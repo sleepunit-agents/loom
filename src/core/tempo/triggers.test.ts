@@ -431,3 +431,15 @@ it('rejects an unsupported machine request instead of scheduling ordinary work',
   expect(() => f.engine.set(request)).toThrow();
   expect(f.db.select().from(triggers).all()).toHaveLength(0);
 });
+
+it('withdraws a machine request in one audited edit before ordinary delivery resumes', () => {
+  const f = fixture();
+  f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: new Date(f.clock.now()).toISOString() }).run();
+  const trigger = f.engine.set(f.base);
+  f.db.update(triggers).set({ machine: 'local' }).where(eq(triggers.id, trigger.id)).run();
+  f.engine.edit(trigger.id, { machine: null }, { kind: 'member', id: 'jonathan' });
+  expect(f.row(trigger.id)).toMatchObject({ machine: null, machineApproval: null, machineWords: null });
+  expect(f.db.select().from(triggerEdits).get()).toMatchObject({ by: 'jonathan', before: JSON.stringify({ machine: 'local' }) });
+  f.clock.advance(10_000);
+  expect(f.items()).toHaveLength(1);
+});

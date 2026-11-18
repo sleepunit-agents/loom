@@ -1,5 +1,5 @@
 import type { Asker } from '../../policy.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { laneFile } from './lane-file.js';
 import { and, eq, max } from 'drizzle-orm';
 import { z } from 'zod';
@@ -30,6 +30,7 @@ export type NewTrigger = z.input<typeof triggerInput>;
 /** The parts of a standing trigger that can change after it is set. Who it is for, what it
  * watches and what it does cannot: stop it and set another. */
 export const triggerEdit = z.object({
+  machine: z.null().optional(),
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(),
   times: text.optional(), days: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX).optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
@@ -188,14 +189,16 @@ export class TriggerEngine {
       if (c.file && !laneFile(c.file)) throw new Error('Instructions must be a relative repository file');
       if ((c.times !== undefined || c.days !== undefined) && t.sourceKind !== 'time') throw new Error('Only a time trigger has times');
       const before: Record<string, string | null> = {};
-      for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
+      for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel', 'machine'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
       if (!Object.keys(before).length) return;
       // The asker follows the words, and only words that are different now: asked here, where what changed is known,
       // so no door can re-stamp a trigger whose words it sent back unchanged.
       if (asked && t.conversation && ('instructions' in before || 'file' in before || 'note' in before)) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       const next = { ...t, ...c };
       const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
-      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      this.db.update(triggers).set({
+        ...(c.machine === null ? { machine: null, machineApproval: null, machineWords: null } : {}),
+        instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
       const seq = (this.db.select({ seq: max(triggerEdits.seq) }).from(triggerEdits).get()?.seq ?? 0) + 1;
       this.db.insert(triggerEdits).values({ seq, trigger: id, at: this.now(), byKind: by.kind, by: by.id, before: JSON.stringify(before) }).run();
       this.log(id, 'edited', Object.keys(before).join(', '));
@@ -360,6 +363,11 @@ export class TriggerEngine {
       this.db.update(triggers).set({ state: standing ? 'standing' : 'stopped', enabled: standing, nextDueAt: standing ? new Date(next!).toISOString() : null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
     });
   }
+  private resolvedWords(t: Trigger): string {
+    const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
+    if (words === undefined) throw new Error('No repository instructions reader');
+    return words;
+  }
   /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
   private fire(t: Trigger, eventId: string, spent: number | null = null) {
     // What the firing was doing, for the log if it fails.
@@ -369,14 +377,15 @@ export class TriggerEngine {
         this.db.update(triggers).set({ state: 'firing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         if (t.machine !== null) {
           stage = 'machine';
+          if (t.machineWords !== null && createHash('sha256').update(this.resolvedWords(t)).digest('hex') !== t.machineWords)
+            throw new Error('The words changed since they were approved');
           throw new Error('Machine execution is unavailable');
         }
         const delivery = `${t.id}:${eventId}`;
         if (t.targetKind === 'operation') this.effects.operation(t.target!, t, delivery);
         else {
           stage = 'instructions';
-          const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
-          if (words === undefined) throw new Error('No repository instructions reader');
+          const words = this.resolvedWords(t);
           stage = 'inbox';
           // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
           const did = this.effects.inbox(t, delivery, words);
