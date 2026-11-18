@@ -76,7 +76,7 @@ export async function bodyProgram(input: {
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   let retirement:Promise<void>|undefined;
-  let measuredDelivery:Promise<void>|undefined;
+  let measuredDelivery: Promise<unknown> | undefined;
   const retire=()=>retirement??=(async()=>{nativeAbort.abort();memoryClient?.close();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
