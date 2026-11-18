@@ -34,13 +34,16 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
  // Settled only after the work was recorded.
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('done');
  expect(f.db.select().from(s.turns).all()).toEqual(expect.arrayContaining([expect.objectContaining({conversation,kind:'reply',model:'actual-background-model',run:'job'}),expect.objectContaining({conversation,kind:'action',model:'actual-tool-model',run:'job'})]));
- expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Completed this stretch of work.',revision:1})]);
+ // A brief with nobody's word on it is anybody else's: loom's line is first on its summary, as on its question. A lane's own work writes its own words alone.
+ const stamp=venue==='handoff'?`[From loom: written while working for somebody loom cannot name in conversation ${conversation}, who is not one of art's owners.] `:'';
+ expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:stamp+(authored?'Authored decisions':'Completed this stretch of work.'),revision:1})]);
  if(authored){expect(f.db.select().from(s.digestItems).all()).toEqual([expect.objectContaining({kind:'task',text:'Keep the inspection task'})]);
   // A brief with nobody's word on it is anybody else's: the question says so first, in loom's words. A lane's own work asks in its own words alone.
   const asked=venue==='handoff'?'[From loom: art asks this while working for somebody loom cannot name, who is not one of its owners. The words below are that job\'s, not art\'s own work.]\n\nInspect the pump?':'Inspect the pump?';
   expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:asked,state:'waiting'})]));
  }
  expect(f.db.select().from(s.threads).all()).toEqual([]);expect(f.db.select().from(s.messages).all()).toEqual([]);
- expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
+ // Such a brief's body writes nothing to the agent's one status row; a lane's own work reports as before.
+ if(venue==='handoff')expect(f.db.select().from(s.agentStatus).get()).toBeUndefined();else expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
  expect(bytes.every(byte=>byte===0)).toBe(true);
 });

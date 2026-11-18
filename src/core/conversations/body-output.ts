@@ -10,7 +10,8 @@ import type { CommsMessages } from './messages.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
 import { ConversationMail } from './mail.js';
 const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
-export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
+/** `quiet` names a body whose status report writes nothing to the agent's status row (one on anybody else's word). */
+export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,quiet?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>)=>boolean):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);
  const threadFor=(viewer:Viewer)=>{
@@ -61,13 +62,17 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    const found=requireCurrent(ctx.viewer),at=service.now();
    // This row is shared across the agent's owners; private conversation words stay private.
    const work=found.cv.member!==null?privateWork[input.state]:input.work;
-   db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work,changedAt:at}}).run();
+   // The row is the whole agent's. A body the composition calls quiet is answered below, since this report is also how
+   // a body hears of a Stop, and writes nothing here: it neither shows its words as the agent's work nor overwrites
+   // what another job of the agent reported.
+   const silent=quiet?.(found)===true;
+   if(!silent)db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work,changedAt:at}}).run();
    const thread=found.cv.venue==='loom'?db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get():undefined;
    let stopRequested=false;
    // Waiting still owns a live body: the thread must keep its Stop control.
    // The body is told of a Stop here and never takes it: Jobs.endIfStopAsked does, when the worker reports the body gone.
    if(thread){service.threads.working(thread.id,input.state==='working'||input.state==='waiting');stopRequested=thread.stopRequested;ctx.changed('threads',thread.id);}
-   ctx.changed('agent_status',found.cv.agent);return {saved:true as const,stopRequested};
+   if(!silent)ctx.changed('agent_status',found.cv.agent);return {saved:true as const,stopRequested};
   },
  }));
 }

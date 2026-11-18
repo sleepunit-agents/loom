@@ -16,12 +16,17 @@ import type { CommsMessages } from './messages.js';
 import type { HandoffToSelf } from './handoff.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
 export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent:string;member:string|null;project:string|null}>,question:Readonly<{to:string;waitsOnKind?:'task'|'approval';waitsOnId?:string}>)=>boolean;
-/** `askedOn` is the composition's line for the head of a question a body asks a person: on whose word the body was
- * working, when that is anybody else's (shared-place-mail.ts, askedOnWord). It may refuse the question by throwing. Whose word a job works on is not this
- * service's to know. */
-export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,askedOn?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>,question:Readonly<{to:string;link?:string}>)=>string|undefined): void {
+/** What the composition says of a body whose job works on anybody else's word (shared-place-mail.ts). Whose word a job
+ * works on is not this service's to know.
+ *  - `question`: loom's line for the head of a question such a body asks a person. It may refuse the question by throwing.
+ *  - `summary`: loom's line for the head of every digest summary such a body writes, question or none: a summary is on
+ *    the tape every later body of the agent is started with.
+ *  - `quiet`: such a body's status report is answered and writes nothing to the agent's one status row. */
+export interface OnWord{question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):string|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean}
+type BodyWork=NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
+export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,onWord?:OnWord): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
- registerConversationBodyOutput(operations,service,proof,privateAssignment);
+ registerConversationBodyOutput(operations,service,proof,privateAssignment,onWord?.quiet);
  registerConversationHandoff(operations,service,proof,privateAssignment,selfHandoff);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
@@ -59,8 +64,10 @@ export function registerConversationBodyOperations(operations:Operations, servic
   output:z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),
   may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
   // The question a person reads says first, in loom's words, on whose word the body was working when that is anybody else's.
-  async prepare(input,ctx){const work=requireCurrent(ctx.viewer),{job,cv}=work,line=input.question?askedOn?.(work,input.question):undefined;
-   return service.prepareDigest({conversation:cv.id,run:job.id,...input,...(input.question&&line?{question:{...input.question,words:line+'\n\n'+input.question.words}}:{})});},
+  async prepare(input,ctx){const work=requireCurrent(ctx.viewer),{job,cv}=work,line=input.question?onWord?.question(work,input.question):undefined,stamp=onWord?.summary(work);
+   // The stamp is part of the summary's 600 characters (the table's own bound): a summary that leaves it no room is refused, not cut.
+   if(stamp&&stamp.length+1+input.summary.length>600)throw new OperationError('invalid',`A summary from this job is at most ${600-stamp.length-1} characters`);
+   return service.prepareDigest({conversation:cv.id,run:job.id,...input,...(stamp?{summary:stamp+' '+input.summary}:{}),...(input.question&&line?{question:{...input.question,words:line+'\n\n'+input.question.words}}:{})});},
   run(ctx,_input,prepared){const {cv}=requireCurrent(ctx.viewer);const digest=(prepared as Awaited<ReturnType<CommsMessages['prepareDigest']>>)();ctx.changed('digests',digest.id);if(digest.inboxItem)ctx.changed('inbox',digest.inboxItem);ctx.changed('conversations',cv.id);return {saved:true as const,digest:digest.id,revision:digest.revision,item:digest.inboxItem};},
  }));
 }

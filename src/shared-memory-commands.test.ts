@@ -570,3 +570,17 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  // Adding a person is refused too. Here the people rule already refuses this agent's body before loom's line is reached.
  expect((await api('mind','personAdd',{name:'Mallory'},'held-person',token)).status).toBe(403);
 });
+it('lets no body set or clear loom\'s stamp of whose word a memory was written on, a body on owners\' word included',async()=>{
+ const f=await fixture(),meta=(title:string)=>JSON.parse((f.source.prepare('SELECT metadata FROM memories WHERE title=?').get(title) as {metadata:string}).metadata);
+ // A body on its owners' word claims the stamp for a memory of its own: the claim is thrown away, the rest is kept.
+ const forged=await f.call('remember',{category:'project',title:'Forged',content:'alpha forged words',metadata:{written_on_word:{who:'the member bob',conversation:'cv-elsewhere'},colour:'green'}},'forged');
+ expect(forged.status).toBe(200);expect(meta('Forged')).toEqual({colour:'green'});
+ // Nor does an edit set it.
+ expect((await f.call('update',{id:forged.result.value.ids[0],metadata:{written_on_word:{who:'somebody'},colour:'blue'}},'forge-update')).status).toBe(200);expect(meta('Forged')).toEqual({colour:'blue'});
+ // A memory loom stamped keeps its stamp through an edit that tries to clear or replace it.
+ const stamp={who:'the member bob',conversation:f.thread.conversation};
+ f.source.close();const write=new Database(f.path);write.prepare('UPDATE memories SET metadata=? WHERE title=?').run(JSON.stringify({written_on_word:stamp}),'Forged');write.close();
+ const read=()=>{const db=new Database(f.path,{readonly:true});try{return JSON.parse((db.prepare('SELECT metadata FROM memories WHERE title=?').get('Forged') as {metadata:string}).metadata);}finally{db.close();}};
+ for(const [id,claim] of [['clear',null],['replace',{who:'the member alice'}]] as const)expect((await f.call('update',{id:forged.result.value.ids[0],metadata:{written_on_word:claim,colour:id}},'stamp-'+id)).status).toBe(200);
+ expect(read()).toEqual({written_on_word:stamp,colour:'replace'});
+});

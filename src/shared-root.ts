@@ -82,7 +82,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -290,7 +290,7 @@ export function sharedRoot(options: {
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),(work,question)=>askedOnWord(db,work,question));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });

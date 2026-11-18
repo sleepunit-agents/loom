@@ -21,7 +21,7 @@ import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {HELD_REFUSALS,jobWord,jobHeld,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
-import {bridgeChannelFilters,tasks,taskComments} from './core/data/schema.js';
+import {bridgeChannelFilters,tasks,taskComments,digests,agentStatus} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const token={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64)};
 function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
@@ -1495,8 +1495,17 @@ it('lets no body on anybody else\'s word propose a household change, or ask for,
 it('lets a body on anybody else\'s word ask the owners a question, and says in the question on whose word it was working',async()=>{
  const {f,cv}=await sharedPlace(),all=runnable(f);
  const asked=()=>f.db.select().from(inbox).where(eq(inbox.source,'thread')).all().filter(item=>item.toKind==='person');
- // The plain summary is the conversation's own record: allowed, and no question is made.
+ // The plain summary is allowed, and no question is made. It goes on the tape every later body of the agent is started
+ // with, so loom's line is first on it, question or none: who the agent was working for, and where.
+ const stamp=`[From loom: written while working for the outside account ${GUEST} in conversation ${cv}, who is not one of art's owners.]`;
+ const summary=()=>f.db.select().from(digests).all().at(-1)!.summary;
  expect((await f.call('conversation','digest',{summary:'Talked about the pond.'})).status).toBe(200);expect(asked()).toEqual([]);
+ expect(summary()).toBe(stamp+' Talked about the pond.');
+ // The line is part of the 600 characters a summary may have: one that leaves it no room is refused, not cut.
+ expect(await f.call('conversation','digest',{summary:'x'.repeat(600-stamp.length)})).toMatchObject({status:400,body:{message:`A summary from this job is at most ${600-stamp.length-1} characters`}});
+ expect((await f.call('conversation','digest',{summary:'x'.repeat(600-stamp.length-1)})).status).toBe(200);expect(summary()).toHaveLength(600);expect(summary().startsWith(stamp+' ')).toBe(true);
+ // Its question waits on no task and no approval card: tied to one, nobody could answer it, and the record could not be moved.
+ expect(await f.call('conversation','digest',{summary:'Asked about a task.',question:{to:'owner',answers:'yes-no',words:'Done?',waitsOnKind:'task',waitsOnId:'t-any'}})).toMatchObject({status:403});
  // The one way such a body reaches the owners. The owner reads loom's line first, then the body's words.
  expect((await f.call('conversation','digest',{summary:'Asked the owner.',question:{to:'owner',answers:'yes-no',words:'May I post the door code here?',ifYes:'I post it'}})).status).toBe(200);
  const line=`[From loom: art asks this while working for the outside account ${GUEST}, who is not one of its owners. The words below are that job's, not art's own work.]`;
@@ -1523,6 +1532,7 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  // A body on the owners' word asks in its own words alone, whoever reads the room, and may send a link.
  expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?',link:'https://example.invalid/doors'}})).status).toBe(200);
  expect(asked().at(-1)).toMatchObject({to:'owner',words:'Which door?',link:'https://example.invalid/doors'});
+ expect(summary()).toBe('Asked again.');
 });
 /** The household around a pond conversation: an owner who has art, and two members who do not. */
 async function pondPlace(){
@@ -1621,4 +1631,17 @@ it('asks the held question of the job the credential is bound to: a body whose c
  for(const [action,input] of [['set',once({conversation:undefined})],['edit',{id:lane.id,instructions:'The guest\'s words'}],['stop',{id:lane.id}],['start',{id:lane.id}],['runNow',{id:lane.id}]] as const)
   expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:HELD_REFUSALS.schedule}});
  expect(f.db.select().from(triggers).where(eq(triggers.id,lane.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
+});
+
+it('writes nothing to the agent\'s status from a body on anybody else\'s word: the row is the whole agent\'s, read by every owner',async()=>{
+ const {f}=await sharedPlace(),status=()=>f.db.select().from(agentStatus).all();
+ // An owners' job elsewhere has said what the agent is doing.
+ f.root.writes.run(()=>f.db.insert(agentStatus).values({agent:'art',state:'working',work:'Rebuilding the pond pump',changedAt:new Date(f.clock.now()).toISOString()}).run());
+ // The guest's body reports, as every body does while it works. It is answered (that is how a body hears of a Stop) and nothing is written.
+ expect(await f.call('conversation','status',{state:'working',work:'Posting the door code for my friend'})).toMatchObject({status:200,body:{value:{saved:true,stopRequested:false}}});
+ expect(await f.call('conversation','status',{state:'idle',work:''})).toMatchObject({status:200});
+ expect(status()).toMatchObject([{agent:'art',state:'working',work:'Rebuilding the pond pump'}]);
+ // On the owner's word the same body writes it.
+ onWord(f,'owner');expect((await f.call('conversation','status',{state:'working',work:'Answering the owner'})).status).toBe(200);
+ expect(status()).toMatchObject([{state:'working',work:'Answering the owner'}]);
 });
