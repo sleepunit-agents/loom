@@ -9,7 +9,7 @@ export const terminalEvent = z.discriminatedUnion('action', [
   z.object({ ...base, action: z.literal('turn'), role: z.enum(['member','agent']), eventId: id,
     words: z.string().min(1).max(MESSAGE_WORDS_MAX) }).strict(),
   z.object({ ...base, action: z.literal('usage'), runId: id, description: z.string().max(500).nullable(),
-    revision: z.number().int().nonnegative(), report: usageReport }).strict(),
+    completed: z.boolean().optional(), revision: z.number().int().nonnegative(), report: usageReport }).strict(),
   z.object({ ...base, action: z.literal('heartbeat') }).strict(),
   z.object({ ...base, action: z.literal('end') }).strict(),
 ]);

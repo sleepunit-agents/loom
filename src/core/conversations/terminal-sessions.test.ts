@@ -41,12 +41,15 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     await send({...usage,revision:1,report:{source:'transcript',tokensIn:10}});
     expect(db.select().from(jobUsage).all().find(r => r.tokensIn===42)).toBeTruthy();
     expect(db.select().from(jobs).all()).toHaveLength(2);
+    await send({...usage,revision:0,completed:true,report:{source:'none'}});
+    const finished=db.select().from(jobs).all().find(j=>j.id!==first.job)!;
+    expect(finished).toMatchObject({state:'done',endedAt:now});
     now = '2026-11-18T00:16:00.000Z';
     expect(expireTerminalSessions(db,now)).toBe(1);
-    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','lost']);
+    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','done']);
     await send(turn);
     await send(usage);
-    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','lost']);
+    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','done']);
     expect(await send({...event,action:'heartbeat'})).toEqual(first);
     await send({...event,action:'end'});
     await expect(send({...event,action:'heartbeat'})).rejects.toThrow('ended');
@@ -65,6 +68,7 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     await send({...event,action:'end',instanceId:'old'});
     expect(db.select().from(jobs).where(eq(jobs.id,first.job)).get()?.state).toBe('running');
     const childJob=db.select().from(jobs).all().find(j=>j.id!==first.job)!;
+    expect(childJob).toMatchObject({state:'done',endedAt:finished.endedAt});
     expect(db.select().from(jobUsage).where(eq(jobUsage.job,childJob.id)).get()?.model).toBeNull();
     const {CommsMessages}=await import('./messages.js');
     const comms=new CommsMessages(db,{seal:async()=>Buffer.from('sealed'),open:async()=>'words',hash:()=>'hash'},()=>now);

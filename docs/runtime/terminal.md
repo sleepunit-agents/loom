@@ -180,7 +180,7 @@ assumption here. Anyone with the credential can report what was typed there.
 | --- | --- | --- |
 | open | cwd, model (nullable) | Opens or resumes the same private conversation |
 | turn | eventId, role (member or agent), words | Records the submitted prompt or finished answer once |
-| usage | runId, description (nullable), revision, report | Replaces this run’s cumulative usage with a newer measured snapshot |
+| usage | runId, description (nullable), revision, report, optional completed flag for a child | Replaces this run’s cumulative usage with a newer measured snapshot |
 | heartbeat | none | Refreshes observed activity |
 | end | none | Removes the session from running work |
 
@@ -199,7 +199,7 @@ harness session ID. Control of the process stays on its machine.
 
 Each transcript supplies a cumulative snapshot of the existing job usage
 record. The main transcript uses run ID `main`. Each subagent uses its own
-run ID under the same conversation. A report's revision is the byte count of
+run ID under the same conversation. A child completion records its end even when the final counter snapshot arrives later. A report's revision is the byte count of
 the transcript snapshot it measured. Duplicate and older revisions do not
 add cost. Missing measurements remain unknown. A quoted terminal approval
 uses the existing owner's approval door.

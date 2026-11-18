@@ -104,19 +104,28 @@ export class TerminalSessions {
   }
 
   private usage(parent: Job, event: Extract<TerminalEvent,{action:'usage'}>, at: string) {
+    if (event.completed && event.runId === 'main') throw new OperationError('invalid','Use end to close the main session');
     const run = this.db.select().from(terminalRuns).where(and(eq(terminalRuns.parent,parent.id),eq(terminalRuns.runId,event.runId))).get();
     const prior = run ? this.db.select().from(jobs).where(eq(jobs.id,run.job)).get() : undefined;
     if (run) {
       if (!prior || prior.startedByKind !== 'terminal' || prior.member !== parent.member || prior.agent !== parent.agent ||
           prior.box !== parent.box || (event.runId === 'main' ? prior.id !== parent.id : prior.id === parent.id || prior.conversation !== null))
         throw new Error('Terminal run records disagree');
-      if (event.revision <= run.revision) return;
+      if (event.revision <= run.revision) {
+        // A completion hook may know only that the child stopped, with no new transcript bytes.
+        if (event.completed && prior.state !== 'done') this.db.update(jobs).set({state:'done',endedAt:prior.endedAt ?? at})
+          .where(eq(jobs.id,prior.id)).run();
+        return;
+      }
     }
     const id = run?.job ?? 'job-'+randomUUID();
     const report = event.report;
+    const finished = event.completed || prior?.state === 'done';
+    const state = finished ? 'done' : parent.state;
+    const endedAt = finished ? prior?.endedAt ?? parent.endedAt ?? at : parent.endedAt;
     if (!run) {
       this.db.insert(jobs).values({id,member:parent.member,agent:parent.agent,box:parent.box,
-        title:event.description || 'Terminal subagent',brief:'',state:parent.state,endedAt:parent.endedAt,model:report.model ?? '',harness:parent.harness,
+        title:event.description || 'Terminal subagent',brief:'',state,endedAt,model:report.model ?? '',harness:parent.harness,
         startedByKind:'terminal',startedBy:parent.startedBy,houseRepository:'',houseFile:'',houseBranch:'',
         queuedAt:parent.endedAt ?? at,claimedAt:parent.endedAt ?? at,heardAt:parent.endedAt ?? at}).run();
       this.db.insert(terminalRuns).values({job:id,parent:parent.id,runId:event.runId,revision:event.revision}).run();
@@ -127,7 +136,7 @@ export class TerminalSessions {
       wallMs:report.wallMs ?? null,harness:parent.harness,model:report.model ?? (prior?.model || null)};
     this.db.insert(jobUsage).values({job:id,...values}).onConflictDoUpdate({target:jobUsage.job,set:values}).run();
     if (id !== parent.id) {
-      this.db.update(jobs).set({state:parent.state,endedAt:parent.endedAt,heardAt:parent.endedAt ?? at,
+      this.db.update(jobs).set({state,endedAt,heardAt:endedAt ?? at,
         ...(event.description ? {title:event.description} : {}),...(report.model ? {model:report.model} : {})})
         .where(eq(jobs.id,id)).run();
     } else if (report.model && report.model !== parent.model) {
