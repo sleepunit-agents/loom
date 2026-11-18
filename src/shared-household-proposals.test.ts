@@ -224,7 +224,7 @@ it('proposes secret rules, the secrets default, bridge settings, tempo timings a
   expect(await allow(await propose('houseSecrets', { agent: 'art', repository: null, secrets: [{ alias: 'GITHUB_TOKEN', secret: 'github-token' }] }))).toMatchObject({ ok: true });
   expect(f.db.select().from(agentHouseSecrets).all()).toEqual([{ agent: 'art', alias: 'GITHUB_TOKEN', secret: 'github-token' }]);
   expect(await allow(await propose('bridge', { action: 'channel', platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false }))).toMatchObject({ ok: true });
-  expect(f.db.select().from(bridgeChannels).all()).toEqual([{ platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false, brief: null }]);
+  expect(f.db.select().from(bridgeChannels).all()).toEqual([{ platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false, brief: null, reportsTo: null }]);
   expect(await allow(await propose('bridge', { action: 'person', platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }))).toMatchObject({ ok: true });
   expect(f.db.select().from(bridgePeople).all()).toEqual([{ platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }]);
   const timings = await propose('tempoTimings', { who: { kind: 'person', id: 'sam' }, settleSeconds: 60 });
