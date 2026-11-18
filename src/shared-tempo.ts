@@ -1,6 +1,6 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
-import { asking, placeFiring, placeFull, privateRewordRefusal, sharedPlaceRefusal, placeTriggerAsker } from './shared-place-triggers.js';
+import { asking, placeFiring, placeFull, privateRewordRefusal, wordRefusal, placeTriggerAsker } from './shared-place-triggers.js';
 import { jobWord } from './shared-place-mail.js';
 import { conversations as conversationRows } from './core/data/schema.js';
 import { eq } from 'drizzle-orm';
@@ -44,7 +44,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
    * is no household owner is that member's body, as it would be in her own thread (Viewer.workingFor), wherever
    * the job sits. So what she has it schedule is her private work, and the agent's own triggers are not hers
    * to reword. A body already working for a member, and every other caller, is taken as it comes. */
-  const onWord = (viewer: Viewer): Viewer => {
+  const judgedAs = (viewer: Viewer): Viewer => {
     const work = options.bodyWork?.(viewer);
     if (!work || viewer.kind !== 'agent' || viewer.workingFor !== undefined) return viewer;
     const word = jobWord(db, work.job);
@@ -77,9 +77,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // chatMember is this door's proof that the caller is the current body of that member's chat.
     commands: { mailboxReceiptScope:options.mailboxReceiptScope,
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
-      recorded: (viewer, trigger) => { const recorded = recordedTrigger(db, onWord(viewer), trigger);
-        return trigger.conversation ? { trigger: recorded.trigger, asked: placeTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : onWord(viewer), access, options.chatMember),
-      placeRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? sharedPlaceRefusal(db, work, action, trigger, change); },
+      recorded: (viewer, trigger) => { const recorded = recordedTrigger(db, judgedAs(viewer), trigger);
+        return trigger.conversation ? { trigger: recorded.trigger, asked: placeTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember),
+      wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change); },
       standRefusal: trigger => trigger.conversation ? placeFull(db, trigger.conversation) : undefined,
       // Changed words are the changer's: the trigger then runs on their word. A change of times alone leaves
       // both as they were, so a firing's words and its asker always come from the same person.

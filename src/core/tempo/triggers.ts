@@ -33,7 +33,7 @@ export const triggerEdit = z.object({
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
 /** What a rule about where a caller works is asked of a trigger: what the caller sent for a new one, or the
- * stored row. The one shape for the door (operations.ts, placeRefusal) and the rule (src/shared-place-triggers.ts). */
+ * stored row. The one shape for the door (operations.ts, wordRefusal) and the rule (src/shared-place-triggers.ts). */
 export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null };
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's

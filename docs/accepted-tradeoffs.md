@@ -954,7 +954,7 @@ Entries are grouped by the part of the program they belong to.
   an hour apart. Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
   that conversation, on its asker's word. A job working for owners, and the agent's own work, is held to
   none of this in a shared place: reach follows the person, not the venue.
-- Where: `isSharedPlace`, `maySchedule` and `SHARED_PLACE_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
+- Where: `isSharedPlace`, `maySchedule` and `WORD_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
   `docs/runtime/tempo.md`.
 - Why: such a body works under the limits of whoever is in the room. A trigger it set for its agent's
   own wake would run words chosen there without them. One that comes back into the conversation runs under them.

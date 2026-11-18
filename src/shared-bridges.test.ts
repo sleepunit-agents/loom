@@ -15,8 +15,8 @@ import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,NOTES_PER_JOB,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
 import {triggerLog} from './core/data/schema.js';
-import {WOKEN_BY_MAIL_REFUSAL} from './shared-place-triggers.js';
-import {RUN_NOW_REFUSAL,SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
+import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL} from './shared-place-triggers.js';
+import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
@@ -352,10 +352,10 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  // What is named must be a bridge conversation of the agent the trigger puts to work.
  expect((await f.call('tempo','set',once({conversation:'cv-none'}),token.other)).status).toBe(400);
  // From a shared place a repeating one comes no more often than hourly, at listed times; a rewording is held to the same.
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
  const hourly=once({lifespan:'until-stopped',times:'09:00,10:00'});expect((await f.call('tempo','set',hourly)).status).toBe(200);
- expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
  expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the shared place'})).status).toBe(200);
  // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
  const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
@@ -368,16 +368,16 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({askedByKind:'agent',askedBy:'art'});
  // A trigger keeps to its asker. The guest's body may not reword, stop, start or run what the owner or the agent asked for there.
  for(const [action,input] of [['edit',{id:own.id,instructions:'The guest\'s words on the agent\'s word'}],['stop',{id:own.id}],['start',{id:own.id}],['runNow',{id:own.id}]] as const)
-  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:action==='runNow'?RUN_NOW_REFUSAL:SHARED_PLACE_ASKER_REFUSAL}});
+  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:action==='runNow'?RUN_NOW_REFUSAL:WORD_ASKER_REFUSAL}});
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
  // Whoever changes its words becomes its asker: the owner rewording the guest's trigger makes it the owner's.
  expect((await f.call('tempo','edit',{id:hourly.id,instructions:'The owner\'s words'},token.owner)).status).toBe(200);
  expect(f.db.select().from(triggers).where(eq(triggers.id,hourly.id)).get()).toMatchObject({askedByKind:'member',askedBy:'owner'});
- expect(await f.call('tempo','stop',{id:hourly.id})).toMatchObject({status:403,body:{message:SHARED_PLACE_ASKER_REFUSAL}});
+ expect(await f.call('tempo','stop',{id:hourly.id})).toMatchObject({status:403,body:{message:WORD_ASKER_REFUSAL}});
  // From a shared place a trigger carries words, never a file of the household's repository, and watches no event.
- expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_FILE_REFUSAL}});
- expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:SHARED_PLACE_FILE_REFUSAL}});
- expect(repeatsTooOften({sourceKind:'job',times:null,lifespan:'until-stopped'})).toBe(true);expect(repeatsTooOften({sourceKind:'time',times:'09:00',lifespan:'until-stopped'})).toBe(false);
+ expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
+ expect(repeatsTooOften({times:'09:00',lifespan:'until-stopped'})).toBe(false);expect(repeatsTooOften({times:'09:00,09:59',lifespan:'until-stopped'})).toBe(true);
  // At most PLACE_TRIGGERS_MAX stand at once for one conversation, whoever sets them.
  expect(PLACE_TRIGGERS_MAX).toBe(10);
  const standing=()=>f.db.select().from(triggers).all().filter(row=>row.conversation===cv&&row.enabled).length;
@@ -648,7 +648,7 @@ it('keys what a body may do with a trigger or a note on whose word it works, not
  let question='';f.root.writes.run(()=>{question=f.root.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',sourceId:'a-question',fromKind:'unknown',words:'Shall I?'}).id;});
  const mail=f.db.select().from(inbox).all().find(item=>item.job==='body')!.id;
  const watching=(watches:string,more:Record<string,unknown>={})=>once({sourceKind:'answer',watches,times:undefined,lifespan:'until-stopped',...more});
- expect(await f.call('tempo','set',watching(`question:${mail}`))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','set',watching(`question:${mail}`))).toMatchObject({status:403,body:{message:WORD_EVENT_REFUSAL}});
  // The owner sets one for this conversation, from outside it.
  const watch=watching(`question:${question}`);expect(await f.call('tempo','set',watch,token.owner)).toMatchObject({status:200});
  expect(f.db.select().from(triggers).where(eq(triggers.id,watch.id)).get()).toMatchObject({sourceKind:'answer',conversation:cv,askedByKind:'member',askedBy:'owner'});
@@ -835,11 +835,11 @@ it('holds a shared place\'s body to the shared-place bounds only when it works f
  const mail=f.db.select().from(inbox).all().find(item=>item.job==='body')!.id;
  // The four a guest-woken body there is refused, and one that watches an event.
  const asks=():[string,ReturnType<typeof once>,string][]=>[
-  ['half-hourly',once({lifespan:'until-stopped',times:'09:00,09:30'}),SHARED_PLACE_REPEAT_REFUSAL],
-  ['a file',once({instructions:undefined,file:'lanes/numbers.md'}),SHARED_PLACE_FILE_REFUSAL],
+  ['half-hourly',once({lifespan:'until-stopped',times:'09:00,09:30'}),WORD_REPEAT_REFUSAL],
+  ['a file',once({instructions:undefined,file:'lanes/numbers.md'}),WORD_FILE_REFUSAL],
   ['another conversation',once({conversation:elsewhere}),SHARED_PLACE_LINE],
   ['an ordinary wake',once({conversation:undefined}),SHARED_PLACE_LINE],
-  ['an event',once({sourceKind:'answer',watches:`question:${mail}`,times:undefined,lifespan:'until-stopped'}),SHARED_PLACE_REPEAT_REFUSAL]];
+  ['an event',once({sourceKind:'answer',watches:`question:${mail}`,times:undefined,lifespan:'until-stopped'}),WORD_EVENT_REFUSAL]];
  for(const [name,trigger,message] of asks())expect(await f.call('tempo','set',trigger),name).toMatchObject({status:403,body:{message}});
  expect(f.db.select().from(triggers).all()).toEqual([]);
  // The line is true wherever it is shown: it speaks of whose word the job is on, not of where the body sits.

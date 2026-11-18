@@ -549,7 +549,7 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
  * person and for an agent's own session. Least reach wins in a mixed batch (jobWord). */
 export const isSharedPlace = (conversation: { venue: string; member: string | null }): boolean =>
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
-export const SHARED_PLACE_SCHEDULE_REFUSAL = 'This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.';
+export const WORD_SCHEDULE_REFUSAL = 'This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.';
 /** Whether a job on this word, working in this conversation, may set, reword, stop, start or run this trigger: any, unless
  * it works for anybody but owners; then only one naming the shared place it is working in. The one statement. */
 export function maySchedule(woke: Woke, conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {

@@ -10,6 +10,7 @@ import { inHousehold, isHouseholdOwner, mayHandTo, membersWithAgent, type Asker,
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
+import type { ChannelTarget } from './core/conversations/channel-target.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
 import { workerPolicy } from './runtime/body-policy.js';
@@ -143,6 +144,18 @@ export const ruled = (db: DataDatabase, agent: string, at: { platform: 'discord'
   !!db.select({ answers: bridgeChannels.answers }).from(bridgeChannels).where(and(eq(bridgeChannels.platform, at.platform), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, at.channel), eq(bridgeChannels.answers, agent))).get();
 /** A channel as a channel rule's `reportsTo` names it, and as a target is compared with it. */
 export const channelKey = (platform: string, workspace: string, channel: string): string => JSON.stringify([platform, workspace, channel]);
+/** A channel target somebody named, resolved for this agent: the one reading of it, for a note and for an
+ * agent's own post. The agent has a rule for the channel (or it is `also`, the one channel the caller's own
+ * channel reports to); the address is one loom can post to; and nothing closes the place. Answers the place
+ * and the conversation there, if there is one; throws an OperationError to refuse. Reads only. */
+export function channelPlace(db: DataDatabase, agent: string, to: ChannelTarget, what: 'note' | 'post', also: string | null = null): { place: string; cv?: typeof conversations.$inferSelect } {
+  if (!ruled(db, agent, to) && channelKey(to.platform, to.workspace, to.channel) !== also) throw new OperationError('invalid', `A ${what} goes to a channel this agent has a rule for`);
+  if (!targetPostable(to)) throw new OperationError('invalid', UNPOSTABLE_REFUSAL);
+  const place = conversationPlace(to.workspace, { channel: to.channel, thread: to.thread ?? null, isDm: false }, null);
+  const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
+  const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+  return { place, cv };
+}
 /** A note from one body of an agent to its body in another conversation: the composition's half of
  * `conversation.handoff` with `to`. The mail it writes starts the target conversation's job like any
  * message; that body, with its own context, says what there is to say in its own words. */
@@ -164,12 +177,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.
         // (Or the one channel its own channel's rule says it reports to: the owner named it there.)
-        if (!ruled(db, agent, to) && channelKey(to.platform, to.workspace, to.channel) !== reportsTo(db, work.cv))
-          throw new OperationError('invalid', 'A note goes to a channel this agent has a rule for');
-        if (!targetPostable(to)) throw new OperationError('invalid', UNPOSTABLE_REFUSAL);
-        const place = conversationPlace(to.workspace, { channel: to.channel, thread: to.thread ?? null, isDm: false }, null);
-        const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
-        const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+        const { place, cv } = channelPlace(db, agent, to, 'note', reportsTo(db, work.cv));
         if (cv?.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another conversation');
         there = cv ?? { id: '', agent, venue: to.platform, place };
         conversation = cv?.id; if (!cv) open = { venue: to.platform, place, label: to.thread ?? to.channel };

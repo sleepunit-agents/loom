@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { SHARED_PLACE_SCHEDULE_REFUSAL, isSharedPlace, maySchedule } from './policy.js';
+import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule } from './policy.js';
 
 it('calls a bridge conversation that is not one member\'s own a shared place, and nothing else', () => {
   for (const venue of ['discord', 'slack']) {
@@ -20,5 +20,5 @@ it('holds a job to triggers naming the shared place it works in only when it wor
   // Anybody else's word: only the shared place it is working in, and so nothing from anywhere else.
   expect(triggers.map(trigger => maySchedule('others', shared, trigger))).toEqual([true, false, false, false]);
   for (const where of [own, thread, wake]) for (const trigger of [...triggers, { conversation: where.id }]) expect(maySchedule('others', where, trigger)).toBe(false);
-  expect(SHARED_PLACE_SCHEDULE_REFUSAL).toBe('This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.');
+  expect(WORD_SCHEDULE_REFUSAL).toBe('This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.');
 });
