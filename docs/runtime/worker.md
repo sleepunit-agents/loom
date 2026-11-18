@@ -1099,6 +1099,35 @@ Invalid configuration is refused before token reads or execution. Poll replay is
 still refused, so an old receipt cannot overwrite newer facts; receipt failure
 rolls back facts and health along with any job claim.
 
+### Choosing among machines
+
+Loom considers the machines in the agent's configured order. A worker is live
+when its last report, stamped by the server, is between zero and 120 seconds
+old, inclusive. A revoked or report-only machine cannot take a job. A usable
+machine must host the agent, meet every required fact, have a compatible
+signed-in model account with room, and have a free worker slot if its capacity
+is known. Workers report their configured slot count with polls and health.
+A worker from before slot reporting has unknown capacity.
+
+Among eligible machines, the first matching **all** preferred facts wins.
+Otherwise the first eligible machine wins immediately. Both owner labels and
+worker facts count. A bare key such as `gpu` matches `gpu:5090` too. Keys
+are case-sensitive and values are compared without regard to case.
+
+A missing required fact leaves the job **queued**. Owners can see it in the
+queue. Waiting for placement sends no per-job inbox notice. An always-on
+machine going silent has its own owner notice. At 24 hours from eligibility
+the queue sweep marks an unclaimed job failed with loom exit 31 and no retry.
+Job history keeps the outcome. For a claimed job, read the ordered list of
+configured machines and the reason each was taken or passed:
+
+```graphql
+{ jobHistory(agent: "art", id: "JOB_ID") { id box prefers placementDecision { box outcome reason } } }
+```
+
+The decision describes eligibility at the successful claim. Older jobs,
+unclaimed work and terminal sessions have no placement decision.
+
 ## Private body bootstrap
 
 A runner command may set `"bodyBootstrap":true` when its fixed child implements
@@ -1347,24 +1376,25 @@ are rejected too.
 
 ## Agent house settings
 
-`POST /api/runtime/agentRunSettingsSet` uses the ordinary `{id,input}` envelope:
+An agent proposes its run settings with `household.propose`. A current agent owner
+allows the settings card with `approvals.answer`. For example, the proposal input is
 
 ```json
-{"agent":"art","houseRepository":"https://example.com/house.git","houseFile":"Housefile","houseBranch":"next","nestedContainers":false,"gpu":false,"boxes":["workshop","attic"],"ports":[{"address":"127.0.0.1","port":9000}]}
+{"change":"runSettings","input":{"agent":"art","houseRepository":"https://example.com/house.git","houseFile":"Housefile","houseBranch":"next","nestedContainers":false,"gpu":false,"boxes":["workshop","attic"],"ports":[{"address":"127.0.0.1","port":9000}],"prefers":["fast"]},"why":"Prefer a machine marked fast"}
 ```
 
-`houseFile` may be empty: the agent then has no Housefile of its own and runs in
-the core house with its repository copied in ("The core house"). A change an
-agent asks for through `household.propose` says so on its card in words ("how
-art runs, in the core house with no Housefile of its own").
+`houseFile` may be empty. The agent then runs in the core house with its
+repository copied in (“The core house”), and the card says so.
 
-Current agent owners configure their house, ordered preferred machines and allowed
-listening ports. The existing agent setup policy applies, including current
-ownership on receipt replay. Runner, agent and service principals cannot edit it;
-a household owner role alone does not replace agent ownership. Preferred machines
-must be enrolled, unrevoked and visible to the configuring member, or explicitly lent to the
-agent. Listing a machine does not grant permission to run there. An empty preference
-list holds work until a machine is configured.
+`boxes` is the ordered list of candidate machines. Each machine must be enrolled,
+unrevoked and visible to the configuring member, or explicitly lent to the
+agent. Listing a machine grants no execution permission. An empty list holds
+work until a machine is configured.
+
+`prefers` supplies the agent's default preferred machine facts. Omit it to keep
+the existing defaults, or send `[]` to clear them. Read the saved defaults
+through GraphQL with `{ agentRunSettings(where:{agent:{eq:"art"}}) { prefers } }`.
+The field returns a list of strings, or null for an agent with no saved defaults.
 
 Repository references cannot contain URL passwords, HTTP user information, queries
 or fragments. The
