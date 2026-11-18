@@ -359,3 +359,12 @@ it('fails a queued machine job before ordinary placement can claim it', () => {
   expect(ended).toEqual([f.job.id]);
   expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'failed', box: null });
 });
+
+it('ignores legacy owner capability labels omitted from a worker report', () => {
+  const f = fixture();
+  const need = 'loom:machine-bodies';
+  f.db.insert(jobNeeds).values({ job: f.job.id, need }).run();
+  f.db.insert(boxFacts).values({ box: 'first', fact: need, fromOwner: true }).run();
+  expect(f.runtime.next('first', [])).toBeUndefined();
+  expect(f.runtime.next('first', [need])?.id).toBe(f.job.id);
+});

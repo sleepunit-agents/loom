@@ -50,7 +50,9 @@ export function selectPlacement(db: DataDatabase, input: {
     const silence = now - Date.parse(box.lastSeenAt);
     if (!Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS) continue;
     if (!machineMayHost(box, listed.get(box.id), input.agent, sharing)) continue;
-    const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all().map(row => row.fact);
+    const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all()
+      .filter(row => !row.fromOwner || !row.fact.startsWith('loom:'))
+      .map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;
     for (const model of models) {
       const role = input.roles.find(role => role.model === model.model);
