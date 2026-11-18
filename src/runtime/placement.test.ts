@@ -180,3 +180,13 @@ it('records why each configured machine was passed even when none can claim', ()
   db.update(boxes).set({ lastSeenAt: null }).where(eq(boxes.id, 'local')).run();
   expect(reason()).toMatchObject({ outcome: 'passed', reason: expect.stringContaining('not live') });
 });
+
+it('places a clock program by machine capabilities while every account is unavailable', () => {
+  const { db, input } = fixture();
+  db.delete(modelAccountBoxes).run();
+  db.insert(boxFacts).values({ box: 'remote', fact: 'program-step:v1', fromOwner: false }).run();
+  const criteria = { ...input, roles: [], program: true, needs: ['program-step:v1'] };
+  expect(decidePlacement(db, criteria).placement?.box).toBe('remote');
+  expect(decidePlacement(db, { ...criteria, needs: ['program-step:v1', 'gpu'] }).placement).toBeUndefined();
+  expect(selectPlacement(db, input)).toBeUndefined();
+});

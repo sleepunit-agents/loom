@@ -181,3 +181,20 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   any trigger. A body working for anybody but owners reads its agent's triggers
   as before, all of them, and can change only its own conversation's (see the
   accepted trade-offs).
+
+## Scheduled house programs
+
+A program firing belongs to the agent and has its own attempt in the trigger's conversation.
+The trigger fixes a house executable by name, its argument vector, its time limit and its allowed
+house-secret aliases. A program-capable container worker builds the agent's claimed house and runs
+the executable directly. Machine sharing, liveness, available slots, needs and preferences still
+apply. Model availability and account sign-in play no part in choosing a machine.
+
+The version 1 result is one UTF-8 JSON object on stdout. Zero exit requests application of that
+result. A nonzero exit fails the attempt and discards its output. The required fields are
+`version: 1` and boolean `wake`. Optional fields are `line` (a short human-readable summary),
+`payload` (JSON data for the wake), `state` (JSON for a later firing), and
+`post: {channel, text}` (one delivery through a ruled bridge channel). A wake and a post may
+occur together. A successful quiet watch returns `{"version":1,"wake":false}`.
+Granting a program name does not grant a secret. The worker needs the intersection of the
+frozen alias list, the agent's configured house aliases and the current startup grants.
