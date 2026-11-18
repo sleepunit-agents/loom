@@ -388,3 +388,14 @@ it.each(['app','inline'])('shows a household owner what a waiting household card
  await act(async()=>tree.unmount());request.mockClear();card.state='used';await draw(node());await act(async()=>{});
  expect(request).not.toHaveBeenCalled();
 });
+
+it('shows a quoted decision in approval notices while the card is visible', async () => {
+ fixture();
+ const card=feed.approvals.approvals[0], note='Denied by sam through art, on their words: “Leave it alone”';
+ feed.approvals.approvalRecord=[{seq:2,at:card.askedAt,event:'deny',approval:card.id,agent:'art',note}];
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));
+ expect(words()).toContain(note);
+ feed.approvals.approvals=[];
+ await act(async()=>{tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));});
+ expect(words()).not.toContain(note);
+});

@@ -1,7 +1,7 @@
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
-import { folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
+import { quotedDecision, folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
 export type { ApprovalSnapshot } from './model';
 
 export type RenderApprovalChange = (approval: Approval) => ReactNode;
@@ -55,7 +55,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
   const change = renderChange?.(a);
   const decision = snapshot.record.filter(r => r.approval === a.id && (r.event === 'allow' || r.event === 'deny'))
     .reduce<(typeof snapshot.record)[number] | undefined>((last, row) => !last || row.seq > last.seq ? row : last, undefined);
-  const attribution = decision?.note.match(/^(Allowed|Denied) by /) ? decision.note : undefined;
+  const attribution = quotedDecision(decision);
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>

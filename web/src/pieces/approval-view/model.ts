@@ -15,6 +15,10 @@ export interface Rule {
 }
 export interface Notice { id: string; agent: string; kind: string; target: string; what: string; at: string }
 export interface Record { seq: number; at: string; event: string; approval: string; agent: string; note: string }
+export function quotedDecision(row: Record | undefined): string | undefined {
+  if (row?.event === 'allow' && row.note.startsWith('Allowed by ')) return row.note;
+  if (row?.event === 'deny' && row.note.startsWith('Denied by ')) return row.note;
+}
 export interface ApprovalSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
   approvals: readonly Approval[]; rules: readonly Rule[]; notices: readonly Notice[]; record: readonly Record[];
