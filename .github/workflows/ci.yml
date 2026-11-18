@@ -139,11 +139,12 @@ jobs:
 
       - name: Test
         env:
+          LOOM_SLOW_REPORT: artifacts/slow.txt
           LOOM_CI_SHARD: ${{ matrix.shard }}/4
           LOOM_BROWSER_TESTS: ${{ vars.LOOM_BROWSER_TESTS }}
           AFFECTED_ONLY: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' }}
         run: |
-          reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
+          reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --reporter=./scripts/slow-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
           if [ "$AFFECTED_ONLY" = true ]; then
             echo "Affected tests only, against $(git rev-parse --short HEAD^1):"
             git diff --name-only HEAD^1 HEAD | sed 's/^/  /' | head -60 || true
@@ -163,7 +164,7 @@ jobs:
             npm test -- --shard=${{ matrix.shard }}/4 "${reporters[@]}"
           fi
 
-      - name: Keep shard reports and retry ledger
+      - name: Keep shard reports, timings and retry ledger
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -271,6 +272,23 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'No retried tests recorded. Check shard completion before treating this as clean.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Collect slow tests and files
+        if: always()
+        run: |
+          mkdir -p merged
+          for report in reports/ci-node-*/slow.txt; do
+            [ -f "$report" ] || continue
+            echo "${report%/slow.txt}"
+            cat "$report"
+          done > merged/slow.txt
+          if [ -s merged/slow.txt ]; then
+            {
+              echo '### Slow tests and files by shard'
+              echo '~~~~text'
+              cat merged/slow.txt
+              echo '~~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v7
         if: always()
