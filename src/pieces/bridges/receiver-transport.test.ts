@@ -141,6 +141,16 @@ it('Slack failed SQLite commit sends no ACK and retry on the replacement socket 
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
 
+it('requests guild events and commits managed-role dispatches through the Discord gateway', async () => {
+  const f=fixture('discord'); f.discord(); await settled();
+  const socket=f.sockets[0]; socket.emit('open'); socket.frame(hello); await settled();
+  expect(socket.sent()[0].d.intents & 1).toBe(1);
+  socket.frame(ready); await settled();
+  const bytes=socket.frame({op:0,t:'GUILD_ROLE_CREATE',s:2,d:{guild_id:'w',role:{id:'role',managed:true,tags:{bot_id:'foreign'}}}});
+  await settled();
+  expect(f.raw().some(row=>Buffer.from(row.event).equals(bytes))).toBe(true);
+});
+
 it('Discord resumes the SQLite cursor after reopen while missing metadata retains original bytes', async () => {
   const f = fixture('discord'), first = f.discord(); await settled();
   const s = f.sockets[0]; s.frame(hello); await settled(); s.frame(ready); await settled();

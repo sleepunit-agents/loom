@@ -7,7 +7,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { eq } from 'drizzle-orm';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
+import { conversations, members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { STOP_WORD } from './incoming.js';
 import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
@@ -59,8 +59,12 @@ function discordFixture(overrides: Partial<SharedBridgeOptions> = {}) {
     clock.advance(0); await daemon.idle();
     return db.select().from(bridgeIncoming).all().find(row => row.id === `bi:${JSON.stringify(['connection', d.id])}`)!;
   };
+  const dispatch = async (type: string, data: unknown) => {
+    ++seq;
+    await gateways.at(-1)!.commit({type,data,seq}, {session:'fixture',url:'wss://gateway.discord.gg',seq}, Buffer.from(JSON.stringify({op:0,t:type,s:seq,d:data})));
+  };
   const start = async () => { await daemon.ready(); await daemon.idle(); };
-  return { client, db, clock, writes, daemon, request, answers, calls, gateways, errors, say, start };
+  return { client, db, clock, writes, daemon, request, answers, calls, gateways, errors, say, start, dispatch };
 }
 
 it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own role is a mention of the bot', async () => {
@@ -77,11 +81,84 @@ it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own 
   expect(f.calls.filter(call => call.path === `guilds/${guild}/roles`)).toHaveLength(1);
 });
 
-it('connects and takes mentions when the roles cannot be read; a role ping is then nobody\'s', async () => {
+it('describes a direct message, named channel and thread where the conversation is opened', async () => {
+  const f = discordFixture(); await f.start();
+  const dm = '700000000000000010', thread = '700000000000000011';
+  f.answers.set(`GET channels/${dm}`, { id: dm, type: 1 });
+  f.answers.set(`GET channels/${room}`, { id: room, guild_id: guild, type: 0, name: 'pond' });
+  f.answers.set(`GET channels/${thread}`, { id: thread, guild_id: guild, type: 11, parent_id: room, name: 'otters' });
+  const addressed = { content: `<@${bot}> hello`, mentions: [{ id: bot }] };
+  const label = async (data: Record<string, unknown>) => {
+    const row = await f.say({ ...addressed, ...data });
+    return f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get()?.label;
+  };
+  expect(await label({ guild_id: undefined, channel_id: dm })).toBe('Discord direct message with owner');
+  expect(await label({ channel_id: thread })).toBe('Discord thread #otters under #pond');
+  expect(await label({ channel_id: room })).toBe('Discord channel #pond');
+});
+
+it('leaves a ping of another bot alone even when that bot has no loom connection', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  expect(await f.say({ content: `<@&${markRole}> yours`, mention_roles: [markRole] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${mark}> yours`, mentions: [{ id: mark, bot: true }] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${person}> hello`, mentions: [{ id: person }] })).toMatchObject({ state: 'delivered' });
+});
+
+it('connects and takes mentions when the roles cannot be read; a role ping waits for evidence', async () => {
   const f = discordFixture(); f.answers.delete(`GET guilds/${guild}/roles`); await f.start();
   expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
-  expect(await f.say({ content: `<@&${artRole}> hello`, mention_roles: [artRole] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@&${artRole}> hello`, mention_roles: [artRole] })).toBeUndefined();
   expect(await f.say({ content: `<@${bot}> hello`, mentions: [{ id: bot }] })).toMatchObject({ state: 'delivered' });
+});
+
+it('recovers the guild role list after a failed read and follows authenticated role changes', async () => {
+  const f=discordFixture(), key=`GET guilds/${guild}/roles`, roles=f.answers.get(key);
+  f.answers.delete(key); await f.start();
+  f.db.insert(bridgeChannels).values({ platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false }).run();
+  const ping=(role:string)=>f.say({content:`<@&${role}> hello`,mention_roles:[role]});
+  const ordinary='500000000000000009';
+  expect(await ping(markRole)).toBeUndefined();
+  expect(await f.say({content:`<@${mark}> <@&${artRole}> both`,mentions:[{id:mark,bot:true}],mention_roles:[artRole]})).toBeUndefined();
+  expect(await ping(ordinary)).toBeUndefined();
+  expect(await f.say({content:'ordinary message'})).toMatchObject({state:'delivered'});
+  f.answers.set(key,roles); f.clock.advance(5000); await f.daemon.idle(); f.clock.advance(0); await f.daemon.idle();
+  const retried=f.db.select().from(bridgeIncoming).all();
+  expect(retried.find(row=>row.mentions===JSON.stringify([mark]))?.state).toBe('dropped');
+  expect(retried.find(row=>row.text.includes('both'))?.state).toBe('delivered');
+  expect(retried.find(row=>row.text.includes(ordinary))?.state).toBe('delivered');
+  expect(await ping(markRole)).toMatchObject({state:'dropped'});
+  const role={id:'500000000000000008',managed:true,tags:{bot_id:mark}};
+  await f.dispatch('GUILD_ROLE_CREATE',{guild_id:guild,role});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:'other',role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_UPDATE',{guild_id:guild,role:{...role,tags:{bot_id:bot}}});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:JSON.stringify([bot])});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:guild,role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  // A new gateway session in this same daemon lifetime starts with its guild snapshot.
+  await f.dispatch('GUILD_CREATE',{id:'other',roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  await f.dispatch('GUILD_CREATE',{id:guild,roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  expect(await ping(markRole)).toMatchObject({state:'delivered',mentions:'[]'});
+  expect(f.gateways).toHaveLength(1);
+});
+
+it('delivers while the optional thread parent name is pending', async () => {
+  const f=discordFixture(); await f.start();
+  const thread='700000000000000011';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room,name:'otters'});
+  const original=f.request.getMockImplementation()!;
+  let release!: (response:Response)=>void;
+  f.request.mockImplementation((url,options)=>String(url).endsWith('/channels/'+room)?new Promise(resolve=>{release=resolve;}):original(url,options));
+  const delivery=f.say({channel_id:thread,content:`<@${bot}>`,mentions:[{id:bot}]});
+  try{
+    await vi.waitFor(()=>expect(f.db.select().from(conversations).get()?.label).toBe(`Discord thread #otters under #${room}`));
+  }finally{release?.(Response.json({id:room,guild_id:guild,type:0,name:'pond'}));}
+  expect(await delivery).toMatchObject({state:'delivered'});
+  expect(f.db.select().from(conversations).get()?.label).toBe('Discord thread #otters under #pond');
 });
 
 it('takes a thread started from the bot\'s own message as addressed to it, whoever posted that message', async () => {
@@ -103,6 +180,22 @@ it('takes a thread started from the bot\'s own message as addressed to it, whoev
   expect(await f.say({ channel_id: bare, content: 'nobody' })).toMatchObject({ state: 'dropped', repliesTo: null });
   expect(f.db.select().from(inbox).all()).toHaveLength(2);
   expect(f.errors).toEqual([]);
+});
+
+it('honors written bot mentions over the implicit thread starter or reply author', async () => {
+  const f=discordFixture();
+  f.answers.set(`GET guilds/${guild}/roles`,[]); await f.start();
+  f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  f.db.insert(bridgeConnections).values({id:'marks',platform:'discord',workspace:guild,botUser:mark,agent:'mark',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:new Date(f.clock.now()).toISOString()}).run();
+  const thread='700000000000000008';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room});
+  f.answers.set(`GET channels/${room}/messages/${thread}`,{id:thread,channel_id:room,author:{id:bot}});
+  const foreign={content:`<@${mark}> look`,mentions:[{id:mark,bot:true}]};
+  expect(await f.say({channel_id:thread,...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  // The active peer connection also identifies Mark when the message omits the optional bot flag.
+  expect(await f.say({channel_id:thread,...foreign,mentions:[{id:mark}]})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({type:19,referenced_message:{author:{id:bot}},...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({channel_id:thread,content:`<@${bot}> <@${mark}> look`,mentions:[{id:bot,bot:true},{id:mark,bot:true}]})).toMatchObject({state:'delivered',repliesTo:bot});
 });
 
 it('ends the working job on the stop word through the runtime\'s Stop, and says so once the pass has committed', async () => {
@@ -151,34 +244,31 @@ it('reacts to a message a running job has taken, shows typing while it works, an
   const reaction = `channels/${room}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, typing = `channels/${room}/typing`;
   const made = (method: string, path: string) => f.calls.filter(call => call.method === method && call.path === path).length;
   const shown = async () => { f.daemon.changed(); await f.daemon.idle(); };
+  const second = await f.say({ content: 'One more detail' });
   // Delivered and waiting: nobody has taken it, so nothing is shown.
   await shown();
   expect(workingOn(f.db)).toEqual([]); expect(made('PUT', reaction)).toBe(0); expect(made('POST', typing)).toBe(0);
   // A job takes it.
   f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
   f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
-  expect(workingOn(f.db)).toEqual([{ connection: 'connection', channel: room, message }]);
-  // The first try does not even reach Discord (the network is down). The connection is not given up for it.
-  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
-  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
-  await shown();
-  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
-  expect(f.gateways).toHaveLength(1);
-  f.calls.length = 0;
-  // Discord refuses the next try (a missing permission, a rate limit): nothing else changes, and it is tried again.
-  const before = JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()]);
-  await shown();
-  expect(made('PUT', reaction)).toBe(1);
-  expect(JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()])).toBe(before);
-  expect(f.errors).toEqual([]);
-  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
-  await shown();
-  expect(made('PUT', reaction)).toBe(2);
-  // Once Discord has the reaction it is not asked for again, and typing is asked for no more often than it lapses.
+  expect(workingOn(f.db)).toHaveLength(2);
+  const secondId = JSON.parse(second.id.slice(3))[1] as string;
+  const secondReaction = reaction.replace(message, secondId);
+  f.answers.set(`PUT ${secondReaction}`, null);
+  f.request.mockImplementationOnce(async () => Response.json({ retry_after: 15 }, {status:429,headers:{'Retry-After':'15'}}));
+  const before = f.request.mock.calls.length;
   await shown(); await shown();
-  expect(made('PUT', reaction)).toBe(2); expect(made('POST', typing)).toBe(0);
-  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(f.request.mock.calls.length - before).toBe(1);
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
+  for (let i = 0; i < 2; i++) { f.clock.advance(5_000); await f.daemon.idle(); }
+  expect(f.request.mock.calls.length - before).toBe(1);
+  f.clock.advance(5_000); await f.daemon.idle();
+  expect(made('PUT', reaction)).toBe(1);
+  expect(made('PUT', secondReaction)).toBe(1);
   expect(made('POST', typing)).toBe(1);
+  await shown(); await shown();
+  expect(made('PUT', reaction)).toBe(1); expect(made('POST', typing)).toBe(1);
   f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
   expect(made('POST', typing)).toBe(2);
   // The reply settles the mail: the reaction comes off and typing stops.
@@ -199,6 +289,23 @@ it('shows nothing for mail whose job is not running, or on a connection that is 
   expect(workingOn(f.db)).toEqual([]);
   f.db.update(jobs).set({ state: 'running' }).run();
   expect(workingOn(f.db)).toHaveLength(1);
+  const typingOnly = [{connection:'connection',channel:room}];
+  f.db.update(bridgeIncoming).set({bot:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  f.db.update(bridgeIncoming).set({bot:false,webhook:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  for (const source of ['trigger','handoff'] as const) {
+    f.db.update(inbox).set({source}).run();
+    expect(workingOn(f.db)).toEqual(typingOnly);
+  }
+  f.db.update(inbox).set({state:'done'}).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(inbox).set({source:'discord',state:'taken'}).run();
+  f.db.update(bridgeIncoming).set({webhook:false}).run();
+  for (const state of ['starting','failed','lost','done'] as const) {
+    f.db.update(jobs).set({state}).run();
+    expect(workingOn(f.db)).toEqual([]);
+  }
   f.db.update(jobs).set({ state: 'stopped' }).run();
   expect(workingOn(f.db)).toEqual([]);
   f.db.update(jobs).set({ state: 'running' }).run();
@@ -206,27 +313,66 @@ it('shows nothing for mail whose job is not running, or on a connection that is 
   expect(workingOn(f.db)).toEqual([]);
 });
 
-it('keeps a delivered Discord message\'s attachments, once, and leaves one it cannot fetch as a link', async () => {
+it('waits for a body with file tools before fetching a picture-only message, then keeps readable files and reports missing ones', async () => {
   const f = discordFixture(); await f.start();
-  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
-  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1', gone = 'https://cdn.discordapp.com/attachments/1/2/gone.png?ex=1';
+  f.db.insert(bridgeChannels).values({platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false}).run();
+  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png', gone = cat + '?gone';
+  const attachments = [{id:'11',filename:'cat.png',size:7,content_type:'image/png',url:cat},
+    {id:'12',filename:'gone.png',size:2,content_type:'image/png',url:gone}];
   f.answers.set(`GET ${cat}`, Buffer.from('PNGDATA'));
-  const attachments = [{ id: '900000000000000001', filename: 'cat.png', size: 7, content_type: 'image/png', url: cat }, { id: '900000000000000002', filename: 'gone.png', size: 9, content_type: 'image/png', url: gone }];
-  const row = await f.say({ content: '', attachments });
-  f.clock.advance(1); await f.daemon.idle(); f.clock.advance(1); await f.daemon.idle();
-  // A picture alone is delivered, with both links in its words.
-  expect(row).toMatchObject({ state: 'delivered' });
-  expect(row.text).toBe(`[attachment: cat.png (image/png, 7 bytes) ${cat}]\n[attachment: gone.png (image/png, 9 bytes) ${gone}]`);
-  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{ connection: 'connection', file: '900000000000000001', name: 'cat.png', contents: Buffer.from('PNGDATA') }]);
-  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{ connection: 'connection', file: '900000000000000001', incoming: row.id }]);
-  // Each is asked for once: the one that is gone is not asked for again on every pass.
-  for (let n = 0; n < 3; n++) { f.clock.advance(5000); await f.daemon.idle(); }
-  expect(f.calls.filter(call => call.path === cat)).toHaveLength(1);
-  expect(f.calls.filter(call => call.path === gone)).toHaveLength(1);
-  // The fetch carries no credential: the link is Discord's own.
-  expect(f.request.mock.calls.find(([url]) => String(url) === cat)?.[1]?.headers).toBeUndefined();
-  // A stranger's attachment is not fetched: the message was dropped.
-  await f.say({ author: { id: '400000000000000099' }, content: 'x', attachments: [{ ...attachments[0], id: '900000000000000003', url: cat + '&other' }] });
-  expect(f.calls.filter(call => call.path === cat + '&other')).toHaveLength(0);
+  const row = await f.say({content:'',attachments});
+  expect(row.state).toBe('delivered');
+  expect(f.calls.some(call=>call.path===cat)).toBe(false);
+  expect(row.text).toContain('cat.png (image/png, 7 bytes)');
+  expect(row.text).not.toContain('https://');
+  const message = '600000000000000001';
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',attachments});
+  const prepare=async(index:number,permit=()=>true)=>(await f.daemon.prepareDiscordFile(row.id,permit,index,1024))();
+  expect(await prepare(0,()=>false)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  const commit=await f.daemon.prepareDiscordFile(row.id,()=>true,0,1024);
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  expect(commit()).toEqual({state:'saved',count:2,bytes:7});
+  expect(await prepare(1)).toMatchObject({state:'unavailable',count:2});
+  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{file:'11',contents:Buffer.from('PNGDATA')}]);
+  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{connection:'connection',file:'11',incoming:row.id}]);
+  expect(await prepare(0)).toMatchObject({state:'saved'});
+  // A previously kept short response must neither bypass the size check nor reset its original retention.
+  const received=f.db.select().from(bridgeFiles).get()!.fetchedAt;
+  f.db.update(bridgeFiles).set({contents:Buffer.from('PN')}).run();
+  expect(await prepare(0)).toMatchObject({state:'saved',bytes:7});
+  expect(f.db.select().from(bridgeFiles).get()).toMatchObject({contents:Buffer.from('PNGDATA'),fetchedAt:received});
+  f.db.update(bridgeFiles).set({contents:Buffer.from('P')}).run();
+  f.answers.set(`GET ${cat}`,Buffer.from('PN'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',edited_timestamp:'2026-11-14T12:02:00Z',attachments:[]});
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  f.request.mockRejectedValueOnce(Error('Discord temporarily offline'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  expect(f.calls.filter(call=>call.path===cat)).toHaveLength(3);
   expect(f.errors).toEqual([]);
+});
+
+it('shares presence capacity across nine busy Discord channels before their heartbeats expire', async () => {
+  const f = discordFixture();
+  await f.start();
+  for (let i = 0; i < 9; i++) {
+    const channel = String(300000000000000100n + BigInt(i));
+    f.answers.set(`GET channels/${channel}`, {id:channel, type:0, guild_id:guild});
+    const row = await f.say({channel_id:channel, content:`<@${bot}> hello`, mentions:[{id:bot}]});
+    const message = JSON.parse(row.id.slice(3))[1];
+    f.answers.set(`POST channels/${channel}/typing`, null);
+    f.answers.set(`PUT channels/${channel}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, null);
+    f.db.insert(jobs).values({id:'work-'+i, agent:'art', conversation:row.conversation, title:'Work', state:'running',
+      queuedAt:new Date(f.clock.now()).toISOString(),brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next'}).run();
+    f.db.update(inbox).set({state:'taken',job:'work-'+i}).where(eq(inbox.conversation,row.conversation!)).run();
+  }
+  f.daemon.changed();
+  await f.daemon.idle();
+  for (let i = 0; i < 2; i++) { f.clock.advance(1000); await f.daemon.idle(); }
+  expect(f.calls.filter(call => call.path.endsWith('/typing'))).toHaveLength(9);
+  expect(f.calls.filter(call => call.method === 'PUT')).toHaveLength(9);
 });

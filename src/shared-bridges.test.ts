@@ -1050,6 +1050,7 @@ it('tells the body a note reaches how to answer only when a note back would be t
  const told=(job:string,from:string,to:unknown)=>hand.target({job:{id:job,agent:'art',conversation:from},cv:row(from)},to as never).told,pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
  const back=`To answer that body, hand a note back to conversation ${cv}.`,none='A note back to that body would be refused from here.';
  // On a guest's word, to the channel this one reports to: that channel reports nowhere, so its body could hand nothing back.
+ expect(told('body',cv,pond)).toContain('in slack channel CROOM (conversation ');
  expect(told('body',cv,pond)).toContain(none);expect(told('body',cv,pond)).not.toContain('To answer that body');
  // On an owner's word the body there may hand to any conversation of the agent.
  f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());

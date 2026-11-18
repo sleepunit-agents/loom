@@ -10,7 +10,7 @@ import { editsWords, logTrigger, wordsChanged, triggerEdit, triggerInput, type N
 import { nextTime } from './core/tempo/calendar.js';
 import { householdTimezone } from './core/data/household-settings.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type OnWord, type Viewer } from './policy.js';
-import { PRIVATE_PLACE_REFUSAL, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, placeAddress, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
+import { PRIVATE_PLACE_REFUSAL, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, describePlace, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
 /** Why a body working for anybody but owners may not make this change to a trigger it may otherwise touch (one naming its own conversation). */
@@ -133,7 +133,7 @@ export function ownersFirst(db: DataDatabase, now: number, work: Work | undefine
   if (!repeats(after)) return undefined;
   // Times that could never fire are the asker's to hear now, not an owner's to find on Allow.
   try { nextTime(after.times ?? '', after.days ?? null, now, householdTimezone(db)); } catch (error) { throw new OperationError('invalid', error instanceof Error ? error.message : 'Invalid times'); }
-  const at = placeAddress(db, work.cv), place = at ? `${work.cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}${at.thread ? `, thread ${at.thread}` : ''}` : work.cv.venue;
+  const place = describePlace(db, work.cv);
   const who = ask.action === 'set' ? ask.asked : ask.trigger.askedByKind && ask.trigger.askedBy ? { kind: ask.trigger.askedByKind, id: ask.trigger.askedBy } : undefined;
   if (!who || who.kind === 'agent') throw new OperationError('denied', 'Nobody loom knows asked for this');
   const base = { agent: work.cv.agent, conversation: work.cv.id, place, asker: who as OnWord };

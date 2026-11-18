@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { discordAttachmentLabels, discordBodyWords } from './discord-link.js';
 import { normalizeDiscord, normalizeSlack } from './normalize.js';
 
 const discord = { id: 'dc', workspace: 'guild' };
@@ -44,17 +45,17 @@ describe('authenticated Discord message normalisation', () => {
     const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
     const words = (changes: object) => normalizeDiscord(discord, dc({ mentions: [], ...changes }), channel)?.text;
     const cat = { filename: 'cat.png', size: 2048, content_type: 'image/png', url: 'https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1&is=2&hm=3' };
-    expect(words({ content: '', attachments: [cat] })).toBe('[attachment: cat.png (image/png, 2048 bytes) https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1&is=2&hm=3]');
+    expect(words({ content: '', attachments: [cat] })).toBe('[attachment: cat.png (image/png, 2048 bytes)]');
     expect(words({ content: 'look', attachments: [cat, { filename: 'notes.txt', size: 3, url: 'https://media.discordapp.net/attachments/1/2/notes.txt' }] }))
-      .toBe('look\n[attachment: cat.png (image/png, 2048 bytes) https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1&is=2&hm=3]\n[attachment: notes.txt (unknown type, 3 bytes) https://media.discordapp.net/attachments/1/2/notes.txt]');
+      .toBe('look\n[attachment: cat.png (image/png, 2048 bytes)]\n[attachment: notes.txt (unknown type, 3 bytes)]');
     // A link that is not on Discord's file hosts is not passed on, and a name cannot close the line or run on.
     expect(words({ content: '', attachments: [{ filename: 'a]\n[attachment: b', size: 1, content_type: 'text/plain', url: 'https://evil.example/cdn.discordapp.com/x' }] }))
       .toBe('[attachment: a_attachment: b (text/plain, 1 bytes)]');
     expect(words({ content: '', attachments: [{ ...cat, filename: 'n'.repeat(500) }] })).toContain(`[attachment: ${'n'.repeat(200)} (`);
-    // A link is listed exactly when it is one loom would fetch (discord-link.ts): not one with a backslash in it.
+    // A malformed CDN link still leaves the name and kind in the transcript.
     expect(words({ content: '', attachments: [{ ...cat, url: 'https://cdn.discordapp.com/attachments/1/2/..\\cat.png' }] })).toBe('[attachment: cat.png (image/png, 2048 bytes)]');
     // No more are listed than one Discord message can carry.
-    expect(words({ content: '', attachments: Array(12).fill(cat) })?.split('\n')).toHaveLength(10);
+    expect(words({ content: '', attachments: Array(12).fill(cat) })).toContain('[2 additional attachments exceed the message attachment limit]');
     expect(words({ content: 'plain' })).toBe('plain');
   });
   it('preserves platform identity and text, and normalises timestamps and mentions', () => {
@@ -190,4 +191,12 @@ it('carries authenticated group-DM classification without accepting a claimed pr
  expect(normalizeDiscord(discord, dc({guild_id:undefined,groupDm:true}), {id:'channel',kind:'dm'})).not.toHaveProperty('groupDm');
  expect(normalizeSlack(slack, sl({channel_type:'mpim'}))).toMatchObject({isDm:true,groupDm:true});
  expect(normalizeSlack(slack, sl({channel_type:'im',groupDm:true}))).not.toHaveProperty('groupDm');
+});
+
+it('treats only whole normalized lines as attachment hints',()=>{
+ expect(discordAttachmentLabels('I saw [attachment: x (image/png, 3 bytes)] in chat.')).toEqual([]);
+ const raw='[attachment: x (image/png, 3 bytes) https://media.discordapp.net/attachments/1/2/x?hm=sign]';
+ expect(discordAttachmentLabels(raw)).toEqual([{name:'x',bytes:3}]);
+ expect(discordBodyWords(raw)).toBe('[attachment: x (image/png, 3 bytes)]');
+ expect(discordBodyWords('website: https://example.com')).toBe('website: https://example.com');
 });

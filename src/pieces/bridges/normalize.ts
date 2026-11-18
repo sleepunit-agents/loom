@@ -4,20 +4,21 @@
  */
 import { z } from 'zod';
 import type { IncomingMessage } from './incoming.js';
+import { discordBodyWords } from './discord-link.js';
 import { slackThread } from './place.js';
-import { discordFileLink } from './discord-link.js';
 
 const id = z.string().min(1).max(256);
 const timestamp = z.string().regex(/^\d{1,12}\.\d{6}$/);
 const slackChannelType = z.enum(['channel', 'group', 'im', 'mpim']);
+const attachmentMetadata = z.object({ filename: z.string(), size: z.number().int().nonnegative(), content_type: z.string().nullish(), url: z.string() }).passthrough();
 const discordMessage = z.object({
   id, type: z.number().int(), channel_id: id, guild_id: id.optional(),
   author: z.object({ id, bot: z.boolean().optional() }),
   content: z.string(), timestamp: z.iso.datetime({ offset: true }),
-  mentions: z.array(z.object({ id })), webhook_id: id.optional(),
+  mentions: z.array(z.object({ id, bot: z.boolean().optional() })), webhook_id: id.optional(),
   // The roles the message pinged, as Discord resolved them.
   mention_roles: z.array(id).optional(),
-  attachments: z.array(z.object({ filename: z.string(), size: z.number().int().nonnegative(), content_type: z.string().nullish(), url: z.string() }).passthrough()).optional(),
+  attachments: z.array(attachmentMetadata).optional(),
   // Present on a reply (type 19); null when the message replied to has been deleted.
   referenced_message: z.object({ author: z.object({ id }) }).nullish(),
 });
@@ -46,6 +47,8 @@ export interface DiscordChannel {
   kind: 'channel' | 'thread' | 'dm' | 'other';
   group?: boolean;
   parent?: string;
+  name?: string;
+  parentName?: string;
   /** A thread only: who wrote the message it was started from, when that is known. */
   starter?: string;
 }
@@ -57,32 +60,42 @@ export interface DiscordChannel {
  * it pings, and that is carried separately as `repliesTo`. The list stays the
  * authority on who a written mention resolved to; the text only says which of
  * them were written. */
-function discordSummons(content: string, resolved: string[], roles: string[], botRoles: ReadonlyMap<string, string>): string[] {
+function discordSummons(content: string, resolved: string[], roles: string[], botRoles: ReadonlyMap<string, string>) {
   const written = new Set([...content.matchAll(/<@!?([^<>\s&]+)>/g)].map(match => match[1]));
   // A bot that joined through an integration owns a role of its own name, and Discord's autocomplete
   // offers that role for the bot's name. A written ping of a bot's own role is a mention of that bot.
   // Any other role, `@everyone` and `@here` mention nobody.
   const writtenRoles = new Set([...content.matchAll(/<@&([^<>\s]+)>/g)].map(match => match[1]));
   const bots = roles.filter(role => writtenRoles.has(role)).flatMap(role => botRoles.get(role) ?? []);
-  return [...new Set([...resolved.filter(id => written.has(id)), ...bots])];
+  return { mentions: [...new Set([...resolved.filter(id => written.has(id)), ...bots])], unresolvedRole: roles.some(role => writtenRoles.has(role) && !botRoles.has(role)) };
 }
 
 /** The most attachments one Discord message carries, which is all that are listed. */
 export const DISCORD_ATTACHMENTS = 10;
 const ATTACHMENT_NAME = 200, ATTACHMENT_TYPE = 100;
 /** A message's words with its attachments listed after them, one line each, so that a message that is only
- * a picture has words and a body can open what was sent. loom fetches nothing: the link is Discord's own
- * signed one, and it is given only when it is on Discord's file hosts. */
+ * a picture has words. Signed links stay out of the transcript. */
 function discordWords(content: string, attachments: readonly { filename: string; size: number; content_type?: string | null; url: string }[]): string {
   const plain = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f[\]]+/g, '_').slice(0, max);
   const lines = attachments.slice(0, DISCORD_ATTACHMENTS).map(file => {
-    const link = discordFileLink(file.url) ? ` ${file.url}` : '';
-    return `[attachment: ${plain(file.filename, ATTACHMENT_NAME) || 'file'} (${plain(file.content_type ?? '', ATTACHMENT_TYPE) || 'unknown type'}, ${file.size} bytes)${link}]`;
+    return `[attachment: ${plain(file.filename, ATTACHMENT_NAME) || 'file'} (${plain(file.content_type ?? '', ATTACHMENT_TYPE) || 'unknown type'}, ${file.size} bytes)]`;
   });
+  if (attachments.length > DISCORD_ATTACHMENTS) lines.push(`[${attachments.length - DISCORD_ATTACHMENTS} additional attachments exceed the message attachment limit]`);
   return [...(content ? [content] : []), ...lines].join('\n');
 }
 
-export function normalizeDiscord(connection: PlatformConnection, payload: unknown, channel: DiscordChannel, botRoles: ReadonlyMap<string, string> = new Map()): IncomingMessage | null {
+/** Check that a fresh REST response still describes the message delivered at intake. Older
+ * messages listed signed links after their descriptors. Strip those for comparison only. */
+export function originalDiscordAttachments(stored: string, content: string, attachments: readonly unknown[]): boolean {
+  const parsed = z.array(attachmentMetadata).safeParse(attachments);
+  if (!parsed.success) return false;
+  const expected = discordWords(content, parsed.data);
+  if (stored === expected) return true;
+  if (!stored.startsWith(content)) return false;
+  return content + discordBodyWords(stored.slice(content.length)) === expected;
+}
+
+export function normalizeDiscord(connection: PlatformConnection & { botUser?: string }, payload: unknown, channel: DiscordChannel, botRoles: ReadonlyMap<string, string> = new Map(), rolesKnown = true): (IncomingMessage & { awaitRoles?: true }) | null {
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
   const message = discordMessage.parse(dispatch.d);
@@ -90,13 +103,21 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
+  const { mentions, unresolvedRole } = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
+  const knownBots = new Set([...botRoles.values(), ...message.mentions.filter(mention => mention.bot).map(mention => mention.id)]);
+  const mentionsBot = mentions.some(id => knownBots.has(id));
+  // An unresolved role may also address this bot, even when another bot is explicitly named.
+  const awaitRoles = !rolesKnown && unresolvedRole && !(connection.botUser && mentions.includes(connection.botUser));
   return {
+    ...(awaitRoles && { awaitRoles: true }),
+    ...(mentionsBot && { mentionsBot: true }),
+    ...(channel.name && { channelName: channel.name }), ...(channel.parentName && { parentName: channel.parentName }),
     id: message.id, connection: connection.id, channel: message.channel_id,
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),
     ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
     isDm: channel.kind === 'dm', user: message.author.id, text: discordWords(message.content, message.attachments ?? []),
     postedAt: new Date(message.timestamp).toISOString(),
-    mentions: discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles),
+    mentions,
     // An explicit reply answers the author it points at. Any other message in a thread answers whoever
     // wrote the message the thread was started from, as a Slack thread reply answers its root.
     ...(message.type === 19 && message.referenced_message ? { repliesTo: message.referenced_message.author.id }

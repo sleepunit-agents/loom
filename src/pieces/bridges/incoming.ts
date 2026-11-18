@@ -11,15 +11,19 @@
  * only while it is in use (enabled and not removed) and that agent is in the household: a retired
  * connection's bot is no agent's, so it is neither a peer that could be addressed, nor a household sender,
  * nor a second claim on a bot that another connection now holds. */
+import { discordBodyWords } from './discord-link.js';
 import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { Conversations, lateMailWaits } from '../../core/conversations/index.js';
+import { Conversations, lateMailWaits, refreshConversationLabel } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
-import { conversationPlace } from './place.js';
+import { conversationPlace, discordPlace } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
 import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+
+// A held receipt keeps the reason nobody received it and the routing fact Discord supplied.
+const BOT_MENTION_HELD = '; the message explicitly mentioned a bot';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -27,6 +31,9 @@ export interface IncomingMessage {
   connection: string;
   channel: string;
   parent?: string;
+  channelName?: string;
+  parentName?: string;
+  mentionsBot?: boolean;
   thread?: string;
   isDm: boolean;
   /** Authenticated channel kind; group DMs are not private to one sender. */
@@ -45,8 +52,8 @@ export interface IncomingMessage {
 /** Stored words that are empty were sent empty, erased at the keep time
  * (core/conversations/private-bridge-words.ts) or never kept because the message
  * was dropped; none of these can be compared. */
-function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
- return samePosting(row,message)&&(row.text===''||row.text===message.text);
+function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage,platform:'discord'|'slack'){
+ return samePosting(row,message)&&(row.text===''||row.text===message.text||platform==='discord'&&discordBodyWords(row.text)===discordBodyWords(message.text));
 }
 /** The same message by everything but its words: where it was posted, by whom and when. */
 function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'postedAt'>,message:IncomingMessage){
@@ -92,20 +99,20 @@ export class BridgeIncoming {
   receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = incomingId(message.connection, message.id);
+      const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
+      if (!connection) throw new Error('Unknown bridge connection');
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       if (existing) {
         // A second event for a message already on record, with other words, is an edit (Slack sends an
         // `app_mention` when a posted message is edited to mention the bot). An edit is not a new message:
         // nothing new is recorded, whatever state the first is in, and the agent keeps the words it was
         // given. The caller has its row and counts the event as read.
-        if (!sameMessage(existing,message)) {
+        if (!sameMessage(existing,message,connection.platform)) {
           if (samePosting(existing,message)) return existing;
           throw new Error('Incoming id reused for a different message');
         }
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
-      const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
-      if (!connection) throw new Error('Unknown bridge connection');
       const channel = message.parent ?? message.channel;
       const route = this.db.select().from(bridgeChannels).where(and(eq(bridgeChannels.platform, connection.platform), eq(bridgeChannels.workspace, connection.workspace), eq(bridgeChannels.channel, channel))).get();
       const filters = this.db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, connection.id)).all();
@@ -159,6 +166,11 @@ export class BridgeIncoming {
         if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
+      // An explicit bot mention takes precedence over the channel default, a reply, and the thread's starter.
+      else if (connection.platform === 'discord' && !message.isDm
+        && !message.mentions.includes(connection.botUser) && (message.mentionsBot || peers.some(peer => message.mentions.includes(peer.botUser)))) {
+        state = 'dropped'; reason = 'Another agent or no channel answer';
+      }
       // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
       // working, and not said to another agent: that job is ended and the message is nobody's mail. It is
       // acted on only as the message is first taken in, and only fresh (a held or late one is spent, above),
@@ -196,7 +208,7 @@ export class BridgeIncoming {
             .from(inboxRefs).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
             .where(and(eq(inboxRefs.item, delivered.id), eq(bridgeIncoming.state, 'delivered'))).all()
             .find(row => row.id === incomingId(row.connection, message.id));
-          if (!original || !sameMessage(original,message)) throw Error('Bridge delivery identity changed');
+          if (!original || !sameMessage(original,message,connection.platform)) throw Error('Bridge delivery identity changed');
           deliveredAt = delivered.at;
           conversation = delivered.conversation;
           matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;
@@ -206,7 +218,12 @@ export class BridgeIncoming {
           // nobody in this household. A duplicate delivery (above) keeps its original recorded scope.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
           const place = conversationPlace(connection.workspace, message, member);
-          conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member, direct: message.isDm }).id;
+          const label = connection.platform === 'discord' ? discordPlace(message, member) : message.thread ?? message.channel;
+          const cv = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label, member, direct: message.isDm });
+          conversation = cv.id;
+          if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label)
+            && (!message.parent || message.parentName || cv.label.endsWith(' under #' + message.parent)))))
+            refreshConversationLabel(this.db, cv, label);
         }
         if (!delivered) {
           this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
@@ -214,6 +231,7 @@ export class BridgeIncoming {
         }
       }
       // A dropped message is never delivered or tried again, and nobody is shown it: it keeps no words.
+      if (state === 'held' && message.mentionsBot) reason += BOT_MENTION_HELD;
       return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null, ...(state === 'dropped' ? { text: '' } : {}) }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
   }
@@ -229,13 +247,13 @@ export class BridgeIncoming {
   /** Try a held message again from its own row, against the household's rules as they are now. This is
    * the retry once the raw event has expired. A row from before the admission fields were stored cannot
    * say whom it mentioned and is returned as it is. */
-  retry(id: string): typeof bridgeIncoming.$inferSelect | undefined {
+  retry(id: string, names?: Pick<IncomingMessage, 'channelName' | 'parentName'>): typeof bridgeIncoming.$inferSelect | undefined {
     return this.db.transaction(() => {
       const row = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       const message = row && parseIncomingId(row.id, row.connection);
       if (!row || row.state !== 'held' || row.mentions === null || !message) return row;
-      return this.receive({ id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
-        mentions: JSON.parse(row.mentions) as string[], bot: !!row.bot, webhook: !!row.webhook,
+      return this.receive({ ...names, id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
+        mentions: JSON.parse(row.mentions) as string[], mentionsBot: row.reason?.endsWith(BOT_MENTION_HELD), bot: !!row.bot, webhook: !!row.webhook,
         ...(row.thread === null ? {} : { thread: row.thread }), ...(row.parent === null ? {} : { parent: row.parent }),
         ...(row.repliesTo === null ? {} : { repliesTo: row.repliesTo }), ...(row.groupDm ? { groupDm: true } : {}) }, true, row.receivedAt);
     });

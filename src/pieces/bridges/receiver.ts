@@ -35,6 +35,8 @@ const slackChannelField = z.object({ channel: id });
 export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
+  /** Whether a complete role list has arrived for this authenticated guild. */
+  rolesKnown?(connection: string): boolean;
   /** Discord role id to the bot it is managed for; none known is an empty map. */
   botRoles?(connection: string): ReadonlyMap<string, string>;
   slack(connection: string, channel: string): SlackChannel | undefined;
@@ -128,14 +130,18 @@ export class BridgeReceiver {
     // Held messages whose receipt is gone are tried from their own rows. Such a delivery has no raw frame,
     // so `delivered` is not called for it: a Slack message that waited this long arrives without its files.
     const expired = new Date(this.clock.now() - RAW_EVENT_LIFETIME).toISOString();
-    const page = (after?: { at: string; id: string }) => this.db.select({ id: bridgeIncoming.id, at: bridgeIncoming.receivedAt }).from(bridgeIncoming)
+    const page = (after?: { at: string; id: string }) => this.db.select({ id: bridgeIncoming.id, at: bridgeIncoming.receivedAt, channel: bridgeIncoming.channel }).from(bridgeIncoming)
       .where(and(eq(bridgeIncoming.connection, connection), eq(bridgeIncoming.state, 'held'), isNotNull(bridgeIncoming.mentions), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${expired})`,
         after ? sql`(julianday(${bridgeIncoming.receivedAt}) > julianday(${after.at}) or (julianday(${bridgeIncoming.receivedAt}) = julianday(${after.at}) and ${bridgeIncoming.id} > ${after.id}))` : undefined))
       .orderBy(sql`julianday(${bridgeIncoming.receivedAt})`, asc(bridgeIncoming.id)).limit(limit).all();
     const after = this.heldAfter.get(connection);
     let held = page(after);
     if (!held.length && after) { this.heldAfter.delete(connection); held = page(); }
-    for (const row of held) { this.heldAfter.set(connection, row); this.incoming.retry(row.id); }
+    for (const row of held) {
+      this.heldAfter.set(connection, row);
+      const channel = source.platform === 'discord' ? this.channels.discord(connection, row.channel) : undefined;
+      this.incoming.retry(row.id, { channelName: channel?.name, parentName: channel?.parentName });
+    }
     let failure: unknown, failed = false;
     // A frame that cannot be taken in now: a later version of this code, better channel metadata or a
     // later pass may take it. It waits as any unread event does, is reported once, and is counted as lost
@@ -158,7 +164,9 @@ export class BridgeReceiver {
           if (frame.t !== 'MESSAGE_CREATE' || this.elsewhere(source, frame.d)) return;
           const channel = this.channels.discord(connection, channelField.parse(frame.d).channel_id);
           if (!channel) return false;
-          message = normalizeDiscord(source, frame, channel, this.channels.botRoles?.(connection));
+          const normalized = normalizeDiscord(source, frame, channel, this.channels.botRoles?.(connection), this.channels.rolesKnown?.(connection));
+          if (normalized?.awaitRoles) return false;
+          message = normalized;
         } else {
           const frame = slackFrame.parse(payload);
           const event = frame.payload.event;

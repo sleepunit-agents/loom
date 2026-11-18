@@ -187,9 +187,10 @@ it('states how much earlier talk a body is handed once', () => {
 });
 
 it('says what a Discord file link is, and how a file\'s name is made plain, once each', () => {
-  // A link listed in a message's words is exactly one loom would fetch: both ask the one rule.
+  // Old transcripts' signed links are recognized and removed with the same rule used before a download.
   expect(sources('src').filter(file => /discordapp/.test(text(file)))).toEqual(['src/pieces/bridges/discord-link.ts']);
-  for (const file of ['src/pieces/bridges/normalize.ts', 'src/pieces/bridges/discord-files.ts']) expect(text(file), file).toContain('discordFileLink(');
+  for (const file of ['src/pieces/bridges/discord-link.ts', 'src/pieces/bridges/discord-files.ts']) expect(text(file), file).toContain('discordFileLink(');
+  expect(text('src/core/conversations/body-input.ts')).toContain('discordBodyWords(');
   // A kept attachment, a file written for a body and a file on a post are named by one rule.
   expect(sources('src').filter(file => text(file).includes('[^A-Za-z0-9._-]+/g'))).toEqual(['src/pieces/bridges/file-name.ts']);
 });

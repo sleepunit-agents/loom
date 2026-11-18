@@ -9,6 +9,14 @@
  * slackThread for Slack); intake turns that address into a place (conversationPlace). A reply goes to
  * the channel and thread of the message it answers (sends.ts copies them from the message's row). */
 
+/** Discord names are display data. Keep each on a single line and fall back to the stable id. */
+export function discordPlace(message: { channel: string; thread?: string | null; parent?: string | null; isDm: boolean; groupDm?: boolean; user: string; channelName?: string; parentName?: string }, member: string | null): string {
+  if (message.isDm) return message.groupDm ? 'Discord group direct message' : `Discord direct message with ${member ?? message.user}`;
+  const name = (value: string | undefined, id: string) => '#' + (value?.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim().slice(0, 100) || id);
+  const channel = name(message.channelName, message.channel);
+  return message.thread ? `Discord thread ${channel}${message.parent ? ' under ' + name(message.parentName, message.parent) : ''}` : `Discord channel ${channel}`;
+}
+
 /** The thread a Slack message sits in: the one it was posted to, or, in a shared place, the one it starts. */
 export function slackThread(kind: 'channel' | 'group' | 'im' | 'mpim', ts: string, threadTs: string | undefined): string | undefined {
   return threadTs ?? (kind === 'channel' || kind === 'group' ? ts : undefined);

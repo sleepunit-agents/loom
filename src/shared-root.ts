@@ -349,7 +349,7 @@ export function sharedRoot(options: {
   };
   // Attachments are read here too (bridges.file). Only a daemon fetches them, so without one there is
   // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
-  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);

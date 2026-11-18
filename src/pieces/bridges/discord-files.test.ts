@@ -6,12 +6,12 @@ const cdn = 'https://cdn.discordapp.com/attachments/1/2/';
 const attachment = (id: string, more = {}) => ({ id, filename: `pic ${id}.png`, size: 100, content_type: 'image/png', url: `${cdn}${id}.png?ex=1`, ...more });
 
 it('picks the attachments worth fetching: a Discord id, a link on Discord\'s file hosts, a size a body can be handed', () => {
-  expect(discordFiles({ attachments: [attachment('11')] })).toEqual([{ id: '11', name: 'pic_11.png', url: `${cdn}11.png?ex=1` }]);
+  expect(discordFiles({ attachments: [attachment('11')] })).toEqual([{ id: '11', name: 'pic_11.png', size: 100, url: `${cdn}11.png?ex=1` }]);
   expect(discordFiles({ attachments: [
     attachment('12', { url: 'https://evil.example/cdn.discordapp.com/x.png' }), attachment('13', { url: 'http://cdn.discordapp.com/x.png' }),
     attachment('14', { size: HANDED_FILE_BYTES + 1 }), attachment('../15'), attachment('16', { filename: '../../etc/passwd' }), { id: '17' }, 'nonsense',
-  ] })).toEqual([{ id: '16', name: 'etc_passwd', url: `${cdn}16.png?ex=1` }]);
-  expect(discordFiles({ attachments: Array.from({ length: 9 }, (_, n) => attachment(String(20 + n))) })).toHaveLength(DISCORD_FILES_PER_MESSAGE);
+  ] })).toEqual([{ id: '16', name: 'etc_passwd', size: 100, url: `${cdn}16.png?ex=1` }]);
+  expect(discordFiles({ attachments: Array.from({ length: 12 }, (_, n) => attachment(String(20 + n))) })).toHaveLength(DISCORD_FILES_PER_MESSAGE);
   for (const none of [{}, { attachments: [] }, { attachments: 'no' }, null, 'frame']) expect(discordFiles(none)).toEqual([]);
 });
 

@@ -59,11 +59,13 @@ connection received, delivered and held in the last day.
    bot's messages. Nothing looser: a bot that has only spoken in a thread, or spoke last, is not addressed.
 4. A delivered message joins a **conversation** (`place.ts`): one per Discord channel, one per Discord
    thread, one per Slack thread in a shared place, one per direct conversation. A one-to-one direct conversation
-   with a linked member is private to that member.
+   with a linked member is private to that member. The Discord assignment names the current
+   place on fresh and continued turns. A direct message names the person, a room names the channel,
+   and a thread names its parent channel. IDs stand in when names are unavailable.
 5. The message becomes mail in the agent's inbox, and the runtime starts a job for the conversation if it
-   has none. One job holds one asker's mail ("Who asked", below). A Discord message's attachments are listed in its words with Discord's link. The files of a
-   delivered message are fetched and kept fourteen days (`bridge_files`): Slack's with the connection's
-   credential, Discord's first five up to 8 MB each from its signed links.
+   has none. One job holds one asker's mail ("Who asked", below). Discord lists attachment names,
+   media types and sizes in the mail, including when the sender wrote nothing. The same channel and sender admission rules apply to a picture as to text.
+   Slack's existing file cache uses the connection credential.
 
 A dropped message keeps no words. An edit is not read.
 
@@ -136,9 +138,14 @@ or answered after that session started. Those words are in the conversation's ke
 continued body is not told again. One session serves every owners' job of the conversation, whichever of
 the owners asked.
 
-A body with file tools finds the kept files of the messages it took written into its scratch directory,
-named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
-such page the work goes on and the agent's owners get one notice.
+A Discord body with file tools receives paths in its scratch directory for attachments it can open.
+Loom considers the first ten files per message, at most 8 MiB each, and writes at most ten files
+and 32 MiB per run. These bounds limit HTTP transfers, memory and scratch space. Mail still reaches
+the body when a file is too large or unavailable. A body working on anybody else's word receives
+the descriptions and is told it cannot open the files. Its job fetches and writes no attachment bytes.
+
+If the channel's rule names a brief, the body is given that page. If the agent has no such page the work
+goes on and the agent's owners get one notice.
 
 A job whose word is anybody else's (not the agent's own work, not its owners': `jobWord`) runs with loom's
 tools only: no shell, files, web or helpers of the harness's own, no secrets, no attachment files and no
@@ -171,8 +178,12 @@ Refused: `memory.update`, `.archive`, `.restore`, `.forget`, `.restoreRevision`,
 `.knowledgeEdit`, `.knowledgeRecheck`, `.knowledgeRestore`, `.knowledgeVerify`, `mind.personAdd`
 (`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's tools only").
 
-While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
-channel (`presence.ts`). Both are best effort.
+Loom adds 👀 when a running job has taken a person's Discord message. It removes the reaction when
+the work settles. While the job owes an answer, the bot requests typing in the destination channel,
+thread or DM. Jobs waiting in the queue produce neither signal. Discord expires a typing indication
+after ten seconds. While the job runs, typing can continue through the final post’s queue and send.
+A posted or failed send, or the end of the job, stops refreshes. These calls run
+outside the job and can fail independently. [Discord channel API](https://docs.discord.com/developers/resources/channel#trigger-typing-indicator)
 
 ## The answer
 

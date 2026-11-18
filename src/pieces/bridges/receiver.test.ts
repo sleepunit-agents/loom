@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../../core/clock.js';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, turns } from '../../core/data/schema.js';
+import { agents, members, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, turns, conversations } from '../../core/data/schema.js';
 import { BridgeReceiver, type BridgeChannelCache } from './receiver.js';
 
 const cleanups: (() => void)[] = [];
@@ -171,6 +171,8 @@ it('goes on past a frame it cannot read, reports it once, and counts it lost onl
 
 it('delivers a held message after its receipt has expired, once what held it is put right', () => {
   const f = fixture();
+  f.channels.discord=(_connection,channel)=>({id:channel,guild:'w',kind:'thread',parent:'parent',name:'otters',parentName:'pond'});
+  f.db.update(bridgeChannels).set({channel:'parent'}).where(eq(bridgeChannels.platform,'discord')).run();
   f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
   f.receiver.discord('discord', f.discord(), f.checkpoint());
   f.receiver.drain('discord');
@@ -186,6 +188,7 @@ it('delivers a held message after its receipt has expired, once what held it is 
   f.receiver.drain('discord');
   expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'delivered', reason: null });
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  expect(f.db.select().from(conversations).get()?.label).toBe('Discord thread #otters under #pond');
   // Trying again delivers nothing twice.
   f.receiver.drain('discord');
   expect(f.db.select().from(inbox).all()).toHaveLength(1);

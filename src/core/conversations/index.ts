@@ -23,6 +23,14 @@ export type DigestInput = {
   question?: Question;
 };
 
+/** Refresh a venue label only while it still has the value the caller observed. */
+export function refreshConversationLabel(db: DataDatabase, current: Pick<Conversation, 'agent' | 'venue' | 'place' | 'label'>, label: string): boolean {
+  return db.update(conversations).set({ label }).where(and(
+    eq(conversations.agent, current.agent), eq(conversations.venue, current.venue),
+    eq(conversations.place, current.place), eq(conversations.label, current.label),
+  )).run().changes > 0;
+}
+
 /** Mail that never joins a job already admitted, by what it is: sent on somebody's word, from an agent, or
  * from the schedule. It starts the next job (pending). Said once, for pending and for who is counted in a
  * job's room (runtime/body-policy.ts). */

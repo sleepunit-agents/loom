@@ -19,6 +19,7 @@ import {BodyJobEnded} from './body-job-ended.js';
 import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
+import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
 import {saveBodyAttachments} from './body-attachments.js';
 import {bodyFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
@@ -67,7 +68,7 @@ export async function bodyProgram(input: {
   let client: ReturnType<typeof bodyConversationClient> | undefined;
   let memoryClient:ReturnType<typeof bodyCommandClient>|undefined,sessionClient:ReturnType<typeof bodyCommandClient>|undefined;
   let keeper:BodySessions|undefined,saved=false;
-  const context: string[] = [], incoming:string[]=[];
+  const context: string[] = [], incoming:string[]=[],discordAttachments=new Map<string,string>();
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
   // Every report to loom goes through here. One that fails after the first exchange is the stage that failed
   // (BODY_EXIT.contact), whatever the body was doing when it reported; the first is BODY_EXIT.report.
@@ -150,6 +151,8 @@ export async function bodyProgram(input: {
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();
         incoming.push(refs[0]);
+        // A hint to check Discord's own message record. No link or file id is read from the words.
+        if(item.source==='discord'&&item.words&&discordAttachmentLabels(item.words).length)discordAttachments.set(refs[0],item.words);
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
@@ -190,13 +193,18 @@ export async function bodyProgram(input: {
     // Files are for a body that has file tools of its own (harness-traits.ts, hasFileTools): what was sent with
     // the messages is written where it can open it, and it may name a file of its own for a post.
     const files=bridge&&hasFileTools(reach,policy);
-    const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
+    const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH],undefined,job.venue==='discord'?discordAttachments:undefined)
+      :discordAttachments.size?'You cannot open these attachments because this body has no file tools.':null;
     if(signal.aborted)throw new Error();
     if(sent){context.push(sent);continued.push(sent);}
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(job.venue==='discord'&&job.venueDescription){
+      const where='Current conversation: '+job.venueDescription+'. This is your location for this turn, including when your Discord role page describes the server in general.';
+      context.unshift(where);continued.unshift(where);
+    }
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
