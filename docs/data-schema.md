@@ -1,9 +1,9 @@
 # Shared data schema
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
-schema is `src/core/data/schema.ts`: all 81 tables in `model.py` with their named
+schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their named
 columns, `model_account_windows`, the ten internal bookkeeping tables listed there
-and three internal programme restriction/grant tables: 95 tables. The programme
+and three internal programme restriction/grant tables: 96 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each

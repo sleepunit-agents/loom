@@ -371,6 +371,10 @@ Entries are grouped by the part of the program they belong to.
 
 ## Running work
 
+### A job can finish before its usage report arrives
+
+The body sends its report as settlement begins. Job completion has priority, including when the body is killed or the receiver is slow. If the report never arrives before the credential expires, the job keeps a record with source `none` and unknown harness counters. Rollups sum reported values and can therefore understate usage. Reliable delivery after body death would require a durable worker-side handoff that preserves attempt attribution.
+
 ### The placed account is taken on trust when a machine has one command per harness
 
 - **What.** loom places a job on an account it checked for room. A worker configured with `runners` (one
