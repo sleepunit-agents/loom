@@ -209,6 +209,15 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  expect(await save({session,files})).toMatchObject({status:200,body:{value:{saved:true}}});
  // Nobody but the body of this conversation's job: not another job's body, not the owner.
  for(const credential of [token.other,token.owner]){expect((await take(credential)).status).toBe(403);expect((await save({session,files},credential)).status).toBe(403);}
+ // Nor a plain member of the household, signed in as themselves, whether or not they have the agent.
+ const member='d'.repeat(64);
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'sam',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
+  f.db.insert(tokens).values({fingerprint:createHash('sha256').update(member).digest('hex'),label:'sam',kind:'owner',member:'sam',agent:null,job:null,createdAt:new Date(f.clock.now()).toISOString()}).run();});
+ expect((await take(member)).status).toBe(403);expect((await save({session,files},member)).status).toBe(403);
+ // Nor the body of a job that is not a bridge conversation's: the other job here has no conversation, and a wake's body has no session.
+ const wake=f.root.services.conversations.open({agent:'art',venue:'wake',place:'daily',label:'Daily'});
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:wake.id}).where(eq(jobs.id,'other')).run();});
+ expect((await take(token.other)).status).toBe(403);expect((await save({session,files},token.other)).status).toBe(403);
  expect(await take()).toMatchObject({status:200,body:{value:{session:{session,files}}}});
  // Stored sealed: neither the bytes nor their base64 are in the database file, and no query serves the table.
  const stored=f.db.select().from(conversationSessions).all();

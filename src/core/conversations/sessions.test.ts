@@ -20,7 +20,7 @@ function fixture() {
   const key = { seal: async (words: string) => Buffer.from('SEALED:' + Buffer.from(words).toString('hex')), open: async (blob: Uint8Array) => Buffer.from(Buffer.from(blob).toString().slice(7), 'hex').toString(), hash: (words: string) => words };
   const sessions = new ConversationSessions(db, now, key);
   const files = Buffer.from('record').toString('base64');
-  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
+  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
   return { db, cv, sessions, save, files, now, later: (ms: number) => { at += ms; } };
 }
 
@@ -62,7 +62,7 @@ it('keeps a session for the household\'s keep time counted from when it was star
   // The conversation goes on: the session is saved again each day, and its start does not move.
   for (let day = 1; day <= 2; day++) {
     f.later(86_400_000); await f.save({ files: Buffer.from('record, day ' + day).toString('base64') });
-    expect(f.db.select().from(conversationSessions).get()?.savedAt).toBe(new Date(started).toISOString());
+    expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(new Date(started).toISOString());
     expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toMatchObject({ startedAt: new Date(started).toISOString(), lastSavedAt: f.now() });
   }
   f.later(86_400_000 - 1000);
@@ -73,10 +73,35 @@ it('keeps a session for the household\'s keep time counted from when it was star
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
   // A save now does not continue it: it starts a new session and a new count.
   await f.save({ session: 'fresh-0001' });
-  expect(f.db.select().from(conversationSessions).get()).toMatchObject({ session: 'fresh-0001', savedAt: f.now() });
+  expect(f.db.select().from(conversationSessions).get()).toMatchObject({ session: 'fresh-0001', startedAt: f.now() });
   f.later(3 * 86_400_000);
   expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
   expect(oldestConversationSession(f.db)).toBeUndefined();
+});
+
+it('counts a session started with older erasable words handed in from the oldest of them, so none outlives the keep time', async () => {
+  const f = fixture();
+  // A direct conversation's body starts fresh and is handed history whose oldest line was said two days ago.
+  const said = new Date(Date.parse(f.now()) - 2 * 86_400_000).toISOString();
+  expect(await f.save({ since: said })).toBe(true);
+  expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(said);
+  // A day later that word is erased (the keep time is three days), and the session that holds it is not handed on.
+  f.later(86_400_000 - 1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).not.toBeNull();
+  f.later(1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
+  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
+  // Handed words already past the keep time, a session is not kept at all, and takes the one kept with it.
+  await f.save();
+  expect(await f.save({ since: new Date(Date.parse(f.now()) - 3 * 86_400_000).toISOString() })).toBe(false);
+  expect(f.db.select().from(conversationSessions).all()).toEqual([]);
+  // A later save never moves the start forward, and an earlier `since` moves it back.
+  await f.save(); const first = f.now();
+  f.later(3_600_000); await f.save({ since: f.now() });
+  expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(first);
+  const earlier = new Date(Date.parse(first) - 3_600_000).toISOString();
+  await f.save({ since: earlier });
+  expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(earlier);
+  // A time that is not one, or is in the future, is not a start.
+  for (const since of ['yesterday', new Date(Date.parse(f.now()) + 86_400_000).toISOString()]) { await f.save({ since }); expect(f.db.select().from(conversationSessions).get()?.startedAt).toBe(earlier); }
 });
 
 it('hands on nothing it cannot open', async () => {

@@ -252,12 +252,12 @@ describe('upgrading a household database', () => {
     old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('s-1', 0, 'plot.png', x'00ff')").run();
     expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('s-1', 0, 'again.png', x'00')").run()).toThrow('UNIQUE');
     expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('no-such-send', 0, 'x', x'00')").run()).toThrow('FOREIGN KEY');
-    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, saved_at) VALUES ('cv-1', 'claude', 'abc', x'00', 1, ?)").run(at);
+    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'claude', 'abc', x'00', 1, ?)").run(at);
     // One session for a conversation and harness; another harness has its own.
-    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, saved_at) VALUES ('cv-1', 'claude', 'def', x'00', 1, ?)").run(at)).toThrow('UNIQUE');
-    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, saved_at) VALUES ('cv-1', 'codex', 'def', x'00', 1, ?)").run(at);
-    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, saved_at) VALUES ('cv-1', 'agy', 'x', x'00', 1, 'yesterday')").run()).toThrow('CHECK');
-    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, saved_at) VALUES ('cv-none', 'claude', 'x', x'00', 1, ?)").run(at)).toThrow('FOREIGN KEY');
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'claude', 'def', x'00', 1, ?)").run(at)).toThrow('UNIQUE');
+    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'codex', 'def', x'00', 1, ?)").run(at);
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'agy', 'x', x'00', 1, 'yesterday')").run()).toThrow('CHECK');
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-none', 'claude', 'x', x'00', 1, ?)").run(at)).toThrow('FOREIGN KEY');
     old.prepare("UPDATE bridge_channels SET brief = 'onterris' WHERE channel = 'pond'").run();
     expect(recogniseDataSchema(old)).toBe(dataSchemaNumber);
   });

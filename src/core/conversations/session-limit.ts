@@ -5,8 +5,7 @@
  * carries it (core/data/door-limit.ts, base64 in JSON), which is what bounds it. A session past it is not
  * kept, and the next body starts fresh with the conversation's kept history.
  * How long a session is kept is the household's keep time for words (core/data/comms-days.ts), counted
- * from when the session was started and not from when it was last saved: it holds the conversation's words
- * from its start on, so none of them outlives the keep time (sessions.ts). */
+ * from the oldest erasable word it holds and not from when it was last saved (sessions.ts). */
 export const SESSION_BYTES = 700 * 1024;
 /** The most a packed session may unpack to: a bound on what a pack can make the body that opens it hold. */
 export const SESSION_UNPACKED_BYTES = 48 * 1024 * 1024;

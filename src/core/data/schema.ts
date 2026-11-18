@@ -1892,17 +1892,18 @@ export const bridgeSendFiles = sqliteTable('bridge_send_files', {
 }, t => [primaryKey({ columns: [t.send, t.position] })]);
 /** A harness's own record of a conversation, kept between bodies so the next body of the same harness
  * resumes it. One for a conversation and harness; `files` is sealed with the household's words key and
- * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. `saved_at` is when
- * the session kept here was started: it is erased when the household's keep time has passed since then,
- * however often it has been saved again (core/conversations/sessions.ts). */
+ * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. `started_at` is the
+ * time of the oldest erasable word the session holds: when it was first saved, or earlier when its first
+ * body was handed older words of a direct conversation. It is erased when the household's keep time has
+ * passed since then, however often it has been saved again (core/conversations/sessions.ts). */
 export const conversationSessions = sqliteTable('conversation_sessions', {
   conversation: text('conversation').notNull().references(() => conversations.id),
   harness: text('harness').notNull(),
   session: text('session').notNull(),
   files: blob('files', { mode: 'buffer' }).notNull(),
   bytes: integer('bytes').notNull(),
-  savedAt: text('saved_at').notNull(),
-}, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_saved_at_utc', utc(t.savedAt))]);
+  startedAt: text('started_at').notNull(),
+}, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_started_at_utc', utc(t.startedAt))]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),

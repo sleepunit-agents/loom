@@ -123,7 +123,7 @@ export async function bodyProgram(input: {
     }
     const resume=await keeper?.take();
     if(signal.aborted)throw new Error();
-    const continued:string[]=[];
+    const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     const claimed=job.run?.policy?.mail;let lateStranger=false;
@@ -136,6 +136,8 @@ export async function bodyProgram(input: {
         incoming.push(refs[0]);
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
+      // The oldest word handed in that will be erased: a session started from them is counted from then.
+      for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
       const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
     });
     if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
@@ -192,7 +194,7 @@ export async function bodyProgram(input: {
       catch (error) {
         // The harness could not continue the session and did nothing: the same work, afresh, with the history.
         if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
-        answer = await afresh(room, context.join('\n\n'), signal, {});
+        answer = await afresh(room, context.join('\n\n'), signal, {});fresh=true;
       }
       if(tools&&!tools.allowsReply(answer.text))throw new Error();
     }
@@ -213,7 +215,8 @@ export async function bodyProgram(input: {
     await client.settle();
     // The answer is on record. Hand loom the session this run left, for the next body of this conversation,
     // and take its files off this machine. Never a reason to fail work that is done.
-    try{await keeper?.save(answer.session);saved=true;}catch{/* loom sees the kept session is behind the answer */}
+    // A run that continued a session was told no history, and its start stands. One that started fresh held it.
+    try{await keeper?.save(answer.session,fresh?oldestErased:undefined);saved=true;}catch{/* loom sees the kept session is behind the answer */}
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});

@@ -1382,10 +1382,10 @@ CREATE TABLE `conversation_sessions` (
 	`session` text NOT NULL,
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
-	`saved_at` text NOT NULL,
+	`started_at` text NOT NULL,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "conversation_sessions_saved_at_utc" CHECK("conversation_sessions"."saved_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."saved_at") = "conversation_sessions"."saved_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."saved_at") = "conversation_sessions"."saved_at", 0))
+	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))
 );
 
 CREATE TABLE `secret_write_journal` (

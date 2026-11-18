@@ -877,7 +877,7 @@ Entries are grouped by the part of the program they belong to.
 - Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
   700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is handed on
   only within one family of models. It is erased when the household's keep time for words has passed
-  since the session was STARTED, however often it has been saved since (`conversation_sessions.saved_at`
+  since the session was STARTED, however often it has been saved since (`conversation_sessions.started_at`
   is that start), so no word in it outlives the keep time; the next body then starts fresh.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also

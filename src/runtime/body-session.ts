@@ -67,7 +67,9 @@ export interface BodySessions {
   /** Puts the kept session back and answers its id, or nothing: the body then starts fresh. */
   take(): Promise<string | undefined>;
   /** Hands loom the session this run left (or says it left none) and removes its files from this machine. */
-  save(session: string | undefined): Promise<void>;
+  /** `since`: the time of the oldest word this run was handed that is erased at the keep time, when it
+   * started fresh with kept history; loom counts the session's keep time from no later than that. */
+  save(session: string | undefined, since?: string): Promise<void>;
   /** Removes from this machine the session `take` put back, telling loom nothing: for a run that did not answer. */
   discard(): void;
 }
@@ -99,11 +101,11 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       return undefined;
     },
     discard() { if (restored) remove(restored); },
-    async save(session) {
+    async save(session, since) {
       let pack: string | undefined;
       try { if (session && SESSION_ID.test(session)) pack = packSession(layout, root, session); } catch { pack = undefined; }
       try {
-        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack }, randomUUID()).catch(() => undefined) : undefined;
+        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(since ? { since } : {}) }, randomUUID()).catch(() => undefined) : undefined;
         // Nothing to hand on, or loom did not take it: what loom keeps is then behind this run, and it is told so.
         if (!sent?.ok) await client.command('conversation.sessionSave', { session: null }, randomUUID());
       } catch { /* loom will see the session is behind the conversation's last answer */ }
