@@ -34,7 +34,7 @@ function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
   if(String(url).endsWith('conversations.info'))return Response.json({ok:true,channel:{id:'CROOM',context_team_id:'TWORK',is_channel:true}});
   if(String(url).endsWith('chat.postMessage'))return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});throw Error('Unexpected endpoint');
  });
- const admitted=vi.fn(()=>true),root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},tempo:{admit:admitted},...(comms?{commsKey:wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR')}:{}),bridges:{source,effectsAllowed,request,slack}});clean.push(()=>root.close());
+ const admitted=vi.fn(()=>true),root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},tempo:{admit:admitted},...(comms?{commsKey:wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR')}:{}),bridges:{source,effectsAllowed,request,slack,discord:()=>({close:async()=>{}})}});clean.push(()=>root.close());
  for(const id of ['body','other'])db.insert(jobs).values({id,agent:'art',box:'box',title:'',brief:'',model:'test',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:at}).run();
  for(const [id,value] of Object.entries(token))db.insert(tokens).values({fingerprint:createHash('sha256').update(value).digest('hex'),label:id,kind:id==='owner'?'owner':'agent',member:id==='owner'?'owner':null,agent:id==='owner'?null:'art',job:id==='owner'?null:id,createdAt:at}).run();
  const call=async(piece:string,operation:string,input:unknown,credential=token.body,id=randomUUID())=>{const response=setupCall(root,piece+'.'+operation,input,'owner')??await root.http.request('http://loom/api/'+piece+'/'+operation,{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:response.status,body:await response.json()};};
@@ -701,4 +701,22 @@ it('starts a job at admission for a note and for a firing, and drops one whose w
  let sams='';f.root.writes.run(()=>{sams=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'handoff',sourceId:'sams',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'member',onWord:'sam',chain:JSON.stringify([cv]),chainStartedAt:new Date(f.clock.now()).toISOString()}).id;});
  f.root.writes.run(()=>f.db.update(members).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(members.id,'sam')).run());
  expect(all.admission(pond)).toEqual({noticed:true});expect(row(sams).state).toBe('resolved');
+});
+
+it('judges the thread of a channel target before any conversation is opened: none on Discord, a message of the channel on Slack',async()=>{
+ const {f,work}=await sharedPlace(()=>false);
+ const guild='100000000000000001',channel='100000000000000002',at=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(bridgeConnections).values({id:'discord',platform:'discord',workspace:guild,botUser:'100000000000000003',agent:'art',tokenSecret:'TOKEN',enabled:true,state:'disconnected',stateAt:at}).run();
+  f.db.insert(bridgeChannels).values({platform:'discord',workspace:guild,channel,answers:'art',botsMayTalk:false}).run();});
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[]);
+ const before=f.db.select().from(conversations).all().length,discord={platform:'discord',workspace:guild,channel},slack={platform:'slack',workspace:'TWORK',channel:'CROOM'};
+ const note=(to:unknown)=>f.call('conversation','handoff',{to,clientId:randomUUID(),label:'Note',words:'Words'},token.other),post=(to:unknown)=>f.call('bridges','post',{id:randomUUID(),to,text:'Words',model:'observed'},token.other);
+ // A Discord thread is a channel of its own, and loom posts to no thread under one: a target naming one could
+ // open a conversation whose every post is refused. On Slack a thread is the time of the message that started it.
+ for(const to of [{...discord,thread:'100000000000000009'},{...discord,thread:channel},{...slack,thread:'not-a-message'}]){
+  expect((await note(to)).status,JSON.stringify(to)).toBe(400);expect((await post(to)).status,JSON.stringify(to)).toBe(400);}
+ expect(f.db.select().from(conversations).all()).toHaveLength(before);expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toEqual([]);expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+ // The channel itself on Discord, and a real thread on Slack, are places like any other.
+ expect((await note(discord)).status).toBe(200);expect((await post(discord)).status).toBe(200);
+ expect((await note({...slack,thread:'1794432000.000001'})).status).toBe(200);
 });

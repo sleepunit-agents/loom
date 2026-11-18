@@ -13,14 +13,22 @@ import type { SendFile } from './sends.js';
  * (incoming.ts), so this is also the one way an agent calls on another. Slack posts ping nobody: their
  * text is escaped below. */
 export const DISCORD_PINGS={parse:['users'],replied_user:false} as const;
+/** Whether loom can post to this address at all, by its shape: the one statement, asked as a post is made and
+ * before a conversation is opened for a place somebody named (a note's or a post's channel target). A Discord
+ * thread is a channel of its own, so a Discord address names no thread under a channel; a Slack thread is the
+ * time of the message that started it. */
+export const postable=(platform:'discord'|'slack',address:{channel:string;thread?:string|null}):boolean=>{
+ const discord=platform==='discord',thread=address.thread??null;
+ return (discord?isDiscordId(address.channel):/^[A-Z][A-Z0-9]{1,199}$/.test(address.channel))
+  &&(thread===null||(discord?thread===address.channel:/^\d{10,}\.\d{6}$/.test(thread)));
+};
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:string;secrets:SecretUse;clock:Clock;current():boolean;request?:typeof fetch}){
  return {async post(address:{channel:string;thread:string|null},text:string,files:readonly SendFile[]=[]):Promise<{id:string}>{
   const discord=input.platform==='discord';
   // Files are posted on Discord only (sends.ts refuses them for Slack when the post is queued).
   if(files.length&&!discord)throw new BridgeReplyNotSent(false);
-  if(text.length===0||!(discord?isDiscordId(address.channel):/^[A-Z][A-Z0-9]{1,199}$/.test(address.channel))
-   ||address.thread!==null&&(discord?address.thread!==address.channel:!/^\d{10,}\.\d{6}$/.test(address.thread)))throw new BridgeReplyNotSent(false);
+  if(text.length===0||!postable(input.platform,address))throw new BridgeReplyNotSent(false);
   const end=input.clock.now()+15000,abort=new AbortController();let expired=false,requested=false,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
   const current=()=>!expired&&input.clock.now()<end&&input.current();
   const cancelBody=()=>{try{void reader?.cancel().catch(()=>{});}catch{}};

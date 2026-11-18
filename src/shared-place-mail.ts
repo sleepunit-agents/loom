@@ -11,9 +11,15 @@ import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
 import { conversationPlace } from './pieces/bridges/place.js';
+import { postable } from './pieces/bridges/reply-api.js';
 import { workerPolicy } from './runtime/body-policy.js';
 
 export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
+/** Why a channel target names no place loom can post to (pieces/bridges/reply-api.ts, postable). */
+export const UNPOSTABLE_REFUSAL = 'Nothing can be posted there: on Discord a thread is named as a channel of its own, and on Slack a thread is the time of the message that started it.';
+/** Whether a channel target somebody named is a place loom can post to: postable, and on Discord with no
+ * thread at all, since a conversation there is found by its channel alone. */
+export const targetPostable = (to: { platform: 'discord' | 'slack'; channel: string; thread?: string }): boolean => postable(to.platform, to) && !(to.platform === 'discord' && to.thread !== undefined);
 /** The most triggers that may stand at once naming one conversation. */
 export const PLACE_TRIGGERS_MAX = 10;
 /** The least time between two firings of a repeating trigger set from a shared place. */
@@ -137,6 +143,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         // (Or the one channel its own channel's rule says it reports to: the owner named it there.)
         if (!ruled(db, agent, to) && channelKey(to.platform, to.workspace, to.channel) !== reportsTo(db, work.cv))
           throw new OperationError('invalid', 'A note goes to a channel this agent has a rule for');
+        if (!targetPostable(to)) throw new OperationError('invalid', UNPOSTABLE_REFUSAL);
         const place = conversationPlace(to.workspace, { channel: to.channel, thread: to.thread ?? null, isDm: false }, null);
         const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
         const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);

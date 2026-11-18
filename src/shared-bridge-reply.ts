@@ -4,7 +4,7 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
-import { isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel,ruled } from './shared-place-mail.js';
+import { UNPOSTABLE_REFUSAL,isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel,ruled,targetPostable } from './shared-place-mail.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { channelTarget } from './core/conversations/handoff.js';
 import { z } from 'zod';
@@ -152,6 +152,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const found=ownWork(ctx.viewer);if(!found)throw new OperationError('denied','Only an agent\'s own work posts straight to a channel');
    const agent=found.cv.agent;
    if(!ruled(db,agent,input.to))throw new OperationError('invalid','A post goes to a channel this agent has a rule for');
+   if(!targetPostable(input.to))throw new OperationError('invalid',UNPOSTABLE_REFUSAL);
    const place=conversationPlace(input.to.workspace,{channel:input.to.channel,thread:input.to.thread??null,isDm:false},null);
    const closed=placeClosed(db,{id:'',agent,venue:input.to.platform,place});if(closed)throw new OperationError('invalid',`Nothing can be posted there: ${closed}`);
    const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=placeAddress(db,cv)!;
