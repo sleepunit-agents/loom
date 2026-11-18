@@ -32,8 +32,12 @@ export default defineConfig({
     // runners four unrelated tests passed their 5 s default in one evening (sign-in notifications, collections paging
     // and sync, mind activity, the runner's secret command), each passing again untouched, and each failure left main
     // without a green build to deploy. A passing test ends when it ends, so this only changes how long a hung one
-    // takes to say so. Local runs keep Vitest's default, where a slow test is worth noticing.
-    testTimeout: process.env.CI ? 20_000 : 5_000,
+    // takes to say so. The same holds on a developer's machine and on loom's own, where bodies run suites beside
+    // other work: on 2026-11-18 one local run showed 69 failures of which 67 were this budget, and a CI shard failed on
+    // a test that had only grown with the schema. So there is one budget everywhere, and it is a hang detector: long
+    // enough that a loaded machine does not reach it. A slow test is worth noticing, and is noticed by being reported
+    // (scripts/flaky-reporter.ts), not by failing.
+    testTimeout: 60_000,
     env: {
       // Force filesystem backend in tests so tool-level tests don't route
       // through Qdrant (which requires a live server and separate data store).
