@@ -66,7 +66,7 @@ function discordSummons(content: string, resolved: string[], roles: string[], bo
   // Any other role, `@everyone` and `@here` mention nobody.
   const writtenRoles = new Set([...content.matchAll(/<@&([^<>\s]+)>/g)].map(match => match[1]));
   const bots = roles.filter(role => writtenRoles.has(role)).flatMap(role => botRoles.get(role) ?? []);
-  return { mentions: [...new Set([...resolved.filter(id => written.has(id)), ...bots])], rolePing: roles.some(role => writtenRoles.has(role)) };
+  return { mentions: [...new Set([...resolved.filter(id => written.has(id)), ...bots])], unresolvedRole: roles.some(role => writtenRoles.has(role) && !botRoles.has(role)) };
 }
 
 /** The most attachments one Discord message carries, which is all that are listed. */
@@ -92,11 +92,11 @@ export function normalizeDiscord(connection: PlatformConnection & { botUser?: st
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
-  const { mentions, rolePing } = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
+  const { mentions, unresolvedRole } = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
   const knownBots = new Set([...botRoles.values(), ...message.mentions.filter(mention => mention.bot).map(mention => mention.id)]);
   const mentionsBot = mentions.some(id => knownBots.has(id));
-  // A role ping may name another bot. Until the guild's list arrives, wait unless a written bot mention already decides admission.
-  const awaitRoles = !rolesKnown && rolePing && !mentionsBot && !(connection.botUser && mentions.includes(connection.botUser));
+  // An unresolved role may also address this bot, even when another bot is explicitly named.
+  const awaitRoles = !rolesKnown && unresolvedRole && !(connection.botUser && mentions.includes(connection.botUser));
   return {
     ...(awaitRoles && { awaitRoles: true }),
     ...(mentionsBot && { mentionsBot: true }),

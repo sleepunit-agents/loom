@@ -30,6 +30,11 @@ export class BridgeChannels implements BridgeChannelCache {
     const life: Lifetime = { ...source, rolesKnown:false, channels: new Map(), botRoles: new Map() };
     this.connections.set(connection, life);
     const current = () => this.connections.get(connection) === life;
+    const replaceRoles = (roles: z.infer<typeof discordRole>[]) => {
+      life.botRoles.clear();
+      for (const role of roles) if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+      life.rolesKnown = true;
+    };
     return {
       /** Expected channel is the requested API channel or authenticated event's
        * channel. Invalidate before validation so bad updates leave no stale row.
@@ -86,9 +91,14 @@ export class BridgeChannels implements BridgeChannelCache {
         if (!current() || life.platform !== 'discord') return;
         life.rolesKnown=false;
         life.botRoles.clear();
-        const roles = z.array(discordRole).max(1000).parse(evidence);
-        life.rolesKnown=true;
-        for (const role of roles) if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+        replaceRoles(z.array(discordRole).max(1000).parse(evidence));
+      },
+      guildRoles: (data: unknown): boolean => {
+        if (!current() || life.platform !== 'discord') return false;
+        const guild=z.object({ id:z.literal(life.workspace), roles:z.array(discordRole).max(1000) }).safeParse(data);
+        if (!guild.success) return false;
+        replaceRoles(guild.data.roles);
+        return true;
       },
       roleEvent: (type: string, data: unknown): void => {
         if (!current() || life.platform !== 'discord') return;

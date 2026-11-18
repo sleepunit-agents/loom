@@ -212,6 +212,7 @@ export class SharedBridges {
      load:()=>{if(!current())throw Error();return receipts.checkpoint();},
      reset:async()=>{if(!current())throw Error();receipts.reset();},
      commit:async(event,checkpoint,raw)=>{if(!current())throw Error();receipts.retain(raw,checkpoint);if(!current())throw Error();
+      if(event.type==='GUILD_CREATE'&&life.channels!.guildRoles(event.data)){life.roleRevision=(life.roleRevision??0)+1;life.rolesAt=undefined;}
       if(event.type.startsWith('GUILD_ROLE_')){life.roleRevision=(life.roleRevision??0)+1;life.channels!.roleEvent(event.type,event.data);}
       this.queuePump(life);},
     });

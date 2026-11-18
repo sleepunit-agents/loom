@@ -119,11 +119,13 @@ it('recovers the guild role list after a failed read and follows authenticated r
   const ping=(role:string)=>f.say({content:`<@&${role}> hello`,mention_roles:[role]});
   const ordinary='500000000000000009';
   expect(await ping(markRole)).toBeUndefined();
+  expect(await f.say({content:`<@${mark}> <@&${artRole}> both`,mentions:[{id:mark,bot:true}],mention_roles:[artRole]})).toBeUndefined();
   expect(await ping(ordinary)).toBeUndefined();
   expect(await f.say({content:'ordinary message'})).toMatchObject({state:'delivered'});
   f.answers.set(key,roles); f.clock.advance(5000); await f.daemon.idle(); f.clock.advance(0); await f.daemon.idle();
   const retried=f.db.select().from(bridgeIncoming).all();
   expect(retried.find(row=>row.mentions===JSON.stringify([mark]))?.state).toBe('dropped');
+  expect(retried.find(row=>row.text.includes('both'))?.state).toBe('delivered');
   expect(retried.find(row=>row.text.includes(ordinary))?.state).toBe('delivered');
   expect(await ping(markRole)).toMatchObject({state:'dropped'});
   const role={id:'500000000000000008',managed:true,tags:{bot_id:mark}};
@@ -135,6 +137,12 @@ it('recovers the guild role list after a failed read and follows authenticated r
   expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:JSON.stringify([bot])});
   await f.dispatch('GUILD_ROLE_DELETE',{guild_id:guild,role_id:role.id});
   expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  // A new gateway session in this same daemon lifetime starts with its guild snapshot.
+  await f.dispatch('GUILD_CREATE',{id:'other',roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  await f.dispatch('GUILD_CREATE',{id:guild,roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  expect(await ping(markRole)).toMatchObject({state:'delivered',mentions:'[]'});
   expect(f.gateways).toHaveLength(1);
 });
 

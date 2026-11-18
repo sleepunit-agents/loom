@@ -166,8 +166,8 @@ export class BridgeIncoming {
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
       // An explicit bot mention takes precedence over the channel default, a reply, and the thread's starter.
-      else if (!message.isDm && !message.mentions.includes(connection.botUser) && (message.mentionsBot ||
-        (connection.platform === 'discord' && !isStopWord(message.text) && peers.some(peer => message.mentions.includes(peer.botUser))))) {
+      else if (connection.platform === 'discord' && !message.isDm && !isStopWord(message.text)
+        && !message.mentions.includes(connection.botUser) && (message.mentionsBot || peers.some(peer => message.mentions.includes(peer.botUser)))) {
         state = 'dropped'; reason = 'Another agent or no channel answer';
       }
       // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
