@@ -45,7 +45,8 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
     available();
     const at = clock.now();
     if (sweptAt !== undefined && (at < sweptAt || at - sweptAt > interval + SILENCE_MS / 2)) judgeFrom = at + SILENCE_MS;
-    listeningSince ??= at;
+    // A wall-clock correction can move the listener opening time into the future.
+    listeningSince = Math.min(listeningSince ?? at, at);
     sweptAt = at;
     const judge = at >= judgeFrom;
     const over = judge ? jobs.sweep(SILENCE_MS, undefined, listeningSince) : [];
