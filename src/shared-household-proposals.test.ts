@@ -831,4 +831,16 @@ it('records an owner grant for the exact reviewed words and files one replacemen
   await poll('current',report);
   expect((await allow(replacement)).body.ok).toBe(true);
   expect(trigger()).toMatchObject({machineApproval:replacement,machineWords:hash(changed)});
+  const preview = () => f.call('household/machinePreview',raw.input,'sam');
+  expect((await f.call('household/machinePreview',raw.input,'art')).status).toBe(403);
+  const shown = (await preview()).body.value as unknown as {summary:string;review:string;problem:string|null};
+  expect(shown.summary.endsWith('Trigger words (complete)\n'+changed)).toBe(true);
+  const approveShown = (reviewed:string) => f.call('household/propose',{...raw,input:{...raw.input,reviewed}},'sam');
+  await f.call('tempo/edit',{id,instructions:'Review after editing.'},'art');
+  expect((await approveShown(shown.review)).body.ok).toBe(false);
+  expect(trigger()?.machineApproval).toBe(replacement);
+  const latest = (await preview()).body.value as unknown as {review:string};
+  const ownerCard = await approveShown(latest.review);
+  expect(ownerCard.body.value).toMatchObject({state:'used'});
+  expect(trigger()).toMatchObject({machineApproval:ownerCard.body.value?.id,machineWords:hash('Review after editing.')});
 });
