@@ -5,7 +5,7 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, messages, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, triggerLog, turns } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
@@ -281,7 +281,11 @@ export class Jobs {
       // A worker may report "started" late or twice. Once the job is running that report changes nothing.
       const job = this.assigned(id, box, claimedJobStates);
       if (job.state !== 'starting') return job;
-      return this.db.update(jobs).set({ state: 'running', build, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
+      const at = this.now();
+      if (job.startedByKind === 'program' && job.conversation) this.mail.turn({
+        conversation: job.conversation, kind: 'action', fromKind: 'schedule', fromId: job.startedBy, run: job.id, model: 'program',
+      }, at);
+      return this.db.update(jobs).set({ state: 'running', build, heardAt: at }).where(eq(jobs.id, id)).returning().get()!;
     });
   }
 
@@ -364,6 +368,7 @@ export class Jobs {
 
   /** Queue the next attempt of work whose last attempt ended with a reason to run again, if it has any left. */
   private retry(before: Job, at: string, earliest = -Infinity): Job | undefined {
+    if (before.startedByKind === 'program') return undefined;
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
     if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
@@ -472,9 +477,28 @@ export class Jobs {
   }
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
-    const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
-    const wallMs = job.claimedAt && ended.endedAt ? Math.max(0, Date.parse(ended.endedAt) - Date.parse(job.claimedAt)) : null;
-    this.db.insert(jobUsage).values({ job: job.id, source: 'none', harness: job.harness, model: job.model, wallMs })
+    const program = job.startedByKind === 'program';
+    const firing = program && this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
+    const line = firing && (state === 'done' ? firing.line : 'Program did not complete.');
+    const ended = this.db.update(jobs).set({ ...values, ...(line && {endedNote: line}), state }).where(eq(jobs.id, job.id)).returning().get()!;
+    const started = program && this.db.select({ at: turns.at }).from(turns).where(and(eq(turns.run, job.id), eq(turns.kind, 'action'))).get();
+    const began = program ? started && started.at : job.claimedAt;
+    const wallMs = began && ended.endedAt ? Math.max(0, Date.parse(ended.endedAt) - Date.parse(began)) : null;
+    if (program) {
+      if (firing) {
+        const woke = this.db.select({id: inbox.id}).from(inbox).where(and(eq(inbox.source, 'trigger'), eq(inbox.sourceId, firing.id), eq(inbox.to, job.agent))).get();
+        const posted = this.db.select({seq: turns.seq}).from(turns).where(and(eq(turns.kind, 'reply'), eq(turns.run, job.id))).get();
+        const decision = state === 'done' ? (woke ? 'Woke ' + job.agent : 'Did not wake') : state[0].toUpperCase() + state.slice(1);
+        const note = [decision, posted && 'posted', wallMs !== null && wallMs + ' ms', line].filter(Boolean).join(' · ');
+        this.db.insert(triggerLog).values({trigger: firing.trigger, at: ended.endedAt ?? this.now(), event: 'program', note}).run();
+      }
+      if (state !== 'done') this.db.update(programFirings).set({ status: 'failed', line: 'Program did not complete.' })
+        .where(and(eq(programFirings.job, job.id), eq(programFirings.status, 'pending'))).run();
+      if (job.conversation) this.mail.turn({ conversation: job.conversation, kind: 'action', fromKind: 'schedule', fromId: job.startedBy,
+        run: job.id, model: 'program', outcome: state === 'done' ? 'progressed' : 'failed', latencyMs: wallMs }, ended.endedAt ?? this.now());
+    }
+    this.db.insert(jobUsage).values({ job: job.id, source: program ? 'program' : 'none', harness: job.harness, model: job.model, wallMs,
+      ...(program && { tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWritten: 0, modelCalls: 0, toolCalls: 0 }) })
       .onConflictDoUpdate({ target: jobUsage.job, set: { wallMs: sql`coalesce(${wallMs}, ${jobUsage.wallMs})` } }).run();
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it. However the job ended, that

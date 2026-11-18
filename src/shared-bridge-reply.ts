@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
 import { channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
-import { channelTarget } from './core/conversations/channel-target.js';
+import { channelTarget, type ChannelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -26,6 +26,19 @@ import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 export const BRIDGE_POSTS_PER_JOB=20;
 /** Why a post from a job on anybody else's word carries no file. */
 export const NO_FILES_REFUSAL='This job is not working for the agent\'s owners: it runs with loom\'s tools only, and its posts carry no files.';
+/** Queue an agent's own post after its caller has established whose work this is. */
+export function queueAgentPost(db: DataDatabase, conversations: Conversations, sends: SharedBridges['sends'], effectsAllowed: () => boolean,
+ agent: string, job: string, input: {id: string; to: ChannelTarget; text: string; model: string}, changed: (table: string, id: string) => void) {
+   const {place}=channelPlace(db,agent,input.to,'post');
+   const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=placeAddress(db,cv)!;
+   const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
+   // Its own posts there: each wrote a reply turn of this job's in that conversation.
+   const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,job),eq(turns.kind,'reply'))).all();
+   if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
+   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
+   if(!existing){const turn=conversations.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:agent,run:job,model:input.model,outcome:'progressed'});changed('turns',`${cv.id}:${turn.seq}`);changed('conversations',cv.id);}
+   changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
+}
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,daemon:Pick<SharedBridges,'sends'|'prepareDiscordFile'|'files'>,
  conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
  const sends=daemon.sends;
@@ -164,15 +177,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   run(ctx,input){
    const found=ownWork(ctx.viewer);if(!found)throw new OperationError('denied','Only an agent\'s own work posts straight to a channel');
    const agent=found.cv.agent;
-   const {place}=channelPlace(db,agent,input.to,'post');
-   const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=placeAddress(db,cv)!;
-   const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-   // Its own posts there: each wrote a reply turn of this job's in that conversation.
-   const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).all();
-   if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
-   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
-   if(!existing){const turn=conversations.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:agent,run:found.job.id,model:input.model,outcome:'progressed'});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);}
-   ctx.changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
+   return queueAgentPost(db,conversations,sends,effectsAllowed,agent,found.job.id,input,ctx.changed);
   },
  });
  // Bridge attachments, kept fourteen days. Without a file id this lists what a message carried; with

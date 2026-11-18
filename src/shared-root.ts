@@ -98,6 +98,7 @@ import { deskSpriteFields } from './desk-sprites.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
+import { applyProgramResult } from './shared-program-result.js';
 import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { measuringSettingsService } from './core/measuring/settings.js';
@@ -246,7 +247,6 @@ export function sharedRoot(options: {
   });
   const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
-  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
   registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
@@ -349,6 +349,8 @@ export function sharedRoot(options: {
   };
   // Attachments are read here too (bridges.file). Only a daemon fetches them, so without one there is
   // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
+  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner,
+    applyProgram: (job, result, changed) => applyProgramResult(db, services.conversations, bridgeDaemon, () => options.bridges?.effectsAllowed() ?? false, job, result, changed) });
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);

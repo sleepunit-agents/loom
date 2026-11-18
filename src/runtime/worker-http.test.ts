@@ -290,3 +290,13 @@ it('uses32randombytes per locally generated token and never reuses a constant cr
   expect(Buffer.from(first.token).toString()).toBe('body_'+'11'.repeat(32)); expect(Buffer.from(second.token).toString()).toBe('body_'+'22'.repeat(32));
   expect(source.mock.calls.slice(before)).toEqual([[32], [32]]); first.erase?.(); second.erase?.();
 });
+
+it('sends the validated program result on the retried finish receipt', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('lost reply')).mockResolvedValueOnce(response({ ok: true }));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'fixture', signal: new AbortController().signal, fetch: fetcher, pause: async () => {} });
+  const result = { version: 1 as const, wake: false, state: { count: 1 } };
+  await control.finish('program', 0, '', 'body', result);
+  const reports = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+  expect(reports[0].input.programResult).toEqual(result);
+  expect(reports[1]).toEqual(reports[0]);
+});

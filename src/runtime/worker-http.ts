@@ -12,6 +12,7 @@ import type { SignInReason } from './account-signin-reasons.js';
 import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
+import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
   conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), venueDescription:z.string().optional(), model: z.string(), account: z.string(), accountChoices: z.number().int().min(1).optional(),
@@ -24,6 +25,7 @@ export const workerAssignment = z.object({
   }).optional(), nestedContainers: z.boolean(), gpu: z.boolean(),
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
+  program: houseProgramSchema.optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
 });
 export interface WorkerHttpOptions {
@@ -158,7 +160,7 @@ export function workerSignIn(input: WorkerHttpOptions) {
     done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
-export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number }): WorkerControl {
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number; programs?: boolean }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
@@ -179,6 +181,12 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
         return { origin: new URL(input.url).origin, job, token, erase };
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
     },
+    programInputs: async (job, aliases, signal) => {
+      const client = privateSecretClient({ ...input, signal: AbortSignal.any([input.signal, signal]),
+        timeoutMs: Math.min(input.timeoutMs ?? PRIVATE_SECRET_TIMEOUT_MS, PRIVATE_SECRET_TIMEOUT_MS) });
+      try { return await client.program(job, aliases); }
+      finally { client.close(); }
+    },
     repositoryInput: async (job, signal) => {
       const client = privateSecretClient({
         ...input, signal: AbortSignal.any([input.signal, signal]),
@@ -187,7 +195,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => (await call('next', { facts, slots: input.slots }, workerAssignment.nullable())) ?? undefined,
+    next: async () => (await call('next', { facts, slots: input.slots, programs: input.programs || undefined }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
       const report = operationCaller(options);
@@ -201,8 +209,8 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail, exitBy) => {
-      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy }, ack, undefined, id, remaining));
+    finish: async (job, exitCode, logTail, exitBy, programResult) => {
+      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult }, ack, undefined, id, remaining));
     },
   };
 }

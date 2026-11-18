@@ -1,3 +1,5 @@
+import { parseProgramResult, type ProgramResult } from './runtime/house-program.js';
+import type { Job } from './runtime/jobs.js';
 import {keepJobText} from './runtime/job-text.js';
 /** Worker operations on the shared connection. No body executes in this root. */
 import { createHash } from 'node:crypto';
@@ -25,6 +27,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   runner(viewer: Viewer): Readonly<{ box: string }> | undefined;
   /** Called after the effect AND receipt commit, including successful replay. */
   jobEnded(id: string): void;
+  applyProgram(job: Job, result: ProgramResult, changed: (table: string, id: string) => void): void;
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun);
   const stopped=new WeakSet<object>();
@@ -50,13 +53,13 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
     run(ctx, input) {
       const ended: string[] = [];
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs);
       ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);
       for (const id of ended) ctx.changed('job', id);
       if (ended.length) unplaced.set(input, ended);
@@ -92,7 +95,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
     // exitBy: whose code it is, as the worker says. A worker from before it was asked leaves it out, and the row then says nobody's.
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional() }).strict(), output: ack,
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), programResult: z.json().optional() }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
@@ -106,7 +109,28 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '', exitBy: input.exitBy ?? null }) : canonical).digest('hex');
     },
     run(ctx, input) {
-      dispatcher.finish(runner(ctx.viewer), input.job, input.exitCode, input.logTail, input.exitBy);
+      const box = runner(ctx.viewer), job = dispatcher.jobs.get(input.job);
+      let exitCode = input.exitCode;
+      if (job.startedByKind === 'program') {
+        if (job.state === 'running' && exitCode === 0) {
+          let result: ProgramResult | undefined;
+          try { result = parseProgramResult(JSON.stringify(input.programResult) ?? ''); }
+          catch { exitCode = 1; }
+          if (result) {
+            const changes: [string, string][] = [];
+            try {
+              const valid = result;
+              db.transaction(() => options.applyProgram(job, valid, (type, id) => changes.push([type, id])));
+              for (const [type, id] of changes) ctx.changed(type, id);
+            } catch (error) {
+              // An inadmissible result is final. Storage failures leave the receipt open for retry.
+              if (!(error instanceof OperationError)) throw error;
+              exitCode = 1;
+            }
+          }
+        }
+      } else if (input.programResult !== undefined) throw new OperationError('invalid', 'Program result requires a program job');
+      dispatcher.finish(box, input.job, exitCode, job.startedByKind === 'program' ? '' : input.logTail, input.exitBy);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return { ok: true as const };
     },
     after: input => options.jobEnded(input.job),
