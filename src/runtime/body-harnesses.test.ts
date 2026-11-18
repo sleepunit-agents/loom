@@ -37,7 +37,8 @@ it('reserves for each harness the names that sign it in, and none for a runner i
   expect(harnessReservesEnv('house-runner', 'ANTHROPIC_API_KEY', {})).toBe(false); expect(harnessReservesEnv('toString', 'ANTHROPIC_API_KEY', {})).toBe(false);
 });
 it('counts a guest by the word loom read for the job, and by nothing in the room', () => {
-  expect(hasGuest(undefined)).toBe(false);
+  // No room at all says nothing about whose word the job works on: closed, like a room with no word.
+  expect(hasGuest(undefined)).toBe(true);
   const owner = { kind: 'person', person: 'owner', tier: null } as const, top = { kind: 'outside', person: 'key', tier: 3 } as const;
   expect(hasGuest(policy([owner], undefined, 'owners'))).toBe(false); expect(hasGuest(policy([], undefined, 'own'))).toBe(false);
   // The top tier is a tier among outside people. It does not make one of them an owner.

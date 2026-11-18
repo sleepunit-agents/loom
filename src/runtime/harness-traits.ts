@@ -21,10 +21,11 @@ export interface HarnessTraits {
 
 /** Whether the job works on anybody else's word: not the agent's own work, not its owners'. The word is
  * loom's (shared-place-mail.ts, jobWord), handed over with the job; nothing here ranks anybody. A room
- * that names no word comes from a loom older than the field and counts as anybody else's. A job with no
- * room at all was not handed out by loom's dispatcher, and nothing is known to hold it by. */
+ * that names no word comes from a loom older than the field and counts as anybody else's. So does a job
+ * with no room at all: loom's dispatcher always hands one, and an assignment without it says nothing about
+ * whose word it works on. Closed, not open. */
 export function hasGuest(policy: WorkerRunPolicy | undefined): boolean {
-  return !!policy && loomToolsOnly(policy.word ?? 'others');
+  return loomToolsOnly(policy?.word ?? 'others');
 }
 /** What the body of this job may use: loom's tools only on anybody else's word, whatever the machine gives
  * its bodies; otherwise what the machine's body file says. The one answer for the harness's command line,

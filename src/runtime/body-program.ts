@@ -172,9 +172,15 @@ export async function bodyProgram(input: {
     const guest=hasGuest(policy),reach=bodyReach(plan.reach,policy);
     // The word turned after the startup secrets were fetched: they leave the environment before any harness starts.
     if(guest)secrets.close();
-    // A harness that cannot be held to loom's tools does not run such a job. loom leaves a late stranger's mail
-    // for the next job, so this is reached only if that failed; the mail stays with the job and is tried again.
-    if(!input.native&&harnessCannotRun(job.harness,policy,plan.reach))throw new Error();
+    // And the session it was handed before the word turned is not continued, and none is left: its files go
+    // from this machine, and the body starts fresh with the kept history.
+    if(guest&&keeper){keeper.discard();keeper=undefined;resume=undefined;fresh=true;}
+    // A harness that cannot be held to loom's tools does not run such a job: the refusal made before the mail
+    // was taken, made again now that the mail says more. loom leaves a late stranger's mail for the next job
+    // (shared-place-mail.ts, lateMailJoins), so this is reached only if that failed. By now the mail is taken
+    // and not settled: the body leaves with the exit code of an assignment its harness refuses, loom returns
+    // the mail to the job (Jobs.finish), and the retry chain tries the work again.
+    if(!input.native&&harnessCannotRun(job.harness,policy,plan.reach)){exit=BODY_EXIT.assignment;throw new Error();}
     // Files are for a body that has file tools of its own (harness-traits.ts, hasFileTools): what was sent with
     // the messages is written where it can open it, and it may name a file of its own for a post.
     const files=bridge&&hasFileTools(reach,policy);
@@ -215,7 +221,8 @@ export async function bodyProgram(input: {
         answer = await afresh(room, context.join('\n\n'), signal, {});fresh=true;
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.
-      if(tools?!tools.allowsReply(answer.text):!secrets.allowsReply(answer.text))throw new Error();
+      // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
+      if(!(tools??secrets).allowsReply(answer.text))throw new Error();
     }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }

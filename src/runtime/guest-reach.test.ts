@@ -1,6 +1,6 @@
 /** A job whose word is anybody else's runs with loom's tools only (policy.ts, loomToolsOnly): what the body
  * side makes of the word the dispatcher hands it. No process is started and nothing live is touched. */
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { loomToolsOnly } from '../policy.js';
 import { bodyReach, deniedTools, hasFileTools, hasGuest, refusesJob, withUnknownSender } from './harness-traits.js';
 import { harnessCannotRun } from './body-harnesses.js';
@@ -22,7 +22,9 @@ it('reads a guest from the job\'s word and from nothing else', () => {
   expect(hasGuest(room('own'))).toBe(false);
   // A loom older than the word says nothing: closed, not open.
   expect(hasGuest(room(undefined, [], [{ kind: 'person', person: 'owner', tier: null }]))).toBe(true);
-  expect(hasGuest(undefined)).toBe(false);
+  // An assignment with no room at all says nothing either: closed the same way.
+  expect(hasGuest(undefined)).toBe(true);
+  expect(bodyReach('all', undefined)).toBe('loom');
   expect(hasGuest(withUnknownSender(room('owners')))).toBe(true);
 });
 
@@ -86,7 +88,7 @@ it('starts Claude Code for such a job with loom\'s tools listed and nothing else
 });
 
 it('asks for no startup secret for such a job, and still does for the owners\'', async () => {
-  const { bodyProgram } = await import('./body-program.js'), { vi } = await import('vitest');
+  const { bodyProgram } = await import('./body-program.js');
   const raw = 'body_' + 'a'.repeat(64);
   const run = async (word: WorkerRunPolicy['word']) => {
     const job = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -133,4 +135,53 @@ it('takes the startup secrets back out before the harness starts when a stranger
     return bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house', reach: 'all' }), stdin: async () => bytes, env: {}, signal: new AbortController().signal, fetch: fetcher as typeof fetch,
       native: async () => ({ text, model: 'observed', actions: [] }), loadMemory: async () => null, error: () => {} }); };
   expect(await again('All done')).toBe(0); expect(await again('The token is PRIVATE_STARTUP')).toBe(14);
+});
+
+it('refuses again, before any harness starts, when a stranger\'s late mail turns the word for a harness that always has a shell', async () => {
+  const { bodyProgram } = await import('./body-program.js'), { BODY_EXIT } = await import('./job-exit.js');
+  const raw = 'body_' + 'a'.repeat(64), paths: string[] = [];
+  // Claimed for its owners, so Codex may run it on this machine of full reach: the first refusal does not apply.
+  const job = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'codex', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
+    run: { nestedContainers: false, gpu: false, ports: [], policy: { ...room('owners'), mail: ['claimed'] } } };
+  const item = (id: string, fromKind: string, seq = 1) => ({ id, seq, source: 'thread', sourceId: null, fromKind, fromId: null, at: '2026-11-15T00:00:00.000Z', words: 'MAIL', keepUntil: null, verdict: null, refs: [] });
+  const fetcher = async (url: string | URL | Request) => {
+    const path = String(url).split('/').at(-1)!; paths.push(path);
+    if (path === 'startup') return Response.json({ aliases: [] });
+    // The mail it takes holds one piece nobody looked up, that was not among the claimed mail.
+    const values = { take: { job: 'job', conversation: 'cv', stopRequested: false, items: [item('claimed', 'person'), item('late', 'unknown', 2)] }, accept: { saved: true }, status: { saved: true, stopRequested: false } };
+    return Response.json({ ok: true, value: values[path as keyof typeof values] });
+  };
+  const run = (assigned: typeof job) => bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/native/codex', cwd: '/house', reach: 'all' }), stdin: async () => Buffer.from(JSON.stringify({ job: assigned, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } })),
+    env: {}, signal: new AbortController().signal, fetch: fetcher as typeof fetch, loadMemory: async () => null, error: () => {} });
+  // It leaves as it does for an assignment its harness would refuse, though by now the mail is taken; no tools server and no harness was started.
+  expect(await run(job)).toBe(BODY_EXIT.assignment);
+  expect(paths).toContain('take'); expect(paths).not.toContain('confirm');
+  // The first refusal, for a job that was anybody else's at claim: before any mail is taken.
+  paths.length = 0;
+  expect(await run({ ...job, run: { ...job.run, policy: { ...room('others'), mail: ['claimed'] } } })).toBe(BODY_EXIT.assignment);
+  expect(paths).not.toContain('take');
+});
+
+it('does not continue a session it was handed, and leaves none, when a stranger\'s late mail turns the word', async () => {
+  const { bodyProgram } = await import('./body-program.js');
+  const raw = 'body_' + 'a'.repeat(64), calls: string[] = [];
+  const job = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', venue: 'discord', thread: null, model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
+    run: { nestedContainers: false, gpu: false, ports: [], policy: { ...room('owners'), mail: ['claimed'] } } };
+  const item = (id: string, fromKind: string, seq: number) => ({ id, seq, source: 'discord', sourceId: null, fromKind, fromId: null, at: '2026-11-15T00:00:00.000Z', words: 'MAIL ' + id, keepUntil: null, verdict: null, refs: ['bi:' + id] });
+  const fetcher = async (url: string | URL | Request) => {
+    const path = String(url).split('/').at(-1)!;
+    if (path === 'startup') return Response.json({ aliases: [] });
+    const values = { take: { job: 'job', conversation: 'cv', stopRequested: false, items: [item('claimed', 'person', 1), item('late', 'unknown', 2)] },
+      digest: { saved: true, digest: 'digest', revision: 1, item: null }, accept: { saved: true }, confirm: { saved: true }, status: { saved: true, stopRequested: false }, turn: { saved: true, conversation: 'cv', seq: 1 }, reply: { saved: true } };
+    return Response.json({ ok: true, value: values[path as keyof typeof values] });
+  };
+  let seen: { words: string; session: unknown } | undefined;
+  const code = await bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house', reach: 'all' }), stdin: async () => Buffer.from(JSON.stringify({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } })),
+    env: {}, signal: new AbortController().signal, fetch: fetcher as typeof fetch, loadMemory: async () => null, loadBrief: async () => null, error: () => {},
+    sessions: { take: async () => { calls.push('take'); return 'session-of-the-owners'; }, save: async session => { calls.push('save:' + session); }, discard: () => { calls.push('discard'); } },
+    native: async (_assigned, words, _signal, session) => { seen = { words, session }; return { text: 'Answer', model: 'observed', actions: [], session: 'session-new' }; } });
+  expect(code).toBe(0);
+  // Handed at the start, while the job was its owners'; put away once the word turned, and nothing saved after.
+  expect(calls).toEqual(['take', 'discard']);
+  expect(seen?.session).toBeUndefined(); expect(seen?.words).toContain('MAIL claimed');
 });

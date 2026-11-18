@@ -2,7 +2,9 @@ import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
-const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
+// With the room loom's dispatcher hands a job on its owners' word: an assignment with none is held to loom's tools.
+const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [{ kind: 'person', person: 'owner', tier: null }], deniedTools: [], word: 'owners' } } };
 const raw = 'body_' + 'a'.repeat(64);
 function fixture() {
   const input = Buffer.from(JSON.stringify({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } }));
