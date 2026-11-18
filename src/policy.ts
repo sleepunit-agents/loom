@@ -555,8 +555,20 @@ export const isRoom = (conversation: { venue: string; member: string | null }): 
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
 export const ROOM_SCHEDULE_REFUSAL = 'A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
 /** Whether the body of a job in this conversation may set, reword, stop, start or run this trigger, as far as where it works goes. */
-export function maySchedule(conversation: { venue: string; member: string | null }, _trigger: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>): boolean {
-  return !isRoom(conversation);
+export function maySchedule(conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
+  return !isRoom(conversation) || (!!conversation.id && trigger.conversation === conversation.id);
+}
+/** On whose word a body is working, by least reach (shared-room-mail.ts, jobWord): the agent's own work,
+ * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
+ * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
+export type Woke = 'own' | 'owners' | 'others';
+/** Who may hand a note to the agent's body where, and post there as the agent's own work. The one statement.
+ * The agent's own work and a body working for owners: any conversation of that agent, and any channel it
+ * has a rule for. A body working for anybody else: only the one channel its own channel's rule names as
+ * where it reports (`reportsTo`); with none named, nowhere. A stranger wakes no body and so hands nothing.
+ * By the person and not by the venue: the same person has the same reach on Discord and on Slack. */
+export function mayHandTo(woke: Woke, target: string, reportsTo: string | null): boolean {
+  return woke !== 'others' || (reportsTo !== null && target === reportsTo);
 }
 /** Who may fire a trigger by hand, or turn a stopped one back on: someone who reads it (rule `trigger`,
  * which the caller checks on the stored row) and who may put its agent to work (directsAgent), as for

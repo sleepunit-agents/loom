@@ -20,6 +20,8 @@ export const triggerInput = z.object({
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text,
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
+  /** The Discord or Slack conversation a firing is mail in, instead of a wake of its own. */
+  conversation: text.nullable().optional(),
 });
 export type NewTrigger = z.input<typeof triggerInput>;
 /** The parts of a standing trigger that can change after it is set. Who it is for, what it
@@ -32,7 +34,7 @@ export type TriggerEdit = z.input<typeof triggerEdit>;
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
-  inbox(trigger: Trigger, deliveryId: string, words: string): void;
+  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop';
   operation(name: string, trigger: Trigger, deliveryId: string): void;
   /** Whether an operation target names something this program can run. Checked when a trigger is set. */
   knows?(name: string): boolean;
@@ -106,7 +108,8 @@ export class TriggerEngine {
   }
   /** `member` is whom the trigger's work is for, when that is a member and not the agent itself. It is the
    * door's to say (shared-tempo-access.ts, recordedTrigger) and never part of what a caller sends. */
-  set(value: NewTrigger, member?: string): Trigger {
+  /** `asked` is who asked for a trigger that names a conversation; the door's to say, like `member`. */
+  set(value: NewTrigger, member?: string, asked?: { kind: 'member' | 'outside' | 'agent'; id: string }): Trigger {
     this.open();
     const v = triggerInput.parse(value);
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
@@ -118,10 +121,12 @@ export class TriggerEngine {
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');
     if (v.file && !laneFile(v.file)) throw new Error('Instructions must be a relative repository file');
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
+    if (!!v.conversation !== !!asked) throw new Error('A trigger that names a conversation records who asked, and no other does');
+    if (v.conversation && (v.targetKind !== 'inbox' || v.toKind !== 'agent' || member !== undefined)) throw new Error('A trigger that names a conversation is mail for its agent');
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
-      this.db.insert(triggers).values({ ...v, id, member: member ?? null, enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
+      this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();
       this.log(id, 'set');
     });
@@ -341,7 +346,8 @@ export class TriggerEngine {
           const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
           if (words === undefined) throw new Error('No repository instructions reader');
           stage = 'inbox';
-          this.effects.inbox(t, delivery, words);
+          // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
+          if (this.effects.inbox(t, delivery, words) === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
         this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();

@@ -287,7 +287,14 @@ export class Jobs {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!jobUnended(job.state)) throw new Error('Job has ended');
-      return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
+      const ended = this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
+      // A person said stop where the work is. Mail waiting there that no person sent (a note from another
+      // body, a trigger's firing) and that no job has taken would start the next job as if nobody had: it is
+      // given to the stopped job, which is what "waits for fresh mail" means for the mail that job took
+      // (end, above). It is not lost: the next thing a person says there brings it along.
+      if (reason === 'stop' && job.conversation) this.db.update(inbox).set({ job: job.id })
+        .where(and(eq(inbox.conversation, job.conversation), eq(inbox.toKind, 'agent'), eq(inbox.state, 'waiting'), isNull(inbox.job), inArray(inbox.fromKind, ['agent', 'schedule']))).run();
+      return ended;
     });
   }
 

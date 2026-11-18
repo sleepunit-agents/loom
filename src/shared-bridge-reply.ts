@@ -3,7 +3,9 @@
  * supplies the actual job; trusted modules use the shared queue directly.
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
-import { and,asc,desc,eq,getTableColumns,inArray } from 'drizzle-orm';
+import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
+import { isBridgeVenue,jobWord,roomAddress,roomClosed,ruled } from './shared-room-mail.js';
+import { conversationPlace } from './pieces/bridges/place.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -36,13 +38,26 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    .where(and(eq(inboxRefs.ref,incoming),eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.source,found.cv.venue as 'discord'|'slack'))).get();
   return mail?.job===found.job.id&&(mail.state==='taken'||mail.state==='done')?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,mail:mail.id}:undefined;
  };
- operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400),text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
-  may:(viewer,input)=>!!target(viewer,input.incoming),
-  inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([target(actor,input.incoming)??null,canonical])).digest('hex'),
+ /** A job whose mail in its bridge conversation is not a message from the bridge (a trigger's firing, a note
+  * from another body of the agent) answers by a post in the conversation itself: there is no message to
+  * answer. Where that is comes from the conversation's place (shared-room-mail.ts). */
+ const placed=(viewer:Viewer)=>{
+  const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||!isBridgeVenue(found.cv.venue))return;
+  const mail=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),inArray(inbox.source,['trigger','handoff']))).all();
+  const at=mail.length?roomAddress(db,found.cv):undefined;
+  return at?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,at:{conversation:found.cv.id,connection:at.connection,channel:at.channel,thread:at.thread},since:found.job.claimedAt??found.job.queuedAt}:undefined;
+ };
+ /** Everything posted for what a job took: answers to its messages, and its posts in the conversation since it was claimed. */
+ const posted=(took:readonly string[],place?:{conversation:string;since:string})=>[
+  ...(took.length?db.select({id:bridgeSends.id}).from(bridgeSends).where(inArray(bridgeSends.incoming,[...took])).all():[]),
+  ...(place?db.select({id:bridgeSends.id}).from(bridgeSends).where(and(isNull(bridgeSends.incoming),eq(bridgeSends.conversation,place.conversation),gte(bridgeSends.createdAt,place.since))).all():[])];
+ operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400).optional(),text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
+  may:(viewer,input)=>!!(input.incoming?target(viewer,input.incoming):placed(viewer)),
+  inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([input.incoming?target(actor,input.incoming)??null:placed(actor)?.job??null,canonical])).digest('hex'),
   run(ctx,input){
-   const bound=target(ctx.viewer,input.incoming);if(!bound)throw new OperationError('denied','Current bridge body required');
+   const place=input.incoming?undefined:placed(ctx.viewer),bound=input.incoming?target(ctx.viewer,input.incoming):place;if(!bound)throw new OperationError('denied','Current bridge body required');
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-   try{sends.queue({...input,held:!effectsAllowed()});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
    // The reply is the answer to everything this job took in the conversation before it, as a thread reply
    // is (ConversationMail.settle). Settling that mail here, with the reply, means a body that dies before
    // its own confirmation cannot leave answered mail waiting for a second body. Mail that arrived since
@@ -99,7 +114,10 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    .where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),eq(inbox.source,found.cv.venue),
     eq(bridgeIncoming.conversation,found.cv.id),eq(bridgeIncoming.state,'delivered'))).orderBy(desc(inbox.seq)).all();
   const latest=taken[0],connection=latest&&db.select({agent:bridgeConnections.agent,platform:bridgeConnections.platform}).from(bridgeConnections).where(eq(bridgeConnections.id,latest.connection)).get();
-  return latest&&connection?.agent===found.cv.agent&&connection.platform===found.cv.venue?{job:found.job.id,incoming:latest.incoming,took:taken.map(row=>row.incoming)}:undefined;
+  // With no message from the bridge among its mail, the job speaks where its reply will go: in the conversation itself.
+  const place=placed(viewer);
+  if(!latest)return place?{job:place.job,incoming:undefined,at:place.at,took:[] as string[],place}:undefined;
+  return connection?.agent===found.cv.agent&&connection.platform===found.cv.venue?{job:found.job.id,incoming:latest.incoming,at:undefined,took:taken.map(row=>row.incoming),place}:undefined;
  };
  // A post may carry files, on Discord: their bytes are kept with the post until it is settled and go out with
  // its last part. The body program reads them from the body's own working area (runtime/body-files.ts);
@@ -111,12 +129,37 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   run(ctx,input){
    const bound=speaking(ctx.viewer);if(!bound)throw new OperationError('denied','Current bridge body required');
    // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
-   const said=db.select({id:bridgeSends.id}).from(bridgeSends).where(inArray(bridgeSends.incoming,bound.took)).all();
+   const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
    const files=(input.files??[]).map(file=>({name:file.name,contents:Buffer.from(file.contents,'base64')}));
-   try{sends.queue({id:input.id,incoming:bound.incoming,text:input.text,held:!effectsAllowed(),...(files.length?{files}:{})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),...(files.length?{files}:{}),...(bound.incoming?{incoming:bound.incoming}:{at:bound.at!})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
    finally{for(const file of files)file.contents.fill(0);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
+  },
+ });
+ // The agent's own work (a lane: a job with no person behind any of its mail, shared-room-mail.ts jobWord)
+ // posts a finished text straight to a channel the agent has a rule for, with no second body run: the
+ // daily post. Through the same queue, so it is split, receipted, held while effects are off and reviewed
+ // like every post; the agent's turn is written in the conversation there. A job with anybody behind it
+ // hands a note instead (conversation.handoff), and the body there says it.
+ const ownWork=(viewer:Viewer)=>{const found=current(viewer);return found&&viewer.kind==='agent'&&viewer.id===found.cv.agent&&jobWord(db,found.job).woke==='own'?found:undefined;};
+ operations.register({name:'bridges.post',input:z.object({id:z.uuid(),to:z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict(),
+   text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200)}).strict(),output:z.object({saved:z.literal(true),conversation:z.string()}).strict(),write:true,recheckPolicy:true,
+  may:viewer=>!!ownWork(viewer),
+  inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-post-receipt-v1\0').update(JSON.stringify([ownWork(actor)?.job.id??null,canonical])).digest('hex'),
+  run(ctx,input){
+   const found=ownWork(ctx.viewer);if(!found)throw new OperationError('denied','Only an agent\'s own work posts straight to a channel');
+   const agent=found.cv.agent;
+   if(!ruled(db,agent,input.to))throw new OperationError('invalid','A post goes to a channel this agent has a rule for');
+   const place=conversationPlace(input.to.workspace,{channel:input.to.channel,thread:input.to.thread??null,isDm:false},null);
+   const closed=roomClosed(db,{id:'',agent,venue:input.to.platform,place});if(closed)throw new OperationError('invalid',`Nothing can be posted there: ${closed}`);
+   const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=roomAddress(db,cv)!;
+   const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
+   const said=posted([],{conversation:cv.id,since:found.job.claimedAt??found.job.queuedAt});
+   if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
+   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
+   if(!existing){const turn=conversations.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:agent,run:found.job.id,model:input.model,outcome:'progressed'});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);}
+   ctx.changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
   },
  });
  // Slack attachments, kept fourteen days. Without a file id this lists what a message carried; with

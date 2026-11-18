@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -300,4 +300,194 @@ it('attaches the earlier words of a bridge conversation to one piece of mail in 
  expect(batch.map(item=>item.words)).toEqual(['Second','Third']);
  expect(batch[0].history?.map(line=>line.words)).toEqual(['Hello','Hello back']);
  expect(batch[1].history).toBeUndefined();
+});
+
+import {Jobs} from './runtime/jobs.js';
+import {workerPolicy} from './runtime/body-policy.js';
+import {CHAIN_NOTICE_EVERY,ROOM_TRIGGERS_MAX} from './shared-room-mail.js';
+import {ROOM_REPEAT_REFUSAL} from './shared-room-triggers.js';
+/** The conversation a call's answer names, wherever the door puts its output. */
+const made=(body:unknown):string=>{const found=JSON.stringify(body).match(/"conversation":"([^"]+)"/);if(!found)throw new Error('No conversation in '+JSON.stringify(body));return found[1];};
+const GUEST=JSON.stringify(['slack','TWORK','UUSER']),ROOM_LINE='A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
+/** A room with a guest's message in it and the body's job working there. */
+async function room(effects:()=>boolean=()=>true){
+ let received=false;const f=fixture(()=>!received||effects(),true),incoming=await f.receive(),cv=incoming.conversation!;received=true;
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(cv,'body');});
+ const once=(more:Record<string,unknown>={})=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+86_400_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Post the numbers',note:'Daily numbers',conversation:cv,...more});
+ /** Put the other job to work in a conversation, with mail from these people behind it. */
+ const work=(conversation:string,from:{kind:'person'|'unknown';id?:string}[])=>f.root.writes.run(()=>{
+  f.db.update(inbox).set({job:null}).where(eq(inbox.job,'other')).run();f.db.update(jobs).set({conversation}).where(eq(jobs.id,'other')).run();
+  from.forEach((who,index)=>{const item=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',sourceId:randomUUID()+index,fromKind:who.kind,fromId:who.id,words:'Go on'});f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,item.id)).run();});});
+ return {f,incoming,cv,once,work};
+}
+it('lets a room\'s body set a trigger that names its own conversation, records who asked, and holds it to that conversation and to the bounds',async()=>{
+ const {f,cv,once}=await room();
+ const mine=once();
+ expect((await f.call('tempo','set',mine)).status).toBe(200);
+ // The asker is the person whose message started the job: here the guest, by the account loom knows them by.
+ expect(f.db.select().from(triggers).get()).toMatchObject({id:mine.id,conversation:cv,askedByKind:'outside',askedBy:GUEST,member:null,state:'standing'});
+ expect(f.db.select().from(triggers).get()!.askedAt).toBe(new Date(f.clock.now()).toISOString());
+ // Anything that does not name this conversation keeps the refusal: no conversation, and another one.
+ const elsewhere=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','COTHER',null]),label:'other'}).id;
+ for(const other of [{conversation:undefined},{conversation:elsewhere}])expect(await f.call('tempo','set',once(other))).toMatchObject({status:403,body:{message:ROOM_LINE}});
+ // What is named must be a bridge conversation of the agent the trigger puts to work.
+ expect((await f.call('tempo','set',once({conversation:'cv-none'}),token.other)).status).toBe(400);
+ // From a room a repeating one comes no more often than hourly, at listed times; a rewording is held to the same.
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
+ const hourly=once({lifespan:'until-stopped',times:'09:00,10:00'});expect((await f.call('tempo','set',hourly)).status).toBe(200);
+ expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
+ expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the room'})).status).toBe(200);
+ // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
+ const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
+ for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:ROOM_LINE}});}
+ // The owner, and the agent outside the room, set one naming a conversation the agent has: the asker is then that owner, or the agent.
+ const owners=once(),own=once();
+ owners.ownerKind='member';owners.owner='owner';f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
+ expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);expect((await f.call('tempo','set',own,token.other)).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,owners.id)).get()).toMatchObject({askedByKind:'member',askedBy:'owner'});
+ expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({askedByKind:'agent',askedBy:'art'});
+ // At most ROOM_TRIGGERS_MAX stand at once for one conversation, whoever sets them.
+ expect(ROOM_TRIGGERS_MAX).toBe(10);
+ const standing=()=>f.db.select().from(triggers).all().filter(row=>row.conversation===cv&&row.enabled).length;
+ while(standing()<ROOM_TRIGGERS_MAX)expect((await f.call('tempo','set',once())).status).toBe(200);
+ for(const credential of [token.body,token.owner])expect((await f.call('tempo','set',once(),credential)).status).toBe(409);
+ expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);expect((await f.call('tempo','set',once())).status).toBe(200);
+});
+it('fires such a trigger as mail from the schedule in its conversation, on its asker\'s word, and answers by a post there',async()=>{
+ const {f,cv,once}=await room(()=>false);
+ const mine=once();expect((await f.call('tempo','set',mine)).status).toBe(200);
+ const before=f.db.select().from(conversations).all().length;
+ expect((await f.call('tempo','runNow',{id:mine.id})).status).toBe(200);
+ // Mail in the room, and no wake of its own.
+ expect(f.db.select().from(conversations).all()).toHaveLength(before);
+ const fired=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
+ expect(fired).toMatchObject({conversation:cv,toKind:'agent',to:'art',fromKind:'schedule',onWordKind:'outside',onWord:GUEST,state:'waiting'});
+ expect(fired.words).toMatch(/^\[From the schedule, not from a person speaking now: "Daily numbers"\. Asked for by the outside account .* at \d{4}-.*\]\n\nPost the numbers$/);
+ // The job that takes it counts the asker as in the room, at the tier they have then: a guest, with a guest's denials.
+ f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'slack')).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'other')).run();f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,fired.id)).run();});
+ expect(workerPolicy(f.db,{id:'other',agent:'art',conversation:cv}).people).toEqual([{kind:'outside',person:GUEST,tier:2}]);
+ f.root.writes.run(()=>f.db.update(agentPeople).set({tier:1}).run());
+ expect(workerPolicy(f.db,{id:'other',agent:'art',conversation:cv}).people).toEqual([{kind:'outside',person:GUEST,tier:1}]);
+ // Its answer answers no message: it is a post in the conversation, queued like any other, and held while effects are off.
+ const reply={id:randomUUID(),text:'Here are the numbers',model:'observed'};
+ expect((await f.call('bridges','reply',reply,token.body)).status).not.toBe(200);
+ expect((await f.call('bridges','reply',reply,token.other)).status).toBe(200);
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({id:reply.id,incoming:null,conversation:cv,connection:'connection',channel:'CROOM',text:'Here are the numbers',state:'held'});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,fired.id)).get()?.state).toBe('done');
+ expect(f.db.select().from(turns).all().at(-1)).toMatchObject({conversation:cv,kind:'reply',run:'other'});
+ expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
+});
+it('stops such a trigger, with one notice, when its asker is no longer known or its conversation cannot be posted to',async()=>{
+ const {f,once}=await room();
+ const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('room-trigger-stopped:'));
+ const asked=once({lifespan:'until-stopped',times:'09:00'}),closed=once({lifespan:'until-stopped',times:'10:00'});
+ for(const trigger of [asked,closed])expect((await f.call('tempo','set',trigger)).status).toBe(200);
+ // A removed channel rule alone stops nothing: a mention there would still wake the agent.
+ f.root.writes.run(()=>f.db.delete(bridgeChannels).run());
+ expect((await f.call('tempo','runNow',{id:asked.id})).status).toBe(200);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
+ // The owner takes the guest's tier away: the firing does nothing, the trigger is stopped, the owner is told once.
+ f.root.writes.run(()=>f.db.delete(agentPeople).run());
+ expect((await f.call('tempo','runNow',{id:asked.id})).status).toBe(200);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,asked.id)).get()).toMatchObject({enabled:false,state:'stopped'});
+ expect(notices()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining('who asked for it, is no longer known to art')}]);
+ // The connection is turned off: the same, for the conversation.
+ f.root.writes.run(()=>{f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run();f.db.update(bridgeConnections).set({enabled:false}).run();});
+ expect((await f.call('tempo','runNow',{id:closed.id})).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,closed.id)).get()).toMatchObject({enabled:false,state:'stopped'});
+ expect(notices().map(item=>item.words)).toContainEqual(expect.stringContaining("its conversation's connection is not in use"));
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
+});
+it('hands a note to the agent\'s own body in another conversation, by who the sending body works for',async()=>{
+ const {f,cv,work}=await room(()=>false);
+ const pond={platform:'slack',workspace:'TWORK',channel:'CPOND'},note=(to:unknown,words='I talked to them; here is what I need to know')=>({to,clientId:randomUUID(),label:'Debrief',words});
+ f.root.writes.run(()=>{f.db.insert(bridgeChannels).values({...pond,answers:'art',botsMayTalk:false}).run();f.db.insert(members).values([{id:'sam',role:'member',joinedAt:new Date(f.clock.now()).toISOString()},{id:'kim',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}]).run();f.db.insert(memberAgents).values({member:'kim',agent:'art'}).run();});
+ const notes=()=>f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all();
+ // A guest woke this body. Its channel names no report target: it hands nothing anywhere.
+ expect((await f.call('conversation','handoff',note(pond))).status).toBe(403);expect(notes()).toEqual([]);
+ // The owner names one on the channel's rule (by its card). Then that channel, and no other.
+ expect((await f.call('bridges','command',{action:'channel',platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'art',botsMayTalk:false,reportsTo:pond},token.owner)).status).toBe(200);
+ expect(f.db.select().from(bridgeChannels).all().find(row=>row.channel==='CROOM')?.reportsTo).toBe(JSON.stringify(['slack','TWORK','CPOND']));
+ f.root.writes.run(()=>f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CELSE',answers:'art',botsMayTalk:false}).run());
+ expect((await f.call('conversation','handoff',note({...pond,channel:'CELSE'}))).status).toBe(403);
+ const first=await f.call('conversation','handoff',note(pond));expect(first.status).toBe(200);
+ const target=made(first.body);
+ // The conversation there is opened, and the note is mail in it: from the agent, on the guest's word, with where it came from.
+ expect(f.db.select().from(conversations).where(eq(conversations.id,target)).get()).toMatchObject({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),member:null});
+ expect(notes()).toMatchObject([{conversation:target,toKind:'agent',to:'art',fromKind:'agent',fromId:'art',onWordKind:'outside',onWord:GUEST,chain:JSON.stringify([cv]),chainStartedAt:new Date(f.clock.now()).toISOString(),state:'waiting'}]);
+ expect(f.db.select().from(inboxRefs).where(eq(inboxRefs.item,notes()[0].id)).all().map(row=>row.ref)).toEqual([cv]);
+ // Sealed like any hand-off: the words are not kept in the clear.
+ expect(notes()[0].words).not.toContain('here is what I need');
+ // The job it starts there counts the guest as in the room.
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:target}).where(eq(jobs.id,'other')).run();f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,notes()[0].id)).run();});
+ expect(workerPolicy(f.db,{id:'other',agent:'art',conversation:target}).people).toEqual([{kind:'outside',person:GUEST,tier:2}]);
+ // So that body, still on the guest's word, hands nothing on: #pond reports nowhere.
+ expect((await f.call('conversation','handoff',note({conversation:cv}),token.other)).status).toBe(403);
+ // Its answer is a post in #pond, held while effects are off.
+ expect((await f.call('bridges','reply',{id:randomUUID(),text:'Daniel asked about X',model:'observed'},token.other)).status).toBe(200);
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{incoming:null,conversation:target,channel:'CPOND',thread:null,state:'held'}]);
+ // The owner answers there: a body woken by an owner hands to any conversation of the agent, and the chain goes on.
+ work(target,[{kind:'person',id:'owner'}]);
+ const back=await f.call('conversation','handoff',note({conversation:cv},'Tell them XYZ'),token.other);expect(back.status).toBe(200);
+ expect(notes().find(item=>item.conversation===cv)).toMatchObject({onWordKind:'member',onWord:'owner',chain:JSON.stringify([cv,target]),chainStartedAt:notes()[0].chainStartedAt});
+ // A member who has the agent: the same reach. A member without it, a sender nobody knows, and a mixed batch: anyone else's.
+ work(target,[{kind:'person',id:'kim'}]);expect((await f.call('conversation','handoff',note({...pond,channel:'CELSE'}),token.other)).status).toBe(200);
+ for(const from of [[{kind:'person' as const,id:'sam'}],[{kind:'unknown' as const}],[{kind:'person' as const,id:'owner'},{kind:'person' as const,id:'sam'}]]){work(target,from);expect((await f.call('conversation','handoff',note({conversation:cv}),token.other)).status,JSON.stringify(from)).toBe(403);}
+ // The agent's own work, with nobody behind it: any target. Never its own conversation, another agent's, or a place it has no rule for.
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[]);
+ expect((await f.call('conversation','handoff',note(pond),token.other)).status).toBe(200);
+ for(const to of [{conversation:lane},{conversation:'cv-none'},{...pond,channel:'CNORULE'}])expect((await f.call('conversation','handoff',note(to),token.other)).status,JSON.stringify(to)).toBe(400);
+ // Nothing was posted anywhere by any of it.
+ expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
+});
+it('refuses no note for the length of its chain, and tells the owners each time it grows by twenty-five',async()=>{
+ const {f,cv,work}=await room();
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ expect(CHAIN_NOTICE_EVERY).toBe(25);
+ const chain=Array.from({length:CHAIN_NOTICE_EVERY-1},(_,index)=>index%2?pond:cv),started='2026-11-01T00:00:00.000Z';
+ work(pond,[{kind:'person',id:'owner'}]);
+ f.root.writes.run(()=>{const item=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'handoff',sourceId:'earlier',fromKind:'agent',fromId:'art',words:null as never,chain:JSON.stringify(chain),chainStartedAt:started});f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,item.id)).run();});
+ const hand=()=>f.call('conversation','handoff',{to:{conversation:cv},clientId:randomUUID(),label:'Again',words:'And again'},token.other);
+ expect((await hand()).status).toBe(200);
+ const note=f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all().find(item=>item.conversation===cv)!;
+ // Its start, its length and the conversations it runs between are on the row, with no words read.
+ expect(note).toMatchObject({chainStartedAt:started});expect(JSON.parse(note.chain!)).toEqual([...chain,pond]);
+ const told=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('handoff-chain:'));
+ expect(told()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining(`handed ${CHAIN_NOTICE_EVERY} notes`)}]);
+ expect(told()[0].words).toContain(cv);expect(told()[0].words).toContain(pond);
+ // The next one is not refused and raises no second notice.
+ expect((await hand()).status).toBe(200);expect(told()).toHaveLength(1);
+});
+it('gives a stopped job the notes and firings waiting in its conversation, so they start no work until a person speaks there',async()=>{
+ const {f,cv}=await room();
+ const send=(fromKind:'agent'|'schedule'|'person',source:'handoff'|'trigger'|'notice')=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source,sourceId:randomUUID(),fromKind,fromId:fromKind==='person'?'owner':'art',words:source==='handoff'?null as never:'Words'}).id;});return id;};
+ const note=send('agent','handoff'),firing=send('schedule','trigger'),said=send('person','notice');
+ const all=new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());
+ // Today's Stop by hand for another reason leaves them as they are.
+ expect(f.db.select().from(inbox).all().filter(item=>[note,firing,said].includes(item.id)).map(item=>item.job)).toEqual([null,null,null]);
+ f.root.writes.run(()=>all.stop('body','owner','stop'));
+ const job=(id:string)=>f.db.select().from(inbox).where(eq(inbox.id,id)).get()!;
+ expect([job(note),job(firing)]).toMatchObject([{job:'body',state:'waiting'},{job:'body',state:'waiting'}]);
+ // What a person said there is fresh mail still, and admission starts work for it; the note comes along then.
+ expect(job(said)).toMatchObject({job:null,state:'waiting'});
+});
+it('lets only an agent\'s own work post a text straight to a channel it has a rule for',async()=>{
+ const {f,cv,work}=await room(()=>false);
+ const post=(to:unknown)=>({id:randomUUID(),to,text:'Standup: all green',model:'observed'}),croom={platform:'slack',workspace:'TWORK',channel:'CROOM'};
+ // The room's body works for a guest: it posts nowhere this way.
+ expect((await f.call('bridges','post',post(croom))).status).toBe(403);
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
+ // A job with a person behind it, an owner included, hands a note instead.
+ work(lane,[{kind:'person',id:'owner'}]);expect((await f.call('bridges','post',post(croom),token.other)).status).toBe(403);
+ work(lane,[]);
+ expect((await f.call('bridges','post',post({...croom,channel:'CNORULE'}),token.other)).status).toBe(400);
+ const done=await f.call('bridges','post',post(croom),token.other);expect(done.status).toBe(200);
+ const posted=made(done.body);
+ expect(f.db.select().from(conversations).where(eq(conversations.id,posted)).get()).toMatchObject({venue:'slack',place:JSON.stringify(['TWORK','CROOM',null])});expect(posted).not.toBe(cv);
+ // Through the queue, held while effects are off, with the agent's turn written there.
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{incoming:null,conversation:posted,channel:'CROOM',thread:null,text:'Standup: all green',state:'held'}]);
+ expect(f.db.select().from(turns).all().at(-1)).toMatchObject({conversation:posted,kind:'reply',run:'other'});
+ expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
 });

@@ -13,12 +13,13 @@ import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
 import { digestItems, turns } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
+import type { HandoffToSelf } from './handoff.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
 export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent:string;member:string|null;project:string|null}>,question:Readonly<{to:string;waitsOnKind?:'task'|'approval';waitsOnId?:string}>)=>boolean;
-export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority): void {
+export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
  registerConversationBodyOutput(operations,service,proof,privateAssignment);
- registerConversationHandoff(operations,service,proof,privateAssignment);
+ registerConversationHandoff(operations,service,proof,privateAssignment,selfHandoff);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);

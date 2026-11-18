@@ -83,7 +83,9 @@ export class BridgeSends {
 
   /** `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
    * was not delivered, addressed like any other to where that message was said. */
-  queue(input: { id: string; incoming: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] }): BridgeSend {
+  /** A post answers a delivered message (`incoming`) and goes where that message is; or it answers none
+   * and is made in a conversation (`at`), whose place the caller read (shared-room-mail.ts, roomAddress). */
+  queue(input: { id: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');
     const queued: (typeof bridgeSendFiles.$inferInsert)[] = [];
@@ -91,7 +93,7 @@ export class BridgeSends {
       queued.length = 0;
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
-        if (old.incoming !== input.incoming || old.text !== input.text) throw new Error('Reply id reused');
+        if (old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new Error('Reply id reused');
         // The same id is the same post, files and all. While the post still has its files they are compared;
         // once it is settled they are gone, and a repeat that names files cannot be told from the first.
         const kept = tx.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, old.id)).orderBy(asc(bridgeSendFiles.position)).all();
@@ -99,8 +101,9 @@ export class BridgeSends {
         if (!(settled && !kept.length) && (kept.length !== given.length || kept.some((file, at) => file.name !== sendFileName(given[at].name) || !file.contents.equals(given[at].contents)))) throw new Error('Reply id reused');
         return old;
       }
-      const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
-      if (!incoming || !(input.stopped ? incoming.state === 'dropped' && incoming.reason === STOP_WORD && input.text === STOPPED_LINE : incoming.state === 'delivered')) throw new Error('No delivered message for reply');
+      const answered = input.at ? undefined : tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
+      if (input.at ? input.stopped : !answered || !(input.stopped ? answered.state === 'dropped' && answered.reason === STOP_WORD && input.text === STOPPED_LINE : answered.state === 'delivered')) throw new Error('No delivered message for reply');
+      const incoming = input.at ? { id: null, ...input.at } : answered!;
       // The reply carries its own address, copied from the message it answers (place.ts): a message's
       // channel and thread never change, and the queue then needs no join to send.
       // A post's files are kept with it until it is settled (bridge_send_files), and go out with its last part.
@@ -110,7 +113,7 @@ export class BridgeSends {
         || files.reduce((sum, file) => sum + file.contents.byteLength, 0) > SEND_FILES_BYTES)) throw new Error('Files cannot be posted');
       files.forEach((file, position) => { queued.push({ send: input.id, position, name: sendFileName(file.name), contents: Buffer.from(file.contents) }); });
       const row = tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
-        connection: incoming.connection, channel: incoming.channel, thread: incoming.thread,
+        connection: incoming.connection, channel: incoming.channel, thread: incoming.thread, conversation: input.at?.conversation ?? null,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
       if (queued.length) tx.insert(bridgeSendFiles).values(queued).run();

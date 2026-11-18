@@ -14,7 +14,7 @@
  *
  * Newest first until the bound is reached, then in the order they were said.
  */
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -41,7 +41,9 @@ export function prepareBridgeHistory(db: DataDatabase, now: () => string, conver
       .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
     const sent: Said[] = db.select({ order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
       .where(and(eq(bridgeSends.state, 'sent'), ne(bridgeSends.text, ''),
-        inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation)))))
+        // What it posted there: answers to the conversation's messages, and posts that answered none.
+        or(inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation))),
+          and(isNull(bridgeSends.incoming), eq(bridgeSends.conversation, conversation)))))
       .orderBy(desc(bridgeSends.createdAt), desc(sql`${bridgeSends}.rowid`)).limit(HISTORY_LINES).all()
       .map(row => ({ kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at), order: row.order }));
     const kept = [...received, ...sent].filter(line => line.keepUntil === null || Date.parse(line.keepUntil) > Date.parse(now()))

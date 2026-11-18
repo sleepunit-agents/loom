@@ -126,10 +126,13 @@ export async function bodyProgram(input: {
     const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
-    const claimed=job.run?.policy?.mail;let lateStranger=false;
+    const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
+      // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
+      // from another body of this agent. Its answer is a post in the conversation, answering no message.
+      if(bridge&&(item.source==='trigger'||item.source==='handoff')&&item.words!==null)placed=true;
       if(bridge&&(item.source==='discord'||item.source==='slack')){
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();
@@ -146,7 +149,7 @@ export async function bodyProgram(input: {
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.settle();await tell({state:'idle',work:''});return 0;}
     // A bridge answer is a reply to a message from the bridge. Mail with words and no such message is mail
     // this body cannot answer, so it fails here, as mail, before anything else is loaded for it.
-    if(bridge&&!incoming.length)throw new Error();
+    if(bridge&&!incoming.length&&!placed)throw new Error();
     exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
@@ -205,7 +208,7 @@ export async function bodyProgram(input: {
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
+    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }

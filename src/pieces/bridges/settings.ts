@@ -13,7 +13,9 @@ export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('disconnect'),id:text}).strict(),
  // `brief` names a role page of the answering agent (roles/<brief>.md in its Memory), handed to the body of
  // every conversation in the channel beside the venue's own page. Left out or null: the channel has none.
- z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().regex(PAGE_NAME).nullable().optional()}).strict(),
+ z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().regex(PAGE_NAME).nullable().optional(),
+  // Where a body working in this channel for a guest may hand a note: one channel on any of the answering agent's bridges.
+  reportsTo:z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:text,channel:text}).strict().nullable().optional()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),
@@ -73,7 +75,7 @@ export class BridgeSettings {
      if(!this.db.update(bridgeConnections).set({enabled:false,state:'disconnected',stateAt:this.now()}).where(eq(bridgeConnections.id,input.id)).run().changes)throw Error('Unknown connection');break;
     }
     case 'channel':{
-     const {action:_action,brief,...rest}=input,row={...rest,brief:brief??null};this.db.insert(bridgeChannels).values(row).onConflictDoUpdate({target:[bridgeChannels.platform,bridgeChannels.workspace,bridgeChannels.channel],set:row}).run();break;
+     const {action:_action,brief,reportsTo,...rest}=input,row={...rest,brief:brief??null,reportsTo:reportsTo?JSON.stringify([reportsTo.platform,reportsTo.workspace,reportsTo.channel]):null};this.db.insert(bridgeChannels).values(row).onConflictDoUpdate({target:[bridgeChannels.platform,bridgeChannels.workspace,bridgeChannels.channel],set:row}).run();break;
     }
     case 'removeChannel':this.db.delete(bridgeChannels).where(and(eq(bridgeChannels.platform,input.platform),eq(bridgeChannels.workspace,input.workspace),eq(bridgeChannels.channel,input.channel))).run();break;
     case 'person':{

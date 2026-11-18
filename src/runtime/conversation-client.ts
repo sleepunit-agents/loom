@@ -118,7 +118,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   },
   requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
   secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},
-  bridgeReply(input:{incoming:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
+  bridgeReply(input:{incoming?:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
   title(title:string,id=randomUUID()){return call('title',{title},z.object({saved:z.literal(true),renamed:z.boolean()}).strict(),id);},

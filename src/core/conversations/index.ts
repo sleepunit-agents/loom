@@ -15,7 +15,7 @@ type Item = typeof inbox.$inferSelect;
 type Turn = typeof turns.$inferInsert;
 export type ConversationInput = Pick<Conversation, 'agent' | 'venue' | 'place' | 'label'> & Partial<Pick<Conversation, 'project' | 'member' | 'direct'>>;
 export type InboxInput = Pick<Item, 'toKind' | 'to' | 'source' | 'fromKind'> & Partial<Pick<Item,
-  'sourceId' | 'conversation' | 'fromId' | 'words' | 'project' | 'agent' | 'member' | 'answers' | 'why' | 'ifYes' | 'ifNo' | 'link' | 'waitsOnKind' | 'waitsOnId' | 'thread' | 'messageSeq'>> & { refs?: string[] };
+  'sourceId' | 'conversation' | 'fromId' | 'words' | 'project' | 'agent' | 'member' | 'answers' | 'why' | 'ifYes' | 'ifNo' | 'link' | 'waitsOnKind' | 'waitsOnId' | 'thread' | 'messageSeq' | 'onWordKind' | 'onWord' | 'chain' | 'chainStartedAt'>> & { refs?: string[] };
 export type Question = Omit<InboxInput, 'toKind' | 'conversation' | 'source' | 'sourceId' | 'fromKind' | 'fromId'> & { answers: 'yes-no' | 'words'; words: string };
 export type DigestInput = {
   conversation: string; run: string; summary: string;

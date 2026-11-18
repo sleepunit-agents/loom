@@ -22,10 +22,10 @@ export interface TempoOperationOptions {
   /** A new trigger as it is recorded for this caller: whose it is can follow who set it (policy.ts,
    * triggerAsSet), and with it the member its work is for, if any. `authorize` judges a `set` by the same
    * reading. Without it, as given and for nobody. */
-  recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string };
+  recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string; asked?: { kind: 'member' | 'outside' | 'agent'; id: string } };
   /** Why this caller may not set, reword, stop, start or run this trigger because of where its job is, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`, of the trigger as recorded. */
-  placeRefusal?(viewer: Viewer, trigger: Pick<NewTrigger, 'ownerKind' | 'owner' | 'toKind' | 'to'>): string | undefined;
+  placeRefusal?(viewer: Viewer, trigger: { conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string }, change?: { times?: string }): string | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }
@@ -46,9 +46,10 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   };
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) { const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
-      const refused = options.placeRefusal?.(ctx.viewer, as.trigger); if (refused) throw new OperationError('denied', refused);
-      const row = tempo.triggers.set(as.trigger, as.member); ctx.changed('triggers', row.id); return { id: row.id }; },
+    run(ctx, trigger) {
+      const refused = options.placeRefusal?.(ctx.viewer, trigger); if (refused) throw new OperationError('denied', refused);
+      const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
+      const row = tempo.triggers.set(as.trigger, as.member, as.asked); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,
@@ -65,7 +66,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
     run(ctx, { id: target, ...change }) {
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
-      const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, stored);
+      const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, stored, change);
       if (refused) throw new OperationError('denied', refused);
       tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id });
       ctx.changed('triggers', target); ctx.changed('triggerEdits', target); return { saved: true };

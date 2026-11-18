@@ -4,27 +4,64 @@ import {MESSAGE_WORDS_MAX} from './words.js';
  * parent place come from its live conversation, never from caller claims. */
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
-import {inbox} from '../data/schema.js';
+import {bridgeConnections,inbox} from '../data/schema.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
 import type {CommsMessages} from './messages.js';
 import {sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
 import { commsKeepDays } from '../data/comms-days.js';
-export function registerConversationHandoff(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean){
+/** Where a note to the agent's own body goes: a conversation it has, or a channel (and thread) it has a rule for. */
+const toSelf=z.union([z.object({conversation:z.string().min(1).max(200)}).strict(),
+ z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict()]);
+export type HandoffTo=z.infer<typeof toSelf>;
+/** The composition's rules for a note from one body of an agent to its body in another conversation
+ * (src/shared-room-mail.ts, selfHandoff): who may hand to where, on whose word, and by what chain. */
+export interface HandoffToSelf{
+ /** Resolve and judge the target for this job; throws an OperationError to refuse. Reads only. */
+ target(work:{job:{id:string;agent:string;conversation:string|null};cv:{id:string;agent:string;venue:string;place:string;member:string|null}},to:HandoffTo):{
+  conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:{kind:'member'|'outside';id:string};chain:string[];startedAt:string};
+ /** Told after a note is written, for the notice a long chain raises. */
+ sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
+}
+export function registerConversationHandoff(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,self?:HandoffToSelf){
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
  operations.register(operation({...common,name:'conversation.handoff',
-  input:z.object({agent:z.string().min(1).max(200),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict(),
+  // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
+  // another conversation (`to`), as mail there that starts its job like any message.
+  input:z.object({agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
+   .refine(value=>(value.agent===undefined)!==(value.to===undefined)),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
-   const found=current(viewer);if(!found||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;
+   const found=current(viewer);if(!found)return false;
+   // To itself: the rule is the composition's and is asked in full when the note is prepared and written.
+   if(input.to)return !!self;
+   if(!input.agent||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;
    if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
    return found.cv.member!==null&&found.cv.project===null||handoffPeersAssigned(db,found.cv.agent,input.agent,found.cv.project);
   },
-  async prepare(input){return sealHandoff(service.key,input.words,service.now(),commsKeepDays(db));},
+  // A note to itself is sealed with what the receiving body is told about it: where it came from and by what chain.
+  async prepare(input,context){
+   const work=input.to?current(context.viewer):undefined;
+   return sealHandoff(service.key,work&&self?`${self.target(work,input.to!).told}\n\n${input.words}`:input.words,service.now(),commsKeepDays(db));},
   run(ctx,input,prepared){
    const {job,cv}=requireCurrent(ctx.viewer),sourceId=JSON.stringify([job.id,input.clientId]);
+   if(input.to){
+    if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
+    const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
+    if(before?.conversation)return {conversation:before.conversation,item:before.id};
+    const how=self.target({job,cv},input.to);
+    const target=how.conversation??cvs.open({agent:cv.agent,venue:how.open!.venue,place:how.open!.place,label:how.open!.label}).id;
+    const chain=[...how.chain,cv.id];
+    const item=cvs.send({conversation:target,toKind:'agent',to:cv.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,refs:[cv.id],
+     chain:JSON.stringify(chain),chainStartedAt:how.startedAt,...(how.onWord?{onWordKind:how.onWord.kind,onWord:how.onWord.id}:{})});
+    cvs.turn({conversation:target,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
+    self.sent({chain,startedAt:how.startedAt,to:target,agent:cv.agent});
+    ctx.changed('conversations',target);ctx.changed('inbox',item.id);ctx.changed('turns',target);
+    return {conversation:target,item:item.id};
+   }
+   if(!input.agent)throw new OperationError('invalid','A hand-off names an agent or a place');
    const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,input.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
