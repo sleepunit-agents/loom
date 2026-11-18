@@ -96,12 +96,15 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   of anybody but owners into one conversation come at least an hour apart
   (`WORD_REPEAT_MIN_MS`, the hour the door's check uses): one that comes sooner
   is not delivered and not lost, it is put off to the hour mark, once (log
-  `put off`). A stopped trigger's log says `stopped`, then `fired`.
+  `put off`). One exception: a `today` trigger put off past local midnight
+  ends with its day like any `today` trigger, and that firing is never
+  delivered. A stopped trigger's log says `stopped`, then `fired`.
 - **A job a firing or a note woke, on anybody else's word, schedules nothing.**
   It sets, edits, starts and runs no trigger; it may stop one the same person
   asked for.
 - **A trigger keeps to its asker.** A body working for anybody but owners may
-  reword, stop and start only a trigger the same person asked for. Whoever
+  reword, stop and start only a trigger the same person asked for. A trigger's
+  words are its instructions, its file and its note (`editsWords`). Whoever
   changes a trigger's words becomes its asker; a change of times alone leaves
   both as they were. So a firing's words and its asker always come from the
   same person.

@@ -119,9 +119,10 @@ channel (`presence.ts`). Both are best effort.
 - Into one member's private conversation only that member's word goes, and the agent's own work. This is
   asked where a note is admitted and where a firing is made, not only at the doors: a note or a firing on
   anybody else's word is not delivered there; the note is dropped, or the trigger stopped, with a notice.
-- A guest's word goes one hop. A job on anybody else's word that a note started hands nowhere; one a
-  person's message or a firing started may hand to its own channel's report target. Such a job hands at
-  most 5 notes (`NOTES_PER_JOB`): a flood guard on one job, not a limit on an exchange.
+- A guest's word goes one hop. A job on anybody else's word that a note or a brief started hands nothing
+  on, to its own body elsewhere or to a peer agent; one a person's message or a firing started may hand
+  to its own channel's report target and may brief a peer agent. Such a job hands at most 5 notes and
+  briefs together (`NOTES_PER_JOB`): a flood guard on one job, not a limit on an exchange.
 - A report target is read from the rule of the agent that answers the channel, and the `channel` card
   takes one only on a bridge of that agent's.
 - A note on the word of somebody no longer known (a member who left, an outside account with no tier
