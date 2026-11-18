@@ -34,6 +34,8 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
       report:{source:'transcript' as const,tokensOut:27,model:'observed'}};
     await send(main);
     expect(db.select().from(jobUsage).get()).toMatchObject({job:first.job,model:'observed',tokensOut:27,tokensIn:null});
+    await send({...main,revision:6,report:{source:'transcript',tokensOut:28}});
+    expect(db.select().from(jobUsage).get()?.tokensOut).toBe(28);
     const usage = {...event, action:'usage' as const, runId:'child',description:'Child',revision:2, report:{source:'transcript' as const,tokensIn:42}};
     await send(usage);
     await send({...usage,revision:1,report:{source:'transcript',tokensIn:10}});

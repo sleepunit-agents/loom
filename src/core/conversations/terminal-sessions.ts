@@ -114,6 +114,12 @@ export class TerminalSessions {
       toolCalls:report.toolCalls ?? null,tools:report.tools ?? null,largestContext:report.largestContext ?? null,
       wallMs:report.wallMs ?? null,harness:parent.harness,model:report.model ?? (parent.model || null)};
     this.db.insert(jobUsage).values({job:id,...values}).onConflictDoUpdate({target:jobUsage.job,set:values}).run();
-    this.db.update(jobs).set({...(id !== parent.id ? {state:parent.state,endedAt:parent.endedAt,heardAt:parent.endedAt ?? at} : {}),...(id !== parent.id && event.description ? {title:event.description} : {}),...(report.model ? {model:report.model} : {})}).where(eq(jobs.id,id)).run();
+    if (id !== parent.id) {
+      this.db.update(jobs).set({state:parent.state,endedAt:parent.endedAt,heardAt:parent.endedAt ?? at,
+        ...(event.description ? {title:event.description} : {}),...(report.model ? {model:report.model} : {})})
+        .where(eq(jobs.id,id)).run();
+    } else if (report.model && report.model !== parent.model) {
+      this.db.update(jobs).set({model:report.model}).where(eq(jobs.id,id)).run();
+    }
   }
 }
