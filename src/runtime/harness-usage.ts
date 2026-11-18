@@ -31,9 +31,10 @@ function toolCounts(names:unknown[]){
 
 export function claudeUsage(rows:unknown[]):UsageReport{
  const messages=new Map<string,Row>(), tools=new Map<string,unknown>();
- let allMessages=true, allTools=true;
+ let sawAssistant=false, allMessages=true, allTools=true;
  for(const row of rows.map(object)){
   if(row.type!=='assistant')continue;
+  sawAssistant=true;
   const message=object(row.message);
   if(typeof message.id==='string')messages.set(message.id,object(message.usage));
   else allMessages=false;
@@ -62,7 +63,7 @@ export function claudeUsage(rows:unknown[]):UsageReport{
   tokensIn:inputSize(usage)??sum(transcript.map(inputSize)),tokensOut:measure('output_tokens'),
   cacheRead:measure('cache_read_input_tokens'),cacheWritten:measure('cache_creation_input_tokens'),
   modelCalls:turns.length||null,largestContext:contexts.length&&contexts.every(n=>n!==null)?contexts.reduce((maximum,size)=>Math.max(maximum,size),0):null,
-  ...(allTools?toolCounts([...tools.values()]):{tools:null,toolCalls:null})};
+  ...(sawAssistant&&allTools?toolCounts([...tools.values()]):{tools:null,toolCalls:null})};
 }
 
 export function codexUsage(rows:unknown[]):UsageReport{
@@ -113,8 +114,11 @@ export function failedReport(read:(rows:unknown[])=>UsageReport,sink?: (usage:Us
  return (output:Buffer)=>{
   try{
    const rows=new TextDecoder('utf-8',{fatal:true}).decode(output).split(/\r?\n/).filter(line=>line.trim()).map(line=>JSON.parse(line));
-   const usage=read(rows);
-   if(usage.source==='report')sink(usage);
+   const {source,...measures}=read(rows);
+   // A partial stream can establish a tool ran, but silence does not establish
+   // that none ran. Keep explicit token zeros from the harness untouched.
+   if(measures.toolCalls===0){measures.toolCalls=null;measures.tools=null;}
+   if(source!=='none'&&Object.values(measures).some(value=>value!=null))sink({source,...measures});
   }catch{/* An unreadable failure leaves unknown usage. */}
  };
 }

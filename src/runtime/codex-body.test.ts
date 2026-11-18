@@ -94,3 +94,22 @@ it('keeps bounded usage from an unsuccessful process without accepting its reply
  expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'report',tokensIn:1,tools:{recall:1}}));
  expect(JSON.stringify(failedUsage.mock.calls)).not.toContain('Answer é');
 });
+
+it('keeps a completed command in a failed turn without inventing token totals',async()=>{
+ const failedUsage=vi.fn(),f=fixture({failedUsage});
+ const answer=f.run(job,'mail',f.abort.signal);
+ f.finish([{type:'thread.started'},{type:'turn.started'},
+  {type:'item.completed',item:{type:'command_execution',id:'i',command:'private command'}},
+  {type:'turn.failed',error:{message:'private error'}}],1);
+ await expect(answer).rejects.toThrow('Native execution unavailable');
+ expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'transcript',tokensIn:null,toolCalls:1,tools:{command_execution:1}}));
+ expect(JSON.stringify(failedUsage.mock.calls)).not.toContain('private');
+});
+
+it('leaves tool counts unknown when a failed stream contains only an assistant message',async()=>{
+ const failedUsage=vi.fn(),f=fixture({failedUsage});
+ const answer=f.run(job,'mail',f.abort.signal);
+ f.finish([{type:'item.completed',item:{type:'agent_message',text:'Hello'}},{type:'turn.failed',usage:{output_tokens:1}}],1);
+ await expect(answer).rejects.toThrow('Native execution unavailable');
+ expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'report',tokensOut:1,toolCalls:null,tools:null}));
+});

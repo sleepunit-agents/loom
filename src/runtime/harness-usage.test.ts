@@ -33,3 +33,8 @@ it('keeps valid transcript calls when the end report contains malformed iteratio
  result.usage.iterations=[null,null];
  expect(claudeUsage([assistant,result])).toMatchObject({source:'report',modelCalls:1,largestContext:4288});
 });
+
+it('keeps result-only context measurements without inventing a zero tool count',()=>{
+ const [,result]=rows('claude');
+ expect(claudeUsage([result])).toMatchObject({source:'report',modelCalls:1,largestContext:4288,toolCalls:null,tools:null});
+});
