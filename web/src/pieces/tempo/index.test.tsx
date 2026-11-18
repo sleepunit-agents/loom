@@ -6,6 +6,7 @@ vi.mock('../../kit', () => ({
   Split: (props: { list: ReactNode; reader: ReactNode }) => h('main', null, props.list, props.reader),
   ...Object.fromEntries(['List', 'Row', 'Empty', 'Error', 'Loading', 'Input', 'Button'].map(name => [name, (props: { children?: ReactNode }) => h(name, props, props.children)])),
 }));
+import { tempoActions } from './commands';
 import Tempo, { TempoCard, type TempoSnapshot } from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -128,7 +129,19 @@ it('shows the requested machine and lets the editor withdraw the request', async
   const data = { ...snapshot, triggers: snapshot.triggers.map(t => ({ ...t, machine: 'worker-2' })) };
   const callbacks = { ...actions(), withdrawMachine: vi.fn(async (_id: string) => {}) };
   await act(async () => { tree = create(h(TempoCard, { snapshot: data, triggerId: 'tr-1', actions: callbacks })); });
-  expect(JSON.stringify(tree.toJSON())).toContain('worker-2');
+  const shown = JSON.stringify(tree.toJSON());
+  for (const words of ['worker-2', 'worker credentials', 'model sign-ins', 'SSH keys', 'Loom database', 'cannot confine']) expect(shown).toContain(words);
   await act(async () => button('Withdraw machine request').props.onClick());
   expect(callbacks.withdrawMachine).toHaveBeenCalledExactlyOnceWith('tr-1');
+});
+
+it('shows the recorded manual firing failure and starts a new intent for a subsequent click', async () => {
+  const reason = 'machine: The words changed since they were approved';
+  const request = vi.fn<typeof fetch>(async () => Response.json({ ok: true, value: { saved: false, failed: true, reason } }));
+  await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1', actions: tempoActions(request) })); });
+  await act(async () => button('Run now').props.onClick());
+  expect(JSON.stringify(tree.toJSON())).toContain(reason);
+  await act(async () => button('Run now').props.onClick());
+  const ids = request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).id);
+  expect(new Set(ids).size).toBe(2);
 });
