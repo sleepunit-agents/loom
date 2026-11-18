@@ -84,7 +84,7 @@ export class SharedBridges {
   this.presence=new BridgePresence(options.db,options.clock,id=>{
    const life=this.lives.get(id);
    if(!life||!life.authenticated||!this.current(life))return undefined;
-   return life.presence??=bridgePresenceApi({clock:options.clock,tokenSecret:life.connection.tokenSecret,secrets:life.secrets,current:()=>this.current(life),request:options.request});
+   return life.presence??=bridgePresenceApi({resume:()=>this.track(this.presence.show()),clock:options.clock,tokenSecret:life.connection.tokenSecret,secrets:life.secrets,current:()=>this.current(life),request:options.request});
   });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
@@ -122,7 +122,7 @@ export class SharedBridges {
   for(const _error of result.notificationErrors)this.report();
  }
  private retire(life:Life){
-  life.active=false;life.retry?.();life.channels?.close();life.secrets.close();
+  life.active=false;life.presence?.close();life.retry?.();life.channels?.close();life.secrets.close();
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }

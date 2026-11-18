@@ -268,3 +268,24 @@ it('keeps a delivered Discord message\'s attachments, once, and leaves one it ca
   expect(f.calls.filter(call => call.path === cat + '&other')).toHaveLength(0);
   expect(f.errors).toEqual([]);
 });
+
+it('shares presence capacity across nine busy Discord channels before their heartbeats expire', async () => {
+  const f = discordFixture();
+  await f.start();
+  for (let i = 0; i < 9; i++) {
+    const channel = String(300000000000000100n + BigInt(i));
+    f.answers.set(`GET channels/${channel}`, {id:channel, type:0, guild_id:guild});
+    const row = await f.say({channel_id:channel, content:`<@${bot}> hello`, mentions:[{id:bot}]});
+    const message = JSON.parse(row.id.slice(3))[1];
+    f.answers.set(`POST channels/${channel}/typing`, null);
+    f.answers.set(`PUT channels/${channel}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, null);
+    f.db.insert(jobs).values({id:'work-'+i, agent:'art', conversation:row.conversation, title:'Work', state:'running',
+      queuedAt:new Date(f.clock.now()).toISOString(),brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next'}).run();
+    f.db.update(inbox).set({state:'taken',job:'work-'+i}).where(eq(inbox.conversation,row.conversation!)).run();
+  }
+  f.daemon.changed();
+  await f.daemon.idle();
+  for (let i = 0; i < 2; i++) { f.clock.advance(1000); await f.daemon.idle(); }
+  expect(f.calls.filter(call => call.path.endsWith('/typing'))).toHaveLength(9);
+  expect(f.calls.filter(call => call.method === 'PUT')).toHaveLength(9);
+});

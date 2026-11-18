@@ -40,3 +40,17 @@ it('absorbs network errors inside credential use', async () => {
   request.mockRejectedValueOnce(Error('socket hang up'));
   expect(await api.typing(channel)).toBe(false);
 });
+
+it('wakes deferred presence when its budget reopens between the regular heartbeats', async () => {
+  const clock = new FakeClock();
+  const resume = vi.fn(), request = vi.fn(async () => new Response(null, {status:204}));
+  const api = bridgePresenceApi({clock, request, resume, current:() => true, tokenSecret:'fixture',
+    secrets:{withValue:async (_name, use) => use('fixture')}});
+  for (let n = 0; n < 10; n++) await api.typing(channel);
+  clock.advance(999);
+  expect(resume).not.toHaveBeenCalled();
+  clock.advance(1);
+  expect(resume).toHaveBeenCalledTimes(1);
+  await api.typing(channel);
+  expect(request).toHaveBeenCalledTimes(9);
+});

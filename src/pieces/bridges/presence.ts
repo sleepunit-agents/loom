@@ -58,15 +58,25 @@ export function workingOn(db: DataDatabase): Working[] {
  * A missing resource or permission suppresses that effect for the rest of this work. */
 type CallResult = boolean | 'deferred' | 'denied';
 export interface PresenceCalls { react(channel: string, message: string, on: boolean): Promise<CallResult>; typing(channel: string): Promise<CallResult> }
-export function bridgePresenceApi(input: { tokenSecret: string; secrets: SecretUse; clock: Clock; current(): boolean; request?: typeof fetch }): PresenceCalls {
+export function bridgePresenceApi(input: { tokenSecret: string; secrets: SecretUse; clock: Clock; current(): boolean; resume?(): void; request?: typeof fetch }): PresenceCalls & { close(): void } {
   let nextCallAt = 0, windowEnds = 0, remaining = 0;
+  let cancel: (() => void) | undefined;
+  // Re-read the live work when capacity returns. Remember no deferred HTTP request: a job
+  // may have ended, a channel may be empty, or the connection may have been retired.
+  const defer = (until: number) => {
+    if (!cancel && input.resume) cancel = input.clock.at(until, () => {
+      cancel = undefined;
+      if (input.current()) input.resume?.();
+    });
+    return 'deferred' as const;
+  };
   const call = async (method: 'PUT' | 'DELETE' | 'POST', path: string): Promise<CallResult> => {
     try {
       const now = input.clock.now();
-      if (now < nextCallAt) return 'deferred';
+      if (now < nextCallAt) return defer(nextCallAt);
       if (!input.current()) return false;
       if (now >= windowEnds) { windowEnds = now + 1000; remaining = BURST_PER_SECOND; }
-      if (remaining === 0) return 'deferred';
+      if (remaining === 0) return defer(windowEnds);
       remaining--;
       return await input.secrets.withValue<CallResult>(input.tokenSecret, async token => {
         if (!input.current()) return false;
@@ -80,7 +90,7 @@ export function bridgePresenceApi(input: { tokenSecret: string; secrets: SecretU
               let seconds = Number(response.headers.get(limited ? 'Retry-After' : 'X-RateLimit-Reset-After'));
               if (limited && !(seconds > 0)) seconds = Number((await response.json().catch(() => null))?.retry_after);
               nextCallAt = input.clock.now() + (Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds * 1000) : TYPING_EVERY_MS);
-              if (limited) return 'deferred';
+              if (limited) return defer(nextCallAt);
             }
             if (response.status === 403 || response.status === 404) return 'denied';
             return response.ok;
@@ -91,6 +101,7 @@ export function bridgePresenceApi(input: { tokenSecret: string; secrets: SecretU
   };
   const ids = (...values: string[]) => values.every(isDiscordId);
   return {
+    close: () => { cancel?.(); cancel = undefined; },
     react: async (channel, message, on) => ids(channel, message) && call(on ? 'PUT' : 'DELETE', `channels/${channel}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`),
     typing: async channel => ids(channel) && call('POST', `channels/${channel}/typing`),
   };
