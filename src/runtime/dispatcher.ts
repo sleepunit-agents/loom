@@ -3,15 +3,18 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { jobRoom } from '../shared-place-mail.js';
+import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
+/** What loom records on a job on anybody else's word that no harness the agent has can run. */
+export const UNHELD_NOTE = 'Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
@@ -48,6 +51,10 @@ export class Dispatcher {
         const policy = jobRoom(this.db, job);
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
+        // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
+        // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
+        // it is ended now and says why. Any other job that cannot be placed waits, as before.
+        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE); continue; }
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
@@ -67,6 +74,12 @@ export class Dispatcher {
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
     }, { behavior: 'immediate' });
+  }
+  /** Whether the agent has models, and every one of them runs on a harness that would refuse this job. */
+  private unheld(agent: string, roles: readonly ModelRole[], policy: WorkerRunPolicy): boolean {
+    const harnesses = this.db.select({ model: agentModels.model }).from(agentModels).where(eq(agentModels.agent, agent)).all()
+      .flatMap(row => roles.filter(role => role.model === row.model).map(role => role.harness));
+    return harnesses.length > 0 && harnesses.every(harness => this.cannotRun(harness, policy));
   }
   /** A lane's work runs in the conversation its trigger opened, whose place names the trigger (wakePlace). What that trigger
    * wants to run on is read when the job is placed, so an edit to the lane takes effect at once. */

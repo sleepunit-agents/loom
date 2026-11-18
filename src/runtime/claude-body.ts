@@ -5,8 +5,8 @@
  *   runHarnessChild): the tools endpoint's bearer is in no argument, environment variable or file.
  * - It can be held to loom's tools only, and it honours the tools a body is not given, so it runs on any
  *   machine and for any job. A job on anybody else's word is held so on every machine (harness-traits.ts,
- *   bodyReach): permission mode `dontAsk` with loom's tools listed, where a job for owners on a machine of
- *   full reach runs with `bypassPermissions`.
+ *   bodyReach): no built-in tool (`--tools ""`, and each denied by name), permission mode `dontAsk` with
+ *   loom's tools listed, where a job for owners on a machine of full reach runs with `bypassPermissions`.
  * - Its events name the model that answered. The reply carries that model, never the one asked for.
  * No Root credential enters argv, environment or model input. The outer worker owns the process group,
  * including this child. */
@@ -31,6 +31,19 @@ export type ClaudeSpawn = HarnessSpawn;
 export const claudeToolSettings: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '0', MAX_MCP_OUTPUT_TOKENS: '100000', MCP_TOOL_TIMEOUT: '86400000', CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '86400000',
 });
+/** Every built-in tool of Claude Code, by the name it is denied by: what a body held to loom's tools is
+ * refused one by one, beside being given none at all (`--tools ""`). The second layer, in case a later
+ * version changes what `--tools` means. Read from what 2.1.326 lists at start, with the names its documents
+ * and earlier versions use for the same things; a name a version does not know denies nothing. The two
+ * tools that read what a tools server offers (ListMcpResourcesTool, ReadMcpResourceTool) are not here:
+ * they reach loom's own server and nothing else. scripts/check-claude-floor.mjs checks the floor against
+ * the real program. */
+export const claudeBuiltInTools: readonly string[] = Object.freeze([
+  'Agent', 'AskUserQuestion', 'Bash', 'BashOutput', 'CronCreate', 'CronDelete', 'CronList', 'DesignSync', 'Edit', 'EnterPlanMode', 'EnterWorktree',
+  'ExitPlanMode', 'ExitWorktree', 'Glob', 'Grep', 'KillBash', 'KillShell', 'LS', 'LSP', 'ListAgents', 'Monitor', 'MultiEdit', 'NotebookEdit', 'NotebookRead',
+  'PushNotification', 'Read', 'RemoteTrigger', 'ReportFindings', 'ScheduleWakeup', 'SendMessage', 'Skill', 'SlashCommand', 'Task', 'TaskCreate', 'TaskGet',
+  'TaskList', 'TaskOutput', 'TaskStop', 'TaskUpdate', 'TodoWrite', 'ToolSearch', 'WebFetch', 'WebSearch', 'Workflow', 'Write',
+]);
 export const claudeBody: BodyHarness = input => {
   const env = { ...input.env };
   if (!input.command || !input.cwd || [input.command, input.cwd, ...Object.keys(env), ...Object.values(env).filter((v): v is string => v !== undefined)].some(v => v.includes('\0'))) throw harnessUnavailable();
@@ -47,6 +60,8 @@ export const claudeBody: BodyHarness = input => {
     const denied = bodyDeniedTools(deniedTools(job.run?.policy));
     // The reach this job's body really has: loom's tools only on anybody else's word, whatever the machine gives (bodyReach).
     const reach = bodyReach(input.reach ?? 'loom', job.run?.policy);
+    // The agent's own denials first, as written; then every built-in tool not among them.
+    const withheld = reach === 'all' ? denied : [...new Set([...denied, ...claudeBuiltInTools])];
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
     // Asked to keep a session, Claude Code writes its transcript under its own directory (sessionFiles below)
     // and can continue one by id. Otherwise nothing is written, as before. A continued session keeps its id
@@ -58,9 +73,13 @@ export const claudeBody: BodyHarness = input => {
       '--output-format', 'stream-json', '--verbose', ...(keep ? [] : ['--no-session-persistence']),
       // With full reach nothing asks and nothing is listed: everything is allowed except what is denied below.
       // Held to loom's tools, nothing is allowed that is not listed: no shell, no files, no web, no helpers.
+      // `dontAsk` with an allow list does not do that alone: the real program still runs read-only shell
+      // commands, reads files and starts subagents. So it is given no built-in tool at all (`--tools ""`),
+      // and each is denied by name below as well.
       '--permission-mode', reach==='all'?'bypassPermissions':'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
+      ...(reach!=='all'?['--tools','']:[]),
       ...(control&&reach!=='all'?['--allowedTools',...allowed]:[]),
-      ...(denied.length ? ['--disallowedTools', ...denied] : [])];
+      ...(withheld.length ? ['--disallowedTools', ...withheld] : [])];
     let output: Buffer;
     try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
       // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.

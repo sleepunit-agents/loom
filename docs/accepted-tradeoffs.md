@@ -726,11 +726,14 @@ Entries are grouped by the part of the program they belong to.
   work, its owners (household owners and members who have the agent), or anybody else, the least reach
   winning. A job on anybody else's word runs with loom's tools only (`loomToolsOnly` in `src/policy.ts`):
   - its harness has no shell, no file read or write, no web and no helpers of its own, on every machine,
-    whatever the machine's body file says. Claude Code is started with `--permission-mode dontAsk` and
-    loom's tools as the allow list. Codex and agy always have a shell and cannot be held so: they do not
-    run such a job. Placement passes them over for the agent's next model. A job whose agent has no model
-    on Claude Code stays queued and fails at the queue deadline (24 hours) with the general note that no
-    machine took it; that note does not yet say why.
+    whatever the machine's body file says. Claude Code is started with no built-in tool (`--tools ""`),
+    every built-in tool denied by name, and `--permission-mode dontAsk` with loom's tools as the allow
+    list. The allow list alone does not hold: on 2.1.326 it left read-only shell commands, Read and
+    subagents. `scripts/check-claude-floor.mjs` checks the floor against the real program
+    (`docs/runtime/worker.md`, "What `loom` reach is on Claude Code, and how it was checked"). Codex and
+    agy always have a shell and cannot be held so: they do not run such a job. Placement passes them over
+    for the agent's next model. A job whose agent has no model on Claude Code is ended at once, with a
+    note that says so (`UNHELD_NOTE` in `src/runtime/dispatcher.ts`).
   - no startup secret is fetched or put in its environment, `request_secret` and `use_secret` are not
     served, and loom's doors refuse the same to a body program that asks anyway;
   - it is handed no attachment files and names no file for a post.
@@ -757,6 +760,10 @@ Entries are grouped by the part of the program they belong to.
 - Why: a guest's words are input to a model. With a shell, files and the agent's secrets in its
   environment, a body answering a guest could be talked into using all of them. Before this, a guest's job
   ran with whatever the machine gave every body, less the rows an owner had thought to deny.
+- The floor is checked by hand, per version. Nothing in the suite starts the real Claude Code, so a new
+  version that changed what `--tools ""` means would be caught only by running the script, or by the
+  second layer (the names denied) still holding. The list of names is as of 2.1.326; a built-in tool a
+  later version adds is covered by `--tools ""` alone until the list is brought up to date.
 - Would change it: the follow-up above, a grant an owner makes for a named person.
 
 ### A stranger wakes nothing, and a tier is what admits an outsider

@@ -53,7 +53,7 @@ it('refuses such a job to a harness that always has a shell, with the machine\'s
 });
 
 it('starts Claude Code for such a job with loom\'s tools listed and nothing else allowed, on a machine of full reach', async () => {
-  const { claudeBody } = await import('./claude-body.js'), { nativeClaudeFixture } = await import('../../test/fixtures/native-claude.js');
+  const { claudeBody, claudeBuiltInTools } = await import('./claude-body.js'), { nativeClaudeFixture } = await import('../../test/fixtures/native-claude.js');
   const job = (word: WorkerRunPolicy['word']) => ({ id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
     run: { nestedContainers: false, gpu: false, ports: [], policy: room(word) } });
   const config = () => Buffer.from(JSON.stringify({ mcpServers: { loom: { type: 'http', url: 'http://127.0.0.1:1', headers: { Authorization: 'Bearer local_secret_x' } } } }));
@@ -63,10 +63,25 @@ it('starts Claude Code for such a job with loom\'s tools listed and nothing else
   expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
   expect(args.slice(args.indexOf('--allowedTools'), args.indexOf('--allowedTools') + 2)).toEqual(['--allowedTools', 'mcp__loom__loom_query']);
   expect(args).not.toContain('bypassPermissions');
+  // The allow list alone leaves read-only shell commands, Read and subagents (checked on 2.1.326,
+  // scripts/check-claude-floor.mjs). So no built-in tool is made available, and each is denied by name as well.
+  expect(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2)).toEqual(['--tools', '']);
+  const withheld = args.slice(args.indexOf('--disallowedTools') + 1);
+  for (const tool of ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'NotebookEdit', 'Skill', 'Monitor', 'ToolSearch']) expect(withheld, tool).toContain(tool);
+  expect(withheld).toEqual([...claudeBuiltInTools]);
   f.finish(f.rows()); await guest.catch(() => {});
+  // The same for an owners' job on a machine that holds its bodies to loom's tools: `loom` means the same thing whoever asked.
+  const h = nativeClaudeFixture();
+  const held = claudeBody({ command: '/private/claude', cwd: '/house', env: h.env, spawn: h.launch, reach: 'loom', mcpConfig: config(), mcpTools: ['mcp__loom__loom_query'] })(job('owners'), 'mail', h.abort.signal);
+  const heldArgs: string[] = h.launch.mock.calls[0][1];
+  expect(heldArgs.slice(heldArgs.indexOf('--tools'), heldArgs.indexOf('--tools') + 2)).toEqual(['--tools', '']);
+  expect(heldArgs.slice(heldArgs.indexOf('--disallowedTools') + 1)).toEqual([...claudeBuiltInTools]);
+  h.finish(h.rows()); await held.catch(() => {});
   const g = nativeClaudeFixture();
   const owner = claudeBody({ command: '/private/claude', cwd: '/house', env: g.env, spawn: g.launch, reach: 'all', mcpConfig: config(), mcpTools: ['mcp__loom__loom_query'] })(job('owners'), 'mail', g.abort.signal);
   expect(g.launch.mock.calls[0][1][g.launch.mock.calls[0][1].indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
+  // With full reach the harness keeps its own tools: neither flag is passed when nothing is denied.
+  expect(g.launch.mock.calls[0][1]).not.toContain('--tools'); expect(g.launch.mock.calls[0][1]).not.toContain('--disallowedTools');
   g.finish(g.rows()); await owner.catch(() => {});
 });
 

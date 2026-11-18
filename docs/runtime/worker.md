@@ -162,7 +162,7 @@ said whose it was, and no stage is guessed.
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 30 | worker house | The house's image does not meet the image contract: it does not say it is a house of this layout (`loom.house="2"`), it does not list the job's harness, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
-| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
+| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Or, at once: the job works on anybody else's word and every model the agent has runs on a harness that always has a shell ("What a body may use"). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 | 32 | worker build time | The house was not fetched and built within the build limit (`buildTimeoutMs`). The worker reported on the job all the while. |
 
 Any other code is the runner's own (a builder or a custom runner). A job swept
@@ -1115,8 +1115,9 @@ settles the mail only after the answer is recorded (see "Attempts, retries and
 exit codes").
 Always-denied tool patterns, and the guests-only patterns when the job works on
 anybody else's word, go into native --disallowedTools. Held to loom's tools the
-CLI uses dontAsk permission mode with loom's tools as its allow list; with full
-reach it uses bypassPermissions. Either way it has an empty settings-source
+CLI is given no built-in tool at all (`--tools ""`), every built-in tool is
+also denied by name, and it uses dontAsk permission mode with loom's tools as
+its allow list; with full reach it uses bypassPermissions and none of those. Either way it has an empty settings-source
 list and no unrelated MCP servers. Calls needing interactive native approval are refused.
 
 ### What a body may use
@@ -1137,9 +1138,56 @@ For a job on anybody else's word:
 
 | Harness | Can it run loom-only? | What happens |
 |---|---|---|
-| claude | yes | `--permission-mode dontAsk --allowedTools <loom's tools>`: no shell, no files, no web, no subagents. |
+| claude | yes | `--tools "" --permission-mode dontAsk --allowedTools <loom's tools> --disallowedTools <every built-in tool>`: no shell, no files, no web, no subagents. |
 | codex | no, it always has a shell | Refused. Placement passes it over; a body handed one anyway leaves before taking mail. |
 | agy | no, it always has a shell | The same. |
+
+When every model the agent has runs on a harness that cannot, the job is ended
+as soon as a machine asks for work: failed by loom (exit 31), with the note
+"Never started: this job is not working for the agent's owners, so it runs with
+loom's tools only, and every model the agent has runs on a harness that always
+has a shell. Give the agent a model that runs on Claude Code." Its message is
+handed to the job the next message starts.
+
+#### What `loom` reach is on Claude Code, and how it was checked
+
+This holds wherever a body's reach is `loom`: by the machine's body file, for
+any job, and for a job on anybody else's word on any machine.
+
+`--permission-mode dontAsk` with an allow list does not hold a body to that
+list. Run on Claude Code 2.1.326 with only those two, the model ran read-only
+shell commands (`echo`, `cat`: the program allows them without asking), read a
+file with Read, and started a subagent that ran a shell command; only Write and
+WebFetch were denied. That is enough to read the environment and a token file.
+
+So the adapter passes three things (`src/runtime/claude-body.ts`):
+
+- `--tools ""`: no built-in tool is made available. This is what holds.
+- `--disallowedTools` with every built-in tool by name (`claudeBuiltInTools`,
+  read from what 2.1.326 lists at start plus the names its documents use), after
+  the agent's own denials. A second layer, in case a later version changes what
+  `--tools` means.
+- `--permission-mode dontAsk --allowedTools <loom's tools>`, as before.
+
+`scripts/check-claude-floor.mjs` checks this against the real program. It is
+run by a person, on purpose: it needs a signed-in `claude` and spends a few
+tokens, so it is not in the suite. It starts `claude` through the adapter, so
+the argv is the adapter's own, with a small local tools server in place of
+loom's (one harmless tool and sixty filler tools) in a scratch directory that
+holds a canary file. It asks the model to call the tool, run two shell
+commands, read the canary, write a file, fetch a local page and start a
+subagent, and judges by effects and tool events, never by what the model says:
+the tools server saw its call, no other tool gave a result, the canary's
+contents are nowhere in the output, no file was made, the page was not fetched.
+
+Run on 2026-11-18 against 2.1.326 with `claude-haiku-4-5`: all nine checks
+held, and loom's tool was callable with `--tools ""`. The same run with
+`--without-floor` (the two flags taken out) fails three of them: built-in tools
+are listed, Bash, Read and Agent give results, and the canary is read. Run it
+again when the Claude Code a machine uses changes:
+
+    npm run build
+    nice -n 19 node scripts/check-claude-floor.mjs --claude <path> --model claude-haiku-4-5
 
 Such a body asks for no startup secret, is served neither `request_secret` nor
 `use_secret`, is handed no attachment files and may name no file for a post.
@@ -1204,7 +1252,9 @@ as a list: its entries are parted by commas and white space outside brackets, so
 `src/runtime/harness-traits.ts` is the one place that reads it; loom's own rules
 ask it, and a harness is handed one entry to an argument, so the two cannot read
 a line differently. That is Claude Code's documented reading of
-`--disallowedTools`; it was not checked against a running Claude Code. The store
+`--disallowedTools`. What was checked against a running Claude Code is the floor
+under it, not this parting of a stored line: see "What a body may use" for what
+was run, on which version, and what it showed. The store
 also accepts lines no harness is known to honour (an unclosed bracket, which is
 read as one entry to the end of the line; a tab between entries, read as white
 space). An entry that would begin with an option dash once the line is parted

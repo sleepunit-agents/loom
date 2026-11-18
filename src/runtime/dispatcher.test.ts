@@ -5,7 +5,8 @@ import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
-import { Dispatcher } from './dispatcher.js';
+import { Dispatcher, UNHELD_NOTE } from './dispatcher.js';
+import { LOOM_EXIT } from './job-exit.js';
 import { harnessCannotRun } from './body-harnesses.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -192,14 +193,27 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
   const job = f.runtime.jobs.admit(incoming.conversation!)!;
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
-  // The fixture's model runs on Codex, which cannot be told what a body is not given: the job stays queued
-  // rather than go where it can only fail. On a harness that can, it is claimed with the rules.
+  // The job works on anybody else's word, so it runs with loom's tools only. The fixture's model runs on Codex,
+  // which always has a shell, and the agent has no other: the job is ended at once and says why, rather than
+  // wait a day for a machine that will never take it.
   expect(f.runtime.next('first')).toBeUndefined();
-  expect(f.runtime.jobs.get(job.id).state).toBe('queued');
+  expect(f.runtime.jobs.get(job.id)).toMatchObject({ state: 'failed', exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: UNHELD_NOTE });
+  expect(UNHELD_NOTE).toBe('Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.');
+  // Its mail starts nothing again by itself; the next message does, and on a harness that can be held the job is claimed with the rules.
+  expect(f.runtime.jobs.admit(incoming.conversation!)).toBeUndefined();
   f.roles[0].harness = 'claude';
-  const assignment = f.runtime.next('first')!;
-  expect(assignment.id).toBe(job.id);
-  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: [f.db.select().from(inbox).where(eq(inbox.conversation, incoming.conversation!)).get()!.id], word: 'others' });
+  new BridgeIncoming(f.db, f.now).receive({ id: 'm2', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Again', postedAt: f.now(), mentions: [] });
+  const second = f.runtime.jobs.admit(incoming.conversation!)!, assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(second.id);
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: f.db.select().from(inbox).where(eq(inbox.job, second.id)).all().map(item => item.id).sort(), word: 'others' });
+  // The message the ended job never answered goes to this one with the new one.
+  expect(assignment.run.policy!.mail).toHaveLength(2);
+  // An owners' job that no harness can run for another reason (a denied tool, on Codex) waits as before: a setting may change.
+  f.roles[0].harness = 'codex'; f.runtime.jobs.stop(second.id, 'owner', 'write-off');
+  const thread = f.comms.open({ agent: 'art', venue: 'loom', place: 'owners-thread', label: 'thread', member: 'owner' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: thread.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Owner work' });
+  const own = f.runtime.jobs.admit(thread.id)!;
+  expect(f.runtime.next('first')).toBeUndefined(); expect(f.runtime.jobs.get(own.id).state).toBe('queued');
 });
 it('passes over a model whose harness would refuse the job for the agent\'s next allowed model', () => {
   const f = fixture();

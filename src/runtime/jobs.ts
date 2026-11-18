@@ -373,6 +373,15 @@ export class Jobs {
     }, { behavior: 'immediate' });
   }
 
+  /** Ends a queued job that can never be placed, at once and with the reason, instead of leaving it to the
+   * queue deadline. Like a job the deadline ends, it is failed by loom and not tried again; its mail waits,
+   * and goes to the job the next fresh mail starts. Whether a job is such a one is the dispatcher's to say (Dispatcher.next). */
+  unplaceable(id: string, note: string): Job | undefined {
+    const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!job || job.state !== 'queued') return undefined;
+    return this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
+  }
+
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
