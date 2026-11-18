@@ -26,21 +26,37 @@ export interface JobMail {
   room(ids: readonly string[]): WorkerRunPolicy;
 }
 /** Who is in a job's room when every person's message that came since admission joins it: the widest room
- * the job could be offered. loom's own answer leaves out a message that would lower the job's word
+ * the job could be offered. loom's own answer leaves out a message somebody else wrote than the job's asker
  * (shared-place-mail.ts, jobRoom); this is the room without that rule, for what asks who has written. */
 export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy {
   const mail = jobMail(db, job);
   return mail.room([...mail.marked, ...mail.late.filter(item => !mail.admitted || !item.waits).map(item => item.id)]);
 }
 export function jobMail(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): JobMail {
-  const deniedTools = db.select({ pattern: agentDeniedTools.pattern, guestsOnly: agentDeniedTools.guestsOnly })
-    .from(agentDeniedTools).where(eq(agentDeniedTools.agent, job.agent))
-    .orderBy(asc(agentDeniedTools.pattern), asc(agentDeniedTools.guestsOnly)).all();
-  const found = db.select({ id: inbox.id, job: inbox.job, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord })
+  const found = db.select(mailColumns)
     .from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
       or(eq(inbox.job, job.id), job.conversation ? and(eq(inbox.conversation, job.conversation), isNull(inbox.job), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute')) : undefined))).all();
   const marked = found.filter(item => item.job === job.id);
-  type Found = typeof found[number];
+  return {
+    admitted: marked.length > 0, marked: marked.map(item => item.id),
+    late: found.filter(item => item.job !== job.id).map(item => ({ id: item.id, waits: waitsForNextJob(item) })),
+    room: rooms(db, job.agent, found),
+  };
+}
+/** The room any of a conversation's waiting mail brings, whichever job it was last marked for: what admission
+ * asks before a job is formed, to say whose word each piece is on (shared-place-mail.ts, askers). */
+export function waitingMail(db: DataDatabase, cv: { agent: string; conversation: string }): Pick<JobMail, 'room'> {
+  return { room: rooms(db, cv.agent, db.select(mailColumns).from(inbox)
+    .where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, cv.agent), eq(inbox.conversation, cv.conversation), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).all()) };
+}
+const mailColumns = { id: inbox.id, job: inbox.job, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord };
+type Found = Pick<typeof inbox.$inferSelect, keyof typeof mailColumns>;
+/** The room these pieces of mail bring: who each is from and on whose word it was sent, each looked up once. */
+function rooms(db: DataDatabase, agent: string, found: readonly Found[]): JobMail['room'] {
+  const job = { agent };
+  const deniedTools = db.select({ pattern: agentDeniedTools.pattern, guestsOnly: agentDeniedTools.guestsOnly })
+    .from(agentDeniedTools).where(eq(agentDeniedTools.agent, job.agent))
+    .orderBy(asc(agentDeniedTools.pattern), asc(agentDeniedTools.guestsOnly)).all();
   type Entry = [string, WorkerRunPolicy['people'][number]];
   type Tier = WorkerRunPolicy['people'][number]['tier'];
   const tierOf = (person: string) => (db.select({ tier: agentPeople.tier }).from(agentPeople)
@@ -96,14 +112,10 @@ export function jobMail(db: DataDatabase, job: { id: string; agent: string; conv
     entries.push([JSON.stringify([kind, person]), { kind, person, tier }]);
     return entries;
   };
-  return {
-    admitted: marked.length > 0, marked: marked.map(item => item.id),
-    late: found.filter(item => item.job !== job.id).map(item => ({ id: item.id, waits: waitsForNextJob(item) })),
-    room(ids) {
-      const wanted = new Set(ids), people = new Map<string, WorkerRunPolicy['people'][number]>(), mail: string[] = [];
-      // In the order the mail was read, so a person two pieces bring is the later one's reading, as before.
-      for (const item of found) if (wanted.has(item.id)) { mail.push(item.id); for (const [key, value] of bringers(item)) people.set(key, value); }
-      return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: mail.sort() };
-    },
+  return ids => {
+    const wanted = new Set(ids), people = new Map<string, WorkerRunPolicy['people'][number]>(), mail: string[] = [];
+    // In the order the mail was read, so a person two pieces bring is the later one's reading, as before.
+    for (const item of found) if (wanted.has(item.id)) { mail.push(item.id); for (const [key, value] of bringers(item)) people.set(key, value); }
+    return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: mail.sort() };
   };
 }

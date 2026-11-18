@@ -13,7 +13,7 @@ import type { HandoffToSelf } from './core/conversations/handoff.js';
 import type { ChannelTarget } from './core/conversations/channel-target.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
-import { jobMail } from './runtime/body-policy.js';
+import { jobMail, waitingMail } from './runtime/body-policy.js';
 import type { WorkerRunPolicy } from './runtime/worker.js';
 
 export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
@@ -91,9 +91,12 @@ export function privateRefusal(member: string | null, word: Asker | undefined): 
 }
 /** On whose word a job is working, read from its mail as the worker reads who is in the room
  * (runtime/body-policy.ts): every person its mail is from, or was sent on the word of, and the member a
- * private conversation is with. Least reach wins: it is `owners` only if every one of them is a
- * household owner or a member who has the agent; one other person makes it `others`. `person` is the one
- * of least reach, for what is done on this job's word later: a guest before a member, a member before an owner.
+ * private conversation is with. A job holds one asker's mail (askers, below: admission forms it so, and late
+ * mail joins only on the same key), so the people behind it are the agent's owners together, or one other
+ * person. This reading does not rely on that: if it is ever handed mixed mail, least reach wins. It is
+ * `owners` only if every one of them is a household owner or a member who has the agent; one other person
+ * makes it `others`. `person` is the one of least reach, for what is done on this job's word later: a guest
+ * before a member, a member before an owner.
  *
  * What counts as the agent's own work, said once: a job with nobody behind any of its mail, which is a
  * lane's own start and a firing whose asker is the agent itself (mail from the schedule, on nobody's
@@ -111,23 +114,24 @@ export function jobHeld(db: DataDatabase, job: { id: string; agent: string; conv
 }
 /** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
  * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,
- * and mail a person wrote since that does not lower its word (lateMailJoins). */
+ * and mail the same asker wrote since (lateMailJoins). */
 export function jobRoom(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy & { word: Woke } {
   const offer = offered(db, job), room = offer.room();
   return { ...room, word: offer.word(room).woke };
 }
 /** Whether mail from a person, arrived after this job was admitted, joins it, or waits for the next job. It
- * joins a job that is anybody else's already, which has nothing to lose; and otherwise only if it is not
- * itself anybody else's word. So a job admitted for its owners, or as the agent's own work, never becomes
- * anybody else's while it runs: what it may use (policy.ts, loomToolsOnly) was settled by its mail at
- * admission. The one answer, for the mail a body is handed (core/conversations, pending) and for the room.
+ * joins only when it is on the job's own key (askKey): the owners' class for an owners' job, and for anybody
+ * else's job that same person. Reach follows who asked (the owner's ruling, 2026-11-18): an owner who writes
+ * while a guest's job is queued or running is not answered by that job at the guest's reach, and a guest who
+ * writes while an owners' job runs is not answered at the owners'. Either waits for a job of its own. The one
+ * answer, for the mail a body is handed (core/conversations, pending) and for the room.
  * Asked once for a job and then of each piece: the job's mail and its word are read once, however much waits. */
 export function lateMailJoins(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): (item: { id: string }) => boolean {
   const offer = offered(db, job);
   return item => offer.joins(item.id);
 }
 /** The mail of this job that makes its word anybody else's: each piece whose own room is. What is settled
- * when such a job can never be run (runtime/dispatcher.ts), so that it lowers no later job. */
+ * when such a job can never be run (runtime/dispatcher.ts), so that it waits for no later job. */
 export function othersMail(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): string[] {
   const offer = offered(db, job);
   return offer.room().mail!.filter(id => offer.word(offer.mail.room([id])).woke === 'others');
@@ -139,21 +143,34 @@ function offered(db: DataDatabase, job: { id: string; agent: string; conversatio
   const mail = jobMail(db, job), word = wordOf(db, job);
   // A job nothing is marked for was not started by admission, and is offered everything that waits.
   const late = new Map(mail.late.map(item => [item.id, item])), judged = new Map<string, boolean>();
-  let lost: boolean | undefined;
-  /** Whether the job is anybody else's by the mail admission marked for it: it then has nothing to lose. */
-  const nothingToLose = () => lost ??= word(mail.room(mail.marked)).woke === 'others';
+  let own: string | undefined;
+  /** The key the job was formed on, by the mail admission marked for it. */
+  const key = () => own ??= askKey(word(mail.room(mail.marked)));
   const joins = (id: string): boolean => {
     const item = late.get(id); if (!item) return false;
     if (!mail.admitted) return true;
     if (item.waits) return false;
     let answer = judged.get(id);
-    if (answer === undefined) judged.set(id, answer = nothingToLose() || word(mail.room([id])).woke !== 'others');
+    if (answer === undefined) judged.set(id, answer = askKey(word(mail.room([id]))) === key());
     return answer;
   };
   return { mail, word, joins, room: () => mail.room([...mail.marked, ...mail.late.filter(item => joins(item.id)).map(item => item.id)]) };
 }
+/** The key mail is jobbed by: whose request it is. Mail on the owners' word, and the agent's own work, shares
+ * one key, as it shares a job. Mail on anybody else's word is keyed by the person, never by the class: one job
+ * holds one such person's mail (what each person and project is given will differ, so a job answers one).
+ * Mail on anybody else's word that names nobody (a sender loom cannot name, a member who has left, an agent's
+ * mail on nobody's word) cannot be keyed by a person: it shares the one key `nobody`, at the floor, and is
+ * never jobbed with anybody loom can name. */
+const askKey = (word: { woke: Woke; person?: OnWord }): string => word.woke !== 'others' ? 'owners' : word.person ? JSON.stringify([word.person.kind, word.person.id]) : 'nobody';
+/** The key of each piece of mail waiting in a conversation (askKey), whichever job it was last marked for: what
+ * admission splits waiting mail by (runtime/jobs.ts), so that one job holds mail on one key. Read once, asked of each piece. */
+export function askers(db: DataDatabase, cv: { agent: string; conversation: string }): (item: string) => string {
+  const mail = waitingMail(db, cv), word = wordOf(db, cv), keys = new Map<string, string>();
+  return item => { let key = keys.get(item); if (key === undefined) keys.set(item, key = askKey(word(mail.room([item])))); return key; };
+}
 /** The word a room of this job's mail works on. The household and the conversation's member are read once. */
-function wordOf(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): (policy: WorkerRunPolicy) => { woke: Woke; person?: OnWord } {
+function wordOf(db: DataDatabase, job: { agent: string; conversation: string | null }): (policy: WorkerRunPolicy) => { woke: Woke; person?: OnWord } {
   const sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
   const member = job.conversation ? db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.member : null;
   const unvouched = new Map<string, boolean>();

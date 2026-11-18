@@ -19,7 +19,7 @@ import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL
 import {triggerLog,triggerEdits} from './core/data/schema.js';
 import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
+import {jobWord,jobHeld,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 import {bridgeChannelFilters} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -175,7 +175,7 @@ it('hands the body that takes the next bridge message what was said before in th
  const client=bodyConversationClient({url:'https://loom.invalid',token:token.body,job:'body',conversation:incoming.conversation!,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());
  const seen:string[]=[],items:unknown[]=[];
  expect(await client.takeAndAccept(async item=>{items.push(structuredClone(item));seen.push(bodyMailContext(item)!);})).toMatchObject({accepted:1});
- expect(items).toMatchObject([{source:'slack',words:'And again',history:[{seq:1,kind:'message',sender:'someone outside the household',words:'Hello',keepUntil:null},{seq:2,kind:'reply',sender:'art',words:'Looking'},{seq:3,kind:'reply',sender:'art',words:'Hello back'}]}]);
+ expect(items).toMatchObject([{source:'slack',words:'And again',history:[{seq:1,kind:'message',sender:'the outside account ["slack","TWORK","UUSER"]',words:'Hello',keepUntil:null},{seq:2,kind:'reply',sender:'art',words:'Looking'},{seq:3,kind:'reply',sender:'art',words:'Hello back'}]}]);
  // What the harness is given: the earlier exchange, then the new words.
  expect(JSON.parse(seen[0])).toMatchObject({input:'And again',history:[{words:'Hello'},{words:'Looking'},{words:'Hello back'}]});
 });
@@ -674,11 +674,24 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  const heard=(id:string,bot:boolean)=>f.root.writes.run(()=>{f.db.insert(bridgeIncoming).values({...incoming,id,bot,text:'Hi'}).run();
   f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'slack',sourceId:id,fromKind:'unknown',words:'Hi',refs:[id]});});
  heard('bi:bot',true);expect(all.admission(cv)).toEqual({});
- // A person speaks there, here the guest: work starts (or loom says why it cannot), and it is for everything waiting.
- heard('bi:guest',false);
- const released=all.admission(cv);expect(released).toMatchObject({started:true,job:{conversation:cv}});
- // The parked note and firing, and the ones that came while it was stopped, are the new job's now, not the stopped one's.
- expect([note,firing,later,next].map(id=>job(id))).toMatchObject(Array.from({length:4},()=>({job:released.job!.id,state:'waiting'})));
+ // A person speaks there, here the guest: work starts (or loom says why it cannot) for everything waiting, one asker at a time.
+ heard('bi:guest',false);const spoke=f.db.select().from(inbox).where(eq(inbox.sourceId,'bi:guest')).get()!.id;
+ const released=all.admission(cv);expect(released).toMatchObject({started:true,behind:true,job:{conversation:cv}});
+ // The oldest mail no job was formed for is the note that came while it was stopped: the first job is the notes', the
+ // parked one with it, and not the stopped job's any more. They carry nobody's word. The message that released them
+ // is here one loom can name nobody by (it has no receipt of its own), so it is on the same key and shares their job.
+ expect([note,later,spoke].map(id=>job(id))).toMatchObject(Array.from({length:3},()=>({job:released.job!.id,state:'waiting'})));
+ expect(jobWord(f.db,released.job!)).toEqual({woke:'others'});
+ // The firings are the agent's own work, another key: they wait for a job of their own, the parked one as fresh mail.
+ // So does the guest's message the stopped job had taken: it is that guest's, and is given back as fresh mail too.
+ const stoppedFor=f.db.select().from(inbox).where(eq(inbox.source,'slack')).all().find(item=>item.sourceId!=='bi:bot'&&item.sourceId!=='bi:guest')!.id;
+ expect([firing,next,stoppedFor].map(id=>job(id))).toMatchObject(Array.from({length:3},()=>({job:null,state:'waiting'})));
+ const end=(id:string)=>f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,id)).run();});
+ // In order, one asker at a time: the guest's older message, on the guest's word, and then the firings, the agent's own.
+ end(released.job!.id);const guests=all.admission(cv);
+ expect(job(stoppedFor).job).toBe(guests.job!.id);expect([firing,next].map(id=>job(id).job)).toEqual([null,null]);expect(jobWord(f.db,guests.job!)).toEqual({woke:'others',person:{kind:'outside',id:GUEST}});
+ end(guests.job!.id);const own=all.admission(cv);
+ expect([firing,next].map(id=>job(id).job)).toEqual([own.job!.id,own.job!.id]);expect(jobWord(f.db,own.job!).woke).toBe('own');
  // Outside a bridge a stop parks nothing: a lane's waiting mail is as it was, for the lane's next job.
  const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
  let waits='';f.root.writes.run(()=>{f.db.update(jobs).set({conversation:lane}).where(eq(jobs.id,'other')).run();waits=f.root.services.conversations.send({conversation:lane,toKind:'agent',to:'art',source:'trigger',sourceId:'lane-firing',fromKind:'schedule',words:'Next'}).id;});
@@ -719,16 +732,16 @@ it('leaves a note, a firing and another agent\'s mail that arrive after a job wa
  let erased=0;f.root.writes.run(()=>{erased=expirePrivateBridgeWords(f.db,at(60_000));});
  expect(erased).toBeGreaterThan(0);expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,'direct-answer')).get()?.text).toBe('');
 });
-it('leaves a message that would make an owners\' job anybody else\'s for the next job, so the job\'s word never falls while it runs',async()=>{
+it('joins late mail to a job only when the same asker wrote it: a guest\'s message never joins an owners\' job, nor an owner\'s a guest\'s',async()=>{
  const {f,work}=await sharedPlace(),stamp=new Date(f.clock.now()).toISOString();
- f.root.writes.run(()=>{f.db.insert(members).values({id:'lodger',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ f.root.writes.run(()=>{f.db.insert(members).values(['lodger','sam'].map(id=>({id,role:'member' as const,joinedAt:stamp}))).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
  const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id,job={id:'other',agent:'art',conversation:pond};
  // Admitted for the owner's message: that mail is marked with the job, and still waiting to be taken.
  work(pond,[{kind:'person',id:'owner'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
  expect(jobWord(f.db,job).woke).toBe('owners');
- const say=(sourceId:string,from:{fromKind:'person'|'unknown';fromId?:string})=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId,words:'Late words',...from}).id;});return id;};
+ const say=(conversation:string,sourceId:string,from:{fromKind:'person'|'unknown';fromId?:string})=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',sourceId,words:'Late words',...from}).id;});return id;};
  // Before the body takes its mail, three more people write: a guest, a member who does not have the agent, and the owner again.
- const guest=say('late-guest',{fromKind:'unknown'}),lodger=say('late-lodger',{fromKind:'person',fromId:'lodger'}),again=say('late-owner',{fromKind:'person',fromId:'owner'});
+ const guest=say(pond,'late-guest',{fromKind:'unknown'}),lodger=say(pond,'late-lodger',{fromKind:'person',fromId:'lodger'}),again=say(pond,'late-owner',{fromKind:'person',fromId:'owner'});
  const offered=f.root.services.conversations.pending(pond,'other').map(item=>item.id);
  expect(offered).toContain(again);expect(offered).not.toContain(guest);expect(offered).not.toContain(lodger);expect(offered).toHaveLength(2);
  // The word is read from the mail the job is offered: it is still the owners' while the others' mail waits.
@@ -738,11 +751,66 @@ it('leaves a message that would make an owners\' job anybody else\'s for the nex
  for(const late of [guest,lodger])expect(f.db.select().from(inbox).where(eq(inbox.id,late)).get()).toMatchObject({state:'waiting',job:null});
  expect(f.db.select().from(inbox).where(eq(inbox.id,again)).get()).toMatchObject({state:'taken',job:'other'});
  expect(jobWord(f.db,job).woke).toBe('owners');
- // A job that is anybody else's already loses nothing by more mail: it takes what comes.
- const brook=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CBROOK',null]),label:'brook'}).id;
+ // A job on a guest's word is that guest's alone. An owner who writes while it is queued or running is not
+ // answered by it, at its reach: the owner's message waits for a job of its own. So does another guest's.
+ const brook=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CBROOK',null]),label:'brook'}).id,guests={...job,conversation:brook};
  work(brook,[{kind:'person',id:'lodger'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
- let more='';f.root.writes.run(()=>{more=f.root.services.conversations.send({conversation:brook,toKind:'agent',to:'art',source:'notice',sourceId:'late-guest-2',fromKind:'unknown',words:'Late words'}).id;});
- expect(jobWord(f.db,{...job,conversation:brook}).woke).toBe('others');expect(f.root.services.conversations.pending(brook,'other').map(item=>item.id)).toContain(more);
+ const first=f.db.select().from(inbox).where(eq(inbox.job,'other')).get()!.id;
+ const owners=say(brook,'late-owner-2',{fromKind:'person',fromId:'owner'}),sams=say(brook,'late-sam',{fromKind:'person',fromId:'sam'}),nobody=say(brook,'late-guest-2',{fromKind:'unknown'}),same=say(brook,'late-lodger-2',{fromKind:'person',fromId:'lodger'});
+ expect(f.root.services.conversations.pending(brook,'other').map(item=>item.id)).toEqual([first,same]);
+ // The room handed with the job at claim holds the guest alone: the owner is not in it, and the word is the guest's.
+ expect(jobWord(f.db,guests)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
+ expect(jobRoom(f.db,guests)).toMatchObject({word:'others',people:[{kind:'person',person:'lodger',tier:null}],mail:[first,same].sort()});
+ f.root.writes.run(()=>f.root.services.conversations.take(brook,'other'));
+ for(const late of [owners,sams,nobody])expect(f.db.select().from(inbox).where(eq(inbox.id,late)).get()).toMatchObject({state:'waiting',job:null});
+});
+it('forms one job for one asker at admission: the oldest waiting mail first, and the rest in jobs of their own, in order',async()=>{
+ const {f}=await sharedPlace(),all=runnable(f),stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values(['lodger','sam'].map(id=>({id,role:'member' as const,joinedAt:stamp}))).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ const say=(words:string,fromId:string)=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:words,words,fromKind:'person',fromId}).id;});return id;};
+ const held=(job:string)=>f.db.select().from(inbox).where(eq(inbox.job,job)).all().map(item=>item.words).sort();
+ const end=(job:string)=>f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,job)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,job)).run();});
+ // Two guests and the owner have written, in this order, before any job was formed.
+ say('lodger 1','lodger');say('owner 1','owner');say('sam 1','sam');say('lodger 2','lodger');say('owner 2','owner');
+ // The oldest piece is the lodger's: the first job holds the lodger's mail and nobody else's, and works on the lodger's word.
+ let started=all.admission(pond);
+ expect(started).toMatchObject({started:true,behind:true,job:{state:'queued',brief:'lodger 1\n\nlodger 2'}});expect(held(started.job!.id)).toEqual(['lodger 1','lodger 2']);
+ expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
+ expect(f.db.select().from(inbox).where(eq(inbox.conversation,pond)).all().filter(item=>item.job===null).map(item=>item.words).sort()).toEqual(['owner 1','owner 2','sam 1']);
+ // While it has not ended nothing else is formed: jobs in one conversation run one at a time.
+ expect(all.admission(pond)).toMatchObject({job:{id:started.job!.id},behind:true});expect(all.admission(pond).started).toBeUndefined();
+ end(started.job!.id);
+ // Then the owner's, on owners' word: both of the owner's pieces, and neither guest's.
+ started=all.admission(pond);
+ expect(started).toMatchObject({started:true,behind:true});expect(held(started.job!.id)).toEqual(['owner 1','owner 2']);
+ expect(jobWord(f.db,started.job!)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
+ end(started.job!.id);
+ // Then the other guest's: one job holds one such person's mail, never two guests' together.
+ started=all.admission(pond);
+ expect(started).toMatchObject({started:true});expect(started.behind).toBeFalsy();expect(held(started.job!.id)).toEqual(['sam 1']);
+ expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'sam'}});
+});
+it('carries mail an ended job left behind into no other asker\'s job: when somebody speaks it gets a job of its own asker',async()=>{
+ const {f}=await sharedPlace(),all=runnable(f),stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'lodger',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ const say=(words:string,fromId:string)=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:words,words,fromKind:'person',fromId}).id;});return id;};
+ const row=(id:string)=>f.db.select().from(inbox).where(eq(inbox.id,id)).get()!;
+ // A guest's job ended with its mail unanswered: out of attempts, or never placed within the queue deadline.
+ const guests=say('lodger asks','lodger'),failed=all.admission(pond).job!;
+ f.root.writes.run(()=>f.db.update(jobs).set({state:'failed'}).where(eq(jobs.id,failed.id)).run());
+ expect(row(guests)).toMatchObject({state:'waiting',job:failed.id});expect(all.admission(pond)).toEqual({});
+ // The owner speaks. The job that starts is the owner's alone, on owners' word; the guest's mail is not marked into it.
+ const owners=say('owner asks','owner'),started=all.admission(pond);
+ expect(started).toMatchObject({started:true,behind:true,job:{brief:'owner asks'}});expect(row(owners).job).toBe(started.job!.id);
+ expect(row(guests)).toMatchObject({state:'waiting',job:null});
+ expect(jobWord(f.db,started.job!)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
+ expect(jobRoom(f.db,started.job!)).toMatchObject({word:'owners',mail:[owners]});
+ // It waits for a job of its own, which is the guest's and runs at the guest's reach.
+ f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,started.job!.id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,started.job!.id)).run();});
+ const next=all.admission(pond);
+ expect(next).toMatchObject({started:true});expect(row(guests).job).toBe(next.job!.id);expect(jobWord(f.db,next.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
 });
 it('holds a late answer to a card to the same rule: the owner\'s joins the running owners\' job, and anybody else\'s waits for the next',async()=>{
  const {f,work}=await sharedPlace(),stamp=new Date(f.clock.now()).toISOString(),mail=f.root.services.conversations;
@@ -1375,6 +1443,8 @@ it('settles only the mail that makes a job unplaceable: the rest of what it held
   f.db.update(inbox).set({job:'body',state:'waiting'}).where(eq(inbox.conversation,cv)).run();});
  const guests=f.db.select().from(inbox).where(eq(inbox.source,'slack')).get()!.id;
  expect(othersMail(f.db,{id:'body',agent:'art',conversation:cv})).toEqual([guests]);
+ // Admission never forms such a job. If one is ever seen, its word is the least reach in it, and it is held.
+ expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv})).toEqual({woke:'others',person:{kind:'outside',id:GUEST}});expect(jobHeld(f.db,{id:'body',agent:'art',conversation:cv})).toBe(true);
  f.root.writes.run(()=>{expect(all.unplaceable('body','No harness here can be held to loom\'s tools',[guests])).toMatchObject({state:'failed',exitBy:'loom'});});
  expect(f.db.select().from(inbox).where(eq(inbox.id,guests)).get()).toMatchObject({state:'resolved',resolution:'No harness here can be held to loom\'s tools'});
  expect(f.db.select().from(inbox).where(eq(inbox.id,owners)).get()).toMatchObject({state:'waiting',resolution:null});

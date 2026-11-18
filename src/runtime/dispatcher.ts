@@ -55,8 +55,8 @@ export class Dispatcher {
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
         // it is ended now and says why. Any other job that cannot be placed waits, as before.
-        // The mail that made it anybody else's is closed with the same reason, so it lowers no later job: an
-        // owner's next message in that conversation starts a job on owners' word, which runs.
+        // The mail that made it anybody else's is closed with the same reason, so it is not jobbed again in vain: an
+        // owner's message in that conversation gets a job on owners' word, which runs.
         if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job)); continue; }
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);

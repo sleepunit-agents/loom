@@ -12,6 +12,10 @@
  * out; the words of a direct conversation carry the time they will be erased, and a line past it is not
  * handed over. A room's words are kept without limit and carry no such time.
  *
+ * Each line says who said it: a member by id; an outside account by the key loom knows it by, as a job is told
+ * who it works for (runtime/harness-traits.ts, workingFor), so two guests in one room are two names; a bot as
+ * a bot. A body works for one asker, and what anybody else said in the room is talk it reads here.
+ *
  * Newest first until the bound is reached, then in the order they were said.
  */
 import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
@@ -21,6 +25,7 @@ import { commsKeepDays } from '../data/comms-days.js';
 import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
 import type { HistoryLine } from './history-context.js';
 import { keepUntilFor } from './retention.js';
+import { outsidePersonKey } from '../../pieces/bridges/keys.js';
 
 
 export function prepareBridgeHistory(db: DataDatabase, now: () => string, conversation: string): () => HistoryLine[] {
@@ -33,12 +38,13 @@ export function prepareBridgeHistory(db: DataDatabase, now: () => string, conver
   type Said = Omit<HistoryLine, 'seq'> & { order: number };
   const read = (): Omit<HistoryLine, 'seq'>[] => {
     const days = commsKeepDays(db), until = (at: string) => erased ? keepUntilFor(at, days) : null;
-    const received: Said[] = db.selectDistinct({ id: bridgeIncoming.id, order: sql<number>`${bridgeIncoming}.rowid`, at: bridgeIncoming.postedAt, dated: bridgeIncoming.receivedAt, words: bridgeIncoming.text, member: bridgeIncoming.member, bot: bridgeIncoming.bot, webhook: bridgeIncoming.webhook })
+    const workspace = (() => { try { const place: unknown = JSON.parse(cv.place); return Array.isArray(place) && typeof place[0] === 'string' ? place[0] : null; } catch { return null; } })();
+    const received: Said[] = db.selectDistinct({ id: bridgeIncoming.id, user: bridgeIncoming.user, order: sql<number>`${bridgeIncoming}.rowid`, at: bridgeIncoming.postedAt, dated: bridgeIncoming.receivedAt, words: bridgeIncoming.text, member: bridgeIncoming.member, bot: bridgeIncoming.bot, webhook: bridgeIncoming.webhook })
       .from(bridgeIncoming).innerJoin(inboxRefs, eq(inboxRefs.ref, bridgeIncoming.id)).innerJoin(inbox, eq(inbox.id, inboxRefs.item))
       .where(and(eq(bridgeIncoming.conversation, conversation), eq(bridgeIncoming.state, 'delivered'), ne(bridgeIncoming.text, ''),
         eq(inbox.conversation, conversation), eq(inbox.toKind, 'agent'), eq(inbox.to, cv.agent), eq(inbox.state, 'done')))
       .orderBy(desc(bridgeIncoming.postedAt), desc(sql`${bridgeIncoming}.rowid`)).limit(HISTORY_LINES).all()
-      .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
+      .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : workspace !== null && row.user ? `the outside account ${outsidePersonKey(cv.venue as 'discord' | 'slack', workspace, row.user)}` : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
     const sent: Said[] = db.select({ order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
       .where(and(eq(bridgeSends.state, 'sent'), ne(bridgeSends.text, ''),
         // What it posted there: answers to the conversation's messages, and posts that answered none.

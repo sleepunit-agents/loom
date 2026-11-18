@@ -557,7 +557,7 @@ export const WORD_SCHEDULE_REFUSAL = 'This job is not working for the agent\'s o
 export function maySchedule(woke: Woke, conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
   return woke !== 'others' || (isSharedPlace(conversation) && !!conversation.id && trigger.conversation === conversation.id);
 }
-/** On whose word a body is working, by least reach (shared-place-mail.ts, jobWord): the agent's own work,
+/** On whose word a body is working (shared-place-mail.ts, jobWord: one asker's, a job being formed for one asker's mail): the agent's own work,
  * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
  * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
 export type Woke = 'own' | 'owners' | 'others';

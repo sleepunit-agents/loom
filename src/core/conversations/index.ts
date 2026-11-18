@@ -40,7 +40,7 @@ export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => st
  * the question/answer round trip. now is injected for fake-clock execution. */
 export class Conversations {
   /** `lateJoins` says whether mail from a person, arrived after a job was admitted, may still join it
-   * (pending). Whose word lowers a job's reach is not this service's to know, so whoever makes one says: the
+   * (pending). Whose request a job is working on is not this service's to know, so whoever makes one says: the
    * composition gives the instance bodies take their mail through the real rule (shared-conversations.ts,
    * from shared-place-mail.ts lateMailJoins). Not given, it is closed: such mail waits for the next job. */
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), private readonly lateJoins: LateJoins = lateMailWaits) {}
@@ -145,8 +145,8 @@ export class Conversations {
     // retry carries the mark over, so what came later has no job yet. By that mark and by no clock: mail
     // written in the millisecond the job was claimed came later all the same. A job nothing is marked for
     // was not started by admission (only tests make one), and nothing says what it was started for.
-    // Mail from a person that came later joins the job unless it would make the job's word anybody else's
-    // (lateJoins): a job admitted for its owners is never handed a guest's words while it runs.
+    // Mail from a person that came later joins the job only when the same asker wrote it (lateJoins): a job
+    // formed for its owners is never handed a guest's words to answer, nor a guest's job an owner's.
     const admitted = !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId))).get();
     let judge: ((item: Item) => boolean) | undefined;
     const joins = (item: Item) => !waitsForNextJob(item) && (judge ??= this.lateJoins({ id: jobId, agent: conversation.agent, conversation: conversationId }))(item);

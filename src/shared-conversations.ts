@@ -21,7 +21,7 @@ import type { WordsKey } from './core/conversations/words.js';
 export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey) {
   const now = () => new Date(clock.now()).toISOString();
   // Bodies take their mail through this service: mail a person writes after a job was admitted joins it only
-  // if the job's word does not fall by it (shared-place-mail.ts, lateMailJoins).
+  // when the same asker wrote it (shared-place-mail.ts, lateMailJoins).
   const service = new CommsMessages(db, key, now, job => lateMailJoins(db, job));
   // A thread is read by the rule of its conversation: its own member, nobody else.
   const policy = (viewer: Viewer, fields: Record<string, AnyColumn>) => conversationVisibility(viewer).conversations!(fields);

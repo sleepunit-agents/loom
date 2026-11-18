@@ -8,7 +8,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
-import { named, privateRefusal, stillKnown } from '../shared-place-mail.js';
+import { askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
@@ -42,9 +42,10 @@ export interface Admission {
   job?: Job;
   /** Whether this call started that job. */
   started?: boolean;
-  /** That job was already there and does not hold all of the conversation's waiting mail: some arrived
-   * after it was admitted. A body takes mail once, so that mail may never reach it, and it is not admitted
-   * until it is held by a job. It becomes one when this job has ended and admission is asked again. */
+  /** That job does not hold all of the conversation's waiting mail: some arrived after it was admitted, or
+   * was somebody else's request when it was formed (one job holds one asker's mail). A body takes mail once,
+   * so that mail may never reach it, and it is not admitted until it is held by a job. It becomes one when
+   * this job has ended and admission is asked again. */
   behind?: boolean;
   /** Why mail that is waiting got no job, in loom's own words. Absent when there was nothing to admit. */
   declined?: string;
@@ -84,7 +85,14 @@ export class Jobs {
 
   /** Called after inbox settling. Repeated admission returns the same active job, whether or not it holds
    * the mail that is waiting now (see Admission.behind).
-   * Work that ran out of attempts and work that was stopped need fresh mail to resume. */
+   * Work that ran out of attempts and work that was stopped need fresh mail to resume.
+   *
+   * One job holds one asker's mail (shared-place-mail.ts, askers): reach follows who asked, never who else
+   * is in the room. The oldest mail no job has been formed for decides whose job this is. Everything waiting
+   * on that key goes with it, mail an ended job left behind included. Whatever waits on another key is left
+   * for a job of its own, formed when this one has ended: jobs in one conversation run one at a time, in
+   * order. Mail an ended job left behind on another key is given back as fresh mail in the same write, so it
+   * is neither carried into this asker's job nor forgotten. */
   admit(conversationId: string): Job | undefined { return this.admission(conversationId).job; }
 
   /** The notices that say why this mail got no job: one for each of the agent's owners, or for the household's
@@ -110,7 +118,7 @@ export class Jobs {
    * agent's notices go to are told. Asked as a job is about to start, of everything then waiting: mail
    * parked by a stop word is asked about when it is released, not when it is parked. The same is asked of a
    * conversation that is one member's private one: mail on anybody else's word is not delivered into it. A brief from another
-   * agent is not this: its word is known to the agent that sent it, and counts for least reach (jobWord). */
+   * agent is not this: its word is known to the agent that sent it, and is the key it is jobbed by (jobWord). */
   private wordUnknown(agent: string, member: string | null, mail: readonly (typeof inbox.$inferSelect)[]): Set<string> {
     const gone = new Set<string>();
     for (const item of mail) {
@@ -162,22 +170,27 @@ export class Jobs {
       if (!settings) return this.declined(conversation.agent, mail, 'the agent has no run settings');
       if (!model) return this.declined(conversation.agent, mail, 'the agent has no model to run on');
       const at = this.now();
+      const key = askers(this.db, { agent: conversation.agent, conversation: conversationId }), asked = key(mail.find(item => item.job === null)!.id);
+      const mine = mail.filter(item => key(item.id) === asked), rest = mail.filter(item => key(item.id) !== asked);
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
         houseRepository: settings.houseRepository, houseFile: settings.houseFile, houseBranch: settings.houseBranch, queuedAt: at,
       }).returning().get();
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
-      this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
+      const waits = and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'));
+      this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(waits, inArray(inbox.id, mine.map(item => item.id)))).run();
+      const left = rest.filter(item => item.job !== null).map(item => item.id);
+      if (left.length) this.db.update(inbox).set({ job: null, changedAt: at }).where(and(waits, inArray(inbox.id, left))).run();
       this.delivery(job.id,'held');
       for (const item of mail) this.mail.resolveSource('notice', `mail-not-admitted:${JSON.stringify([conversation.agent, item.id])}`, 'Work was started');
-      return { job, started: true };
+      return { job, started: true, ...(rest.length ? { behind: true } : {}) };
     }, { behavior: 'immediate' });
   }
 

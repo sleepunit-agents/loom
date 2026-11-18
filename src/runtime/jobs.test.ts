@@ -234,7 +234,12 @@ it('attributes automatic schedule/unknown admission to the receiving agent', () 
   const f = fixture();
   f.comms.send({ toKind: 'agent', to: 'art', conversation: f.conversation.id, source: 'trigger', fromKind: 'schedule', words: 'Scheduled work' });
   f.comms.send({ toKind: 'agent', to: 'art', conversation: f.conversation.id, source: 'notice', fromKind: 'unknown', words: 'Notice' });
-  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ startedByKind: 'agent', startedBy: 'art', brief: 'Scheduled work\n\nNotice' });
+  // One job holds one asker's mail: the schedule's firing is the agent's own work, and the notice is from a sender
+  // nobody can name. The older piece is jobbed first, the other after it.
+  const first = f.runtime.admission(f.conversation.id);
+  expect(first).toMatchObject({ started: true, behind: true, job: { startedByKind: 'agent', startedBy: 'art', brief: 'Scheduled work' } });
+  f.db.update(inbox).set({ state: 'done' }).where(eq(inbox.job, first.job!.id)).run(); f.db.update(jobs).set({ state: 'done' }).where(eq(jobs.id, first.job!.id)).run();
+  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ startedByKind: 'agent', startedBy: 'art', brief: 'Notice' });
 });
 it('marks silent jobs lost after the boundary and rejects late worker events', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;

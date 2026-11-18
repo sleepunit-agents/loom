@@ -198,7 +198,7 @@ export function placeCrowded(db: DataDatabase, conversation: string, now: string
     words: `${count} schedules now stand for one conversation of ${agent} (${conversation}). Nothing was refused: stop any that should not stand.` } : undefined;
 }
 /** Who is asking, for a trigger that names this conversation, as it is set or its words, file or times are
- * changed. By a shared place's body, the person its job is working on the word of (the one of least reach), or the
+ * changed. By a shared place's body, the person its job is working on the word of, or the
  * agent itself when the work is the agent's own; never somebody nobody can name. By a person, that
  * member; by the agent anywhere else, the member it works for or the agent. */
 export function asking(db: DataDatabase, viewer: Viewer, agent: string, work: Work | undefined): Asker {
