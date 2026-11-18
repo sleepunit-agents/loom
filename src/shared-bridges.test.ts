@@ -620,7 +620,24 @@ it('keys what a body may do with a trigger or a note on whose word it works, not
  work(lane,[{kind:'person',id:'kim'}]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(200);
  work(lane,[]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(200);
  expect((await f.call('tempo','set',once({conversation:kims}),token.other)).status).toBe(200);
- void cv;
+ // What a body may schedule follows its job's word everywhere. A member who does not have the agent is not
+ // its owner: a job on that word, in a place that is no shared place (a lane's wake here; a brief's conversation
+ // is the same), schedules nothing but into its own bridge conversation, and it has none. Before, it set a
+ // trigger of the agent's own, and its words then ran with the agent's whole reach.
+ f.root.writes.run(()=>f.db.insert(members).values({id:'sam',role:'member',joinedAt:stamp}).run());
+ const plain=()=>once({conversation:undefined});
+ work(lane,[{kind:'person',id:'sam'}]);
+ expect(jobWord(f.db,{id:'other',agent:'art',conversation:lane})).toEqual({woke:'others',person:{kind:'member',id:'sam'}});
+ expect(await f.call('tempo','set',plain(),token.other)).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
+ expect(await f.call('tempo','set',once({conversation:cv}),token.other)).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
+ // The same job with a member who has the agent behind it, and the agent's own work, schedule as before.
+ work(lane,[{kind:'person',id:'kim'}]);expect((await f.call('tempo','set',plain(),token.other)).status).toBe(200);
+ work(lane,[]);const owned=plain();expect((await f.call('tempo','set',owned,token.other)).status).toBe(200);
+ // On sam's word again: nothing of the agent's is reworded, stopped or started either, as from a shared place.
+ work(lane,[{kind:'person',id:'sam'}]);
+ expect((await f.call('tempo','edit',{id:owned.id,instructions:'Sam\'s words'},token.other)).status).toBe(403);
+ for(const action of ['stop','start','runNow'])expect((await f.call('tempo',action,{id:owned.id},token.other)).status,action).toBe(403);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,owned.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
 });
 
 /** What admission needs before it starts a job for the agent, and the Jobs service on the fixture's clock. */

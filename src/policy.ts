@@ -543,8 +543,9 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
  * would later run words chosen there without any of that. So a shared place's body may set, reword, stop,
  * start and run only a trigger whose firing comes back into that same conversation (`triggers.conversation`),
  * as a job on its asker's word (src/shared-place-triggers.ts). A body in one member's own thread or direct
- * message is not in a shared place: maySetTrigger alone decides for it, as for a person and for an
- * agent's own session. */
+ * message is not in a shared place: maySetTrigger decides for it, as for a person and for an agent's own
+ * session. Beside where it works, on whose word a job works limits it everywhere (sharedPlaceRefusal): a
+ * job with anybody but owners behind it schedules only into its own bridge conversation. */
 export const isSharedPlace = (conversation: { venue: string; member: string | null }): boolean =>
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
 export const SHARED_PLACE_SCHEDULE_REFUSAL = 'A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';

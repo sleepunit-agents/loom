@@ -85,9 +85,11 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   firing's words and its asker always come from the same person.
 - **By whose word, not where.** A body working for anybody but owners fires no
   trigger by hand (`tempo.runNow`): it is awake and does the work now. No job
-  fires or starts again the trigger whose firing woke it. A job with somebody
-  outside the household behind it schedules only into its own bridge
-  conversation, wherever it is working. One member's private conversation is
+  fires or starts again the trigger whose firing woke it. A job with anybody
+  but owners behind it (a guest, a member who does not have the agent,
+  somebody loom cannot name) sets, rewords, stops and starts only what fires
+  into its own bridge conversation, wherever it is working: in a brief's
+  conversation or a wake that is nothing at all. One member's private conversation is
   named only on that member's word, or by the agent's own work. How often a
   trigger repeats is asked when it is set and when its times change, never to
   stop, start, run or reword one.

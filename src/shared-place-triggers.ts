@@ -38,10 +38,11 @@ export function sharedPlaceRefusal(db: DataDatabase, work: Work | undefined, act
     .where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'trigger'), eq(inboxRefs.ref, trigger.id))).get()) return REFIRE_REFUSAL;
   // A body working for anybody but owners is awake and does its work now.
   if (action === 'runNow' && word.woke === 'others') return RUN_NOW_REFUSAL;
-  // Somebody outside the household, or nobody loom can name, is behind this job: it schedules only into its own
-  // bridge conversation, wherever it is working (a brief's conversation and a wake included).
-  const outsider = word.woke === 'others' && word.person?.kind !== 'member', own = isSharedPlace(work.cv) && trigger.conversation === work.cv.id;
-  if (outsider && !own && action !== 'stop') return SHARED_PLACE_SCHEDULE_REFUSAL;
+  // Anybody but owners is behind this job (a guest, a member who does not have the agent, nobody loom can name):
+  // it sets, rewords, stops and starts only what fires into its own bridge conversation, wherever it is working
+  // (a brief's conversation and a wake included). By the word and not the venue: the same answer a shared place gives.
+  const own = isSharedPlace(work.cv) && trigger.conversation === work.cv.id;
+  if (word.woke === 'others' && !own) return SHARED_PLACE_SCHEDULE_REFUSAL;
   if (!isSharedPlace(work.cv) || !trigger.conversation) return undefined;
   // A trigger keeps to its asker: a body working for anybody but owners touches only what the same person asked for.
   if (stored && word.woke === 'others' && !(word.person && word.person.kind === trigger.askedByKind && word.person.id === trigger.askedBy)) return SHARED_PLACE_ASKER_REFUSAL;
