@@ -112,6 +112,37 @@ export function jobWord(db: DataDatabase, job: { id: string; agent: string; conv
 export function jobHeld(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): boolean {
   return loomToolsOnly(jobWord(db, job).woke);
 }
+/** Why a body working for anybody but owners holds back nothing of its agent's: a pause holds every trigger the agent
+ * has, and muted mail starts no job and joins none, in whatever conversation it waits. */
+export const WORD_PAUSE_REFUSAL = 'This job is not working for the agent\'s owners: it does not pause or resume the agent. Stop a schedule the same person asked for here, or have an owner do it.';
+export const WORD_VOLUME_REFUSAL = 'This job is not working for the agent\'s owners: it does not change the volume of any mail.';
+const ASK_INSTEAD = 'If an owner should decide it, ask them a question with conversation.digest.';
+/** What a body on anybody else's word is told at each door it is refused. The rule behind them all: on such a word a
+ * body changes nothing outside its own conversation, except by asking the owners a question (`conversation.digest`
+ * with a `question`). A notice is pushed to the owners' phones in the agent's own name; a task, a household
+ * proposal and an approval card are the household's records, and an allowed card is an allowance to act. */
+export const HELD_REFUSALS = {
+  pause: WORD_PAUSE_REFUSAL, resume: WORD_PAUSE_REFUSAL, volume: WORD_VOLUME_REFUSAL,
+  notice: `This job is not working for the agent's owners: it raises and clears no notice. ${ASK_INSTEAD}`,
+  task: `This job is not working for the agent's owners: it makes and changes no task. ${ASK_INSTEAD}`,
+  propose: `This job is not working for the agent's owners: it proposes no change to the household. ${ASK_INSTEAD}`,
+  approval: `This job is not working for the agent's owners: it asks for no approval, and uses, reports on and withdraws none. ${ASK_INSTEAD}`,
+} as const;
+/** Why the body of this job may not do this: its job works on anybody else's word (jobHeld). The one question for
+ * every door such a body is refused at, asked of the job and never of what the body says about itself. Nothing for
+ * a caller that is no job's body, and for a job on owners' word or the agent's own work. */
+export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } } | undefined, action: keyof typeof HELD_REFUSALS): string | undefined {
+  return work && jobHeld(db, work.job) ? HELD_REFUSALS[action] : undefined;
+}
+/** loom's line at the head of a question a body on anybody else's word asks a person (`conversation.digest`): on
+ * whose word the body was working, as loom names them. So an owner never reads a question a guest steered as the
+ * agent's own, and the job that later reads the owner's answer, which quotes the question, is told the same.
+ * Nothing for a job on owners' word or the agent's own work: its question is its own words alone. */
+export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }): string | undefined {
+  const word = jobWord(db, work.job);
+  return word.woke !== 'others' ? undefined
+    : `[From loom: ${work.job.agent} asks this while working for ${word.person ? named(word.person) : 'somebody loom cannot name'}, who is not one of its owners. The words below are that job's, not ${work.job.agent}'s own work.]`;
+}
 /** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
  * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,
  * and mail the same asker wrote since (lateMailJoins). */

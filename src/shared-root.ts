@@ -29,7 +29,7 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, secretChanges } from './core/data/schema.js';
+import { boxes, jobs as jobRows, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
@@ -82,7 +82,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { selfHandoff } from './shared-place-mail.js';
+import { askedOnWord, heldRefusal, selfHandoff } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -203,7 +203,11 @@ export function sharedRoot(options: {
   // Whose memory a command works on is the caller's own agent's, on proof of its credential. A body working
   // for a member is that agent only while the member has the agent (rules.agentItself), the same answer
   // the memory reads give it.
-  registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes);
+  // What the body of a job on anybody else's word is refused, asked of the job its credential is bound to and never of
+  // what the body says: on such a word a body changes nothing outside its own conversation, except by asking the owners
+  // a question (shared-place-mail.ts, heldRefusal).
+  const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return heldRefusal(db,job?{job}:undefined,action);};
+  registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
   memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
@@ -280,7 +284,7 @@ export function sharedRoot(options: {
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),work=>askedOnWord(db,work));
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -336,10 +340,10 @@ export function sharedRoot(options: {
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
-  householdProposals.register(operations, services.approvals, bodyScope);
+  householdProposals.register(operations, services.approvals, bodyScope, held('propose'));
   const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => { tempo?.capacityChanged(); data.changed(); }));
   startupCleanups.push(stopHouseholdProposals);
-  registerSharedTaskCommands(operations, db, services.tasks);
+  registerSharedTaskCommands(operations, db, services.tasks, held('task'));
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
@@ -436,7 +440,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
-  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession);
+  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals);
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);

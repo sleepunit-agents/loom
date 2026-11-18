@@ -20,7 +20,12 @@ import {MESSAGE_WORDS_MAX} from './core/conversations/words.js';
  *  - A body in its conversation: the conversation's labels, and its principal (policy.ts, `workPrincipal`).
  *  - The agent's terminal credential, bound to no job: the agent's own work, in no conversation. */
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string,
- terminal:(viewer:Viewer)=>Readonly<{agent:string}>|undefined){
+ terminal:(viewer:Viewer)=>Readonly<{agent:string}>|undefined,
+ /** Why this caller asks for no approval and uses none, in words for the caller: the body of a job on anybody else's
+  * word (shared-place-mail.ts, heldRefusal). An allowed card is an allowance to act, and a standing rule may allow
+  * one with no owner looking: neither is a guest's job's to get, to spend or to take away. Reading a rule is left. */
+ held:(viewer:Viewer)=>string|undefined=()=>undefined){
+ const refuseHeld=(viewer:Viewer)=>{const refused=held(viewer);if(refused)throw new OperationError('denied',refused);};
  // The terminal credential is its agent while the agent is in the household (rule `agentItself`).
  const session=(viewer:Viewer)=>{const own=current(viewer)?undefined:terminal(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
  const defaults=bodyOperationDefaults(current,hash,'body-work');
@@ -63,6 +68,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{merge(source(viewer),input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){
+   refuseHeld(ctx.viewer);
    const context=source(ctx.viewer),binding=merge(context,input.kind,input.target,true);
    const row=requestApprovalWithRules(db,service,rules,{...input,agent:context.agent,conversation:context.conversation,askedFrom:context.askedFrom,actingFor:context.actingFor,member:context.member,project:binding.project});
    if(binding.change&&row.state==='allowed')ctx.changed('changes',binding.change.id);
@@ -84,15 +90,15 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  }));
  operations.register(operation({...common,name:'approvals.report',input:z.object({id:z.string().min(1),what:boundedText}).strict(),output:z.object({id:z.string(),reported:z.literal(true)}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id),
-  run(ctx,input){const row=card(ctx.viewer,input.id);service.reportUsed(row.id,row.agent,input.what);ctx.changed('approvals',row.id);return {id:row.id,reported:true as const};},
+  run(ctx,input){refuseHeld(ctx.viewer);const row=card(ctx.viewer,input.id);service.reportUsed(row.id,row.agent,input.what);ctx.changed('approvals',row.id);return {id:row.id,reported:true as const};},
  }));
  operations.register(operation({...common,name:'approvals.withdraw',input:z.object({id:z.string().min(1)}).strict(),output:z.object({id:z.string(),state:z.literal('withdrawn')}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id),
-  run(ctx,input){const row=card(ctx.viewer,input.id);service.withdraw(row.id,row.agent);ctx.changed('approvals',row.id);return {id:row.id,state:'withdrawn' as const};},
+  run(ctx,input){refuseHeld(ctx.viewer);const row=card(ctx.viewer,input.id);service.withdraw(row.id,row.agent);ctx.changed('approvals',row.id);return {id:row.id,state:'withdrawn' as const};},
  }));
  operations.register(operation({...common,name:'approvals.use',input:target.extend({id:z.string().min(1)}).strict(),output:z.object({id:z.string(),used:z.boolean()}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id,true),
   rejected(viewer,input,failure){if(failure.code==='denied'&&belongs(viewer,input.id)&&!belongs(viewer,input.id,true)){const row=card(viewer,input.id);service.refuseUse(row.id,row.agent,'Cached merge target no longer matches');}},
-  run(ctx,input){const row=card(ctx.viewer,input.id),result=service.use(row.id,row.agent,input.kind,input.target);ctx.changed('approvals',row.id);return {id:row.id,used:result.ok};},
+  run(ctx,input){refuseHeld(ctx.viewer);const row=card(ctx.viewer,input.id),result=service.use(row.id,row.agent,input.kind,input.target);ctx.changed('approvals',row.id);return {id:row.id,used:result.ok};},
  }));
 }

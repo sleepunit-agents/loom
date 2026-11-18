@@ -373,7 +373,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   file,
   // Called after the outer Allow transaction commits, so readers see the change.
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
-  register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>){
+  /** `held` answers why this caller proposes nothing, in words for the caller: the body of a job on anybody else's
+   * word (shared-place-mail.ts, heldRefusal). loom's own card for such a job's repeating schedule is filed by `file`. */
+  register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>,held:(viewer:Viewer)=>string|undefined=()=>undefined){
    // An agent in the household now may propose for itself. Proposing changes nothing: see the file header.
    // One change may also be asked for by a household owner, and by an agent only about itself: letting an
    // agent onto a project (policy.ts, rule `asksToJoin`).
@@ -383,6 +385,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
     input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
     run(ctx,raw){
+     const heldBy=held(ctx.viewer);if(heldBy)throw new OperationError('denied',heldBy);
      if(raw.change==='projectJoin'){
       // A household owner reads the household, so is told at once what stands against it. An agent is told
       // only what it reads for itself: that it is already on a project it is on. Anything else is filed, and

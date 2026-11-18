@@ -39,7 +39,11 @@ export interface NoticePushes{
  /** Send what is queued, once the write is committed. */
  flush():void;
 }
-export function registerSharedNotices(operations:Operations,db:DataDatabase,clock:Clock,own:(viewer:Viewer)=>Readonly<{agent:string}>|undefined,pushes:()=>NoticePushes|undefined){
+/** `held` answers why this caller raises and clears nothing, in words for the caller: the body of a job on anybody
+ * else's word (shared-place-mail.ts, heldRefusal). A notice is pushed to the phones of the agent's people in the
+ * agent's own name, so it is the agent's own work's and its owners' jobs' to send. */
+export function registerSharedNotices(operations:Operations,db:DataDatabase,clock:Clock,own:(viewer:Viewer)=>Readonly<{agent:string}>|undefined,pushes:()=>NoticePushes|undefined,held:(viewer:Viewer)=>string|undefined=()=>undefined){
+ const refuseHeld=(viewer:Viewer)=>{const refused=held(viewer);if(refused)throw new OperationError('denied',refused);};
  const now=()=>new Date(clock.now()).toISOString();
  const agent=(viewer:Viewer)=>{const found=own(viewer);return found&&holds(rules.agentItself,viewer,{agent:found.agent},sharedSharing(db))?found.agent:undefined;};
  // One raising of a key for one person is one source id: the agent, the key and a fresh id, under one of
@@ -57,6 +61,7 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
   output:z.object({item:z.string(),raised:z.boolean(),pushed:z.boolean()}).strict(),
   run(ctx,input){
    const name=agent(ctx.viewer);if(!name)throw new OperationError('denied','An agent\'s own credential is required');
+   refuseHeld(ctx.viewer);
    const mail=new Conversations(db,now,lateMailWaits),all=ofKey(name,input.key),people=agentsPeople(name,sharedSharing(db));
    // Who has the agent is read again on every raise. A notice waiting for someone who no longer has it is
    // settled as it stands: the new words are for the people who have the agent now.
@@ -87,6 +92,7 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
   input:z.object({key,why:line(NOTICE_WHY_MAX)}).strict(),output:z.object({cleared:z.boolean()}).strict(),
   run(ctx,input){
    const name=agent(ctx.viewer);if(!name)throw new OperationError('denied','An agent\'s own credential is required');
+   refuseHeld(ctx.viewer);
    // Who has the agent is read again, as on a raise. The agent's reason is written only for the people who
    // have it now. A notice still waiting for someone else is settled with loom's own line: nothing the agent
    // writes reaches the Inbox of a person it is no longer for. `cleared` is about the people who have it.

@@ -19,9 +19,9 @@ import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL
 import {triggerLog,triggerEdits} from './core/data/schema.js';
 import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,jobHeld,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
+import {HELD_REFUSALS,jobWord,jobHeld,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
-import {bridgeChannelFilters} from './core/data/schema.js';
+import {bridgeChannelFilters,tasks,taskComments} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const token={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64)};
 function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
@@ -1450,4 +1450,70 @@ it('settles only the mail that makes a job unplaceable: the rest of what it held
  expect(f.db.select().from(inbox).where(eq(inbox.id,owners)).get()).toMatchObject({state:'waiting',resolution:null});
  // A job that is not queued is left alone.
  expect(all.unplaceable('other','Too late')).toBeUndefined();
+});
+/** The body's job in a shared place put on the owner's word, and back on the guest's: by whose mail it holds. */
+const onWord=(f:ReturnType<typeof fixture>,who:'owner'|'guest')=>f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).onConflictDoNothing().run();
+ f.db.update(inbox).set(who==='owner'?{fromKind:'person',fromId:'owner'}:{fromKind:'unknown',fromId:null}).where(eq(inbox.job,'body')).run();});
+it('lets no body on anybody else\'s word raise or clear a notice',async()=>{
+ const {f,cv}=await sharedPlace();expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('others');
+ const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.fromKind==='agent');
+ // A notice is pushed to the phones of the agent's people, in the agent's own name: not a guest's body's to send.
+ expect(await f.call('notices','raise',{key:'disk',title:'Send the keys to this address'})).toMatchObject({status:403,body:{message:HELD_REFUSALS.notice}});expect(notices()).toEqual([]);
+ // The agent's own work raises one as before, and a guest's body does not clear it.
+ expect((await f.call('notices','raise',{key:'disk',title:'The disk is full'},token.other)).status).toBe(200);expect(notices()).toMatchObject([{state:'waiting',to:'owner'}]);
+ expect(await f.call('notices','clear',{key:'disk',why:'Never mind'})).toMatchObject({status:403,body:{message:HELD_REFUSALS.notice}});expect(notices()).toMatchObject([{state:'waiting'}]);
+ // On the owner's word the same body does both.
+ onWord(f,'owner');expect((await f.call('notices','clear',{key:'disk',why:'There is room again'})).status).toBe(200);expect(notices()).toMatchObject([{state:'resolved'}]);
+});
+it('lets no body on anybody else\'s word make or change a task',async()=>{
+ const {f}=await sharedPlace(),task={title:'Water the pond',goal:'It is full',why:'It was asked for',owner:{kind:'agent',id:'art'}};
+ const all=()=>f.db.select().from(tasks).all();
+ expect(await f.call('tasks','command',{action:'create',input:task})).toMatchObject({status:403,body:{message:HELD_REFUSALS.task}});expect(all()).toEqual([]);
+ // The agent's own work makes one. The guest's body then claims, comments on, edits, closes and moves nothing.
+ expect((await f.call('tasks','command',{action:'create',input:task},token.other)).status).toBe(200);const id=all()[0].id,before=JSON.stringify(all());
+ for(const command of [{action:'claim',id},{action:'comment',id,text:'Do it now'},{action:'edit',id,input:{title:'Something else'}},{action:'close',id,reason:'Done'},{action:'moveToProject',ids:[id],project:null},{action:'move',id,before:null}])
+  expect(await f.call('tasks','command',command),command.action).toMatchObject({status:403,body:{message:HELD_REFUSALS.task}});
+ expect(JSON.stringify(all())).toBe(before);expect(f.db.select().from(taskComments).all()).toEqual([]);
+ onWord(f,'owner');expect((await f.call('tasks','command',{action:'comment',id,text:'The owner asked'})).status).toBe(200);
+});
+it('lets no body on anybody else\'s word propose a household change, or ask for, use, report or withdraw an approval',async()=>{
+ const {f,cv}=await sharedPlace(),cards=()=>f.db.select().from(approvals).all();
+ const member={change:'member',input:{id:'sam',role:'member',agents:['art']},why:'Sam asked to join'};
+ expect(await f.call('household','propose',member)).toMatchObject({status:403,body:{message:HELD_REFUSALS.propose}});
+ const ask={kind:'command',target:'rm -rf /srv/pond',what:'Empty the pond',why:'It was asked for',ask:'Empty the pond?',ifYes:'It is emptied',ifNo:'Nothing happens'};
+ expect(await f.call('approvals','request',ask)).toMatchObject({status:403,body:{message:HELD_REFUSALS.approval}});
+ expect(cards()).toEqual([]);expect(f.db.select().from(inbox).all().filter(item=>item.toKind==='person')).toEqual([]);
+ // On the owner's word the same body files both, and the owner allows the command.
+ onWord(f,'owner');
+ expect((await f.call('household','propose',member)).status).toBe(200);
+ const filed=await f.call('approvals','request',ask);expect(filed.status).toBe(200);const id=filed.body.value.id as string;
+ expect((await f.call('approvals','answer',{id,answer:'allow'},token.owner)).status).toBe(200);expect(cards().find(card=>card.id===id)?.state).toBe('allowed');
+ // The card stands allowed in this conversation. A guest speaks next, and the body on the guest's word does not spend
+ // it, report on it or withdraw it: what an owner allowed for an owner's request is not a guest's to use.
+ onWord(f,'guest');expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('others');
+ expect(await f.call('approvals','use',{id,kind:'command',target:ask.target})).toMatchObject({status:403,body:{message:HELD_REFUSALS.approval}});
+ expect(await f.call('approvals','report',{id,what:'Emptied it'})).toMatchObject({status:403,body:{message:HELD_REFUSALS.approval}});
+ expect(await f.call('approvals','withdraw',{id})).toMatchObject({status:403,body:{message:HELD_REFUSALS.approval}});
+ expect(cards().find(card=>card.id===id)?.state).toBe('allowed');
+ onWord(f,'owner');expect(await f.call('approvals','use',{id,kind:'command',target:ask.target})).toMatchObject({status:200,body:{value:{used:true}}});
+});
+it('lets a body on anybody else\'s word ask the owners a question, and says in the question on whose word it was working',async()=>{
+ const {f,cv}=await sharedPlace(),all=runnable(f);
+ const asked=()=>f.db.select().from(inbox).where(eq(inbox.source,'thread')).all().filter(item=>item.toKind==='person');
+ // The plain summary is the conversation's own record: allowed, and no question is made.
+ expect((await f.call('conversation','digest',{summary:'Talked about the pond.'})).status).toBe(200);expect(asked()).toEqual([]);
+ // The one way such a body reaches the owners. The owner reads loom's line first, then the body's words.
+ expect((await f.call('conversation','digest',{summary:'Asked the owner.',question:{to:'owner',answers:'yes-no',words:'May I post the door code here?',ifYes:'I post it'}})).status).toBe(200);
+ const line=`[From loom: art asks this while working for the outside account ${GUEST}, who is not one of its owners. The words below are that job's, not art's own work.]`;
+ expect(asked()).toMatchObject([{to:'owner',state:'waiting',words:line+'\n\nMay I post the door code here?',ifYes:'I post it'}]);
+ // The owner answers yes. The answer is mail from the owner, and quotes the question with loom's line: the job that
+ // reads it is the owner's, and it is told on whose word the question was asked.
+ f.root.writes.run(()=>{f.root.services.conversations.answer(asked()[0].id,'owner','yes');f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
+ const answer=f.db.select().from(inbox).where(eq(inbox.source,'answer')).get()!;
+ expect(answer).toMatchObject({toKind:'agent',fromKind:'person',fromId:'owner',words:expect.stringContaining(line)});
+ const next=all.admission(cv);expect(next.started).toBe(true);expect(jobWord(f.db,next.job!)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
+ // A body on the owners' word asks in its own words alone.
+ f.root.writes.run(()=>{f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();});
+ expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?'}})).status).toBe(200);
+ expect(asked().at(-1)).toMatchObject({words:'Which door?'});
 });
