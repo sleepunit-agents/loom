@@ -583,6 +583,16 @@ describe('the stop word', () => {
     expect(f.ingress.receive({ ...f.message, id: 'stop-thread', channel: 't', parent: 'room', thread: 't', text: 'stop' })).toMatchObject({ reason: STOP_WORD });
     expect([f.state().state, f.state('thread-job').state]).toEqual(['running', 'stopped']);
   });
+  it.each(['<@outside-bot> stop', '<@&managed-role> cancel'])('keeps %s from an unrelated bot out of this agent’s mail', text => {
+    const f = working();
+    const sent = { ...f.message, text, mentions: ['outside-bot'], mentionsBot: true };
+    const before = f.db.select().from(inbox).all().length;
+    expect(f.ingress.receive({ ...sent, id: 'working' })).toMatchObject({state:'dropped', reason:'Another agent or no channel answer'});
+    expect(f.state().state).toBe('running');
+    new Jobs(f.db, f.now).stop('job', 'jonathan', 'write-off');
+    expect(f.ingress.receive({ ...sent, id: 'idle' })).toMatchObject({state:'dropped'});
+    expect(f.db.select().from(inbox).all()).toHaveLength(before);
+  });
   it('is not a stop when said to another agent, or by someone who may not end this agent\'s jobs', () => {
     const f = working();
     // Said to Mark: Art's job goes on, and the message is not Art's.

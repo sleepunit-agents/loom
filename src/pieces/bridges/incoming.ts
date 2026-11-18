@@ -167,7 +167,7 @@ export class BridgeIncoming {
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
       // An explicit bot mention takes precedence over the channel default, a reply, and the thread's starter.
-      else if (connection.platform === 'discord' && !message.isDm && !isStopWord(message.text)
+      else if (connection.platform === 'discord' && !message.isDm
         && !message.mentions.includes(connection.botUser) && (message.mentionsBot || peers.some(peer => message.mentions.includes(peer.botUser)))) {
         state = 'dropped'; reason = 'Another agent or no channel answer';
       }
