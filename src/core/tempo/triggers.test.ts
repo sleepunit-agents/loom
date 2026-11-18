@@ -424,3 +424,10 @@ it('fails a machine firing before reading a file or delivering its words', () =>
   expect(instructions).not.toHaveBeenCalled();
   expect(f.items()).toEqual([]);
 });
+
+it('rejects an unsupported machine request instead of scheduling ordinary work', () => {
+  const f = fixture();
+  const request = { ...f.base, machine: 'local' };
+  expect(() => f.engine.set(request)).toThrow();
+  expect(f.db.select().from(triggers).all()).toHaveLength(0);
+});

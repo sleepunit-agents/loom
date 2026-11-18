@@ -13,6 +13,8 @@ import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
 export const triggerInput = z.object({
+  // A machine request must never become an ordinary trigger when this server cannot serve it.
+  machine: z.never().optional(),
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
