@@ -16,7 +16,7 @@ import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVATE_PLACE_REFUSAL} from './shared-place-mail.js';
 import {SCHEDULE_ASKED,WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,repeats} from './shared-place-triggers.js';
-import {triggerLog} from './core/data/schema.js';
+import {triggerLog,triggerEdits} from './core/data/schema.js';
 import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
@@ -1232,6 +1232,29 @@ it('refuses an owner who changes only part of the words of a trigger a guest ask
  for(const part of [{note:'Typo fixed'},{instructions:'The owner\'s instructions'},{file:'lanes/owner.md'}])
   expect(await f.call('tempo','edit',{id:guests.id,...part},token.owner),JSON.stringify(part)).toMatchObject({status:403,body:{message:WORD_PART_REFUSAL}});
  expect(row()).toMatchObject({note:'Daily numbers',instructions:'Post the numbers',file:null,askedByKind:'outside',askedBy:GUEST});
+});
+it('leaves the asker when an owner resends a guest\'s trigger\'s words unchanged: words sent and not changed are no reword',async()=>{
+ const {f,guests,row}=await guestsTrigger();
+ const edits=()=>f.db.select().from(triggerEdits).all().filter(edit=>edit.trigger===guests.id);
+ // A client that sends the whole trigger back to change one field: the guest's text must not come to fire on the owner's word.
+ expect((await f.call('tempo','edit',{id:guests.id,note:'Daily numbers',instructions:'Post the numbers'},token.owner)).status).toBe(200);
+ expect(row()).toMatchObject({note:'Daily numbers',instructions:'Post the numbers',askedByKind:'outside',askedBy:GUEST});expect(edits()).toEqual([]);
+ // With new times beside the same words, the times move and the asker stays.
+ const later=new Date(f.clock.now()+2*86_400_000).toISOString();
+ expect((await f.call('tempo','edit',{id:guests.id,note:'Daily numbers',instructions:'Post the numbers',times:later},token.owner)).status).toBe(200);
+ expect(row()).toMatchObject({times:later,askedByKind:'outside',askedBy:GUEST});expect(edits()).toHaveLength(1);
+ // A new note beside the stored instructions changes part of the words, whatever was sent: refused, as a note alone is.
+ expect(await f.call('tempo','edit',{id:guests.id,note:'Typo fixed',instructions:'Post the numbers'},token.owner)).toMatchObject({status:403,body:{message:WORD_PART_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:guests.id,note:'Daily numbers',instructions:'The owner\'s instructions'},token.owner)).toMatchObject({status:403,body:{message:WORD_PART_REFUSAL}});
+ expect(row()).toMatchObject({note:'Daily numbers',instructions:'Post the numbers',askedByKind:'outside',askedBy:GUEST});
+ // The same through a body on the owner's word, in the place itself.
+ f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());
+ expect((await f.call('tempo','edit',{id:guests.id,note:'Daily numbers',instructions:'Post the numbers'})).status).toBe(200);
+ expect(await f.call('tempo','edit',{id:guests.id,note:'Typo fixed',instructions:'Post the numbers'})).toMatchObject({status:403,body:{message:WORD_PART_REFUSAL}});
+ expect(row()).toMatchObject({note:'Daily numbers',instructions:'Post the numbers',askedByKind:'outside',askedBy:GUEST});
+ // Both changed, by that body: the words are the owner's now, and so is the trigger.
+ expect((await f.call('tempo','edit',{id:guests.id,note:'The owner\'s note',instructions:'The owner\'s instructions'})).status).toBe(200);
+ expect(row()).toMatchObject({askedByKind:'member',askedBy:'owner'});
 });
 it('re-stamps the asker to an owner who replaces all the words of a trigger a guest asked for',async()=>{
  const {f,cv,guests,row}=await guestsTrigger();

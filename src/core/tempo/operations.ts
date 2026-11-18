@@ -39,7 +39,7 @@ export interface TempoOperationOptions {
    * with many standing raises, and for the record of a come-back that follows another. It refuses nothing. */
   stood?(viewer: Viewer, action: 'set' | 'start' | 'edit', trigger: { id: string; conversation?: string | null }): void;
   /** Who asks for a trigger that names a conversation, once this caller has changed its words, file or times. */
-  reasked?(viewer: Viewer, trigger: { conversation: string | null }, change: { instructions?: string | null; file?: string | null; note?: string; times?: string }): Asker | undefined;
+  reasked?(viewer: Viewer, trigger: Trigger, change: { instructions?: string | null; file?: string | null; note?: string; times?: string }): Asker | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }

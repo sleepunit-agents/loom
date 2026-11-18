@@ -107,7 +107,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
         return { id: card.action === 'set' ? card.trigger.id : card.id, card: id, waits: SCHEDULE_ASKED }; },
       // Changed words (instructions, file or note: editsWords) are the changer's: the trigger then runs on their word. A change of times alone leaves
       // both as they were, so a firing's words and its asker always come from the same person.
-      reasked: (viewer, trigger, change) => { if (!trigger.conversation || !editsWords(change)) return undefined;
+      reasked: (viewer, trigger, change) => { if (!trigger.conversation || !editsWords(change, trigger)) return undefined;
         const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;
         return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } },
   });

@@ -32,15 +32,24 @@ export const triggerEdit = z.object({
   times: text.optional(), days: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX).optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
-/** Whether an edit changes what a firing says. A trigger's words are its instructions, the file they are read
- * from, and its note, which a firing into a conversation quotes to the body. The one statement: whoever
- * changes any of them becomes the asker, and may not where the words would go into another member's private
- * conversation. Times, days and the wanted model are not words. */
-export const editsWords = (change: { instructions?: string | null; file?: string | null; note?: string }): boolean =>
-  change.instructions !== undefined || change.file !== undefined || change.note !== undefined;
+/** Which of a trigger's words an edit changes. A trigger's words are its note, which a firing into a conversation
+ * quotes to the body, and what it says: its instructions, or the file they are read from. Changed means different
+ * from what is stored: words sent back as they stand are not changed, whoever sends them. Read as the engine
+ * applies an edit: giving the instructions drops the file, and giving a file drops the instructions. */
+export function wordsChanged(change: WordsEdit, stored: StoredWords): { note: boolean; said: boolean } {
+  const instructions = change.instructions !== undefined ? change.instructions : change.file != null ? null : stored.instructions ?? null;
+  const file = change.file !== undefined ? change.file : change.instructions != null ? null : stored.file ?? null;
+  return { note: change.note !== undefined && change.note !== stored.note, said: instructions !== (stored.instructions ?? null) || file !== (stored.file ?? null) };
+}
+export type WordsEdit = { instructions?: string | null; file?: string | null; note?: string };
+export type StoredWords = { instructions?: string | null; file?: string | null; note?: string };
+/** Whether an edit changes what a firing says. The one statement: whoever changes any of a trigger's words becomes
+ * the asker, and may not where the words would go into another member's private conversation. Times, days and the
+ * wanted model are not words, and neither are words sent unchanged. */
+export const editsWords = (change: WordsEdit, stored: StoredWords): boolean => { const changed = wordsChanged(change, stored); return changed.note || changed.said; };
 /** What a rule about where a caller works is asked of a trigger: what the caller sent for a new one, or the
  * stored row. The one shape for the door (operations.ts, wordRefusal) and the rule (src/shared-place-triggers.ts). */
-export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null };
+export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; instructions?: string | null; note?: string; askedByKind?: string | null; askedBy?: string | null };
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
@@ -163,13 +172,13 @@ export class TriggerEngine {
   }
   /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and
    * who changed them. `asked` re-stamps who asked, for a trigger that names a conversation whose words or
-   * file change: whether to is the door's to say (src/shared-tempo.ts, reasked). */
+   * file change: who that is is the door's to say (src/shared-tempo.ts, reasked), and whether anything changed is
+   * asked here. */
   edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: Asker): void {
     this.open();
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {
       const t = this.get(id);
-      if (asked && t.conversation) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;
@@ -179,6 +188,9 @@ export class TriggerEngine {
       const before: Record<string, string | null> = {};
       for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
       if (!Object.keys(before).length) return;
+      // The asker follows the words, and only words that are different now: asked here, where what changed is known,
+      // so no door can re-stamp a trigger whose words it sent back unchanged.
+      if (asked && t.conversation && ('instructions' in before || 'file' in before || 'note' in before)) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       const next = { ...t, ...c };
       const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
       this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();

@@ -6,7 +6,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggerLog, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { z } from 'zod';
-import { editsWords, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
+import { editsWords, wordsChanged, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
 import { nextTime } from './core/tempo/calendar.js';
 import { householdTimezone } from './core/data/household-settings.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type OnWord, type Viewer } from './policy.js';
@@ -157,14 +157,14 @@ export function placeScheduleRefusal(db: DataDatabase, ask: PlaceScheduleAsk): s
 export function applyPlaceSchedule(db: DataDatabase, engine: Pick<TriggerEngine, 'set' | 'edit'>, ask: PlaceScheduleAsk): Trigger {
   const refused = placeScheduleRefusal(db, ask); if (refused) throw new OperationError('invalid', refused);
   if (ask.action === 'set') return engine.set(ask.trigger, undefined, ask.asker);
-  engine.edit(ask.id, ask.change, { kind: 'agent', id: ask.agent }, editsWords(ask.change) ? ask.asker : undefined);
+  engine.edit(ask.id, ask.change, { kind: 'agent', id: ask.agent }, ask.asker);
   return db.select().from(triggers).where(eq(triggers.id, ask.id)).get()!;
 }
 /** Why this caller may not reword a trigger that names one member's private conversation: the words would
  * become the caller's and fire there on the caller's word. Asked of every caller, a person too. The firing
  * asks again (placeFiring); this is the early refusal. */
 export function privateRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work | undefined, trigger: TriggerAsked, change?: { instructions?: string | null; file?: string | null; note?: string }): string | undefined {
-  if (!trigger.conversation || !change || !editsWords(change)) return undefined;
+  if (!trigger.conversation || !change || !editsWords(change, trigger)) return undefined;
   const cv = db.select({ agent: conversations.agent, member: conversations.member }).from(conversations).where(eq(conversations.id, trigger.conversation)).get();
   return cv && cv.member !== null && privateRefusal(cv.member, asking(db, viewer, cv.agent, work)) ? PRIVATE_PLACE_REFUSAL : undefined;
 }
@@ -173,15 +173,19 @@ export function privateRewordRefusal(db: DataDatabase, viewer: Viewer, work: Wor
  * that left the note or the instructions as the old asker wrote them would fire that text on the editor's
  * word. The rule bites only when the old asker's reach is lower than the editor's, said once here: the
  * asker changing their own trigger, and owners' reach changing what the agent or an owner asked for, are
- * free. Otherwise the edit replaces all of it (the note, and the instructions or a file) or is refused. */
+ * free. Otherwise the edit replaces all of it (the note, and the instructions or a file) or is refused. Replaced
+ * means different from what is stored: words sent back as they stand are the old asker's still, so an edit that
+ * sends everything and changes one part is refused like one that sends one part, and one that changes nothing is
+ * no reword at all. */
 export function partRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work | undefined, trigger: TriggerAsked, change?: { instructions?: string | null; file?: string | null; note?: string }): string | undefined {
-  if (!trigger.conversation || !trigger.askedByKind || !trigger.askedBy || !change || !editsWords(change)) return undefined;
+  const changed = change && wordsChanged(change, trigger);
+  if (!trigger.conversation || !trigger.askedByKind || !trigger.askedBy || !changed || !(changed.note || changed.said)) return undefined;
   const agent = db.select({ agent: conversations.agent }).from(conversations).where(eq(conversations.id, trigger.conversation)).get()?.agent;
   if (!agent) return undefined;
   const was = { kind: trigger.askedByKind, id: trigger.askedBy } as Asker, editor = asking(db, viewer, agent, work);
   if (editor.kind === was.kind && editor.id === was.id) return undefined;
   if (!(wordReach(db, agent, was) === 'others' && wordReach(db, agent, editor) !== 'others')) return undefined;
-  return change.note !== undefined && (change.instructions != null || change.file != null) ? undefined : WORD_PART_REFUSAL;
+  return changed.note && changed.said ? undefined : WORD_PART_REFUSAL;
 }
 /** The notice a conversation raises when one more trigger has come to stand for it, by being set or turned back
  * on, and that makes PLACE_TRIGGERS_NOTICE_EVERY of them or a further multiple: whom to tell and in what words.
