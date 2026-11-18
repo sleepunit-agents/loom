@@ -108,8 +108,10 @@ channel (`presence.ts`). Both are best effort.
   settled.
 - What a body may schedule follows whose word its job works on, not the place (`docs/runtime/tempo.md`):
   working for owners, or as the agent's own work, it schedules from a shared place what it could from the
-  owner's own thread; working for anybody else, only into the shared place it is in, at listed times an
-  hour apart, with its own words.
+  owner's own thread; working for anybody else, only into the shared place it is in, at listed times,
+  with its own words. On such a word a one-time trigger is set at once: a body comes back to work it is
+  doing any time. A repeating one is asked of the household's owners as a card, and set only when an
+  owner allows it.
 - A job whose mail is no message from the bridge (a trigger's firing in the conversation, a note from
   another body of the agent) answers by a post in the conversation itself, addressed from the
   conversation's place (`bridge_sends.conversation`, with no `incoming`).
@@ -134,8 +136,10 @@ channel (`presence.ts`). Both are best effort.
   anybody else's word is not delivered there; the note is dropped, or the trigger stopped, with a notice.
 - A guest's word goes one hop. A job on anybody else's word that a note or a brief started hands nothing
   on, to its own body elsewhere or to a peer agent; one a person's message or a firing started may hand
-  to its own channel's report target and may brief a peer agent. Such a job hands at most 5 notes and
-  briefs together (`NOTES_PER_JOB`): a flood guard on one job, not a limit on an exchange.
+  to its own channel's report target and may brief a peer agent. No number of notes is refused. When
+  such a job has handed 5 notes and briefs together, and at each further 5 (`NOTES_NOTICE_EVERY`), the
+  members who have the agent are told, or the household's owners when nobody has it: who the job works
+  for, the conversation, and that nothing was stopped.
 - A report target is read from the rule of the agent that answers the channel, and the `channel` card
   takes one only on a bridge of that agent's.
 - A note on the word of somebody no longer known (a member who left, an outside account with no tier

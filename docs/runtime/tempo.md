@@ -78,7 +78,10 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   trigger's words (its note, its instructions or its file) makes the editor
   its asker, so an editor with more reach than the asker replaces all of them
   together, the note and the instructions or a file; changing only part is
-  refused with a line saying to give both or leave the words alone. The rule
+  refused with a line saying to give both or leave the words alone. Changed
+  means different from what is stored: words sent back as they stand are not
+  changed, the asker stays, and an edit that sends everything and changes one
+  part is refused like one that sends one part. The rule
   bites only when the old asker's reach is lower than the editor's: the asker
   changes their own trigger freely, and an owner or the agent's own work
   changes freely what the agent or an owner asked for.
@@ -97,19 +100,46 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   when nobody has it. The notice is written each time the trigger is stopped
   this way: turned back on and stopped again, they are told again. **A channel rule that was removed does not
   by itself stop a firing: a mention there would still wake the agent.**
-- **Held at the firing itself.** Two rules are asked where a firing is made,
-  whatever door set or changed the trigger. Into one member's private
-  conversation a trigger fires only on that member's word or as the agent's
-  own work; otherwise it is stopped with the notice. And firings on the word
-  of anybody but owners into one conversation come at least an hour apart
-  (`WORD_REPEAT_MIN_MS`, the hour the door's check uses): one that comes sooner
-  is not delivered and not lost, it is put off to the hour mark, once (log
-  `put off`). One exception: a `today` trigger put off past local midnight
-  ends with its day like any `today` trigger, and that firing is never
-  delivered. A stopped trigger's log says `stopped`, then `fired`.
-- **A job a firing or a note woke, on anybody else's word, schedules nothing.**
-  It sets, edits, starts and runs no trigger; it may stop one the same person
-  asked for.
+- **Held at the firing itself.** Asked where a firing is made, whatever door
+  set or changed the trigger: into one member's private conversation a
+  trigger fires only on that member's word or as the agent's own work, and one
+  that watches an event fires only on the word of an owner or the agent;
+  otherwise it is stopped with the notice. No firing is put off or held back
+  for how soon it follows another. A stopped trigger's log says `stopped`,
+  then `fired`.
+- **No numeric limits; notices instead** (the owner's ruling, 2026-11-18). No
+  count or interval refuses a trigger. What could run away is told to the
+  members who have the agent, or to the household's owners when nobody has it,
+  and nothing is stopped:
+  - when 10 triggers stand at once for one conversation, and at each further
+    10 (`PLACE_TRIGGERS_NOTICE_EVERY`), counted when one is set or turned back
+    on; one mark is told once a day;
+  - when come-backs follow one another 5 times in a row, and at each further 5
+    (`COME_BACK_NOTICE_EVERY`): see the next point.
+- **A repeating schedule on anybody else's word is an owner's to allow.** A
+  trigger repeats unless it is once-only or its time is one date. A job
+  working for anybody but owners sets a one-time trigger at once: a body
+  comes back to work it is doing any time. When it sets a repeating one, or
+  changes one so that it repeats once changed (its times or its words),
+  nothing is set or changed. loom files a card for the household's owners
+  (`placeSchedule`, a household card) that shows who asked, the conversation,
+  the times, and the note and words in full, and `tempo.set` / `tempo.edit`
+  answer with `waits`, a plain line saying the request went to the owners.
+  Allowed, the trigger is made or changed on the asker's word exactly as the
+  door would have; denied, nothing is. The owner's answer comes to the
+  conversation as mail to the agent. No standing approval rule answers this
+  card, and nobody proposes one: `household.propose` does not take the kind,
+  so who asked is always loom's reading of the job's mail. What the owner is
+  asked and what the answer says are loom's words only; the body's note and
+  words are on the card and nowhere in the answer.
+- **A job a firing or a note woke, on anybody else's word, may come back and
+  no more.** Nobody is speaking, so it sets and moves only a one-time trigger
+  into its own conversation. It sets, changes and starts no repeating one, and
+  no card is filed for one; it may stop one the same person asked for. A
+  come-back set or moved by the job a firing woke is recorded in the trigger's
+  log as following that firing (`comes back`, with the first trigger of the
+  chain and which firing in a row it will be), and the notice above counts
+  from that.
 - **A trigger keeps to its asker.** A body working for anybody but owners may
   reword, stop and start only a trigger the same person asked for. A trigger's
   words are its instructions, its file and its note (`editsWords`). Whoever
@@ -118,15 +148,15 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   same person.
 - **For every job.** No job fires or starts again the trigger whose firing is
   in its mail. One member's private conversation is named only on that
-  member's word, or by the agent's own work. At most 10 triggers stand at once
-  for one conversation (`PLACE_TRIGGERS_MAX`), checked when one is set and
-  when a stopped one is turned back on.
+  member's word, or by the agent's own work.
 - **For a job working for anybody but owners.** It fires no trigger by hand
   (`tempo.runNow`): it is awake and does the work now. Its trigger carries its
   own words: naming a `file` of the household's repository is refused on
-  `tempo.set` and `tempo.edit`. A repeating one lists times at least an hour
-  apart (`WORD_REPEAT_MIN_MS`); one that watches an event is refused with a line of its own; the times are asked
-  when it is set and when its times change, never to stop, start or reword one.
+  `tempo.set` and `tempo.edit`. One that watches an event is refused with a
+  line of its own. It neither pauses nor resumes its agent (`tempo.pause`,
+  `tempo.resume`), which would hold or release every trigger the agent has,
+  and it changes the volume of no mail (`inbox.volume`): muted mail starts no
+  job and joins none, in whatever conversation it waits.
 - An owner, and the agent in its own thread, see, reword and stop these like
   any trigger. A body working for anybody but owners reads its agent's triggers
   as before, all of them, and can change only its own conversation's (see the

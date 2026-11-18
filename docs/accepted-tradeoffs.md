@@ -22,11 +22,13 @@ Entries are grouped by the part of the program they belong to.
   and that scope. The change is applied as the owner who set the rule: the card records them as
   `decidedBy`, run settings are checked against what that owner may offer, and a rule whose setter is no
   longer an owner answers nothing. A card with nobody known behind it (a terminal session, a room) always
-  asks. Three kinds of card always ask, whatever rule there is (`alwaysAsks` in
+  asks. Four kinds of card always ask, whatever rule there is (`alwaysAsks` in
   `src/shared-household-proposals.ts`): one that changes a rule, so a rule cannot widen the rules; a request
   to let an agent onto a project (`projectJoin`), since that lets the agent read what is filed under it and
   a blanket rule is not an owner saying so for that project; and a merge of two projects (`projectMerge`),
-  which cannot be undone and shows each project's people the other's records. If the last answer to the
+  which cannot be undone and shows each project's people the other's records; and a repeating schedule
+  somebody who is not an owner asked a body for in a shared place (`placeSchedule`), which the owner ruled is
+  asked of an owner each time. If the last answer to the
   same thing was a deny, it asks again. If the change cannot be made on the rule's word (its setter may not
   make that change, or it cannot be made at all), the rule has answered nothing and the card waits for an
   owner. An agent whose card a rule answers is told the card's state, so it learns whether its change was
@@ -1011,8 +1013,10 @@ Entries are grouped by the part of the program they belong to.
 ### A body working for anybody but owners schedules only into its own shared place
 - What: a job with anybody but owners behind it (a guest, a member who does not have the agent, somebody
   loom cannot name) may set, reword, stop and start only a trigger naming the shared place it is working
-  in (a Discord or Slack conversation that is not one member's own), with its own words, at listed times
-  an hour apart. Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
+  in (a Discord or Slack conversation that is not one member's own), with its own words, at listed times.
+  A one-time trigger it sets at once; a repeating one is asked of the household's owners as a card and set
+  only when one allows it. No count or interval refuses one: what could run away is told to the agent's
+  people instead (`docs/runtime/tempo.md`). Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
   that conversation, on its asker's word. A job working for owners, and the agent's own work, is held to
   none of this in a shared place: reach follows the person, not the venue.
 - Where: `isSharedPlace`, `maySchedule` and `WORD_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
@@ -1040,7 +1044,9 @@ Entries are grouped by the part of the program they belong to.
   say. Reach follows the person who woke the body, not the venue.
 - Accepted with it: no chain of notes is refused for its length. Each note shows its chain to the body that
   receives it, which is told to stop and say so to a person when the exchange is not getting anywhere,
-  and the household's owners are told at 25 hand-offs and each further 25 (`CHAIN_NOTICE_EVERY`). A stop
+  and the household's owners are told at 25 hand-offs and each further 25 (`CHAIN_NOTICE_EVERY`). Nor is a
+  job on anybody else's word refused a note for how many it has handed: the agent's people are told at 5
+  and each further 5 (`NOTES_NOTICE_EVERY`). A stop
   word in either place ends that place's job, and the notes and firings waiting there wait for a person to
   speak. A job started by a note or a firing is handed the conversation's kept history like any other job
   there, and the stored session where there is one. In a Slack channel a post that answers no message
