@@ -3,9 +3,9 @@ import {keepJobText} from './job-text.js';
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { named, stillKnown } from '../shared-place-mail.js';
@@ -140,7 +140,12 @@ export class Jobs {
       // A person said stop in this place (stop, below). Until a person speaks there again nothing starts: the
       // notes and firings that were waiting are parked with the stopped job, and one that arrives meanwhile
       // waits with them. Only a bridge's place: a lane's own conversation goes on at its next time.
-      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !waiting.some(item => item.job === null && (item.fromKind === 'person' || item.fromKind === 'unknown'))) {
+      // A person speaking is mail from a member, or a delivered bridge message from an account that is no bot
+      // and no webhook: mail from a sender loom cannot name is otherwise nobody speaking.
+      const spoke = (item: typeof waiting[number]) => item.fromKind === 'person' || (item.fromKind === 'unknown' && !!this.db.select({ id: bridgeIncoming.id }).from(inboxRefs)
+        .innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref)).where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, conversationId), eq(bridgeIncoming.state, 'delivered'),
+          or(isNull(bridgeIncoming.bot), eq(bridgeIncoming.bot, false)), or(isNull(bridgeIncoming.webhook), eq(bridgeIncoming.webhook, false)))).get());
+      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !waiting.some(item => item.job === null && spoke(item))) {
         const last = this.db.select({ state: jobs.state, endedReason: jobs.endedReason }).from(jobs).where(eq(jobs.conversation, conversationId)).orderBy(desc(jobs.queuedAt), desc(sql`${jobs}.rowid`)).get();
         if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
       }

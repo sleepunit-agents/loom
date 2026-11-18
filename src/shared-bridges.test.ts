@@ -514,7 +514,7 @@ it('refuses no note for the length of its chain, and tells the owners each time 
  expect(()=>f.root.writes.run(()=>f.db.update(inbox).set({chain:'{}'}).where(eq(inbox.sourceId,'earlier')).run())).toThrow('CHECK');
 });
 it('gives a stopped job the notes and firings waiting in its conversation, so they start no work until a person speaks there',async()=>{
- const {f,cv}=await sharedPlace();
+ const {f,cv,incoming}=await sharedPlace();
  const send=(fromKind:'agent'|'schedule'|'person',source:'handoff'|'trigger'|'notice')=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source,sourceId:randomUUID(),fromKind,fromId:fromKind==='person'?'owner':'art',words:source==='handoff'?null as never:'Words'}).id;});return id;};
  const note=send('agent','handoff'),firing=send('schedule','trigger'),said=send('person','notice');
  const all=new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());
@@ -530,8 +530,13 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  expect(all.admission(cv)).toEqual({});
  const later=send('agent','handoff'),next=send('schedule','trigger');
  expect(all.admission(cv)).toEqual({});expect([job(later).job,job(next).job]).toEqual([null,null]);
- // A person speaks there: work starts (or loom says why it cannot), and it is for everything waiting.
- send('person','notice');
+ // A bot's message there is nobody speaking, whatever let it through: mail from a sender loom cannot name un-parks
+ // nothing unless it is a delivered message from a person's account.
+ const heard=(id:string,bot:boolean)=>f.root.writes.run(()=>{f.db.insert(bridgeIncoming).values({...incoming,id,bot,text:'Hi'}).run();
+  f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'slack',sourceId:id,fromKind:'unknown',words:'Hi',refs:[id]});});
+ heard('bi:bot',true);expect(all.admission(cv)).toEqual({});
+ // A person speaks there, here the guest: work starts (or loom says why it cannot), and it is for everything waiting.
+ heard('bi:guest',false);
  expect(Object.keys(all.admission(cv))).not.toEqual([]);
 });
 it('leaves a note, a firing and another agent\'s mail that arrive after a job was admitted for the next job, and reads a thread\'s rules by its parent channel',async()=>{
