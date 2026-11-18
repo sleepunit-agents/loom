@@ -13,6 +13,7 @@ import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { nextData } from './next-data.js';
+import { Machines } from './runtime/machines.js';
 import * as s from './core/data/schema.js';
 
 const clean: (() => void | Promise<void>)[] = [];
@@ -472,4 +473,15 @@ it('refuses unsupported installed coercion at startup before admitting reads', a
   const installed = new GraphQLScalarType({ name: 'Installed', serialize() { callbacks++; return 'private'; } });
   await expect(setup({ installed: { type: installed, resolve() { callbacks++; return 'private'; } } })).rejects.toThrow('Unsupported read scalar');
   expect(callbacks).toBe(0);
+});
+
+it('shows only visible worker reports in structured fields and keeps their encoding out of labels', async () => {
+  const f = await setup(), at = new Date(f.clock.now()).toISOString();
+  const machines = new Machines(f.db, () => at);
+  for (const [id, owner] of [['owned', 'sam'], ['hidden', 'owner']]) {
+    f.db.insert(s.boxes).values({id,name:id,owner,sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+    machines.poll(id,['cpu'], {version:1,enabled:false,user:'worker',cwd:'/srv/worker',agents:['art']});
+  }
+  const response = await f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({query:'{ machineBodyReports { machine enabled user cwd agents } boxFacts { fact } }'})});
+  expect(await response.json()).toEqual({data:{machineBodyReports:[{machine:'owned',enabled:false,user:'worker',cwd:'/srv/worker',agents:['art']}],boxFacts:[{fact:'cpu'}]}});
 });

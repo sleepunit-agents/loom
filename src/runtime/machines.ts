@@ -1,5 +1,5 @@
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { machineReport, workerFacts, type MachineReport } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
@@ -10,16 +10,28 @@ type Box = typeof boxes.$inferSelect;
 const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastSeenAt ?? box.enrolledAt])}`;
 
 // A newline was never legal in generic facts, including facts older workers could submit.
-const reportPrefix = 'loom:machine-report:\n';
+export const reportPrefix = 'loom:machine-report:\n';
 const reserved = sql`(lower(${boxFacts.fact}) = 'loom:machine' or lower(${boxFacts.fact}) glob 'loom:machine[-:]*')`;
 
 /** The last authenticated poll, for display. Legacy labels carry no structured report. */
 export function readMachineReport(db: DataDatabase, id: string): MachineReport | undefined {
-  const rows = db.select().from(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false),
-    sql`substr(${boxFacts.fact}, 1, ${reportPrefix.length}) = ${reportPrefix}`)).all();
-  if (rows.length !== 1) return undefined;
-  try { return machineReport.parse(JSON.parse(rows[0].fact.slice(reportPrefix.length))); }
-  catch { return undefined; }
+  const result = readMachineReports(db, eq(boxFacts.box, id))[0];
+  if (!result) return undefined;
+  const { machine: _machine, ...report } = result;
+  return report;
+}
+
+/** Decode worker reports in one read. More than one for a machine is ambiguous. */
+export function readMachineReports(db: DataDatabase, visible: SQL): (MachineReport & {machine: string})[] {
+  const rows = db.select().from(boxFacts).where(and(visible, eq(boxFacts.fromOwner, false),
+    sql`substr(${boxFacts.fact}, 1, ${reportPrefix.length}) = ${reportPrefix}`)).orderBy(boxFacts.box).all();
+  const byMachine = new Map<string, MachineReport | undefined>();
+  for (const row of rows) {
+    if (byMachine.has(row.box)) { byMachine.set(row.box, undefined); continue; }
+    try { byMachine.set(row.box, machineReport.parse(JSON.parse(row.fact.slice(reportPrefix.length)))); }
+    catch { byMachine.set(row.box, undefined); }
+  }
+  return [...byMachine].flatMap(([machine, report]) => report ? [{ machine, ...report }] : []);
 }
 
 /** Timers belong to the composition root, so tests and callers can supply time. */

@@ -20,7 +20,7 @@ import { dataSocket } from './core/data/socket.js';
 import { tempoVisibility } from './core/tempo/visibility.js';
 import { tempoQueryFields } from './core/tempo/queries.js';
 import { taskVisibility } from './core/data/visibility.js';
-import { boxVisibility } from './core/data/box-visibility.js';
+import { boxVisibility, machineReportFields } from './core/data/box-visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
@@ -68,7 +68,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
     },
-  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, triggerWords), ...accounts.fields,
+  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...machineReportFields(db, viewer), ...tempoQueryFields(db, viewer, triggerWords), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
     ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), () => canReadUsage(viewer)),
   });};

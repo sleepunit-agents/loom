@@ -118,3 +118,11 @@ it.each(['token','session'] as const)('reconciles current browser identity after
  try{await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children===(kind==='token'?'Revoke token':'Sign out browser')).props.onClick());expect(location.reload).toHaveBeenCalledOnce();expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('Could not');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledExactlyOnceWith(kind==='token'?'token.revoke':'sessions.revoke',kind==='token'?{fingerprint:'f'.repeat(64)}:{ref:'b'.repeat(64)});}finally{f.feed.data=saved;}
 });
 it('keeps a refused household revocation as unconfirmed when the owner is still signed in',async()=>{f.operation.mockRejectedValue(Error('Could not save'));vi.stubGlobal('location',{reload:vi.fn()});await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Revoke token').props.onClick());expect(location.reload).not.toHaveBeenCalled();expect(JSON.stringify(tree.toJSON())).toContain('Could not confirm revocation');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledOnce();});
+
+it('shows reported worker access in the Machines list', async () => {
+  f.feed.data = { ...(original as object), boxes: [{ id:'b', name:'Workshop', revokedAt:null }],
+    machineBodyReports:[{machine:'b',enabled:false,user:'worker',cwd:'/srv/workshop',agents:['art','mark']}] };
+  await act(async()=>{tree=create(h(Setup));});
+  const rendered = JSON.stringify(tree.toJSON());
+  for (const text of ['Workshop','worker','/srv/workshop','art, mark','Disabled']) expect(rendered).toContain(text);
+});
