@@ -1,3 +1,4 @@
+import { userInfo } from 'node:os';
 import { it, expect, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
 import { containerWorkerExecutor, UPKEEP_FAILED } from './worker-container.js';
@@ -112,19 +113,52 @@ it('rejects malformed configuration before reading a token or launching', async 
   expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
-it.each([null, 'private-value', { agents: ['art'], cwd: '/private-path' }])(
-  'stops before credentials or either executor when the machine section is present', async machine => {
-    const f = fixture(), containerExecutor = vi.fn();
-    f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/socket' }, machine }));
-    expect(await workerProgram({ ...f, containerExecutor })).toBe(58);
-    expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: this worker does not support the machine configuration section\n');
-    expect(f.read.mock.calls).toEqual([['/config']]);
-    expect(f.control).not.toHaveBeenCalled();
-    expect(f.executor).not.toHaveBeenCalled();
-    expect(containerExecutor).not.toHaveBeenCalled();
-    expect(f.run).not.toHaveBeenCalled();
-  },
-);
+const stagedRunner = { ...plan, bodyBootstrap: true };
+const stagedMachine = { user: userInfo().username, cwd: plan.cwd, agents: ['art'], runners: { codex: stagedRunner } };
+const containerConfig = { ...houseConfig, container: { socket: '/socket' } };
+it('validates staged machine settings but gives only ordinary facts and container configuration to the worker', async () => {
+  const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
+  const machine = { ...stagedMachine, slots: 2, accountRunners: { personal: { claude: stagedRunner } } };
+  const base = { ...containerConfig, facts: ['gpu'], slots: 2 };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...base, machine }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker: machine configuration validated; host execution is disabled\n');
+  expect(f.control).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ facts: ['gpu'] }));
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...base, state }, { say: expect.any(Function) });
+  expect(f.executor).not.toHaveBeenCalled();
+  expect(f.run).toHaveBeenCalledTimes(2);
+});
+it.each([
+  null, 'private-value', {}, { ...stagedMachine, user: stagedMachine.user + '-other' },
+  { ...stagedMachine, agents: [] }, { ...stagedMachine, agents: ['*'] }, { ...stagedMachine, agents: ['art', 'art'] },
+  { ...stagedMachine, cwd: 'relative' }, { ...stagedMachine, runners: {} }, { ...stagedMachine, slots: 5 },
+  { ...stagedMachine, runners: { codex: { ...stagedRunner, args: undefined } } },
+  { ...stagedMachine, accountRunners: { personal: { codex: { ...stagedRunner, cwd: '/private' } } } },
+  { ...stagedMachine, accountRunners: { personal: {} } }, { ...stagedMachine, surprise: true },
+])('rejects invalid machine settings before credentials or either executor', async machine => {
+  const f = fixture(), containerExecutor = vi.fn();
+  f.read.mockResolvedValue(JSON.stringify({ ...containerConfig, machine }));
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(58);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid staged machine configuration for this container worker\n');
+  expect(f.read.mock.calls).toEqual([['/config']]);
+  expect(f.control).not.toHaveBeenCalled();
+  expect(f.executor).not.toHaveBeenCalled();
+  expect(containerExecutor).not.toHaveBeenCalled();
+});
+it('refuses machine settings on a process worker', async () => {
+  const f = fixture();
+  f.read.mockResolvedValue(JSON.stringify({ ...config, machine: stagedMachine }));
+  expect(await workerProgram(f)).toBe(58);
+  expect(f.read.mock.calls).toEqual([['/config']]);
+});
+it.each(['loom:machine-bodies', ' loom:machine-bodies ', 'loom:machine-user:art', 'loom:machine-cwd:/work',
+  'loom:machine-agent:art'])('refuses machine capability metadata in configured facts', async fact => {
+  const f = fixture();
+  f.read.mockResolvedValue(JSON.stringify({ ...config, facts: [fact] }));
+  expect(await workerProgram(f)).toBe(41);
+  expect(f.read.mock.calls).toEqual([['/config']]);
+  expect(f.control).not.toHaveBeenCalled();
+});
 
 const account = { account: 'subscription', owner: 'member', provider: 'provider' };
 function accountFixture(mode: string, config: unknown) {

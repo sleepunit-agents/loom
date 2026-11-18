@@ -4,6 +4,7 @@ import { ACCOUNT_SLOTS_BY_HARNESS, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS,
 import { workerTurns } from './worker-turns.js';
 import { keyPart } from './worker-mounts.js';
 import { z } from 'zod';
+import { userInfo } from 'node:os';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
@@ -21,6 +22,14 @@ const command = z.object({ command: commandString.min(1), args: z.array(commandS
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
 /** How many bodies on one account at once. */
 const accountSlot = z.number().int().min(1).max(SLOTS_MAX);
+const machineName = z.string().min(1).refine(name => name === name.trim() && !/[\0\r\n*]/.test(name));
+const stagedRunners = z.record(machineName, runnerCommand).refine(runners => Object.keys(runners).length > 0);
+const stagedMachine = z.object({
+  user: machineName, cwd: commandString.startsWith('/'),
+  agents: z.array(machineName).min(1).refine(agents => new Set(agents).size === agents.length),
+  runners: stagedRunners, accountRunners: z.record(machineName, stagedRunners).optional(), slots: accountSlot.optional(),
+}).strict().refine(machine => [machine.runners, ...Object.values(machine.accountRunners ?? {})]
+  .every(runners => Object.values(runners).every(runner => runner.cwd === machine.cwd)));
 /** A directory of this machine an agent's bodies are given, and where under the tenant's home it lands. Only the shape is read here: every rule
  * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
  * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
@@ -33,7 +42,8 @@ const accountCommand = z.object({
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const configSchema = z.object({
-  facts: machineFacts.optional(),
+  facts: machineFacts.refine(facts => facts.every(fact => !fact.startsWith('loom:machine-') && fact !== 'loom:machine')).optional(),
+  machine: z.unknown().optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   /** A directory of this worker's own, where it records the builds and bodies it starts and keeps each
    * body's scratch directory, so that the worker after it can end them if this one is killed
@@ -146,8 +156,13 @@ export async function workerProgram(input: {
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
     stage = 'config';
     const raw: unknown = JSON.parse(await input.read(input.args[0]));
-    if (raw !== null && typeof raw === 'object' && Object.hasOwn(raw, 'machine')) throw new WorkerStop('machine');
-    const config = configSchema.parse(raw);
+    const { machine, ...config } = configSchema.parse(raw);
+    if (machine !== undefined) {
+      const staged = stagedMachine.safeParse(machine);
+      if (!config.container || !staged.success || staged.data.user !== userInfo().username
+        || (staged.data.slots ?? 1) > (config.slots ?? HOUSE_SLOTS_DEFAULT)) throw new WorkerStop('machine');
+      input.error('Worker: machine configuration validated; host execution is disabled\n');
+    }
     // Keys a worker with container bodies used to take. It does not go on without them as if they were
     // not there: whoever wrote one expects it to do something.
     if (config.container) for (const [key, present] of [['build', config.build], ['runners', config.runners], ['accountRunners', config.accountRunners],

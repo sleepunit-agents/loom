@@ -197,7 +197,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 54 | git 2.32.0 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 | 56 | the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on |
-| 58 | the configuration contains a top-level `machine` section. This worker has no machine executor. It stops before reading its token file. |
+| 58 | invalid staged machine configuration for this container worker (see “Staging machine settings” below) |
 | 57 | another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine's houses. The line ends with the key of the one that is in use, in brackets: `(container.socket)` or `(accountLogins.subscription-a.claude.source)` (see "One worker for an engine") |
 
 A worker that stops cannot report its own end, so loom records the job it held
@@ -1588,3 +1588,30 @@ For the GraphQL queries, count definitions and observations, see [Reading job us
 ### Machine-marked assignments
 
 A worker receiving an assignment with a machine approval reports worker exit 33 before starting a build or process. There is currently no worker configuration that enables per-trigger host execution. Existing process workers still run ordinary assignments as their OS user.
+
+### Staging machine settings
+
+A container worker can validate a proposed machine configuration while it continues serving ordinary container jobs. Add a top-level `machine` object alongside the existing `container` setting. For example, if the worker runs as `art`:
+
+```json
+{
+  "machine": {
+    "user": "art",
+    "cwd": "/home/art/machine-bodies",
+    "agents": ["art"],
+    "runners": {
+      "codex": {
+        "command": "/usr/bin/loom-body",
+        "args": ["/home/art/.config/loom-worker/machine-body.json"],
+        "cwd": "/home/art/machine-bodies",
+        "env": {"PATH": "/usr/bin:/bin"},
+        "bodyBootstrap": true
+      }
+    }
+  }
+}
+```
+
+Use the worker’s actual OS username, an absolute starting directory, a nonempty list of distinct agent IDs without wildcards, and at least one runner. Every runner needs a command, argument list, the same starting directory, and an explicit environment. Optional `accountRunners` maps each account ID to a nonempty map of harnesses to runners. Optional `machine.slots` defaults to one and cannot exceed the worker’s total slots. Startup validates these settings without executing the commands or checking that the paths exist.
+
+On restart, the worker prints `Worker: machine configuration validated; host execution is disabled`. It continues to use the container executor and does not advertise machine capability. A marked assignment still fails with worker exit 33. Generic `facts` cannot supply the reserved machine capability or its user, directory, and agent labels.

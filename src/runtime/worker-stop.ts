@@ -45,7 +45,7 @@ export const WORKER_STOP = {
   shared: [57, 'another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine\'s houses'],
   /** The core house every house is built on is defined by files in the directory the worker is installed in. */
   core: [56, 'the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on'],
-  machine: [58, 'this worker does not support the machine configuration section'],
+  machine: [58, 'invalid staged machine configuration for this container worker'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */
