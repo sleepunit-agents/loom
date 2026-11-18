@@ -142,7 +142,7 @@ it('writes what was sent with a message only for a body that has file tools to o
  expect(await f.run('four',(await f.hear('With a guest')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:denied})).toBe(0);
  expect(asked).toEqual([]);
  // The same denial for guests only, with no guest in the room, takes nothing away.
- expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{...denied,people:[{kind:'person',person:'owner',tier:null}]}})).toBe(0);
+ expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{deniedTools:denied.deniedTools,people:[{kind:'person',person:'owner',tier:null}],word:'owners'}})).toBe(0);
  expect(asked).toHaveLength(1);
 });
 
