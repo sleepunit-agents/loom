@@ -76,6 +76,7 @@ export async function bodyProgram(input: {
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   let retirement:Promise<void>|undefined;
+  let measuredDelivery:Promise<void>|undefined;
   const retire=()=>retirement??=(async()=>{nativeAbort.abort();memoryClient?.close();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
@@ -235,12 +236,12 @@ export async function bodyProgram(input: {
     finally {
       const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
         model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
-      // Failure has no subsequent settlement request to keep the job credential alive.
-      // Retire the harness and its secrets immediately while measured usage is in flight.
-      const measuredFailure = !answer && !signal.aborted && report.source !== 'none' && usageReport.safeParse(report).success;
-      const delivery = client.usage(report, measuredFailure ? 1000 : undefined).catch(()=>{});
+      // Keep a valid measurement in flight during retirement and reply settlement.
+      // Unmeasured or malformed reports must never hold the body open.
+      const measured = !input.signal.aborted && report.source !== 'none' && usageReport.safeParse(report).success;
+      const delivery = client.usage(report, 1000).catch(()=>{});
+      if (measured) measuredDelivery = delivery;
       await retire();
-      if(measuredFailure) await delivery;
     }
     if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
@@ -272,5 +273,5 @@ export async function bodyProgram(input: {
     // A report that failed is why the work was dropped, whichever stage was dropped.
     input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
-  finally { await retire(); if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { await retire(); await measuredDelivery; if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

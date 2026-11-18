@@ -373,7 +373,7 @@ Entries are grouped by the part of the program they belong to.
 
 ### A job can finish before its usage report arrives
 
-On success the body sends its report alongside settlement. An ordinary harness failure with validated measurements waits up to one second for delivery on its own job credential. A missing, malformed, or oversized measurement adds no wait. If the report never arrives before the credential expires, the job keeps a record with source `none` and unknown harness counters. Rollups sum reported values and can therefore understate usage. Reliable delivery after body death would require a durable worker-side handoff that preserves attempt attribution.
+On success the body sends its report alongside settlement. A body with validated measurements keeps its job client open for delivery for up to one second from submission, including when the reply settles first. A missing, malformed, or oversized measurement adds no wait. If the report never arrives before the credential expires, the job keeps a record with source `none` and unknown harness counters. Rollups sum reported values and can therefore understate usage. Reliable delivery after body death would require a durable worker-side handoff that preserves attempt attribution.
 
 ### The placed account is taken on trust when a machine has one command per harness
 

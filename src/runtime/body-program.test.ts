@@ -375,3 +375,18 @@ it.each([
   expect(await bodyProgram({...f.options,native:undefined,fetch:fetcher,clock:new FakeClock()})).toBe(BODY_EXIT.harness);
  } finally { harness.mockRestore(); }
 });
+
+it('keeps its credential until a measured report is acknowledged after a fast reply', async () => {
+ const f = fixture();
+ let acknowledged = false;
+ const fetcher:typeof fetch = async (url, init) => {
+  if (!String(url).endsWith('/conversation/usage')) return f.options.fetch(url, init);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  if (init?.signal?.aborted) throw new Error('closed before delivery');
+  acknowledged = true;
+  return Response.json({ok:true,value:{saved:true}});
+ };
+ const native = async () => ({text:'Answer', model:'observed', actions:[], usage:{source:'report' as const,tokensOut:7}});
+ expect(await bodyProgram({...f.options,native,fetch:fetcher})).toBe(0);
+ expect(acknowledged).toBe(true);
+});
