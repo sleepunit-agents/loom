@@ -361,10 +361,14 @@ export class TriggerEngine {
   /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
   private fire(t: Trigger, eventId: string, spent: number | null = null) {
     // What the firing was doing, for the log if it fails.
-    let stage: 'operation' | 'instructions' | 'inbox' = 'operation';
+    let stage: 'machine' | 'operation' | 'instructions' | 'inbox' = 'operation';
     try {
       this.db.transaction(() => {
         this.db.update(triggers).set({ state: 'firing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        if (t.machine !== null) {
+          stage = 'machine';
+          throw new Error('Machine execution is unavailable');
+        }
         const delivery = `${t.id}:${eventId}`;
         if (t.targetKind === 'operation') this.effects.operation(t.target!, t, delivery);
         else {

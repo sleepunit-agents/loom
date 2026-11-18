@@ -13,6 +13,7 @@ export const boxSettingsInput=z.object({box:z.string().min(1).max(200),name:mach
 
 /** Trusted setting application; callers authorize against the current machine. */
 export function validateBoxSettings(db:DataDatabase,input:z.infer<typeof boxSettingsInput>){
+   if(input.facts.some(fact=>fact.trim().startsWith('loom:')))throw new OperationError('invalid','Only a worker can report loom facts');
    const box=db.select().from(boxes).where(eq(boxes.id,input.box)).get();
    if(!box||box.revokedAt)throw new OperationError('denied','Available machine required');
    const sharing=sharedSharing(db);

@@ -115,3 +115,11 @@ it('holds a renamed machine to the name rule enrolment has, and lets a name stor
  expect((await f.settings({name:'Renamed'})).status).toBe(200);
  expect(stored()).toBe('Renamed');
 });
+
+it('reserves loom facts for worker reports, including when an owner edits a reported label', async () => {
+  const f = fixture();
+  const fact = 'loom:machine-bodies';
+  expect((await f.call('health', { facts: [fact] }, 'machine-report')).status).toBe(200);
+  expect((await f.settings({ facts: [fact] })).status).toBe(400);
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact, fromOwner: false }]);
+});

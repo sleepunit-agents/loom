@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { agents, boxes, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
 import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
@@ -411,4 +411,16 @@ it('fires a standing time that comes due after the wall clock was stepped forwar
   vi.setSystemTime(start + 210 * minute);
   vi.advanceTimersByTime(STEP_CHECK_MS);
   expect(events()).toEqual(['fired', 'missed']); expect(f.items()).toHaveLength(1);
+});
+
+it('fails a machine firing before reading a file or delivering its words', () => {
+  const instructions = vi.fn(() => 'lane words');
+  const f = fixture({ instructions });
+  f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: new Date(f.clock.now()).toISOString() }).run();
+  const t = f.engine.set({ ...f.base, file: 'routines/lane.md', instructions: null });
+  f.db.update(triggers).set({ machine: 'local' }).where(eq(triggers.id, t.id)).run();
+  f.clock.advance(10_000);
+  expect(f.row(t.id).state).toBe('failed');
+  expect(instructions).not.toHaveBeenCalled();
+  expect(f.items()).toEqual([]);
 });

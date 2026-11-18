@@ -350,3 +350,12 @@ it('names to its caller each job a poll ended as one no harness can hold', () =>
   expect(f.runtime.next('first', undefined, ended)).toBeUndefined();
   expect(ended).toEqual([job.id]); expect(f.runtime.jobs.get(job.id).endedNote).toBe(UNHELD_NOTE);
 });
+
+it('fails a queued machine job before ordinary placement can claim it', () => {
+  const f = fixture();
+  f.db.update(jobs).set({ machine: 'second' }).where(eq(jobs.id, f.job.id)).run();
+  const ended: string[] = [];
+  expect(f.runtime.next('first', [], ended)).toBeUndefined();
+  expect(ended).toEqual([f.job.id]);
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'failed', box: null });
+});
