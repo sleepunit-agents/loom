@@ -761,3 +761,33 @@ it('lets a standing rule for settings answer a retire and a revive: each is undo
   expect(ask('projectRevive')).toMatchObject({ state: 'used', kind: 'setting' });
   expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: false });
 });
+
+it('requires the current machine owner to approve each explicit reader and revocation', async () => {
+ const f=fixture(), at=new Date(f.clock.now()).toISOString();
+ f.db.insert(boxes).values({id:'work',name:'Workshop',owner:'lee',sameMachineAsLoom:false,hostsAny:false,reportOnly:true,alwaysOn:false,enrolledAt:at}).run();
+ for(const allow of [true,false]){
+  const input={box:'work',agent:'art',allow};
+  expect((await f.call('machine/proposeReader',input,'sam')).status).toBe(403);
+  const filed=await f.call('machine/proposeReader',input,'lee');
+  expect(filed.body.value?.state).toBe('pending');
+  const id=filed.body.value!.id;
+  expect(f.db.select().from(inbox).where(eq(inbox.sourceId,id)).all().map(row=>row.to)).toEqual(['lee']);
+  expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).status).toBe(403);
+  expect((await f.call('machine/readerCards',{machine:'work'},'lee')).body.value).toEqual([expect.objectContaining({id,ask:expect.stringContaining(allow?'Grant':'Revoke')})]);
+  expect((await f.call('machine/answerReader',{id,answer:'allow'},'sam')).status).toBe(403);
+  expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
+  expect(f.db.select().from(boxes).get()!.readers).toEqual(allow?['art']:[]);
+ }
+});
+
+it('shows an agent-proposed change to explicit readers on the machine owner’s pending cards',async()=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();
+ const settings={box:'work',name:'Workshop',hostsAny:false,reportOnly:true,alwaysOn:false,agents:[],facts:[],readers:['mark']};
+ f.db.insert(boxes).values({id:'work',name:'Workshop',owner:'lee',sameMachineAsLoom:false,hostsAny:false,reportOnly:true,alwaysOn:false,enrolledAt:at}).run();
+ const result=await f.call('household/propose',{change:'boxSettings',input:settings,why:'Read load and disk'},'art');
+ const id=result.body.value!.id;
+ expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).status).toBe(403);
+ expect((await f.call('machine/readerCards',{machine:'work'},'lee')).body.value).toEqual([{id,ask:'Grant machine reads to mark.'}]);
+ expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
+ expect(f.db.select().from(boxes).get()?.readers).toEqual(['mark']);
+});
