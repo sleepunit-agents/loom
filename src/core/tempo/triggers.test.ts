@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, boxes, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { agents, approvals, boxes, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
 import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
@@ -442,4 +443,25 @@ it('withdraws a machine request in one audited edit before ordinary delivery res
   expect(f.db.select().from(triggerEdits).get()).toMatchObject({ by: 'jonathan', before: JSON.stringify({ machine: 'local' }) });
   f.clock.advance(10_000);
   expect(f.items()).toHaveLength(1);
+});
+
+it.each(['file', 'stored'])('compares the complete %s words at manual and scheduled machine firings', source => {
+  const approved = 'Check all alerts.\r\n' + 'é'.repeat(2500) + '\n';
+  let current = approved;
+  const f = fixture({ instructions: () => current });
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  const t = f.engine.set({ ...f.base, times: '12:01', days: 'daily', lifespan: 'until-stopped',
+    ...(source === 'file' ? { file: 'routines/lane.md', instructions: null } : { instructions: approved }) });
+  f.db.insert(approvals).values({ id: 'card', kind: 'setting', target: t.id, what: 'Machine work', why: 'Check alerts',
+    agent: 'art', askedFrom: 'tempo', actingFor: 'jonathan', state: 'used', minutes: 1, ask: 'Allow?', ifYes: 'Allow', ifNo: 'Stop',
+    details: '', askedAt: at, decidedAt: at, decidedBy: 'jonathan' }).run();
+  f.db.update(triggers).set({ machine: 'local', machineApproval: 'card', machineWords: createHash('sha256').update(approved).digest('hex') }).where(eq(triggers.id, t.id)).run();
+  f.engine.runNow(t.id);
+  current = approved.trimEnd();
+  if (source === 'stored') f.db.update(triggers).set({ instructions: current }).where(eq(triggers.id, t.id)).run();
+  f.clock.advance(60_000);
+  const failures = f.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all().filter(log => log.event === 'failure');
+  expect(failures.map(log => log.note)).toEqual(['machine: Machine execution is unavailable', 'machine: The words changed since they were approved']);
+  expect(f.items()).toEqual([]);
 });
