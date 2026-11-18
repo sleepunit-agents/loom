@@ -625,8 +625,10 @@ has answered ([accepted-tradeoffs.md](../accepted-tradeoffs.md), "A harness
 session is kept between bodies"). It does so only where that directory is the
 body's alone. In a house it is: the directory is in the container's own home,
 and the account's sign-in is mounted somewhere else (`/run/loom/login/<harness>`).
-The worker says so to the body (`LOOM_BODY_OWN_HARNESS=1`) unless one of the
-agent's mounted directories is, holds, or is inside that place. **An agent
+The worker always tells the body, `LOOM_BODY_OWN_HARNESS=1` or `=0`, so a value
+set in the image never stands: 1 unless one of the agent's mounted directories
+is, holds, or is inside that place. The body also refuses when the place, or any
+step from the home down to it, is a link and not a real directory. **An agent
 mount at `.claude`, or anywhere under it, turns this off for that agent's
 bodies:** each then starts fresh with what was said before. A house that sets
 `CLAUDE_CONFIG_DIR` to anywhere but `/home/agent/.claude` turns it off too, and
