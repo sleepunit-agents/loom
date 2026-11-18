@@ -534,19 +534,26 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  send('person','notice');
  expect(Object.keys(all.admission(cv))).not.toEqual([]);
 });
-it('leaves a note that arrives after a job was claimed for the next job, and reads a thread\'s rules by its parent channel',async()=>{
+it('leaves a note, a firing and another agent\'s mail that arrive after a job was admitted for the next job, and reads a thread\'s rules by its parent channel',async()=>{
  const {f,cv,work}=await sharedPlace();
  const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
  work(pond,[{kind:'person',id:'owner'}]);
  const at=(ms:number)=>new Date(f.clock.now()+ms).toISOString();
  f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();f.db.update(jobs).set({claimedAt:at(0)}).where(eq(jobs.id,'other')).run();});
- // The job was claimed for the owner's message. A note on a guest's word arrives before the body takes its mail.
- f.clock.advance(1000);
- let note='',spoke='';
+ // The job was admitted and claimed for the owner's message. A note on a guest's word arrives before the body
+ // takes its mail, in the very millisecond the job was claimed: what a job was started for is marked by admission
+ // (inbox.job), and no clock is compared.
+ let note='',spoke='',firing='',agents='';
  f.root.writes.run(()=>{note=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'handoff',sourceId:'late',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'outside',onWord:GUEST,chain:JSON.stringify([cv]),chainStartedAt:at(0)}).id;
+  firing=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'trigger',sourceId:'late-firing',fromKind:'schedule',words:'From the schedule'}).id;
+  agents=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:'late-agent',fromKind:'agent',fromId:'mark',words:'From another agent'}).id;
   spoke=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:'late-person',fromKind:'person',fromId:'owner',words:'And another thing'}).id;});
  const offered=f.root.services.conversations.pending(pond,'other').map(item=>item.id);
- expect(offered).not.toContain(note);expect(offered).toContain(spoke);expect(offered).toHaveLength(2);
+ for(const late of [note,firing,agents])expect(offered).not.toContain(late);
+ expect(offered).toContain(spoke);expect(offered).toHaveLength(2);
+ // Taking leaves them too, and they are still waiting, for the job after this one.
+ f.root.writes.run(()=>f.root.services.conversations.take(pond,'other'));
+ for(const late of [firing,agents])expect(f.db.select().from(inbox).where(eq(inbox.id,late)).get()).toMatchObject({state:'waiting',job:null});
  // It is still waiting, for the job after this one.
  expect(f.db.select().from(inbox).where(eq(inbox.id,note)).get()).toMatchObject({state:'waiting',job:null});
  // A Discord thread's place names the thread; its rules are its parent channel's, as admission reads them.

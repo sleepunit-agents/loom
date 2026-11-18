@@ -53,7 +53,8 @@ it('deduplicates all sources and lets only the running conversation job take and
 });
 it('leaves muted mail waiting when a running job takes other mail in the same conversation', () => {
   const { db, service, cv } = fixture();
-  const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'trigger', fromKind: 'schedule' });
+  // A person's mail: what the schedule or an agent sends after a job was admitted waits for the next job (pending).
+  const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'notice', fromKind: 'person', fromId: 'jonathan' });
   const muted = send(), dim = send();
   const quietUntil='2026-11-16T18:00:00.000Z';
   db.update(inbox).set({ volume: 'mute', quietUntil }).where(eq(inbox.id, muted.id)).run();

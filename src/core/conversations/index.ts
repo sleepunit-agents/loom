@@ -125,23 +125,28 @@ export class Conversations {
     const conversation = this.conversation(conversationId);
     const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
     if (job?.conversation !== conversationId || job.agent !== conversation.agent || !liveConversationJob(job.state)) throw new Error('Job is not running in this conversation');
-    // Mail on somebody's word, or from an agent, that was not there when this job was admitted is left for the
-    // next job: this one was claimed for the people behind its own mail, and runs with what they are given.
-    // Admission marks the mail a job was started for (runtime/jobs.ts), so what came later has no job yet.
+    // Mail on somebody's word, from an agent or from the schedule, that was not there when this job was admitted
+    // is left for the next job: this one was claimed for the people behind its own mail, and runs with what
+    // they are given. Admission marks the mail a job was started for (runtime/jobs.ts, `inbox.job`), and a
+    // retry carries the mark over, so what came later has no job yet. By that mark and by no clock: mail
+    // written in the millisecond the job was claimed came later all the same. A job nothing is marked for
+    // was not started by admission (only tests make one), and nothing says what it was started for.
+    const admitted = !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId))).get();
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
       or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all()
-      .filter(item => item.job === jobId || !(item.onWordKind !== null || item.fromKind === 'agent' || item.fromKind === 'schedule') || !job.claimedAt || Date.parse(item.at) <= Date.parse(job.claimedAt));
+      .filter(item => !admitted || item.job === jobId || !(item.onWordKind !== null || item.fromKind === 'agent' || item.fromKind === 'schedule'));
   }
 
   /** Only the current job can claim this conversation's waiting mail. An
    * explicit batch leaves mail arriving during async preparation waiting. */
   take(conversationId: string, jobId: string, batch?: readonly string[]): Item[] {
     return this.db.transaction(() => {
-      this.pending(conversationId, jobId);
-      if (batch?.length === 0) return [];
+      // Only what pending() offers this job is ever taken, with a batch or without: mail it leaves for the next job stays waiting.
+      const offered = this.pending(conversationId, jobId).map(item => item.id), ids = batch ? batch.filter(id => offered.includes(id)) : offered;
+      if (!ids.length) return [];
       const conversation = this.conversation(conversationId);
       const at = this.now();
-      const selected = batch ? inArray(inbox.id, [...batch]) : undefined;
+      const selected = inArray(inbox.id, ids);
       this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'), selected)).run();
       // Snapshot each actual publication, including a retry of an unconfirmed take.
       this.db.update(inbox).set({takenVolume:inbox.volume}).where(and(eq(inbox.conversation,conversationId),eq(inbox.job,jobId),eq(inbox.state,'taken'),ne(inbox.volume,'mute'),selected)).run();
