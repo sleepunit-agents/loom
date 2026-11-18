@@ -166,3 +166,6 @@ The database can store a machine request. When the request has a stored digest, 
 Keep the complete routine in the trigger instructions or in the single repository file. An instruction to read a second file leaves that file outside the digest. Earlier conversation, identity, ledger data and tool results are also outside it.
 
 An editor can withdraw a request with `tempo.edit` by passing `{"id":"<trigger-id>","machine":null}`. This clears the stored machine, approval reference and digest in the same transaction. A later ordinary firing follows ordinary placement, which can select a process worker if the installation still has one.
+
+
+For a manual firing, call `tempo.runNow` with only the trigger ID. Check the returned value even if the command succeeded. A failed firing returns `{"saved":false,"failed":true,"reason":"…"}` and commits the reason to the trigger log. A successful firing returns `{"saved":true}`. Replaying the command with the same operation ID returns its recorded result.
