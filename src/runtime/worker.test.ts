@@ -21,9 +21,10 @@ function fixture(turns?: WorkerTurns, assignment: WorkerAssignment = job) {
   const abort = new AbortController();
   let pulse = () => {};
   const disposed = vi.fn(), clock = { ms: 0 };
-  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms, turns,
+  const silenceExpired = vi.fn();
+  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms, turns, silenceExpired,
     schedule: { every: (_ms, callback) => { pulse = callback; return disposed; } } });
-  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock };
+  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock, silenceExpired };
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 describe('worker work plane', () => {
@@ -133,13 +134,25 @@ describe('worker work plane', () => {
       const f = fixture(), run = f.run(); await flush();
       if (phase === 'running') { f.built.resolve('image'); f.spawned.resolve(); await flush(); }
       vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
-      // The last answered report was the claim (or the running acknowledgement), at 0. The next try after
-      // this one could not be answered inside the silence interval.
-      f.clock.ms = SILENCE_MS - REPORT_MS - 1; f.pulse(); await flush(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
-      f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); expect(await run).toBe('abandoned');
+      f.clock.ms = REPORT_MS; f.pulse(); await flush();
+      f.clock.ms = REPORT_MS + SILENCE_MS - 1; f.pulse(); await flush();
+      expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+      f.clock.ms = REPORT_MS + SILENCE_MS; f.pulse(); expect(await run).toBe('abandoned');
+      expect(f.silenceExpired).toHaveBeenCalledExactlyOnceWith(SILENCE_MS);
       expect(f.control.finish).not.toHaveBeenCalled(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(true);
       if (phase === 'running') expect(f.body.stop).toHaveBeenCalled();
     }
+  });
+  it('stops the body when the silence window expires during a pending retry', async () => {
+    const f = fixture(), run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValueOnce(new Error('connection refused'));
+    f.clock.ms = REPORT_MS; f.pulse(); await flush();
+    const retry = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValue(retry.promise);
+    f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); await flush();
+    f.clock.ms = REPORT_MS + SILENCE_MS; f.pulse(); await flush();
+    expect(f.body.stop).toHaveBeenCalled();
+    retry.resolve(true); expect(await run).toBe('abandoned');
+    expect(f.control.finish).not.toHaveBeenCalled();
   });
   it('goes on reporting a job as starting for as long as its build takes', async () => {
     const f = fixture(), run = f.run(); await flush();

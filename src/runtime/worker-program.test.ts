@@ -21,10 +21,10 @@ it('loads validated config and token file then wires worker-only dependencies', 
   const f = fixture();
   expect(await workerProgram(f)).toBe(0);
   expect(f.read.mock.calls.map(c => c[0])).toEqual(['/config', '/token']);
-  expect(f.control).toHaveBeenCalledWith({ url: config.url, token: 'private-token', signal: expect.any(AbortSignal) });
+  expect(f.control).toHaveBeenCalledWith({ url: config.url, token: 'private-token', signal: expect.any(AbortSignal), silenceExpired: expect.any(Function) });
   expect(f.executor).toHaveBeenCalledWith({ ...config, state });
   // One slot for a worker whose bodies are processes, unless it is told otherwise.
-  expect(f.run).toHaveBeenCalledExactlyOnceWith({ box: 'b', control: {}, executor: {}, signal: expect.any(AbortSignal), turns: expect.objectContaining({ take: expect.any(Function) }) });
+  expect(f.run).toHaveBeenCalledExactlyOnceWith({ box: 'b', control: {}, executor: {}, signal: expect.any(AbortSignal), turns: expect.objectContaining({ take: expect.any(Function) }), silenceExpired: expect.any(Function) });
   expect(f.handlers.size).toBe(0);
 });
 it('ends what a killed worker left before it takes any work, and gives its state directory up when it stops', async () => {

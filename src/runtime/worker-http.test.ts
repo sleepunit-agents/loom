@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
-import { FINISH_BUDGET_MS, REPORT_MS, SILENCE_MS } from './silence.js';
+import { SILENCE_MS } from './silence.js';
 vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn((size: number) => actual.randomBytes(size)) }; });
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
@@ -29,24 +29,55 @@ describe('worker operation client', () => {
     await expect(control.next()).rejects.toThrow('outcome may be uncertain');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
-  it('discards error diagnostics and never retries uncertain writes', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error('private-token private-url private-brief'));
+  it('discards error diagnostics and stops on an explicit rejection', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('private-token private-url private-brief', { status: 403 }));
     await expect(client(fetcher).started('j1', 'image')).rejects.toThrow(/^Worker started failed; outcome may be uncertain$/);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
-  it('sends a finish again under the same operation id after a dropped reply, and gives up after three tries', async () => {
-    const pauses: number[] = [], pause = async (ms: number) => { pauses.push(ms); };
-    const dropped = vi.fn<typeof fetch>().mockRejectedValueOnce(new Error('reset')).mockResolvedValueOnce(response({ ok: true }));
-    await httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: dropped, signal: new AbortController().signal, pause }).finish('j1', 0, 'done', 'body');
-    const sent = dropped.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
-    expect(sent).toHaveLength(2); expect(sent[1]).toEqual(sent[0]); expect(pauses).toEqual([2_000]);
-    const down = vi.fn<typeof fetch>().mockRejectedValue(new Error('down'));
-    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: down, signal: new AbortController().signal, pause }).finish('j1', 0, 'done', 'body'))
-      .rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
-    expect(down).toHaveBeenCalledTimes(3);
-    const abort = new AbortController(), stopped = vi.fn<typeof fetch>().mockImplementation(async () => { abort.abort(); throw new Error('down'); });
-    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: stopped, signal: abort.signal, pause }).finish('j1', 0, 'done', 'body')).rejects.toThrow();
-    expect(stopped).toHaveBeenCalledTimes(1);
+  it.each(['started', 'finish'] as const)('survives refusal and a starting server when reporting %s, with the same receipt', async name => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockImplementationOnce(async () => new Response(null, { status: 503 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 429 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 500 }))
+      .mockResolvedValueOnce(response({ ok: true }));
+    const pause = vi.fn(async () => {});
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal: new AbortController().signal, pause });
+    if (name === 'started') await control.started('j1', 'image');
+    else await control.finish('j1', 0, 'done', 'body');
+    const sent = fetcher.mock.calls.map(([, init]) => init?.body);
+    expect(sent).toHaveLength(5); expect(new Set(sent).size).toBe(1);
+  });
+  it('retries enrollment when the socket refused the connection before delivery', async () => {
+    const refused = Object.assign(new Error(), { code: 'ECONNREFUSED' });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed', { cause: refused }))
+      .mockResolvedValueOnce(response({ registered: true }));
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal: new AbortController().signal, pause: async () => {} });
+    const bootstrap = await control.enrollBody!('job', new AbortController().signal);
+    expect(fetcher.mock.calls[0][1]?.body).toEqual(fetcher.mock.calls[1][1]?.body);
+    bootstrap.erase?.();
+  });
+  it('ceases claiming authority when Loom explicitly rejects the heartbeat', async () => {
+    expect(await client(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: false, code: 'denied', message: 'Not permitted' }, { status: 403 }))).heartbeat('j1', 'running')).toBe(false);
+  });
+  it.each([200, 403, 429, 500])('treats an unrecognized heartbeat reply (HTTP %i) as unanswered', async status => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('malformed', { status }));
+    await expect(client(fetcher).heartbeat('j1', 'running')).rejects.toThrow('Worker heartbeat failed');
+  });
+  it('retries a repository secret read only after the initial connection was refused', async () => {
+    const refused = new TypeError('fetch failed', { cause: Object.assign(new Error(), { code: 'ECONNREFUSED' }) });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(refused).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'synthetic', fetch: fetcher, signal: new AbortController().signal, pause: async () => {} });
+    expect(await control.repositoryInput!('j1', new AbortController().signal)).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fetcher.mockRejectedValueOnce(new TypeError('socket reset'));
+    await expect(control.repositoryInput!('j1', new AbortController().signal)).rejects.toThrow('Private secret input unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    fetcher.mockResolvedValueOnce(new Response('synthetic', { headers: {
+      'content-type': 'application/octet-stream', 'x-loom-secret-use': 'use-input-' + 'a'.repeat(64),
+    } })).mockRejectedValueOnce(refused);
+    await expect(control.repositoryInput!('j1', new AbortController().signal)).rejects.toThrow('Private secret input unavailable');
+    expect(fetcher.mock.calls.slice(3).map(([url]) => new URL(String(url)).pathname))
+      .toEqual(['/api/secrets/private/read', '/api/secrets/private/confirm']);
   });
   it('keeps every try of a finish report inside the budget the silence interval leaves, whatever the request deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
@@ -58,8 +89,7 @@ describe('worker operation client', () => {
       const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
       await vi.advanceTimersByTimeAsync(300_000); await refused;
       expect(gaveUp.length).toBeGreaterThan(0);
-      expect(Math.max(...gaveUp)).toBeLessThanOrEqual(FINISH_BUDGET_MS);
-      expect(FINISH_BUDGET_MS + REPORT_MS).toBeLessThan(SILENCE_MS);
+      expect(Math.max(...gaveUp)).toBe(SILENCE_MS);
     } finally { vi.useRealTimers(); }
   });
   it('rejects an oversized body and cancels its stream', async () => {

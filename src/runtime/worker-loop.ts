@@ -10,6 +10,7 @@ export async function runWorker(input: {
   once?: typeof workOnce; report?: (result: WorkerResult) => void;
   /** Shared by every slot of one worker: see workOnce. */
   turns?: WorkerTurns;
+  silenceExpired?: (elapsedMs: number) => void;
 }): Promise<void> {
   const idleMs = input.idleMs ?? 5_000;
   if (!Number.isSafeInteger(idleMs) || idleMs < 1 || idleMs > 60_000) throw new Error('Invalid worker idle interval');

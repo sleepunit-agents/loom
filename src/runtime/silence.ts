@@ -11,7 +11,3 @@ export const SILENCE_MS = 120_000;
 /** How often the worker and the body report. Several reports fit in the silence interval, so one that is
  * dropped does not end anything. */
 export const REPORT_MS = 15_000;
-/** How long a worker may keep trying to deliver a job's finish report, tries and waits together. The last
- * report before it can be a whole REPORT_MS old, and loom must still hear the finish inside SILENCE_MS:
- * a finish that arrives after the sweep is refused, and work that had finished would be run again. */
-export const FINISH_BUDGET_MS = SILENCE_MS / 2;

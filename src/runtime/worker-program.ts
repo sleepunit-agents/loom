@@ -157,7 +157,8 @@ export async function workerProgram(input: {
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
     const remote = { url: config.url, token, signal: abort.signal };
-    const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
+    const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
+    const control = (input.control ?? httpWorkerControl)({ ...remote, silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container
@@ -234,7 +235,7 @@ export async function workerProgram(input: {
       : harness => own(said ?? {}, harness) ?? Math.min(own(ACCOUNT_SLOTS_BY_HARNESS, harness) ?? ACCOUNT_SLOTS_DEFAULT, slots) });
     try {
       if (!abort.signal.aborted) {
-        const running = Array.from({ length: slots }, () => (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor: executor!, turns })
+        const running = Array.from({ length: slots }, () => (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor: executor!, turns, silenceExpired })
           .catch((error: unknown) => { abort.abort(); throw error; }));
         const failed = (await Promise.allSettled(running)).find(slot => slot.status === 'rejected');
         if (failed) throw failed.reason;

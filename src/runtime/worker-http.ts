@@ -1,7 +1,5 @@
 import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
-/** Worker-side client for the ordinary operation door. No local retries: a lost
- * claim or report is reconciled by loom's job-silence sweep. The one exception is
- * finish, which is sent again under the same operation id (see httpWorkerControl). */
+/** Worker-side client for the ordinary operation door. Claims are never replayed. */
 import { randomUUID } from 'node:crypto';
 import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,7 +9,7 @@ import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
-import { FINISH_BUDGET_MS } from './silence.js';
+import { SILENCE_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 export const workerAssignment = z.object({
@@ -31,12 +29,21 @@ export const workerAssignment = z.object({
 export interface WorkerHttpOptions {
   url: string; token: string; signal: AbortSignal; timeoutMs?: number;
   fetch?: typeof fetch;
-  /** Waits between the tries of a finish report; tests supply their own. */
+  silenceExpired?: (elapsedMs: number) => void;
+  /** Wait between attempts at a receipt-backed report. */
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
-/** A finish report is sent at most this many times, this far apart, and all of it inside FINISH_BUDGET_MS:
- * a try is given no more time than the budget has left, whatever the request deadline is set to. */
-const FINISH_TRIES = 3, FINISH_PAUSE_MS = 2_000;
+class WorkerOperationFailure extends Error {
+  constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false) {
+    super(`Worker ${name} failed; outcome may be uncertain`);
+  }
+}
+function connectionRefused(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ('code' in error && error.code === 'ECONNREFUSED') return true;
+  if (error instanceof AggregateError) return error.errors.length > 0 && error.errors.every(connectionRefused);
+  return error instanceof Error && connectionRefused(error.cause);
+}
 function operationCaller(input: WorkerHttpOptions) {
   let base: URL;
   try { base = privateOrigin(input.url); } catch { throw new Error('Worker URL must be an HTTPS origin (HTTP allowed only on loopback)'); }
@@ -52,18 +59,25 @@ function operationCaller(input: WorkerHttpOptions) {
     try {
       const body = JSON.stringify({ id, input: args });
       if (Buffer.byteLength(body, 'utf8') > DOOR_REQUEST_BYTES) throw new Error('Worker request exceeded limit');
-      response = await (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
-        method: 'POST', redirect: 'error', signal,
-        headers: { authorization: `Bearer ${input.token}`, 'content-type': 'application/json' },
-        body,
-      });
-      if (!response.ok || !response.body) throw new Error('Worker operation rejected');
+      try {
+        response = await (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
+          method: 'POST', redirect: 'error', signal,
+          headers: { authorization: `Bearer ${input.token}`, 'content-type': 'application/json' },
+          body,
+        });
+      } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
+      // Only a parsed refusal from Loom says this worker has lost authority. A gateway
+      // can return its own page (including a 403) while Loom is starting.
+      if (!response.ok && !(name === 'heartbeat' && response.status === 403)) {
+        throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
+      }
+      if (!response.body) throw new WorkerOperationFailure(name, false);
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await reader.read().catch(() => { throw new WorkerOperationFailure(name, true); });
           if (done) break;
           size += value.byteLength;
           // An answer to a worker is small: it reads no more of one than it may send.
@@ -73,10 +87,15 @@ function operationCaller(input: WorkerHttpOptions) {
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
       if (signal.aborted) throw new Error('Worker request cancelled');
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (!response.ok) {
+        const denied = z.object({ ok: z.literal(false), code: z.literal('denied'), message: z.string() }).strict().safeParse(data).success;
+        throw new WorkerOperationFailure(name, false, false, denied);
+      }
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkerOperationFailure) throw error;
       // Never include upstream bodies, URLs, tokens or fetch diagnostics in logs.
-      throw new Error(`Worker ${name} failed; outcome may be uncertain`);
+      throw new WorkerOperationFailure(name, deadline.signal.aborted);
     } finally {
       clearTimeout(timer);
       if (onAbort) signal.removeEventListener('abort', onAbort);
@@ -84,6 +103,25 @@ function operationCaller(input: WorkerHttpOptions) {
     }
   }
   return call;
+}
+/** Keep one operation id across the outage. Enrollment is retried only when no connection was made. */
+async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attempt: (id: string, withinMs: number) => Promise<T>): Promise<T> {
+  const start = performance.now(), id = randomUUID();
+  const pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+  const remaining = () => SILENCE_MS - (performance.now() - start);
+  while (!input.signal.aborted && remaining() > 0) {
+    try { return await attempt(id, remaining()); }
+    catch (error) {
+      if (!(error instanceof WorkerOperationFailure) || !error.temporary || input.signal.aborted ||
+        (name === 'enrollBody' && !error.beforeDelivery)) throw error;
+      const wait = Math.min(2_000, remaining());
+      if (wait > 0) {
+        try { await pause(wait, input.signal); } catch { throw error; }
+      }
+    }
+  }
+  if (!input.signal.aborted) input.silenceExpired?.(Math.floor(performance.now() - start));
+  throw new WorkerOperationFailure(name, true);
 }
 export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
 export function readWorkerAccountBasis(input: WorkerHttpOptions, identity: WorkerAccountIdentity) {
@@ -124,29 +162,47 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       cancellation.addEventListener('abort', erase, { once: true });
       try {
         if (cancellation.aborted) throw new Error('Body enrollment cancelled');
-        await operationCaller({ ...input, signal: cancellation })('enrollBody',
-          { job, fingerprint: credentialFingerprint(token) }, z.object({ registered: z.literal(true) }).strict(), erase);
+        const options = { ...input, signal: cancellation }, enroll = operationCaller(options);
+        const args = { job, fingerprint: credentialFingerprint(token) };
+        await reportWithRetry(options, 'enrollBody', (id, remaining) => enroll('enrollBody',
+          args, z.object({ registered: z.literal(true) }).strict(), erase, id, remaining));
         if (cancellation.aborted || erased) throw new Error('Body enrollment cancelled');
         return { origin: new URL(input.url).origin, job, token, erase };
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
     },
-    repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??PRIVATE_SECRET_TIMEOUT_MS,PRIVATE_SECRET_TIMEOUT_MS),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
+    repositoryInput: async (job, signal) => {
+      const options = { ...input, signal: AbortSignal.any([input.signal, signal]) };
+      return reportWithRetry(options, 'repositoryInput', async (_id, remaining) => {
+        let requests = 0, refusedBeforeRead = false;
+        const client = privateSecretClient({
+          ...options,
+          timeoutMs: Math.max(1, Math.floor(Math.min(input.timeoutMs ?? PRIVATE_SECRET_TIMEOUT_MS, PRIVATE_SECRET_TIMEOUT_MS, remaining))),
+          fetch: async (url, init) => {
+            requests++;
+            try { return await (input.fetch ?? fetch)(url, init); }
+            catch (error) {
+              // A read or confirmation that might have delivered bytes must never be repeated.
+              refusedBeforeRead = requests === 1 && !init?.signal?.aborted && connectionRefused(error);
+              throw error;
+            }
+          },
+        });
+        try { return await client.repository(job); }
+        catch (error) { if (refusedBeforeRead) throw new WorkerOperationFailure('repositoryInput', true, true); throw error; }
+        finally { client.close(); }
+      });
+    },
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
-    started: async (job, build) => { await call('started', { job, build }, ack); },
-    heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,
+    started: async (job, build) => { await reportWithRetry(input, 'started', (id, remaining) => call('started', { job, build }, ack, undefined, id, remaining)); },
+    heartbeat: async (job, state) => {
+      try { return (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active; }
+      catch (error) { if (error instanceof WorkerOperationFailure && error.denied) return false; throw error; }
+    },
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
     finish: async (job, exitCode, logTail, exitBy) => {
-      const id = randomUUID(), pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
-      const until = performance.now() + FINISH_BUDGET_MS;
-      for (let tries = 1; ; tries++) {
-        try { await call('finish', { job, exitCode, logTail, exitBy }, ack, undefined, id, until - performance.now()); return; }
-        catch (error) {
-          if (tries >= FINISH_TRIES || input.signal.aborted || until - performance.now() <= FINISH_PAUSE_MS) throw error;
-          try { await pause(FINISH_PAUSE_MS, input.signal); } catch { throw error; }
-        }
-      }
+      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy }, ack, undefined, id, remaining));
     },
   };
 }
