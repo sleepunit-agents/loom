@@ -421,6 +421,7 @@ it('reports contact loss when the first status cannot reach Loom for two minutes
  const f=fixture(),clock=new FakeClock(),fetcher=vi.fn<typeof fetch>().mockRejectedValue(Error('offline'));
  const result=bodyProgram({...f.options,clock,fetch:fetcher});
  await vi.waitFor(()=>expect(fetcher).toHaveBeenCalled());
+ await new Promise(resolve=>setImmediate(resolve)); // Let the client observe the failed response.
  clock.advance(120000);
  expect(await result).toBe(BODY_EXIT.contact);expect(f.error).toHaveBeenCalledWith(expect.stringContaining("120 seconds"));expect(f.native).not.toHaveBeenCalled();
 });
