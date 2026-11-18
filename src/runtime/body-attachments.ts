@@ -17,7 +17,6 @@ export const BODY_ATTACHMENTS = 10;
 /** The most bytes written for one run. */
 export const BODY_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const listed = z.object({ files: z.array(z.object({ file: z.string(), name: z.string(), bytes: z.number().int().nonnegative(), fetchedAt: z.string(), contents: z.string().optional() }).strict()) }).strict();
-const safe = plainFileName;
 
 /** Returns the words to add to the body's input, or null when nothing was written. */
 export async function saveBodyAttachments(client: Pick<ReturnType<typeof bodyCommandClient>, 'command'>, incoming: readonly string[], scratch: string | undefined,
@@ -36,9 +35,9 @@ export async function saveBodyAttachments(client: Pick<ReturnType<typeof bodyCom
         if (contents === undefined) continue;
         const bytes = Buffer.from(contents, 'base64');
         try {
-          const path = join(directory, `${lines.length + 1}-${safe(file.name)}`);
+          const path = join(directory, `${lines.length + 1}-${plainFileName(file.name)}`);
           write(path, bytes); total += bytes.byteLength;
-          lines.push(`- ${path} (${safe(file.name)}, ${bytes.byteLength} bytes)`);
+          lines.push(`- ${path} (${plainFileName(file.name)}, ${bytes.byteLength} bytes)`);
         } finally { bytes.fill(0); }
       }
     }

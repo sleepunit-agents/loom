@@ -21,6 +21,8 @@ it('fetches each file on its own, with no credential and no redirect, and leaves
     const name = String(url).slice(cdn.length);
     if (name.startsWith('gone')) return body(0, 'application/json', 404);
     if (name.startsWith('page')) return body(10, 'text/html; charset=utf-8');
+    if (name.startsWith('sneak')) return new Response('  <!DOCTYPE html><html><body>not a picture</body></html>', { headers: { 'content-type': 'text/plain' } });
+    if (name.startsWith('untyped')) return new Response('<html lang="en"><head></head></html>');
     if (name.startsWith('huge')) return body(HANDED_FILE_BYTES + 1);
     if (name.startsWith('down')) throw Error('socket hang up');
     return body(5);
@@ -29,6 +31,8 @@ it('fetches each file on its own, with no credential and no redirect, and leaves
   const fetched = await fetchDiscordFiles(files, () => true, request);
   expect(fetched.map(file => [file.id, file.name, file.bytes.byteLength])).toEqual([['1', 'ok.png', 5]]);
   expect(request).toHaveBeenCalledTimes(5);
+  // An HTML page served as something else, or as nothing, is not kept either.
+  expect(await fetchDiscordFiles(['sneak', 'untyped'].map((name, index) => ({ id: String(index + 20), name, url: cdn + name })), () => true, request)).toEqual([]);
   for (const [, options] of request.mock.calls) { expect(options).toMatchObject({ method: 'GET', redirect: 'error' }); expect(options?.headers).toBeUndefined(); }
   // A link that is not Discord's is never asked for, and nothing is fetched for a connection no longer in use.
   request.mockClear();

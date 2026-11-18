@@ -53,7 +53,9 @@ export async function fetchDiscordFiles(files: readonly DiscordFile[], current: 
         if (size > HANDED_FILE_BYTES || !current()) { whole = false; break; }
         chunks.push(Buffer.from(part.value));
       }
-      if (whole) fetched.push({ id: file.id, name: file.name, bytes: Buffer.concat(chunks) });
+      // Never an HTML page, whatever it was served as: the declared type is checked above, and here what it starts with.
+      const bytes = Buffer.concat(chunks);
+      if (whole && !/^\s*<(!doctype html|html[\s>])/i.test(bytes.subarray(0, 512).toString('latin1'))) fetched.push({ id: file.id, name: file.name, bytes });
     } catch { /* this file is only a link */ }
     finally { void reader?.cancel().catch(() => {}); }
   }

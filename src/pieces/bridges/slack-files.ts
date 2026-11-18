@@ -39,7 +39,6 @@ function fileUrl(value:string) {
   if(u.origin!=='https://files.slack.com'||u.username||u.password||u.hash)throw held();
   return u.href;
 }
-const safeName=plainFileName;
 
 /** One batch (first five attachments), no retry or cache. Returned bytes belong
  * only to this proof's delivery; the caller must persist them privately and
@@ -110,7 +109,7 @@ export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretU
           }
         });
         if(!current()){bytes.fill(0);throw held();}
-        completed.push({id:f.id,name:safeName(f.name),bytes});
+        completed.push({id:f.id,name:plainFileName(f.name),bytes});
       }
       // The post-holder check above is also the final batch check: pushing
       // the result and returning contain no await or external callback. Empty

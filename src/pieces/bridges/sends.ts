@@ -7,7 +7,6 @@ import { STOP_WORD } from './incoming.js';
 /** What the bot says where a stop word stopped a job, as the earlier bridge said it. */
 export const STOPPED_LINE = 'Stopped here.';
 
-export { SEND_FILES, SEND_FILES_BYTES, sendFileName } from './send-file-limit.js';
 import { SEND_FILES, SEND_FILES_BYTES, sendFileName } from './send-file-limit.js';
 export interface SendFile { name: string; contents: Buffer }
 
@@ -93,6 +92,11 @@ export class BridgeSends {
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
         if (old.incoming !== input.incoming || old.text !== input.text) throw new Error('Reply id reused');
+        // The same id is the same post, files and all. While the post still has its files they are compared;
+        // once it is settled they are gone, and a repeat that names files cannot be told from the first.
+        const kept = tx.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, old.id)).orderBy(asc(bridgeSendFiles.position)).all();
+        const given = input.files ?? [], settled = ['sent', 'uncertain', 'dismissed'].includes(old.state);
+        if (!(settled && !kept.length) && (kept.length !== given.length || kept.some((file, at) => file.name !== sendFileName(given[at].name) || !file.contents.equals(given[at].contents)))) throw new Error('Reply id reused');
         return old;
       }
       const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();

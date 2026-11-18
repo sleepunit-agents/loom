@@ -303,7 +303,10 @@ export class SharedBridges {
     const still=this.options.db.select({state:bridgeIncoming.state,text:bridgeIncoming.text}).from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get();
     // Words erased while the files were on their way (a direct message past its keep time) take the files with them.
     if(still?.state==='delivered'&&still.text===message.text)for(const file of fetched)this.files.store({connection:row.id,file:file.id,incoming,name:file.name,contents:file.bytes});
-    for(const file of files)if(!fetched.some(got=>got.id===file.id)){if(this.unfetched.size>=4096)this.unfetched.clear();this.unfetched.add(JSON.stringify([row.id,file.id]));}
+    for(const file of files)if(!fetched.some(got=>got.id===file.id)){
+     // Bounded by forgetting the oldest, never all at once: a file that failed is not asked for again while its frame is still spooled.
+     if(this.unfetched.size>=4096)this.unfetched.delete(this.unfetched.values().next().value!);
+     this.unfetched.add(JSON.stringify([row.id,file.id]));}
     life.again=true;
    }
    // Frame and Inbox delivery have committed. Keep the original raw receipt

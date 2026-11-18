@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends, SEND_FILES, SEND_FILES_BYTES, STOPPED_LINE, reviewReply } from './sends.js';
+import { BridgeSends, STOPPED_LINE, reviewReply } from './sends.js';
+import { SEND_FILES, SEND_FILES_BYTES } from './send-file-limit.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
 const opened: Database.Database[] = [];
@@ -318,6 +319,18 @@ describe('a post\'s files', () => {
     // Its files are gone; the posts that may still be sent keep theirs.
     expect(kept(f).map(row => row[0]).sort()).toEqual(['for-review', 'waiting']);
     void restarted;
+  });
+  it('are part of what a post\'s id names: the same id with other files is refused, not answered as if it were the first', async () => {
+    const f = fixture();
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'Here', held: true, files: [png()] });
+    // The same post again is the same post.
+    expect(f.sends.queue({ id: 'reply', incoming: 'in', text: 'Here', held: true, files: [png()] }).id).toBe('reply');
+    for (const files of [[{ name: 'plot one.png', contents: Buffer.from('OTHER') }], [{ name: 'other.png', contents: Buffer.from('PNG') }], [png(), png()], undefined])
+      expect(() => f.sends.queue({ id: 'reply', incoming: 'in', text: 'Here', held: true, ...(files ? { files } : {}) })).toThrow('Reply id reused');
+    // And a post made without files is not the same post with some.
+    f.sends.queue({ id: 'plain', incoming: 'in', text: 'Plain', held: true });
+    expect(() => f.sends.queue({ id: 'plain', incoming: 'in', text: 'Plain', held: true, files: [png()] })).toThrow('Reply id reused');
+    expect(kept(f)).toHaveLength(1);
   });
   it('are refused past their count or their bytes, when empty, and on Slack, and then nothing is queued', () => {
     const f = fixture();
