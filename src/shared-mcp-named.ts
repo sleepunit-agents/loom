@@ -337,9 +337,16 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   z.object({state:z.enum(approvals.state.enumValues).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
    // The state is one of the column's own fixed words, so it is safe to write into the query as an enum value.
-   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null}[]}>(
-    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy}}',{limit:input.limit??20});
-   return data.approvals.length?data.approvals.map(row=>'## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(row.decidedBy?' · answered by '+row.decidedBy:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why).join('\n\n---\n\n'):'No approvals'+(input.state?' are '+input.state:'')+'.';
+   type Decision = {event:'allow'|'deny';note:string};
+   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null;decision:Decision[]}[]}>(
+    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy decision:approvalRecordByApproval(where:{event:{inArray:[allow,deny]}},orderBy:{seq:{direction:desc,priority:1}},limit:1){event note}}}',{limit:input.limit??20});
+   if(!data.approvals.length)return 'No approvals'+(input.state?' are '+input.state:'')+'.';
+   return data.approvals.map(row=>{
+    const decision=row.decision[0];
+    const attributed=decision?.note.startsWith(decision.event==='allow'?'Allowed by ':'Denied by ');
+    const answer=attributed?decision.note:row.decidedBy?'answered by '+row.decidedBy:'';
+    return '## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(answer?' · '+answer:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
+   }).join('\n\n---\n\n');
   });
  tool('inbox','List what is in your inbox, newest first. state narrows it: '+inbox.state.enumValues.join(', ')+'.',
   z.object({state:z.enum(inbox.state.enumValues).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),

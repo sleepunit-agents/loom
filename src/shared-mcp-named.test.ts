@@ -246,6 +246,29 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
  }finally{await art.client.close();await p.close();}
 },30_000);
 
+it('lists the current attributed approval answer after an owner answers through MCP',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ const owner=new Client({name:'fictional-owner-terminal',version:'1'});
+ try{
+  const token=p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'owner',member:'alice',label:'Owner terminal'})).value.token;
+  await owner.connect(new StreamableHTTPClientTransport(new URL('/mcp',p.url),{requestInit:{headers:{authorization:'Bearer '+token}}}));
+  const card=p.composition.writes.run(()=>p.composition.services.approvals.request({
+   kind:'command',target:'fixture',what:'Apply fixture',why:'Test the terminal',agent:'art',actingFor:'alice',
+   askedFrom:'terminal',ask:'Apply?',ifYes:'Apply',ifNo:'Wait',
+  })).value;
+  for(const [answer,quote] of [['allow','Proceed with the fixture'],['deny','Hold the fixture']] as const){
+   const result=await owner.callTool({name:'loom_command',arguments:{operation:'approvals.answer',id:'answer-'+answer,
+    input:{id:card.id,answer,onWord:{venue:'terminal',through:'mark',quote}}}});
+   expect(result.isError,JSON.stringify(result.content)).not.toBe(true);
+  }
+  const listed=await art.call('approvals',{state:'denied'});
+  expect(listed.error,listed.text).toBe(false);
+  expect(listed.text).toContain('Denied by alice as told to mark at the terminal');
+  expect(listed.text).toContain('Hold the fixture');
+  expect(listed.text).not.toContain('Proceed with the fixture');
+ }finally{await owner.close();await art.client.close();await p.close();}
+},30_000);
+
 it('proposes a change, sees the approval waiting, and reads its own inbox',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
