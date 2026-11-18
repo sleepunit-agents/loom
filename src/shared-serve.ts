@@ -11,7 +11,7 @@ import { sharedRoot } from './shared-root.js';
 export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number; webRoot?:string }) {
   const web=options.webRoot?sharedWeb(options.webRoot):undefined;
   validateSharedMemoryOptions(options.db,options.memory);await prepareSharedMemorySources(options.memory);
-  const root = sharedRoot(options);
+  const root = sharedRoot({ ...options, deferRuntimeStart: true });
   const sockets = new Set<Socket>();
   let meter: Awaited<typeof root.measuring> | undefined;
   const listener = getRequestListener(async request=>{const response=await root.http.fetch(request);return web&&response.status===404&&['GET','HEAD'].includes(request.method)?web.fetch(request):response;});
@@ -55,6 +55,7 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
       server.once('error', failed); server.once('listening', ready);
       server.listen(options.port ?? 0, host);
     });
+    root.services.runtime.start();
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('No shared listener address');
     return { ...root, url: `http://${host.includes(':') ? '[' + host + ']' : host}:${address.port}`, close };

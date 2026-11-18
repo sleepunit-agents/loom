@@ -106,6 +106,8 @@ import { registerSharedAccountReports } from './shared-account-reports.js';
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
 export function sharedRoot(options: {
+  /** Production starts the silence clock when its HTTP listener opens. */
+  deferRuntimeStart?: boolean;
   db: DataDatabase;
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
@@ -457,7 +459,7 @@ export function sharedRoot(options: {
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
-  runtime.start();
+  if (!options.deferRuntimeStart) runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
     measuring: measuringReady,
