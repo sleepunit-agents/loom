@@ -1,9 +1,10 @@
 /** Canonical metadata-only enrollment for the locally generated body credential.
- * Only the current assigned starting worker can bind a fingerprint to its job.
+ * Only the current assigned starting worker can bind a fingerprint to its job, and only while the job has no
+ * live body token: the same fingerprint again is a repeat, another one is refused.
  * This decides who may enrol; the row itself is made by sharedTokens, like every token row. */
 import {SHA256_HEX} from './core/sha256-hex.js';
 import {createHash} from 'node:crypto';
-import {eq} from 'drizzle-orm';
+import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
 import {jobs,tokens} from './core/data/schema.js';
@@ -26,6 +27,9 @@ export function registerSharedBodyEnrollment(operations:Operations,db:DataDataba
   const at=Date.parse(options.now());
   if(old&&(old.kind!=='agent'||old.agent!==job.agent||old.job!==job.id||old.member!==null||old.box!==null
    ||!tokenLive(old,at)||!(Date.parse(old.createdAt)<=at)))return;
+  // A job has one body. While it has a live body token, no other fingerprint is bound to it: a second
+  // enrolment would be a second body in the first one's place, with everything the job is handed.
+  if(!old&&db.select().from(tokens).where(and(eq(tokens.kind,'agent'),eq(tokens.job,job.id))).all().some(row=>tokenLive(row,at)))return;
   return {job,proof,old};
  };
  operations.register({name:'runtime.enrollBody',doors:['http'],write:true,recheckPolicy:true,input,

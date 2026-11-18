@@ -8,12 +8,14 @@
  *
  * Asking for the agent and no one job is asking for a standing answer, and whether a rule or the household
  * default may answer a request is the same question: policy.ts, standingSecretAnswerServes. It holds for
- * every body of the agent whoever its work is for, and fails only for a body whose member has left the
- * household or lost the agent. */
+ * every body of the agent working for its owners, whichever of them, and fails for a body whose member has
+ * left the household or lost the agent. A body working on anybody else's word asks for nothing: its job runs
+ * with loom's tools only (policy.ts, loomToolsOnly), and `secrets.request` is refused it. */
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { holds, rules, standingSecretAnswerServes, type Viewer } from './policy.js';
+import { holds, loomToolsOnly, rules, standingSecretAnswerServes, type Viewer } from './policy.js';
+import { jobWord } from './shared-place-mail.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, secretRequests, secretUses } from './core/data/schema.js';
@@ -30,9 +32,12 @@ export function registerSharedSecretAgentCommands(operations:Operations,db:DataD
   const job=db.select({id:jobs.id,agent:jobs.agent,conversation:jobs.conversation}).from(jobs).where(eq(jobs.id,bound.job)).get();
   return job?.agent===bound.agent?job:undefined;
  };
+ // A body whose job works on anybody else's word asks for no secret (policy.ts, loomToolsOnly). A terminal
+ // session of the agent is bound to no job and asks as before.
+ const held=(viewer:Viewer)=>{const job=target(viewer);return !!job&&loomToolsOnly(jobWord(db,job).woke);};
  operations.register({name:'secrets.request',input:agentSecretRequest,output:requestState,write:true,recheckPolicy:true,
   inputHash:(canonical,{actor})=>{const job=target(actor);return createHash('sha256').update('loom-shared-secret-request-receipt-v1\0').update(JSON.stringify([job?.id??null,job?.conversation??null,canonical])).digest('hex');},
-  may:(viewer,input)=>itself(viewer,viewer.id)&&(input.scope==='agent'?standingSecretAnswerServes(viewer,sharedSharing(db)):!!target(viewer)),
+  may:(viewer,input)=>itself(viewer,viewer.id)&&!held(viewer)&&(input.scope==='agent'?standingSecretAnswerServes(viewer,sharedSharing(db)):!!target(viewer)),
   run(ctx,input){
    const job=target(ctx.viewer);if(ctx.viewer.kind!=='agent'||(input.scope==='job'&&!job))throw new OperationError('denied','A current agent or body is required');
    try{const row=requests.request({id:input.id,secret:input.secret,why:input.why,minutes:input.minutes,agent:ctx.viewer.id,

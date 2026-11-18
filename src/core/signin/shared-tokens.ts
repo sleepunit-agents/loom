@@ -54,7 +54,8 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       }
     }
     if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
-    // A job has one live body token: a new one ends any other.
+    // A job has one live body token: a new one ends any other. (The worker's door refuses a second while one
+    // is live, shared-body-enrollment.ts; this holds the same for every other caller.)
     if (value.kind === 'agent' && value.job) db.update(tokens).set({ revokedAt: new Date(now).toISOString() })
       .where(and(eq(tokens.kind, 'agent'), eq(tokens.job, value.job), ne(tokens.fingerprint, fingerprint), isNull(tokens.revokedAt))).run();
     db.insert(tokens).values({ ...value, fingerprint, ...(madeFrom === undefined ? {} : { madeFrom }), createdAt: new Date(now).toISOString() }).run();

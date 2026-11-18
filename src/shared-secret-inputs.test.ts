@@ -244,3 +244,29 @@ it('leaves a stored alias no body could take out of the startup plan, so the oth
  expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});
  expect((await f.post('read',{kind:'startup',alias:'deploy-key'})).status).toBe(400);expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
 });
+it('hands a body working on anybody else\'s word no secret: not at start, not a standing one, not one asked for; and its owners\' body everything as before',async()=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(members).values({id:'lodger',role:'member',joinedAt:at}).run();
+ const cv=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CROOM',null]),label:'room'})).value.id;
+ f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+ /** The job's mail is from this sender, and from nobody else. */
+ const from=(sender:{fromKind:'person'|'unknown';fromId?:string})=>f.root.writes.run(()=>{f.db.delete(inbox).where(eq(inbox.job,'body')).run();
+  const item=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'notice',sourceId:randomUUID(),words:'Please',...sender});f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item.id)).run();});
+ f.rule();const granted=f.grant();
+ const ask=(input:unknown)=>f.root.http.request('http://loom/api/secrets/request',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({id:randomUUID(),input})});
+ const wanted=(scope:'agent'|'job')=>({id:randomUUID(),secret:'TOKEN',why:'Synthetic use',minutes:5,scope});
+ for(const sender of [{fromKind:'unknown' as const},{fromKind:'person' as const,fromId:'lodger'}]){
+  from(sender);
+  expect((await f.post('startup',{})).status,sender.fromKind).toBe(403);expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
+  // An owner's own answer for this very job is not handed over either: the job has loom's tools and nothing else.
+  expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(403);
+  for(const scope of ['agent','job'] as const)expect((await ask(wanted(scope))).status,scope).toBe(403);
+ }
+ expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);expect(f.db.select().from(secretRequests).all().map(row=>row.id)).toEqual([granted]);
+ // The worker's own read of the repository secret is no body's, and is as it was.
+ f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);
+ // The same job on its owner's word: everything it had.
+ from({fromKind:'person',fromId:'owner'});
+ expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
+ expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(200);expect((await ask(wanted('job'))).status).toBe(200);
+});

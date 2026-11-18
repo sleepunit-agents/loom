@@ -41,9 +41,16 @@ it('ends a body with the machine token that enrolled it: revoking a leaked machi
  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()).toMatchObject({revokedAt:null,madeFrom:hash(raw.runner)});
  expect(held.valid()).toBe(false);expect(asBody()).toBeUndefined();
 });
-it('rotates prior job body tokens atomically and never revives a revoked fingerprint through a new id or old receipt',async()=>{
+it('refuses a second body for a job that has a live one, and never revives a revoked fingerprint through a new id or old receipt',async()=>{
  const f=fixture(),first=f.credential(),second=f.credential(),id=randomUUID();expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(200);const proof=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))!;
- expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);expect(proof.valid()).toBe(false);expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
+ // Whoever holds the machine's token cannot put a body of their own in the place of the one the job has.
+ expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(403);expect(proof.valid()).toBe(true);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()).toBeUndefined();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(first))).get()?.revokedAt).toBeNull();
+ // The same fingerprint again is the same body, said twice.
+ expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(200);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(200);
+ // Once that body's token is revoked the job has no live body, and another may be enrolled; the revoked one never comes back.
+ f.root.writes.run(()=>f.db.update(tokens).set({revokedAt:f.now()}).where(eq(tokens.fingerprint,hash(first))).run());expect(proof.valid()).toBe(false);
+ expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);
  expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()?.revokedAt).toBeNull();
 });
 it.each(['worker','foreign'])('enrolls independent concurrent and subsequent jobs on %s without revoking another body',async box=>{
@@ -76,8 +83,10 @@ it.each(['owner','agent','runner','other-job','expired','future','revoked'] as c
  if(!['owner','agent','runner'].includes(kind))f.db.insert(tokens).values({fingerprint,label:'Collision',kind:'agent',agent:'art',job:kind==='other-job'?'other':'job',createdAt:kind==='future'?new Date(f.clock.now()+1000).toISOString():f.now(),expiresAt:kind==='expired'?f.now():null,revokedAt:kind==='revoked'?f.now():null}).run();
  expect((await f.call({job:'job',fingerprint})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();
 });
-it('rolls token rotation back with a refused receipt and publishes no partial registration',async()=>{
- const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});const next=hash(f.credential());expect(f.changes.some(change=>change.type==='token')).toBe(true);f.changes.length=0;f.client.exec("CREATE TRIGGER refuse_body_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.enrollBody' BEGIN SELECT RAISE(ABORT,'synthetic'); END");expect((await f.call({job:'job',fingerprint:next})).status).toBe(503);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,next)).get()).toBeUndefined();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();expect(f.changes.filter(change=>change.type==='token')).toEqual([]);
+it('rolls a registration back with a refused receipt and publishes no partial registration',async()=>{
+ const f=fixture(),next=hash(f.credential());f.client.exec("CREATE TRIGGER refuse_body_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.enrollBody' BEGIN SELECT RAISE(ABORT,'synthetic'); END");expect((await f.call({job:'job',fingerprint:next})).status).toBe(503);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,next)).get()).toBeUndefined();expect(f.changes.filter(change=>change.type==='token')).toEqual([]);
+ // Nothing was left behind to stand in the way: the same enrolment succeeds once the receipt can be written.
+ f.client.exec('DROP TRIGGER refuse_body_receipt');expect((await f.call({job:'job',fingerprint:next})).status).toBe(200);expect(f.changes.some(change=>change.type==='token')).toBe(true);
 });
 it('rechecks captured worker proof after token rebinding, job reassignment, revocation and shutdown',async()=>{
  const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!;expect(f.root.credentials.runnerEnrollment(auth.viewer)).toMatchObject({box:'worker',fingerprint:hash(raw.runner)});

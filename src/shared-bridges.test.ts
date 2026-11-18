@@ -214,6 +214,12 @@ it('takes a file on bridges.say as a name and bytes, and refuses it for Slack wi
  const f=fixture();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
  const contents=Buffer.from('PNG').toString('base64');
+ // The message is a guest's, so the job works on anybody else's word: its body has no file tools, and no post of its carries a file.
+ const guests=await f.call('bridges','say',{id:randomUUID(),text:'With a plot',files:[{name:'plot.png',contents}]});
+ expect(guests.status).toBe(403);expect(guests.body.message).toBe('This job is not working for the agent\'s owners: it runs with loom\'s tools only, and its posts carry no files.');
+ expect((await f.call('bridges','say',{id:randomUUID(),text:'Words alone'})).status).toBe(200);f.root.writes.run(()=>{f.db.delete(bridgeSends).run();});
+ // The owner speaks there instead.
+ f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());
  const refused=await f.call('bridges','say',{id:randomUUID(),text:'With a plot',files:[{name:'plot.png',contents}]});
  expect(refused.status).toBe(400);expect(refused.body.message).toContain('files are posted on Discord only');
  expect(f.db.select().from(bridgeSends).all()).toEqual([]);
