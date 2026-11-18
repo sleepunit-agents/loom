@@ -323,7 +323,7 @@ CREATE TABLE `conversations` (
 	CONSTRAINT "conversations_direct_boolean" CHECK("conversations"."direct" in (0, 1)),
 	CONSTRAINT "conversations_started_at_utc" CHECK("conversations"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."started_at") = "conversations"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."started_at") = "conversations"."started_at", 0)),
 	CONSTRAINT "conversations_last_at_utc" CHECK("conversations"."last_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."last_at") = "conversations"."last_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."last_at") = "conversations"."last_at", 0)),
-	CONSTRAINT "conversations_venue_choice" CHECK("conversations"."venue" in ('loom', 'discord', 'slack', 'wake', 'handoff'))
+	CONSTRAINT "conversations_venue_choice" CHECK("conversations"."venue" in ('loom', 'discord', 'slack', 'wake', 'handoff', 'terminal'))
 );
 
 CREATE UNIQUE INDEX `conversations_place_unique` ON `conversations` (`agent`,`venue`,`place`);
@@ -1292,6 +1292,42 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `terminal_credentials` (
+	`fingerprint` text PRIMARY KEY NOT NULL,
+	`machine` text NOT NULL,
+	`member` text NOT NULL,
+	FOREIGN KEY (`fingerprint`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `terminal_sessions` (
+	`job` text PRIMARY KEY NOT NULL,
+	`thread` text,
+	`session_id` text NOT NULL,
+	`machine` text NOT NULL,
+	`member` text NOT NULL,
+	`agent` text NOT NULL,
+	`harness` text NOT NULL,
+	`cwd` text NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `terminal_sessions_identity` ON `terminal_sessions` (`machine`,`member`,`agent`,`harness`,`session_id`);
+CREATE TABLE `terminal_runs` (
+	`job` text PRIMARY KEY NOT NULL,
+	`parent` text NOT NULL,
+	`run_id` text NOT NULL,
+	`revision` integer NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`parent`) REFERENCES `terminal_sessions`(`job`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `terminal_runs_identity` ON `terminal_runs` (`parent`,`run_id`);
 CREATE TABLE `job_usage` (
 	`job` text PRIMARY KEY NOT NULL,
 	`source` text NOT NULL,

@@ -280,6 +280,44 @@ const upgrades: readonly (readonly string[])[] = [
      SELECT id, 'none', harness, model, max(0, round((julianday(ended_at) - julianday(claimed_at)) * ${DAY_MS}))
      FROM jobs WHERE state IN ('done', 'failed', 'lost', 'stopped')`,
   ],
+  // 13: preserve every conversation while admitting the terminal venue.
+  [
+    `CREATE TABLE conversations_rebuilt (
+	id text PRIMARY KEY NOT NULL,
+	agent text NOT NULL,
+	project text,
+	member text,
+	venue text NOT NULL,
+	place text NOT NULL,
+	label text NOT NULL,
+	direct integer DEFAULT false NOT NULL,
+	started_at text NOT NULL,
+	last_at text NOT NULL,
+	turn_count integer NOT NULL,
+	FOREIGN KEY (agent) REFERENCES agents(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (project) REFERENCES projects(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (member) REFERENCES members(id) ON UPDATE no action ON DELETE no action,
+	CHECK (direct in (0, 1)),
+	CHECK (started_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', started_at) = started_at or strftime('%Y-%m-%dT%H:%M:%fZ', started_at) = started_at, 0)),
+	CHECK (last_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', last_at) = last_at or strftime('%Y-%m-%dT%H:%M:%fZ', last_at) = last_at, 0)),
+	CHECK (venue in ('loom', 'discord', 'slack', 'wake', 'handoff', 'terminal'))
+)`,
+    `INSERT INTO conversations_rebuilt (id, agent, project, member, venue, place, label, direct, started_at, last_at, turn_count)
+      SELECT id, agent, project, member, venue, place, label,
+        direct,
+        started_at, last_at, turn_count FROM conversations`,
+    'DROP TABLE conversations',
+    'ALTER TABLE conversations_rebuilt RENAME TO conversations',
+    'CREATE UNIQUE INDEX `conversations_place_unique` ON `conversations` (`agent`,`venue`,`place`)',
+    'CREATE INDEX `conversations_project_idx` ON `conversations` (`project`)',
+    'CREATE INDEX `conversations_member_idx` ON `conversations` (`member`)',
+    'CREATE INDEX `conversations_agent_last_at_idx` ON `conversations` (`agent`,`last_at`)',
+    "CREATE TABLE `terminal_credentials` (\n\t`fingerprint` text PRIMARY KEY NOT NULL,\n\t`machine` text NOT NULL,\n\t`member` text NOT NULL,\n\tFOREIGN KEY (`fingerprint`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action\n);",
+    "CREATE TABLE `terminal_sessions` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`thread` text,\n\t`session_id` text NOT NULL,\n\t`machine` text NOT NULL,\n\t`member` text NOT NULL,\n\t`agent` text NOT NULL,\n\t`harness` text NOT NULL,\n\t`cwd` text NOT NULL,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE set null,\n\tFOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action\n);",
+    "CREATE UNIQUE INDEX `terminal_sessions_identity` ON `terminal_sessions` (`machine`,`member`,`agent`,`harness`,`session_id`);",
+    "CREATE TABLE `terminal_runs` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`parent` text NOT NULL,\n\t`run_id` text NOT NULL,\n\t`revision` integer NOT NULL,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`parent`) REFERENCES `terminal_sessions`(`job`) ON UPDATE no action ON DELETE no action\n);",
+    "CREATE UNIQUE INDEX `terminal_runs_identity` ON `terminal_runs` (`parent`,`run_id`);",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

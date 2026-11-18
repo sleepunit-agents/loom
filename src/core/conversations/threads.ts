@@ -9,7 +9,7 @@ import { conversations, deletedThreads, jobs, messages, threads } from '../data/
 import { Conversations, lateMailWaits, type LateJoins } from './index.js';
 
 type Thread = typeof threads.$inferSelect;
-export type ThreadInput = { id?: string; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
+export type ThreadInput = { id?: string; venue?: 'loom' | 'terminal'; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
 
 export class Threads {
   readonly conversations: Conversations;
@@ -31,11 +31,11 @@ export class Threads {
       const existing = this.db.select().from(threads).where(eq(threads.id, id)).get();
       if (existing) {
         const cv = this.conversations.conversation(existing.conversation);
-        if (cv.agent !== input.agent || cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Thread identity differs');
+        if (cv.venue !== (input.venue ?? 'loom') || cv.agent !== input.agent || cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Thread identity differs');
         return existing;
       }
       const title = this.title(input.title), at = this.now();
-      const cv = this.conversations.open({ agent: input.agent, member: input.member, project: input.project, venue: 'loom', place: id, label: title }, at);
+      const cv = this.conversations.open({ agent: input.agent, member: input.member, project: input.project, venue: input.venue ?? 'loom', place: id, label: title }, at);
       if (cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Conversation is not this private thread');
       return this.db.insert(threads).values({ id, conversation: cv.id, title, titledBy: input.titledBy ?? 'member', pinned: false, openedAt: at, lastAt: at, readSeq: 0, working: false, stopRequested: false }).returning().get();
     });

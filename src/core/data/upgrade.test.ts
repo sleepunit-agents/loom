@@ -56,6 +56,26 @@ describe('upgrading a household database', () => {
     expect(made.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: dataSchemaNumber });
   });
 
+  it('keeps a populated private Comms thread intact when step 13 rebuilds conversations', () => {
+    const old = household(12);
+    old.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam', 'member', '${at}');
+      INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO conversations (id, agent, member, venue, place, label, direct, started_at, last_at, turn_count)
+        VALUES ('cv', 'art', 'sam', 'loom', 'th', 'Private', 1, '${at}', '${at}', 1);
+      INSERT INTO threads (id, conversation, title, titled_by, pinned, opened_at, last_at, read_seq, working, stop_requested)
+        VALUES ('th', 'cv', 'Private', 'member', 1, '${at}', '${at}', 1, 0, 0);
+      INSERT INTO turns (conversation, seq, at, kind, from_kind, from_id) VALUES ('cv', 1, '${at}', 'message', 'person', 'sam');
+      INSERT INTO messages (thread, seq, at, kind, sender, words, keep_until, client_id)
+        VALUES ('th', 1, '${at}', 'message', 'sam', X'0012FFAA00', '2026-11-29T00:00:00.000Z', 'm1')`);
+    const privateHistory = () => ['conversations', 'threads', 'messages', 'turns']
+      .map(table => old.prepare(`SELECT * FROM ${table}`).all());
+    const before = privateHistory();
+    upgradeDataSchema(old);
+    expect(privateHistory()).toEqual(before);
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+    expect(() => old.prepare("DELETE FROM conversations WHERE id = 'cv'").run()).toThrow('FOREIGN KEY');
+  });
+
   it('backfills ended attempts at step 12, keeping unknown counters absent and queued attempts pending', () => {
     const old = household(11);
     old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot')`);

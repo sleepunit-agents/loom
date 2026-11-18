@@ -1,0 +1,52 @@
+import Database from 'better-sqlite3';
+import { expect, it } from 'vitest';
+import { createDataSchema } from '../data/database.js';
+import { agents, boxes, members, jobs, messages, inbox, jobUsage, conversations } from '../data/schema.js';
+import { TerminalSessions, expireTerminalSessions } from './terminal-sessions.js';
+
+it('records a private session, deduplicates observed turns, and replaces cumulative usage by revision', async () => {
+  const client = new Database(':memory:');
+  try {
+    let now = '2026-11-18T00:00:00.000Z';
+    const db = createDataSchema(client);
+    db.insert(members).values({id:'sam',role:'owner',joinedAt:now}).run();
+    db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+    db.insert(boxes).values({id:'box',name:'Box',owner:'sam',enrolledAt:now,sameMachineAsLoom:false,hostsAny:false,reportOnly:true,alwaysOn:false}).run();
+    const scope = {member:'sam',agent:'art',machine:'box'};
+    const event = {harness:'claude' as const,sessionId:'s1',machine:'box'};
+    const service = new TerminalSessions(db,{seal:async () => Buffer.from('sealed'),open:async () => 'words',hash:()=>'hash'},()=>now);
+    const send = async (input: Parameters<typeof service.prepare>[1]) => (await service.prepare(scope,input))();
+    const open = {...event,action:'open' as const,cwd:'/tmp',model:null};
+    const first = await send(open);
+    expect(await send(open)).toEqual(first);
+    expect(db.select().from(conversations).get()).toMatchObject({agent:'art',member:'sam',venue:'terminal',label:'box · claude'});
+    const turn = {...event, action:'turn' as const,eventId:'m1',role:'member' as const,words:'secret'};
+    await send(turn);
+    await send(turn);
+    expect(db.select().from(messages).all()).toMatchObject([{words:Buffer.from('sealed'),sender:'sam'}]);
+    expect(db.select().from(inbox).all()).toEqual([]);
+    await expect(service.prepare({...scope,machine:'other'},turn)).rejects.toThrow('machine');
+    const privateCommit = await service.prepare({...scope,member:'another-member'},turn);
+    expect(privateCommit).toThrow('has not opened');
+    expect(db.select().from(messages).all()).toHaveLength(1);
+    const main = {...event,action:'usage' as const,runId:'main',description:null,revision:5,
+      report:{source:'transcript' as const,tokensOut:27,model:'observed'}};
+    await send(main);
+    expect(db.select().from(jobUsage).get()).toMatchObject({job:first.job,model:'observed',tokensOut:27,tokensIn:null});
+    const usage = {...event, action:'usage' as const, runId:'child',description:'Child',revision:2, report:{source:'transcript' as const,tokensIn:42}};
+    await send(usage);
+    await send({...usage,revision:1,report:{source:'transcript',tokensIn:10}});
+    expect(db.select().from(jobUsage).all().find(r => r.tokensIn===42)).toBeTruthy();
+    expect(db.select().from(jobs).all()).toHaveLength(2);
+    now = '2026-11-18T00:16:00.000Z';
+    expect(expireTerminalSessions(db,now)).toBe(1);
+    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','lost']);
+    expect(await send({...event,action:'heartbeat'})).toEqual(first);
+    await send({...event,action:'end'});
+    await expect(send({...event,action:'heartbeat'})).rejects.toThrow('ended');
+    expect(await send(open)).toEqual(first);
+    await send({...usage,revision:3,report:{source:'transcript',tokensIn:80}});
+    expect(db.select().from(jobUsage).all().find(r => r.tokensIn === 80)).toBeTruthy();
+    expect(db.select().from(jobs).all()).toHaveLength(2);
+  } finally { client.close(); }
+});

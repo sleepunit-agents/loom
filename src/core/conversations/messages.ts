@@ -69,6 +69,19 @@ export class CommsMessages {
     return this.db.update(messages).set({ inboxItem: item.id }).where(and(eq(messages.thread, message.thread), eq(messages.seq, message.seq))).returning().get()!;
   }
 
+  /** A turn already delivered in the terminal. Record it without queueing another delivery. */
+  recordObserved(thread: string, role: 'member' | 'agent', clientId: string, words: Buffer, run: string): Message {
+    return this.db.transaction(() => {
+      const { cv } = this.context(thread);
+      const sender = role === 'member' ? cv.member : cv.agent;
+      if (!sender) throw new Error('A private thread is required');
+      return this.retry(thread, sender, clientId) ?? this.append({
+        thread, sender, clientId, kind: role === 'member' ? 'message' : 'reply', words, run,
+        delivery: null,
+      }, []);
+    });
+  }
+
   async send(input: MessageInput): Promise<Message> {
     return (await this.prepareSend(input))();
   }

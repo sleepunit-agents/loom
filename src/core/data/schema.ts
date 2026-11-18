@@ -349,7 +349,7 @@ export const conversations = sqliteTable('conversations', {
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   project: text('project').references((): AnySQLiteColumn => projects.id),
   member: text('member').references((): AnySQLiteColumn => members.id),
-  venue: text('venue', { enum: ["loom", "discord", "slack", "wake", "handoff"] }).notNull(),
+  venue: text('venue', { enum: ["loom", "discord", "slack", "wake", "handoff", "terminal"] }).notNull(),
   place: text('place').notNull(),
   label: text('label').notNull(),
   direct: integer('direct', { mode: 'boolean' }).notNull().default(false),
@@ -360,7 +360,7 @@ export const conversations = sqliteTable('conversations', {
   check('conversations_direct_boolean', sql`${t.direct} in (0, 1)`),
   check('conversations_started_at_utc', utc(t.startedAt)),
   check('conversations_last_at_utc', utc(t.lastAt)),
-  check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff')`),
+  check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff', 'terminal')`),
   uniqueIndex('conversations_place_unique').on(t.agent, t.venue, t.place),
   index('conversations_project_idx').on(t.project),
   index('conversations_member_idx').on(t.member),
@@ -1991,7 +1991,35 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   // SQLite trim defaults to ASCII spaces; include Unicode whitespace too.
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
+/** A grant is bound to the owner who issued it and the enrolled machine. */
+export const terminalCredentials = sqliteTable('terminal_credentials', {
+  fingerprint: text('fingerprint').primaryKey().notNull().references(() => tokens.fingerprint, {onDelete:'cascade'}),
+  machine: text('machine').notNull().references(() => boxes.id),
+  member: text('member').notNull().references(() => members.id),
+});
+
+/** One observed harness session inside its authenticated machine, agent and member scope. */
+export const terminalSessions = sqliteTable('terminal_sessions', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  thread: text('thread').references(() => threads.id, {onDelete:'set null'}),
+  sessionId: text('session_id').notNull(),
+  machine: text('machine').notNull().references(() => boxes.id),
+  member: text('member').notNull().references(() => members.id),
+  agent: text('agent').notNull().references(() => agents.id),
+  harness: text('harness').notNull(),
+  cwd: text('cwd').notNull(),
+}, t => [uniqueIndex('terminal_sessions_identity').on(t.machine,t.member,t.agent,t.harness,t.sessionId)]);
+
+/** Each transcript has its own byte revision and one cumulative job_usage snapshot. */
+export const terminalRuns = sqliteTable('terminal_runs', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  parent: text('parent').notNull().references(() => terminalSessions.job),
+  runId: text('run_id').notNull(),
+  revision: integer('revision').notNull(),
+}, t => [uniqueIndex('terminal_runs_identity').on(t.parent,t.runId)]);
+
 export const plumbing = {
+  terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
