@@ -950,7 +950,8 @@ the daemon checks which jobs still need a signal. An exhausted bucket
 or a 429 pauses presence on that connection for the advertised interval. Other bot traffic shares
 Discord's global allowance. Under load
 an indication can be late or absent. Presence has no durable ledger. A crash or a refused removal can
-leave an eye reaction behind. A later PUT for the bot's own reaction is idempotent. Slack has no
+leave an eye reaction behind. A restart while the final reply is waiting in the send queue can also
+lose that job’s typing indication. The send queue itself is durable. A later PUT for the bot's own reaction is idempotent. Slack has no
 presence implementation here. See `src/pieces/bridges/presence.ts`.
 [Discord rate limits](https://docs.discord.com/developers/topics/rate-limits)
 

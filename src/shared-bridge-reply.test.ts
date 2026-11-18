@@ -8,6 +8,7 @@ import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import * as s from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
+import {workingOn} from './pieces/bridges/presence.js';
 import {BridgeIncoming} from './pieces/bridges/incoming.js';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -48,11 +49,28 @@ function fixture(discordRequest?:typeof fetch){
    token(value,{kind:'agent',agent:'art',job});});
   return {job,token:value};
  };
- const call=async(name:'reply'|'file'|'prepareFile',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
+ const call=async(name:'reply'|'say'|'file'|'prepareFile',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
  const reply=(incomingId:string,bearer:string)=>call('reply',{id:randomUUID(),incoming:incomingId,text:'Synthetic reply',model:'m'},bearer);
  const mail=(incomingId:string)=>db.select({item:s.inbox}).from(s.inboxRefs).innerJoin(s.inbox,eq(s.inbox.id,s.inboxRefs.item)).where(eq(s.inboxRefs.ref,incomingId)).get()!.item;
  return {db,root,clock,now,receive,incoming,body,call,reply,mail};
 }
+it.each(['discord','handoff'] as const)('keeps typing until the final %s reply is posted or the job ends',async source=>{
+ const f=fixture(async()=>new Response(null,{status:503}));
+ const row=f.root.writes.run(()=>f.incoming.receive({id:'66',connection:'slack',channel:'33',isDm:false,user:'44',text:'A question',postedAt:f.now(),mentions:[]})).value;
+ const body=f.body(row.conversation!);
+ if(source==='handoff')f.db.update(s.inbox).set({source}).run();
+ f.root.writes.run(()=>f.root.services.conversations.take(row.conversation!,body.job));
+ expect((await f.call('say',{id:randomUUID(),text:'Still working'},body.token)).status).toBe(200);
+ const id=randomUUID();
+ expect((await f.call('reply',{id,...(source==='discord'?{incoming:row.id}:{}),text:'Answer',model:'m'},body.token)).status).toBe(200);
+ expect(f.mail(row.id).state).toBe('done');
+ expect(workingOn(f.db)).toEqual([{connection:'slack',channel:'33'}]);
+ f.db.update(s.bridgeSends).set({state:'sending'}).where(eq(s.bridgeSends.id,id)).run();
+ expect(workingOn(f.db)).toHaveLength(1);
+ if(source==='discord')f.db.update(s.bridgeSends).set({state:'sent'}).where(eq(s.bridgeSends.id,id)).run();
+ else f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,body.job)).run();
+ expect(workingOn(f.db)).toEqual([]);
+});
 it('settles everything the body took with its one reply, and leaves mail that arrived afterwards waiting',async()=>{
  const f=fixture(),one=f.receive(true),two=f.receive(true);expect(two.conversation).toBe(one.conversation);
  const body=f.body(one.conversation!);f.root.writes.run(()=>f.root.services.conversations.take(one.conversation!,body.job));

@@ -15,6 +15,7 @@ import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
+import { followBridgeReply } from './pieces/bridges/presence.js';
 import { SEND_FILES,SEND_FILES_BYTES } from './pieces/bridges/send-file-limit.js';
 import type { SharedBridges } from './pieces/bridges/shared-daemon.js';
 import { BODY_ATTACHMENTS, BODY_ATTACHMENT_BYTES, discordFileOutcome } from './pieces/bridges/attachment-limits.js';
@@ -56,6 +57,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  const posted=(took:readonly string[],place?:{conversation:string;since:string})=>[
   ...(took.length?db.select({id:bridgeSends.id}).from(bridgeSends).where(inArray(bridgeSends.incoming,[...took])).all():[]),
   ...(place?db.select({id:bridgeSends.id}).from(bridgeSends).where(and(isNull(bridgeSends.incoming),eq(bridgeSends.conversation,place.conversation),gte(bridgeSends.createdAt,place.since))).all():[])];
+ const replyJobs=new WeakMap<object,string>();
  operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400).optional(),text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
   may:(viewer,input)=>!!(input.incoming?target(viewer,input.incoming):placed(viewer)),
   inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([input.incoming?target(actor,input.incoming)??null:placed(actor)?.job??null,canonical])).digest('hex'),
@@ -72,8 +74,10 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
     conversations.confirm(item.id,bound.job);ctx.changed('inbox',item.id);
    }
    if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
+   if(current(ctx.viewer)?.cv.venue==='discord')replyJobs.set(input,bound.job);
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
+  after:(input)=>{const job=replyJobs.get(input);if(job)followBridgeReply(db,input.id,job);},
  });
  // The brief the channel's rule names for the bodies of its conversations (settings.ts): the name of a role
  // page of the agent's. The body reads the page from its own Memory. The rule is found as every rule about

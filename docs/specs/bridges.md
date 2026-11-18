@@ -181,7 +181,8 @@ Refused: `memory.update`, `.archive`, `.restore`, `.forget`, `.restoreRevision`,
 Loom adds 👀 when a running job has taken a person's Discord message. It removes the reaction when
 the work settles. While the job owes an answer, the bot requests typing in the destination channel,
 thread or DM. Jobs waiting in the queue produce neither signal. Discord expires a typing indication
-after ten seconds. Loom stops refreshing when the answer settles or the job ends. These calls run
+after ten seconds. While the job runs, typing can continue through the final post’s queue and send.
+A posted or failed send, or the end of the job, stops refreshes. These calls run
 outside the job and can fail independently. [Discord channel API](https://docs.discord.com/developers/resources/channel#trigger-typing-indicator)
 
 ## The answer

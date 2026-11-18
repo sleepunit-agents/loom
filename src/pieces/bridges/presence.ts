@@ -12,7 +12,7 @@
 import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, conversations, inbox, inboxRefs, jobs } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs, jobs } from '../../core/data/schema.js';
 import type { SecretUse } from '../secrets/role.js';
 import { placeAddress, placeClosed } from '../../shared-place-mail.js';
 import { isDiscordId } from './discord-id.js';
@@ -29,6 +29,14 @@ const BURST_PER_SECOND = 8;
 interface Channel { connection: string; channel: string }
 interface Working extends Channel { message?: string }
 type Taken = Channel & { message: string };
+/** Only bridges.reply settles the mail. Its queued send and running job identify the channel
+ * still owed the final post after settlement. Like the shown reactions, this link is best effort. */
+const queuedReplies = new WeakMap<DataDatabase, Map<string, string>>();
+export function followBridgeReply(db: DataDatabase, send: string, job: string): void {
+  let replies = queuedReplies.get(db);
+  if (!replies) queuedReplies.set(db, replies = new Map());
+  replies.set(send, job);
+}
 /** Every channel owed a reply. Only an identifiable human message gets a reaction. */
 export function workingOn(db: DataDatabase): Working[] {
   const running = and(eq(inbox.state, 'taken'), eq(jobs.state, 'running'), eq(inbox.toKind, 'agent'),
@@ -50,6 +58,15 @@ export function workingOn(db: DataDatabase): Working[] {
   for (const cv of placed) {
     const at = placeAddress(db, cv);
     if (at && !placeClosed(db, cv)) result.push({connection: at.connection, channel: at.channel});
+  }
+  const replies = queuedReplies.get(db);
+  if (replies) for (const [send, job] of replies) {
+    const row = db.select({connection: bridgeSends.connection, channel: bridgeSends.channel}).from(bridgeSends)
+      .innerJoin(bridgeConnections, eq(bridgeConnections.id, bridgeSends.connection)).innerJoin(jobs, eq(jobs.id, job))
+      .where(and(eq(bridgeSends.id, send), inArray(bridgeSends.state, ['pending', 'sending']), eq(jobs.state, 'running'),
+        eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.enabled, true))).get();
+    if (row) result.push(row);
+    else replies.delete(send);
   }
   return result;
 }
