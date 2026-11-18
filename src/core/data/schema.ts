@@ -754,7 +754,13 @@ export const triggers = sqliteTable('triggers', {
   askedByKind: text('asked_by_kind', { enum: ["member", "outside", "agent"] }),
   askedBy: text('asked_by'),
   askedAt: text('asked_at'),
+  machine: text('machine').references((): AnySQLiteColumn => boxes.id),
+  machineApproval: text('machine_approval').references((): AnySQLiteColumn => approvals.id),
+  machineWords: text('machine_words'),
 }, t => [
+  check('triggers_machine_digest', sql`${t.machineWords} is null or (typeof(${t.machineWords}) = 'text' and length(${t.machineWords}) = 64 and length(cast(${t.machineWords} as blob)) = 64 and ${t.machineWords} not glob '*[^0-9a-f]*')`),
+  check('triggers_machine_grant', sql`(${t.machineApproval} is null and ${t.machineWords} is null) or (${t.machine} is not null and ${t.machineApproval} is not null and ${t.machineWords} is not null)`),
+  check('triggers_machine_target', sql`${t.machine} is null or (${t.targetKind} = 'inbox' and ${t.toKind} is 'agent' and ${t.member} is null and ${t.conversation} is null)`),
   check('triggers_asked_at_utc', utc(t.askedAt)),
   check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
   check('triggers_asker_with_conversation', sql`(${t.conversation} is null) = (${t.askedByKind} is null) and (${t.askedByKind} is null) = (${t.askedBy} is null) and (${t.askedByKind} is null) = (${t.askedAt} is null)`),
@@ -965,6 +971,7 @@ export const jobs = sqliteTable('jobs', {
   // Who chose exit_code: loom's body program, the worker, loom itself, or a machine's own runner. Absent
   // when nobody said (a job ended before this column, or reported by a worker from before it).
   exitBy: text('exit_by', { enum: ["body", "worker", "loom", "runner"] }),
+  machine: text('machine').references((): AnySQLiteColumn => boxes.id),
   logTail: text('log_tail'),
   endedBy: text('ended_by').references((): AnySQLiteColumn => members.id),
   // Why a person ended it: stuck work reset, work given up on, or Stop pressed in its conversation.

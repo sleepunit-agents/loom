@@ -318,6 +318,12 @@ const upgrades: readonly (readonly string[])[] = [
     "CREATE TABLE `terminal_runs` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`parent` text NOT NULL,\n\t`run_id` text NOT NULL,\n\t`revision` integer NOT NULL,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`parent`) REFERENCES `terminal_sessions`(`job`) ON UPDATE no action ON DELETE no action\n);",
     "CREATE UNIQUE INDEX `terminal_runs_identity` ON `terminal_runs` (`parent`,`run_id`);",
   ],
+  [
+    'ALTER TABLE triggers ADD COLUMN machine text REFERENCES boxes(id)',
+    'ALTER TABLE triggers ADD COLUMN machine_approval text REFERENCES approvals(id)',
+    `ALTER TABLE triggers ADD COLUMN machine_words text CHECK("triggers"."machine_words" is null or (typeof("triggers"."machine_words") = 'text' and length("triggers"."machine_words") = 64 and length(cast("triggers"."machine_words" as blob)) = 64 and "triggers"."machine_words" not glob '*[^0-9a-f]*')) CHECK(("triggers"."machine_approval" is null and "triggers"."machine_words" is null) or ("triggers"."machine" is not null and "triggers"."machine_approval" is not null and "triggers"."machine_words" is not null)) CHECK("triggers"."machine" is null or ("triggers"."target_kind" = 'inbox' and "triggers"."to_kind" is 'agent' and "triggers"."member" is null and "triggers"."conversation" is null))`,
+    'ALTER TABLE jobs ADD COLUMN machine text REFERENCES boxes(id)',
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

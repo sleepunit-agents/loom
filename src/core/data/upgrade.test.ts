@@ -41,6 +41,29 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('leaves earlier work in the house and accepts only a complete machine grant', () => {
+    const old = household(13);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO triggers (id, owner_kind, owner, source_kind, lifespan, target_kind, to_kind, "to", note, enabled, state, created_at, changed_at)
+      VALUES ('wake', 'agent', 'art', 'time', 'once', 'inbox', 'agent', 'art', '', 1, 'standing', '${at}', '${at}');
+      INSERT INTO jobs (id, agent, title, state, brief, model, started_by_kind, started_by, house_repository, house_file, house_branch, queued_at)
+      VALUES ('job', 'art', '', 'queued', '', 'm', 'agent', 'art', '', '', '', '${at}')`);
+    upgradeDataSchema(old);
+    expect(old.prepare('SELECT machine, machine_approval, machine_words FROM triggers').get()).toEqual({ machine: null, machine_approval: null, machine_words: null });
+    expect(old.prepare('SELECT machine FROM jobs').get()).toEqual({ machine: null });
+    // Isolate the grant and digest checks from foreign-key enforcement.
+    old.pragma('foreign_keys = OFF');
+    const assign = old.prepare('UPDATE triggers SET machine = ?, machine_approval = ?, machine_words = ?');
+    const digest = 'ab'.repeat(32);
+    assign.run('box', null, null);
+    assign.run('box', 'card', digest);
+    for (const invalid of ['', digest.toUpperCase(), digest.slice(1), digest + '\0x'])
+      expect(() => assign.run('box', 'card', invalid)).toThrow();
+    expect(() => assign.run(null, 'card', digest)).toThrow();
+    expect(() => assign.run('box', null, digest)).toThrow();
+    expect(() => assign.run('box', 'card', null)).toThrow();
+  });
+
   it('keeps existing rows, enforces the new rules on them, and does nothing the second time', () => {
     const old = household(1);
     expect(old.prepare("SELECT name FROM pragma_table_info('members')").all()).not.toContainEqual({ name: 'removed_at' });
