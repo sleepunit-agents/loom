@@ -93,8 +93,9 @@ function createSpec(job: WorkerAssignment, house: HouseStart, built: { repositor
     Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`, `${HOUSE_ENV.repository}=${built.repository}`, `${HOUSE_ENV.branch}=${built.branch}`, `${HOUSE_ENV.commit}=${built.commit}`,
       // And whether the place its harness keeps sessions is this body's alone: it is the container's own
       // home unless a mount (an agent's own directory; a sign-in is mounted elsewhere) is, holds, or is inside
-      // it (house-layout.ts, houseSessions). A harness with no such place is told nothing.
-      ...(ownSessions(job.harness, mounts) ? [`${BODY_OWN_HARNESS}=1`] : [])],
+      // it (house-layout.ts, houseSessions). The worker always says, 1 or 0: a variable it sets holds over
+      // an image's `ENV` of the same name, so no house can say it for itself.
+      `${BODY_OWN_HARNESS}=${ownSessions(job.harness, mounts) ? '1' : '0'}`],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },

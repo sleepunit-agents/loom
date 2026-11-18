@@ -38,12 +38,12 @@ export function bodyHarness(name: string, input: HarnessInput): HarnessRun {
   return async (job, words, signal, session) => {
     if (job.harness !== name || refusesJob(harness, job.run?.policy, input.reach ?? 'loom')) throw harnessUnavailable();
     // Only a harness that says where its sessions are is asked to keep one.
-    return harness.sessionFiles && session ? run(job, words, signal, session) : run(job, words, signal);
+    return harness.sessions && session ? run(job, words, signal, session) : run(job, words, signal);
   };
 }
-/** Where the harness keeps one session's files, or nothing for a harness that keeps none. */
-export function harnessSessionFiles(name: string, env: Readonly<Record<string, string | undefined>>, session: string): { root: string; files: string[] } | undefined {
-  return listed(name)?.sessionFiles?.(env, session);
+/** How the harness keeps sessions, or nothing for a harness that keeps none. */
+export function harnessSessions(name: string): Harness['sessions'] {
+  return listed(name)?.sessions;
 }
 /** Remove what a harness leaves outside its body's scratch directory and can only remove itself when it ends
  * normally. The worker calls this with the scratch directory and the body's environment after the body's

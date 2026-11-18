@@ -11,9 +11,9 @@
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, normalize, sep } from 'node:path';
+import { filesUnfollowed, listUnfollowed } from './unfollowed.js';
 import { HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
 import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { deniedTools } from './harness-traits.js';
@@ -91,22 +91,25 @@ export const claudeBody: BodyHarness = input => {
     finally { output.fill(0); }
   };
 };
-/** Claude Code keeps a session as `projects/<the working directory, slugged>/<session>.jsonl` under its own
- * directory, with the larger tool results in a directory of the same name beside it. */
-function claudeSessionFiles(env: Readonly<Record<string, string | undefined>>, session: string): { root: string; files: string[] } {
-  const root = env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), '.claude'), files: string[] = [];
-  if (!SESSION_ID.test(session)) return { root, files };
-  const walk = (rel: string) => {
-    // A link is never followed: only the harness's own files and directories are a session's.
-    let stat; try { stat = lstatSync(join(root, rel)); } catch { return; }
-    if (stat.isFile()) files.push(rel);
-    else if (stat.isDirectory()) for (const name of readdirSync(join(root, rel)).sort()) walk(join(rel, name));
-  };
-  let projects: string[] = []; try { projects = readdirSync(join(root, 'projects')).sort(); } catch { /* none kept */ }
-  for (const project of projects) for (const name of [`${session}.jsonl`, session]) walk(join('projects', project, name));
-  return { root, files };
-}
-export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody, sessionFiles: claudeSessionFiles,
+/** Where Claude Code keeps a session, said here and nowhere else: under its own directory
+ * (`CLAUDE_CONFIG_DIR`, or `.claude` in the home), `projects/<the working directory, slugged>/<session>.jsonl`
+ * is the transcript, and a directory of the same name beside it holds the larger tool results. */
+const SESSION_FILES_FOUND = 256;
+const claudeSessions: NonNullable<Harness['sessions']> = {
+  root: env => env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), '.claude'),
+  owns(relative, session) {
+    if (!SESSION_ID.test(session) || normalize(relative) !== relative || relative.includes('\0')) return false;
+    const parts = relative.split(sep);
+    return parts.length >= 3 && parts[0] === 'projects' && !parts.includes('..') && !parts.includes('.') && !parts.includes('')
+      && (parts.length === 3 ? parts[2] === `${session}.jsonl` : parts[2] === session);
+  },
+  files(root, session) {
+    if (!SESSION_ID.test(session)) return [];
+    // Every step is looked at as it is: a `projects`, a project directory or anything below that is a link is passed over.
+    return listUnfollowed(root, 'projects').flatMap(project => [`${session}.jsonl`, session].flatMap(name => filesUnfollowed(root, join('projects', project, name), SESSION_FILES_FOUND)));
+  },
+};
+export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody, sessions: claudeSessions,
   // Claude Code on a cloud provider signs in with that provider's own variables.
   reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name) || Object.hasOwn(claudeToolSettings, name)
     || !!env.CLAUDE_CODE_USE_BEDROCK && /^AWS_/.test(name)
