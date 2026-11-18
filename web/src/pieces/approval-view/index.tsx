@@ -1,3 +1,4 @@
+import { MachineAccess } from '../tempo/machine-access';
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
@@ -23,8 +24,10 @@ function Unavailable({ status }: { status: ApprovalSnapshot['status'] }) {
   return status === 'loading' ? <Loading label="Opening Approvals…" />
     : <Error text={status === 'denied' ? 'Sign in with access to see Approvals.' : 'Waiting for connection.'} />;
 }
+const machineRequest = (card: Approval) => card.operation === 'household.change' && card.target.startsWith('household:triggerMachine:');
 function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalActions }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
+  const needsReview = machineRequest(approval) && approval.problem !== null;
   const dangerous = approval.kind === 'dangerous';
   const active = useRef(false);
   async function send(action: () => Promise<void>) {
@@ -43,7 +46,7 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
         ? <><p className="basis-full">This cannot be undone.</p>
           <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
           <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
-        : <Button disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
+        : <Button disabled={busy || needsReview} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
       {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
     </div>}
@@ -64,6 +67,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
     <section><h3>If you deny</h3><p>{a.ifNo}</p></section>
     {!change && a.changeSummary && <section><h3>Exactly what will change</h3><p className="whitespace-pre-wrap">{a.changeSummary}</p></section>}
     {change}
+    {machineRequest(a) && <MachineAccess />}
     {a.problem && <section><h3>This cannot be allowed as it stands</h3><p>{a.problem}</p></section>}
     <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
     <Answer key={a.id} approval={a} actions={actions} />

@@ -1,3 +1,4 @@
+import { MachineAccess } from './machine-access';
 import { TempoFiringFailure, type TempoActions } from './actions';
 import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
@@ -85,11 +86,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       {trigger.machineApprovalRow?.decidedAt && <div><dt>Allowed at</dt><dd>{time(trigger.machineApprovalRow.decidedAt)}</dd></div>}
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
     </dl>
-    {trigger.machine && <section aria-label="Machine access">
-      <h2>Machine access</h2>
-      <p>A process running as the worker user can read that user’s worker credentials, model sign-ins and SSH keys. If that user also runs Loom, it can read the Loom database and keys.</p>
-      <p>The approved words cannot confine the process. The agent also receives identity, memory and earlier conversation. Machine execution is unavailable on this version.</p>
-    </section>}
+    {trigger.machine && <MachineAccess />}
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
     {actions && <TriggerActions trigger={trigger} machines={snapshot.machines} pauses={snapshot.pauses} actions={actions} />}

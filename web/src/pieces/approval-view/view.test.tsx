@@ -126,3 +126,16 @@ it('shows the quoted decision on the inline approval card', async () => {
    record:[{seq:1,at:approval.askedAt,event:'allow',approval:approval.id,agent:'art',note}]});
  expect(JSON.stringify(tree.toJSON())).toContain(note);
 });
+
+it('keeps machine Allow disabled until the owner review has loaded and all conditions pass', async () => {
+  const card = { ...approval, operation: 'household.change', target: 'household:triggerMachine:evening', changeSummary: 'Request filed' };
+  const actions = { allow: vi.fn(), deny: vi.fn() };
+  const allowDisabled = () => buttons().find((b: { props: { children: string } }) => b.props.children === 'Allow')?.props.disabled;
+  await draw({ ...snapshot, approvals: [card] }, actions);
+  expect(allowDisabled()).toBe(true);
+  const words = 'Review ' + 'a'.repeat(5000) + '\nKeep the ending.\n';
+  await draw({ ...snapshot, approvals: [{ ...card, problem: 'Worker support is unavailable', changeSummary: words }] }, actions);
+  expect(allowDisabled()).toBe(true);
+  expect(tree.root.findAllByType('p').some((p: { props: { children: unknown } }) => p.props.children === words)).toBe(true);
+  expect(JSON.stringify(tree.toJSON())).toContain('worker credentials');
+});
