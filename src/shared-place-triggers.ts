@@ -5,7 +5,7 @@ import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
-import type { NewTrigger, Trigger, TriggerAsked } from './core/tempo/triggers.js';
+import { editsWords, type NewTrigger, type Trigger, type TriggerAsked } from './core/tempo/triggers.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, membersWithAgent, type Asker, type Viewer } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, wordReach } from './shared-place-mail.js';
@@ -62,8 +62,8 @@ export function wordRefusal(db: DataDatabase, work: Work | undefined, action: 's
 /** Why this caller may not reword a trigger that names one member's private conversation: the words would
  * become the caller's and fire there on the caller's word. Asked of every caller, a person too. The firing
  * asks again (placeFiring); this is the early refusal. */
-export function privateRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work | undefined, trigger: TriggerAsked, change?: { instructions?: string | null; file?: string | null }): string | undefined {
-  if (!trigger.conversation || (change?.instructions === undefined && change?.file === undefined)) return undefined;
+export function privateRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work | undefined, trigger: TriggerAsked, change?: { instructions?: string | null; file?: string | null; note?: string }): string | undefined {
+  if (!trigger.conversation || !change || !editsWords(change)) return undefined;
   const cv = db.select({ agent: conversations.agent, member: conversations.member }).from(conversations).where(eq(conversations.id, trigger.conversation)).get();
   return cv && cv.member !== null && privateRefusal(cv.member, asking(db, viewer, cv.agent, work)) ? PRIVATE_PLACE_REFUSAL : undefined;
 }

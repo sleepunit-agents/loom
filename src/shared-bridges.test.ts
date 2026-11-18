@@ -986,3 +986,95 @@ it('lets a guest\'s word go one hop and five notes, and reads a report target on
  expect((await card(pond)).status).toBe(200);
  void work;
 });
+
+/** Kim, a member who has the agent, her private direct conversation, and a trigger there the agent's own work set. */
+async function kimsTrigger(){
+ const made=await sharedPlace(),{f,once}=made,stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'kim',agent:'art'}]).run();});
+ const kims=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','DKIM',null,['member','kim']]),label:'kim',member:'kim',direct:true}).id;
+ const own=once({conversation:kims});expect((await f.call('tempo','set',own,token.other)).status).toBe(200);
+ return {...made,kims,own,stamp,row:()=>f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()!};
+}
+it('refuses an owner\'s change of a trigger\'s note where the trigger names another member\'s private conversation: a note is words',async()=>{
+ const {f,own,row}=await kimsTrigger();
+ expect(await f.call('tempo','edit',{id:own.id,note:'The owner\'s words, in the note'},token.owner)).toMatchObject({status:403,body:{message:PRIVATE_PLACE_REFUSAL}});
+ expect(row()).toMatchObject({note:'Daily numbers',askedByKind:'agent'});
+});
+it('refuses an owner\'s change of file on a trigger that names another member\'s private conversation',async()=>{
+ const {f,own,row}=await kimsTrigger();
+ expect(await f.call('tempo','edit',{id:own.id,file:'lanes/owner.md'},token.owner)).toMatchObject({status:403,body:{message:PRIVATE_PLACE_REFUSAL}});
+ expect(row()).toMatchObject({file:null,instructions:'Post the numbers',askedByKind:'agent'});
+});
+it('re-stamps the asker when a trigger\'s note changes, as when its instructions do',async()=>{
+ const {f,cv,once}=await sharedPlace();
+ const guests=once();expect((await f.call('tempo','set',guests)).status).toBe(200);
+ f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
+ expect((await f.call('tempo','edit',{id:guests.id,note:'The owner\'s note'},token.owner)).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,guests.id)).get()).toMatchObject({conversation:cv,note:'The owner\'s note',askedByKind:'member',askedBy:'owner'});
+});
+it('holds a trigger\'s note to the length its instructions are held to, set or changed',async()=>{
+ const {f,once}=await sharedPlace(),long='n'.repeat(100_001);
+ expect((await f.call('tempo','set',once({note:long}),token.other)).status).toBe(400);
+ const fine=once();expect((await f.call('tempo','set',fine,token.other)).status).toBe(200);
+ expect((await f.call('tempo','edit',{id:fine.id,note:long},token.other)).status).toBe(400);
+});
+/** A shared place that reports to #pond, a peer agent mark, and the job a guest's note started in #pond (the `other` job). */
+async function noteStarted(){
+ const made=await sharedPlace(()=>false),{f}=made,stamp=new Date(f.clock.now()).toISOString(),pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
+ f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'owner',agent:'mark'}]).run();
+  f.db.insert(bridgeChannels).values({...pond,answers:'art',botsMayTalk:false}).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CPOND'])}).where(eq(bridgeChannels.channel,'CROOM')).run();});
+ const brief=(credential:string,agent='mark')=>f.call('conversation','handoff',{agent,clientId:randomUUID(),label:'Brief',words:'Look into X'},credential);
+ const note=(to:unknown,credential=token.body)=>f.call('conversation','handoff',{to,clientId:randomUUID(),label:'Note',words:'Words'},credential);
+ return {...made,pond,stamp,brief,note};
+}
+it('lets no job a note started on a guest\'s word brief a peer agent',async()=>{
+ const {f,pond,brief,note}=await noteStarted();
+ const first=await note(pond);expect(first.status).toBe(200);const there=made(first.body);
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:there}).where(eq(jobs.id,'other')).run();f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.conversation,there)).run();});
+ expect((await brief(token.other)).status).toBe(403);
+ expect(f.db.select().from(inbox).all().filter(item=>item.to==='mark')).toEqual([]);
+ // The guest's own body, which a person's message started, still may: that ruling stands.
+ expect((await brief(token.body)).status).toBe(200);
+});
+it('lets no job a brief started on a guest\'s word brief back',async()=>{
+ const {f,stamp,brief}=await noteStarted(),marks='d'.repeat(64);
+ const first=await brief(token.body);expect(first.status).toBe(200);const briefed=made(first.body);
+ f.root.writes.run(()=>{f.db.insert(jobs).values({id:'marks',agent:'mark',box:'box',conversation:briefed,title:'',brief:'',model:'test',state:'running',startedByKind:'agent',startedBy:'mark',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:stamp}).run();
+  f.db.update(inbox).set({job:'marks',state:'taken'}).where(eq(inbox.conversation,briefed)).run();
+  f.db.insert(tokens).values({fingerprint:createHash('sha256').update(marks).digest('hex'),label:'marks',kind:'agent',agent:'mark',job:'marks',createdAt:stamp}).run();});
+ expect(jobWord(f.db,{id:'marks',agent:'mark',conversation:briefed}).woke).toBe('others');
+ expect((await brief(marks,'art')).status).toBe(403);
+ expect(f.db.select().from(inbox).all().filter(item=>item.source==='handoff'&&item.to==='art')).toEqual([]);
+});
+it('counts a brief to a peer agent with the notes a job on a guest\'s word may hand',async()=>{
+ const {f,pond,brief,note}=await noteStarted();
+ for(let n=1;n<NOTES_PER_JOB;n++)expect((await note({...pond,thread:`179443200${n}.000001`})).status,String(n)).toBe(200);
+ // Every brief from one job is in the one conversation that job opened, and each is one more hand-off.
+ expect((await brief(token.body)).status).toBe(200);
+ expect((await brief(token.body)).status).toBe(409);expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(409);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(NOTES_PER_JOB);
+});
+it('stops at the firing a trigger that watches an event on the word of anybody but owners',async()=>{
+ const {f,once}=await sharedPlace();
+ const mine=once();expect((await f.call('tempo','set',mine)).status).toBe(200);
+ // No door sets one. The row is written as one would stand if a door had, or if its asker stopped being an owner.
+ f.root.writes.run(()=>f.db.update(triggers).set({sourceKind:'answer',watches:'question:none',times:null,nextDueAt:null,lifespan:'until-stopped'}).where(eq(triggers.id,mine.id)).run());
+ expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toEqual([]);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,mine.id)).get()).toMatchObject({enabled:false,state:'stopped'});
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().map(item=>item.words)).toContainEqual(expect.stringContaining('it watches an event'));
+});
+it('lets a job a note woke on a guest\'s word schedule nothing, as one a firing woke',async()=>{
+ const {f,cv,once}=await sharedPlace();
+ expect((await f.call('tempo','set',once())).status).toBe(200);
+ f.root.writes.run(()=>{const item=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'handoff',sourceId:'a-note',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'outside',onWord:GUEST,chain:JSON.stringify(['elsewhere']),chainStartedAt:new Date(f.clock.now()).toISOString()});
+  f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item.id)).run();});
+ expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+});
+it('drops at admission a firing that waits in one member\'s private conversation on somebody else\'s word',async()=>{
+ const {f,kims}=await kimsTrigger(),all=runnable(f);
+ let firing='';f.root.writes.run(()=>{firing=f.root.services.conversations.send({conversation:kims,toKind:'agent',to:'art',source:'trigger',sourceId:'tr:late',fromKind:'schedule',words:'The owner\'s words',onWordKind:'member',onWord:'owner'}).id;});
+ expect(all.admission(kims)).toEqual({noticed:true});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,firing)).get()).toMatchObject({state:'resolved',resolution:expect.stringContaining('private to the member kim')});
+ expect(f.db.select().from(jobs).all().filter(job=>job.conversation===kims)).toEqual([]);
+});

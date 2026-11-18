@@ -27,7 +27,7 @@ export const PLACE_TRIGGERS_MAX = 10;
  * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
  * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */
 export const WORD_REPEAT_MIN_MS = 3_600_000;
-/** The most notes one job on the word of anybody but owners hands. A flood guard on one job, like the bound
+/** The most notes one job on the word of anybody but owners hands, briefs to a peer agent counted with them. A flood guard on one job, like the bound
  * on its posts (BRIDGE_POSTS_PER_JOB): each note may open a conversation and start a job. It is no limit on
  * an exchange, which no rule cuts short; a job working for owners, and the agent's own work, is not counted. */
 export const NOTES_PER_JOB = 5;
@@ -186,9 +186,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       const word = jobWord(db, work.job);
       if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
         throw new OperationError('denied', 'This body may hand a note only to the channel its own channel reports to, and its channel names none or another');
-      // A guest's word goes one hop: a job on anybody else's word that a note started hands nowhere.
-      if (word.woke === 'others' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'handoff'))).get())
-        throw new OperationError('denied', 'A note started this job, and it is not working for the agent\'s owners: it hands no note on. Say what there is to say here.');
+      const hop = this.hop(work); if (hop) throw new OperationError('denied', hop);
       const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = placeAddress(db, work.cv);
       // Whether the body this reaches could hand a note back, as far as can be known now: it will work on this
       // note's word at most, so the same questions are asked of the way back; and on anybody else's word a job a
@@ -201,11 +199,17 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
           + `Saying what needs saying here, in ${where}, in your own words, is your job. ${answerable ? `To answer that body, hand a note back to conversation ${work.cv.id}.` : 'A note back to that body would be refused from here.'} `
           + `Hand-offs before this one in this exchange: ${chain.length}${chain.length ? ` (through conversations ${chain.join(', ')})` : ''}. If this exchange is no longer making progress, stop and say so to a person instead of handing on.]` };
     },
+    // A guest's word goes one hop: a job on anybody else's word that a note or a brief started hands nowhere, to its
+    // own body elsewhere or to a peer agent. One a person's message or a firing started may.
+    hop(work) {
+      return jobWord(db, work.job).woke === 'others' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'handoff'))).get()
+        ? 'A note or a brief started this job, and it is not working for the agent\'s owners: it hands nothing on. Say what there is to say here.' : undefined;
+    },
     full(work) {
       if (jobWord(db, work.job).woke !== 'others') return undefined;
       const mine = JSON.stringify([work.job.id]).slice(0, -1) + ',';
-      const sent = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, work.job.agent), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'))).all().filter(item => item.sourceId?.startsWith(mine));
-      return sent.length >= NOTES_PER_JOB ? `A job that is not working for the agent's owners hands at most ${NOTES_PER_JOB} notes` : undefined;
+      const sent = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'), eq(inbox.fromId, work.job.agent))).all().filter(item => item.sourceId?.startsWith(mine));
+      return sent.length >= NOTES_PER_JOB ? `A job that is not working for the agent's owners hands at most ${NOTES_PER_JOB} notes and briefs` : undefined;
     },
     sent(note) {
       // Loud, not a stop: the household's owners are told once each time a chain grows by CHAIN_NOTICE_EVERY.

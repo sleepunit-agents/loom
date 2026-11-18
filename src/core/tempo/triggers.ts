@@ -18,7 +18,7 @@ export const triggerInput = z.object({
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
   targetKind: z.enum(triggers.targetKind.enumValues), target: text.nullable().optional(),
   toKind: z.enum(triggers.toKind.enumValues).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
-  instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text,
+  instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX),
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
   /** The Discord or Slack conversation a firing is mail in, instead of a wake of its own. */
@@ -29,9 +29,15 @@ export type NewTrigger = z.input<typeof triggerInput>;
  * watches and what it does cannot: stop it and set another. */
 export const triggerEdit = z.object({
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(),
-  times: text.optional(), days: text.nullable().optional(), note: text.optional(), wantsModel: text.max(200).nullable().optional(),
+  times: text.optional(), days: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX).optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
+/** Whether an edit changes what a firing says. A trigger's words are its instructions, the file they are read
+ * from, and its note, which a firing into a conversation quotes to the body. The one statement: whoever
+ * changes any of them becomes the asker, and may not where the words would go into another member's private
+ * conversation. Times, days and the wanted model are not words. */
+export const editsWords = (change: { instructions?: string | null; file?: string | null; note?: string }): boolean =>
+  change.instructions !== undefined || change.file !== undefined || change.note !== undefined;
 /** What a rule about where a caller works is asked of a trigger: what the caller sent for a new one, or the
  * stored row. The one shape for the door (operations.ts, wordRefusal) and the rule (src/shared-place-triggers.ts). */
 export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null };

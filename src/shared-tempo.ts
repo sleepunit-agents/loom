@@ -20,6 +20,7 @@ import { isHouseholdOwner, mayRunPrivateWork } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
+import { editsWords } from './core/tempo/triggers.js';
 
 export interface SharedTempoOptions {
   /** Trusted checkout path, never supplied by a command caller. */
@@ -81,9 +82,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
         return trigger.conversation ? { trigger: recorded.trigger, asked: placeTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember),
       wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change); },
       standRefusal: trigger => trigger.conversation ? placeFull(db, trigger.conversation) : undefined,
-      // Changed words are the changer's: the trigger then runs on their word. A change of times alone leaves
+      // Changed words (instructions, file or note: editsWords) are the changer's: the trigger then runs on their word. A change of times alone leaves
       // both as they were, so a firing's words and its asker always come from the same person.
-      reasked: (viewer, trigger, change) => { if (!trigger.conversation || (change.instructions === undefined && change.file === undefined)) return undefined;
+      reasked: (viewer, trigger, change) => { if (!trigger.conversation || !editsWords(change)) return undefined;
         const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;
         return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } },
   });

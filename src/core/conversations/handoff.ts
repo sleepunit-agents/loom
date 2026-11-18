@@ -26,6 +26,8 @@ export interface HandoffToSelf{
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
+ /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
+ hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
  /** Why this job may hand no further note, or nothing: asked as a new note is about to be written, never of one sent again. */
  full(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
  /** Told after a note is written, for the notice a long chain raises. */
@@ -83,6 +85,9 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    }
    // The handoff carries every label that says who may read the words it came from: the project, the member,
    // and whether it was a direct message.
+   // The composition's rules for a hand-off of any kind: one hop on anybody else's word, and the flood guard.
+   const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
+   const full=self?.full({job});if(full)throw new OperationError('conflict',full);
    const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
    if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const word=self?.word({job});
