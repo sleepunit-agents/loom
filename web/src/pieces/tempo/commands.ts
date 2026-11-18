@@ -20,7 +20,7 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
       throw new TempoFiringFailure(result.value.reason);
     }
     if (action === 'propose') {
-      if (!('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id || !('state' in result.value) || result.value.state !== 'pending') throw new Error('Tempo could not confirm the machine request.');
+      if (!('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id || !('state' in result.value) || (result.value.state !== 'pending' && result.value.state !== 'used')) throw new Error('Tempo could not confirm the machine request.');
       if (pending.get(action) === attempt) pending.delete(action);
       return result.value.id;
     }
@@ -29,8 +29,16 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
   }
   const change = async (action: string, input: object) => { await call(action, input); };
   return {
-    async requestMachine(id, machine) {
-      const card = await call('propose', { change: 'triggerMachine', input: { trigger: id, machine }, why: 'Run this trigger on the selected machine.' }, 'household');
+    async previewMachine(trigger, machine) {
+      const response = await request('/api/household/machinePreview', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: { trigger, machine } }) });
+      const result = await response.json(), value = result?.value;
+      if (!response.ok || result?.ok !== true || !value || typeof value.summary !== 'string' || !value.summary ||
+        typeof value.review !== 'string' || !value.review || !(value.problem === null || typeof value.problem === 'string')) throw new Error('The machine request could not be reviewed.');
+      return { summary: value.summary, review: value.review, problem: value.problem };
+    },
+    async requestMachine(id, machine, reviewed) {
+      const card = await call('propose', { change: 'triggerMachine', input: { trigger: id, machine, ...(reviewed ? { reviewed } : {}) }, why: 'Run this trigger on the selected machine.' }, 'household');
       if (!card) throw new Error('Tempo could not confirm the machine request.');
       return card;
     },

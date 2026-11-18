@@ -394,7 +394,7 @@ it('ships the Tempo selection through the generated door and withdraws it after 
   ]));
   const removed = await (await request()).json();
   expect(removed.errors).toBeUndefined();
-  expect(removed.data).toEqual({boxes:[],triggers:[],triggerLog:[],agentPauses:[],tempoTimezone:'UTC'});
+  expect(removed.data).toEqual({boxes:[],triggers:[],triggerLog:[],agentPauses:[],tempoMachineReviewer:null,tempoTimezone:'UTC'});
 });
 it('projects only the household timezone for Tempo and publishes changes through the same selection',async()=>{
  const f=await setup();

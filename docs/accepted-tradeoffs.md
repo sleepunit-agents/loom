@@ -1380,6 +1380,7 @@ On success the body sends its report alongside settlement. A body with validated
     messages when they expire, across the three tables that hold them, and removes their files with them.
   - `tokens.last_used_at`, `sessions.seen_at`: `src/shared-credentials.ts` stamps a credential when it is used.
   - `approvals.state`, `changes.waiting_on`: `src/shared-work-lifetime.ts` expires an allowed card on the clock.
+  - `triggers.machine`, `triggers.machine_approval`, and `triggers.machine_words`: `src/shared-household-proposals.ts` records the reviewed request and grant in the card transaction.
   - `approvals.details`, `approvals.change_summary`, `approvals.what`: `src/shared-household-proposals.ts`,
     for household cards an older version filed, once at start ("One rewrite of stored rows runs at start",
     below).

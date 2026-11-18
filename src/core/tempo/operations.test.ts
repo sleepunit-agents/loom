@@ -144,7 +144,7 @@ it('returns the committed failure of a manual machine firing, including on recei
   f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true,
     hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: f.now() }).run();
   f.db.update(triggers).set({ machine: 'local' }).where(eq(triggers.id, 'tr')).run();
-  const reason = 'machine: Machine execution is unavailable';
+  const reason = 'machine: This trigger has no owner approval for machine work';
   const result = { ok: true, value: { saved: false, failed: true, reason } };
   expect(f.call('tempo.runNow', { id: 'tr', words: 'different' }, 'override')).toMatchObject({ ok: false, code: 'invalid' });
   expect(f.call('tempo.runNow', { id: 'tr' }, 'fire')).toEqual(result);

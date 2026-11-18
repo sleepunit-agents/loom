@@ -133,7 +133,7 @@ export class TriggerEngine {
   /** `member` is whom the trigger's work is for, when that is a member and not the agent itself; `asked` is
    * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
    * shared-place-triggers.ts) and never part of what a caller sends. */
-  set(value: NewTrigger, member?: string, asked?: Asker): Trigger {
+  set(value: NewTrigger, member?: string, asked?: Asker, beforeFirstFiring?: (stored: Trigger) => void): Trigger {
     this.open();
     const v = triggerInput.parse(value);
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
@@ -153,6 +153,7 @@ export class TriggerEngine {
       this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();
       this.log(id, 'set');
+      beforeFirstFiring?.(this.get(id));
     });
     this.tick(); return this.get(id);
   }
@@ -381,14 +382,13 @@ export class TriggerEngine {
         this.db.update(triggers).set({ state: 'firing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         if (t.machine !== null) {
           stage = 'machine';
-          if (t.machineWords !== null) {
-            const words = this.resolvedWords(t);
-            if (createHash('sha256').update(words).digest('hex') !== t.machineWords) {
-              changedWords = words;
-              throw new Error('The words changed since they were approved');
-            }
+          if (!t.machineApproval || !t.machineWords) throw new Error('This trigger has no owner approval for machine work');
+          const words = this.resolvedWords(t);
+          if (createHash('sha256').update(words).digest('hex') !== t.machineWords) {
+            changedWords = words;
+            throw new Error('The words changed since they were approved');
           }
-          throw new Error('Machine execution is unavailable');
+          throw new Error('Machine worker execution is disabled');
         }
         const delivery = `${t.id}:${eventId}`;
         if (t.targetKind === 'operation') this.effects.operation(t.target!, t, delivery);

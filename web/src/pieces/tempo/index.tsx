@@ -1,6 +1,6 @@
 import { useDataQuery } from '../../data/graphql';
 import { MachineAccess } from './machine-access';
-import { TempoFiringFailure, type TempoActions } from './actions';
+import { TempoFiringFailure, type TempoActions, type MachinePreview } from './actions';
 import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
@@ -8,6 +8,7 @@ import { folders, rows, title, source, target, history, status, terminal, trigge
 
 export interface TempoSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
+  reviewer?: string;
   machines?: readonly { id: string; name: string }[];
   triggers: readonly Trigger[];
   events: readonly TriggerEvent[];
@@ -17,8 +18,10 @@ export interface TempoSnapshot {
 
 export type { TempoActions } from './actions';
 
-function TriggerActions({ trigger, machines, pauses, actions }: { trigger: Trigger; machines: TempoSnapshot['machines']; pauses: readonly AgentPause[]; actions: TempoActions }) {
+function TriggerActions({ trigger, machines, reviewer, pauses, actions }: { reviewer?: string; trigger: Trigger; machines: TempoSnapshot['machines']; pauses: readonly AgentPause[]; actions: TempoActions }) {
   const [machine, setMachine] = useState('');
+  const [preview, setPreview] = useState<MachinePreview>();
+  const previewMachine = actions.previewMachine;
   const [card, setCard] = useState('');
   const requestMachine = actions.requestMachine;
   const withdraw = actions.withdrawMachine;
@@ -42,15 +45,25 @@ function TriggerActions({ trigger, machines, pauses, actions }: { trigger: Trigg
         <Button disabled={pending || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => void run(() => actions.runNow(trigger.id))}>Run now</Button>
         <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>Cancel</Button>
       </>}
-      {trigger.machine && withdraw && <Button disabled={pending} onClick={() => void run(() => withdraw(trigger.id))}>Withdraw machine request</Button>}
+      {trigger.machine && withdraw && <Button disabled={pending} onClick={() => void run(async () => { await withdraw(trigger.id); setCard(''); setPreview(undefined); })}>Withdraw machine request</Button>}
       {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {requestMachine && !!machines?.length && !trigger.machine && !card && trigger.targetKind === 'inbox' && trigger.toKind === 'agent' && !trigger.conversation && !trigger.member && <div className="grid gap-2">
-      <label>Requested machine <select aria-label="Requested machine" value={machine} onChange={e => setMachine(e.target.value)}>
+      <label>Requested machine <select aria-label="Requested machine" disabled={pending} value={machine} onChange={e => { setPreview(undefined); setMachine(e.target.value); }}>
         <option value="">Choose a machine</option>
         {machines.map(box => <option key={box.id} value={box.id}>{box.name}</option>)}
       </select></label>
       <p>Requesting review holds this trigger. Withdraw the request to resume ordinary firing.</p>
+      {reviewer && previewMachine && <Button disabled={pending || !machines.some(box => box.id === machine)} onClick={() => void run(async () => { setPreview(undefined); setPreview(await previewMachine(trigger.id, machine)); })}>Preview machine approval</Button>}
+      {reviewer && preview && <section aria-label="Machine approval preview">
+        <pre className="whitespace-pre-wrap break-words">{preview.summary}</pre>
+        <MachineAccess />
+        {preview.problem !== null ? <p>{preview.problem}</p>
+          : <Button disabled={pending} onClick={() => void run(async () => {
+            try { setCard(await requestMachine(trigger.id, machine, preview.review)); }
+            finally { setPreview(undefined); }
+          })}>Allow these words on this machine</Button>}
+      </section>}
       <Button disabled={pending || !machines.some(box => box.id === machine)} onClick={() => void run(async () => setCard(await requestMachine(trigger.id, machine)))}>Request machine review</Button>
     </div>}
     {card && <a href={`/p/approvals-preview/approval/${encodeURIComponent(card)}`}>Open owner review</a>}
@@ -97,7 +110,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
     {trigger.machine && <MachineAccess />}
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
-    {actions && <TriggerActions trigger={trigger} machines={snapshot.machines} pauses={snapshot.pauses} actions={actions} />}
+    {actions && <TriggerActions key={snapshot.reviewer ?? ''} reviewer={snapshot.reviewer} trigger={trigger} machines={snapshot.machines} pauses={snapshot.pauses} actions={actions} />}
     <section><h2>Recent history</h2>{history(snapshot.events, trigger.id).length ? <ol>
       {history(snapshot.events, trigger.id).map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
     </ol> : <p>No events yet.</p>}</section>

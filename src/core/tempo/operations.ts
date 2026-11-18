@@ -23,6 +23,7 @@ export interface TempoOperationOptions {
   /** A new trigger as it is recorded for this caller: whose it is can follow who set it (policy.ts,
    * triggerAsSet), and with it the member its work is for, if any. `authorize` judges a `set` by the same
    * reading. Without it, as given and for nobody. */
+  requestMachine?(viewer: Viewer, trigger: Trigger, machine: string): string;
   recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string; asked?: Asker };
   /** Why this caller may not set, reword, stop, start or run this trigger because of whose word its job works on, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
@@ -62,15 +63,23 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
     return !!trigger && options.authorize(viewer, { action, trigger });
   };
-  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string(), waits }),
-    may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) {
+  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput.extend({ machine: z.string().min(1).max(200).optional() }), output: z.object({ id: z.string(), waits }),
+    may: (viewer, {machine: _machine, ...trigger}) => options.authorize(viewer, { action: 'set', trigger }),
+    run(ctx, {machine, ...trigger}) {
       const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
+      if (machine && (!options.requestMachine || trigger.conversation || trigger.targetKind !== 'inbox' || trigger.toKind !== 'agent')) {
+        throw new OperationError('invalid', 'Only an agent’s own inbox schedule can request machine work');
+      }
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
+      if (machine && first) throw new OperationError('denied', 'A delegated schedule cannot request machine work');
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { id: first.id, waits: first.waits }; }
-      const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
-      const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
+      const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger, member: undefined, asked: undefined };
+      const row = tempo.triggers.set(as.trigger, as.member, as.asked, machine ? stored => {
+        const card = options.requestMachine!(ctx.viewer, stored, machine);
+        ctx.changed('approvals', card);
+        ctx.changed('inbox', card);
+      } : undefined); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: action === 'runNow' ? manualResult : saved,

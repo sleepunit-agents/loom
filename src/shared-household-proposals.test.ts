@@ -813,6 +813,9 @@ it('records an owner grant for the exact reviewed words and files one replacemen
   expect(review.problem).toBeNull();
   for (const item of ['operator','/srv/triage','SSH keys',words]) expect(review.summary).toContain(item);
   const allow = (which:string) => f.call('approvals/answer',{id:which,answer:'allow'},'sam');
+  f.db.update(boxes).set({lastSeenAt:new Date(f.clock.now()+60_000).toISOString()}).where(eq(boxes.id,'work')).run();
+  expect((await allow(card)).body.ok).toBe(false);
+  f.db.update(boxes).set({lastSeenAt:at}).where(eq(boxes.id,'work')).run();
   expect((await allow(card)).body.ok).toBe(true);
   const trigger = () => f.db.select().from(triggers).where(eq(triggers.id,id)).get();
   expect(trigger()).toMatchObject({machineApproval:card,machineWords:hash(words)});
@@ -826,6 +829,9 @@ it('records an owner grant for the exact reviewed words and files one replacemen
   const replacement = pending()[0].id;
   for (const text of [words,changed]) expect((await look(f,replacement)).summary).toContain(text);
   await poll('legacy');
+  await f.call('tempo/edit',{id,instructions:words},'art');
+  expect((await f.call('tempo/runNow',{id},'art')).body.value).toMatchObject({failed:true,reason:expect.stringMatching(/worker/i)});
+  await f.call('tempo/edit',{id,instructions:changed},'art');
   expect((await allow(replacement)).body.ok).toBe(false);
   expect(trigger()?.machineApproval).toBe(card);
   await poll('current',report);
@@ -843,4 +849,24 @@ it('records an owner grant for the exact reviewed words and files one replacemen
   const ownerCard = await approveShown(latest.review);
   expect(ownerCard.body.value).toMatchObject({state:'used'});
   expect(trigger()).toMatchObject({machineApproval:ownerCard.body.value?.id,machineWords:hash('Review after editing.')});
+});
+
+it('creates a due machine trigger and its card together, and rolls back a refused request', async () => {
+  const f = fixture(), times = new Date(f.clock.now()).toISOString();
+  f.db.insert(boxes).values({ id:'remote',name:'Second machine',owner:'sam',sameMachineAsLoom:false,
+    hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:times }).run();
+  f.db.insert(boxAgents).values({box:'remote',agent:'art',lent:true}).run();
+  f.db.insert(memberAgents).values({member:'lee',agent:'art'}).onConflictDoNothing().run();
+  const input={machine:'remote',ownerKind:'agent',owner:'art',sourceKind:'time',times,lifespan:'once',
+    targetKind:'inbox',toKind:'agent',to:'art',instructions:'Inspect report',note:'Machine report'};
+  expect((await f.call('tempo/set',{...input,id:'missing',machine:'nonexistent'},'art')).body.ok).toBe(false);
+  expect((await f.call('tempo/set',{...input,id:'private'},'lee')).body.ok).toBe(false);
+  expect(f.db.select().from(triggers).all()).toEqual([]);
+  expect(f.db.select().from(approvals).all()).toEqual([]);
+  const request = await f.call('tempo/set',{...input,id:'immediate'},'art','machine-set');
+  expect(request.body).toMatchObject({ok:true,value:{id:'immediate'}});
+  expect(await f.call('tempo/set',{...input,id:'immediate'},'art','machine-set')).toEqual(request);
+  expect(f.db.select().from(triggers).all()).toMatchObject([{id:'immediate',machine:'remote',machineApproval:null,state:'failed'}]);
+  expect(f.db.select().from(approvals).all()).toMatchObject([{agent:'art',state:'pending'}]);
+  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toEqual([]);
 });

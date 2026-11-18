@@ -33,6 +33,7 @@ export interface SharedTempoOptions {
   admit?: TempoOptions['admit'];
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
+  requestMachine?: TempoOperationOptions['requestMachine'];
   reviewChangedMachineWords?: TempoOptions['reviewChangedMachineWords'];
   changeRevision?: TempoOptions['changeRevision'];
   mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
@@ -91,7 +92,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // Chat is the control surface: a current body may carry out its member's ordinary mailbox preference
     // without becoming that member. When is the volume rule in policy.ts, asked by tempoCommandAllowed;
     // chatMember is this door's proof that the caller is the current body of that member's chat.
-    commands: { mailboxReceiptScope:options.mailboxReceiptScope,
+    commands: { requestMachine: options.requestMachine && ((viewer, row, machine) => options.requestMachine!(judgedAs(viewer), row, machine)), mailboxReceiptScope:options.mailboxReceiptScope,
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
       recorded, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember),
       wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change)

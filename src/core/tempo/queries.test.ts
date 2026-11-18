@@ -20,7 +20,7 @@ it('projects only the timezone and the caller\'s own timings to member/agent sch
    expect(tempoQueryFields(db,viewer).tempoTimezone.resolve()).toBeNull();expect(tempoQueryFields(db,viewer).tempoTimings.resolve()).toBeNull();
   }
   for(const kind of ['runner','service'] as const)expect(tempoQueryFields(db,{kind,id:'caller'}).tempoTimezone.resolve()).toBeNull();
-  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoTimezone','tempoTimings','tempoMachineWordsMatch']);
+  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoTimezone','tempoTimings','tempoMachineReviewer','tempoMachineWordsMatch']);
  } finally {client.close();}
 });
 it('reads the caller\'s own timings, with the defaults until it has changed one, and never another caller\'s',()=>{

@@ -22,6 +22,8 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, resolvedWords
      if ((viewer.kind !== 'member' && viewer.kind !== 'agent') || !current()) return null;
      return readTimings(db, { kind: viewer.kind === 'member' ? 'person' : 'agent', id: viewer.id });
    },
+ }, tempoMachineReviewer: { type: GraphQLString,
+   resolve: () => sqlHolds(db, rules.householdOwner, viewer) ? viewer.id : null,
  }, tempoMachineWordsMatch: { type: GraphQLBoolean, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
    resolve(_parent: unknown, { id }: { id: string }) {
      const visible = sqlVisibility(viewer, ['triggers']).triggers(getTableColumns(triggers));

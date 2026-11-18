@@ -369,6 +369,14 @@ export function sharedRoot(options: {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
     bodyWork: viewer => bodyScope(viewer), bodyJob,
     // A repeating schedule asked for on anybody else's word is an owner's to allow: filed as a household card.
+    requestMachine: (viewer, trigger, machine) => {
+      if (!trigger.to || viewer.kind !== 'member' && (viewer.kind !== 'agent' || viewer.workingFor || viewer.id !== trigger.to)) {
+        throw new OperationError('denied', 'A delegated schedule cannot request machine work');
+      }
+      return householdProposals.file(services.approvals, trigger.to, {change: 'triggerMachine',
+        input: {trigger: trigger.id, machine}, why: 'Run this trigger on the selected machine.'},
+        undefined, viewer.kind === 'member' ? viewer.id : undefined).id;
+    },
     reviewChangedMachineWords: (trigger,words) => householdProposals.reviewChanged(services.approvals,trigger,words),
     askOwners: (agent, ask, why, where) => householdProposals.file(services.approvals, agent, { change: 'placeSchedule', input: ask, why }, where).id,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,

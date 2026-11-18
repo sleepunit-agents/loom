@@ -464,6 +464,6 @@ it.each(['file', 'stored'])('compares the complete %s words at manual and schedu
   f.clock.advance(60_000);
   const failures = f.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all().filter(log => log.event === 'failure');
   expect(review).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: t.id, machineApproval: 'card' }), current);
-  expect(failures.map(log => log.note)).toEqual(['machine: Machine execution is unavailable', 'machine: The words changed since they were approved']);
+  expect(failures.map(log => log.note)).toEqual(['machine: Machine worker execution is disabled', 'machine: The words changed since they were approved']);
   expect(f.items()).toEqual([]);
 });

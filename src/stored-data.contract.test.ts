@@ -182,6 +182,7 @@ it('lets no second module write a household table unless it is listed here and i
     signin_links: { owner: signin, others: [] },
     threads: { owner: conversations, others: ['src/runtime/jobs.ts'] },
     tokens: { owner: signin, others: ['src/shared-credentials.ts'] },
+    triggers: { owner: 'src/core/tempo/', others: ['src/shared-household-proposals.ts'] },
     trigger_log: { owner: 'src/core/tempo/', others: [] },
     turns: { owner: conversations, others: [] },
   };

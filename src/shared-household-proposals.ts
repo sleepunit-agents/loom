@@ -36,6 +36,7 @@
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
 import {openMachineReview,sealMachineReview} from './core/tempo/machine-review.js';
+import { SHA256_HEX } from './core/sha256-hex.js';
 import {readMachineReport} from './runtime/machines.js';
 import {SILENCE_MS} from './runtime/silence.js';
 import {logTrigger} from './core/tempo/triggers.js';
@@ -76,7 +77,7 @@ import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWor
 import {triggers as triggerRows} from './core/data/schema.js';
 const operation='household.change';
 const kinds={project:projectInput,
- triggerMachine:z.object({trigger:z.string().min(1).max(200),machine:z.string().min(1).max(200),reviewed:z.string().regex(/^[0-9a-f]{64}$/).optional()}).strict(),
+ triggerMachine:z.object({trigger:z.string().min(1).max(200),machine:z.string().min(1).max(200),reviewed:z.string().regex(SHA256_HEX).optional()}).strict(),
  // One project emptied into another and removed. Its records cannot be told apart again afterwards.
  projectMerge:projectMergeInput,
  // A project set aside whole, and brought back. Either can be undone by the other, so each is a setting.
@@ -221,12 +222,13 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(row)try{words=resolved??parts.triggerWords?.(row)??null;}catch{/* An unreadable file must never authorize a firing. */}
   const listed=row?.to&&box?db.select().from(boxAgents).where(and(eq(boxAgents.box,box.id),eq(boxAgents.agent,row.to))).get():undefined;
   const report=box?readMachineReport(db,box.id):undefined;
-  const problem=!row||!box||box.revokedAt||box.reportOnly?'The requested trigger or machine is unavailable'
+  const reportAge = Date.parse(now()) - Date.parse(box?.lastSeenAt ?? '');
+ const problem=!row||!box||box.revokedAt||box.reportOnly?'The requested trigger or machine is unavailable'
    :!row.to||!machineMayHost(box,listed||undefined,row.to,sharedSharing(db))?'The machine may not host this agent'
    :words===null?'The trigger words are unavailable'
    :!report?.enabled?'The worker has not reported support for machine bodies'
    :!report.agents.includes(row.to)?'The worker does not allow this agent'
-   :!box.lastSeenAt||Date.parse(now())-Date.parse(box.lastSeenAt)>SILENCE_MS?'The machine is away':null;
+   :!Number.isFinite(reportAge)||reportAge<0||reportAge>SILENCE_MS?'The machine is away':null;
   return {row,box,words,report,problem};
  };
  const reviewText=(review:ReturnType<typeof machineReview>)=>[

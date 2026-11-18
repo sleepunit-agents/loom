@@ -157,3 +157,28 @@ it('files a request for the selected machine and links to its owner review', asy
   expect(JSON.parse(String(request.mock.calls[0][1]?.body)).input).toMatchObject({ change: 'triggerMachine', input: { trigger: 'tr-1', machine: 'remote' } });
   expect(tree.root.findByType('a').props.href).toBe('/p/approvals-preview/approval/card-1');
 });
+
+it.each([null, 'The worker is disabled'])('shows the whole owner preview before submitting a reviewed grant (%s)', async problem => {
+  const words = 'Check reports\r\n' + 'é'.repeat(5000) + '\n';
+  const summary = 'Agent art\nMachine Workshop\nWorker worker\nDirectory /srv\nTrigger words (complete)\n' + words;
+  const request = vi.fn<typeof fetch>(async url => String(url).endsWith('/machinePreview')
+    ? Response.json({ok:true,value:{summary,review:'owner-proof',problem}})
+    : Response.json({ok:true,value:{id:'card-2',state:'used'}}));
+  const visible = { ...snapshot, reviewer:'owner', machines: [{ id:'remote', name:'Workshop' }] };
+  await act(async()=>{ tree=create(h(TempoCard,{snapshot:visible,triggerId:'tr-1',actions:tempoActions(request)})); });
+  await act(async()=>tree.root.findByProps({'aria-label':'Requested machine'}).props.onChange({target:{value:'remote'}}));
+  expect(button('Allow these words on this machine')).toBeUndefined();
+  await act(async()=>button('Preview machine approval').props.onClick());
+  expect(tree.root.findByType('pre').props.children).toBe(summary);
+  expect(JSON.stringify(tree.toJSON())).toContain('worker credentials');
+  expect(request).toHaveBeenCalledTimes(1);
+  if (problem) {
+    expect(button('Allow these words on this machine')).toBeUndefined();
+    expect(JSON.stringify(tree.toJSON())).toContain(problem);
+    return;
+  }
+  await act(async()=>button('Allow these words on this machine').props.onClick());
+  const submitted = JSON.parse(String(request.mock.calls[1][1]?.body));
+  expect(submitted.input.input).toEqual({trigger:'tr-1', machine:'remote', reviewed:'owner-proof'});
+  expect(tree.root.findByType('a').props.href).toContain('card-2');
+});

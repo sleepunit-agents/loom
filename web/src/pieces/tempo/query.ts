@@ -4,6 +4,7 @@ import type { AgentPause, Trigger, TriggerEvent } from './model';
  * visibility for each table; this module never chooses a caller or a policy. */
 export const tempoQuery = `query Tempo {
   tempoTimezone
+  tempoMachineReviewer
   boxes { id name revokedAt }
   triggers {
     id ownerKind owner sourceKind watches times days lifespan targetKind target toKind to
@@ -15,6 +16,7 @@ export const tempoQuery = `query Tempo {
   agentPauses { agent since }
 }`;
 export interface TempoData {
+  tempoMachineReviewer?: string | null;
   tempoTimezone?: string | null;
   boxes?: { id: string; name: string; revokedAt: string | null }[];
   triggers: Trigger[];
