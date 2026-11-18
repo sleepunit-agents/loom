@@ -15,6 +15,7 @@ export interface TempoSnapshot {
 export type { TempoActions } from './actions';
 
 function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses: readonly AgentPause[]; actions: TempoActions }) {
+  const withdraw = actions.withdrawMachine;
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -35,6 +36,7 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
         <Button disabled={pending || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => void run(() => actions.runNow(trigger.id))}>Run now</Button>
         <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>Cancel</Button>
       </>}
+      {trigger.machine && withdraw && <Button disabled={pending} onClick={() => void run(() => withdraw(trigger.id))}>Withdraw machine request</Button>}
       {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {pending && <p role="status">Waiting for Tempo…</p>}
@@ -64,6 +66,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household' : trigger.owner}</dd></div>
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       <div><dt>Target</dt><dd>{target(trigger)}</dd></div>
+      {trigger.machine && <div><dt>Requested machine</dt><dd>{trigger.machine}</dd><dt>Approval record</dt><dd>{trigger.machineApproval ?? 'None'}</dd></div>}
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
     </dl>

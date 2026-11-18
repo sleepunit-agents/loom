@@ -123,3 +123,12 @@ it('offers resume for a paused operation belonging to its agent without an inbox
  const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children==='Resume agent')!;
  expect(button).toBeDefined();await act(async()=>button.props.onClick());expect(resume).toHaveBeenCalledExactlyOnceWith('art');
 });
+
+it('shows the requested machine and lets the editor withdraw the request', async () => {
+  const data = { ...snapshot, triggers: snapshot.triggers.map(t => ({ ...t, machine: 'worker-2' })) };
+  const callbacks = { ...actions(), withdrawMachine: vi.fn(async (_id: string) => {}) };
+  await act(async () => { tree = create(h(TempoCard, { snapshot: data, triggerId: 'tr-1', actions: callbacks })); });
+  expect(JSON.stringify(tree.toJSON())).toContain('worker-2');
+  await act(async () => button('Withdraw machine request').props.onClick());
+  expect(callbacks.withdrawMachine).toHaveBeenCalledExactlyOnceWith('tr-1');
+});

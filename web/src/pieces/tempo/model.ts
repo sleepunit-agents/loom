@@ -4,6 +4,7 @@ export interface Trigger {
   sourceKind: 'time' | 'pull-request' | 'answer' | 'job'; watches: string | null;
   times: string | null; days: string | null; lifespan: 'until-stopped' | 'today' | 'once';
   targetKind: 'operation' | 'inbox'; target: string | null; toKind: 'person' | 'agent' | null; to: string | null;
+  machine?: string | null; machineApproval?: string | null;
   project: string | null; instructions: string | null; file: string | null; note: string; enabled: boolean;
   state: 'standing' | 'due' | 'firing' | 'held' | 'fired' | 'stopped' | 'failed';
   nextDueAt: string | null; lastFiredAt: string | null; createdAt: string; changedAt: string;
