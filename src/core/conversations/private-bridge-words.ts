@@ -13,7 +13,7 @@
  * A message that went into no conversation holds no words to erase: a dropped
  * one never keeps them, and a held one loses them when it is closed
  * (pieces/bridges/incoming.ts, receiver.ts). */
-import { and, eq, inArray, isNotNull, ne, notExists, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, ne, notExists, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { bridgeConnections, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, conversations, inbox } from '../data/schema.js';
 
@@ -25,7 +25,9 @@ function held(db: DataDatabase) {
   return {
     mail: and(inArray(inbox.source, bridgeConnections.platform.enumValues), isNotNull(inbox.words), inArray(inbox.conversation, private_))!,
     sent: and(ne(bridgeSends.text, ''), inArray(bridgeSends.state, ['sent', 'dismissed']),
-      inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(inArray(bridgeIncoming.conversation, private_))))!,
+      // What was posted there: answers to its messages, and posts that answered none (a firing's or a note's answer).
+      or(inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(inArray(bridgeIncoming.conversation, private_))),
+        and(isNull(bridgeSends.incoming), inArray(bridgeSends.conversation, private_))))!,
     received: and(ne(bridgeIncoming.text, ''), eq(bridgeIncoming.state, 'delivered'), inArray(bridgeIncoming.conversation, private_))!,
     // A direct message that still lists a file, whether or not it had words. Dated by when it was received.
     filed: and(inArray(bridgeIncoming.conversation, private_),

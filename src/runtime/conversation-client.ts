@@ -81,7 +81,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
     const multipleHistories=input.items.filter(row=>row.history.length>0).length>1;
     const malformedRows=input.items.some((row,index)=>
-     (row.history.length>0&&row.source!=='thread'&&row.source!=='discord'&&row.source!=='slack')||
+     (row.history.length>0&&row.source!=='thread'&&row.source!=='discord'&&row.source!=='slack'&&row.source!=='trigger'&&row.source!=='handoff')||
      (index>0&&row.seq<=input.items[index-1].seq)||
      row.history.some((line,previous)=>previous>0&&line.seq<=row.history[previous-1].seq));
     if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||

@@ -143,8 +143,11 @@ const bridgeConnection: Rule = any(householdOwner, agentOwners);
  * role does not read a direct message (rule `conversation`), so there the reply is reviewed by the people
  * the message is shown to: the conversation's own member for their private one, the agent's owners for one
  * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
-const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seenWith('bridgeIncoming', 'incoming'),
-  any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true))));
+/** Who reads a post loom queued: whoever reads the message it answers, or, for a post that answers none (a
+ * firing's or a note's answer, an agent's own post), whoever reads the conversation it was made in. */
+const seesSend: Rule = any(seenWith('bridgeIncoming', 'incoming'), all(equal('incoming', null), seenWith('conversations', 'conversation')));
+const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seesSend,
+  any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true)), all(equal('incoming', null), seenWith('conversations', 'conversation', equal('direct', true)))));
 /** Whose a task is when it has no project: a member's own, or an agent's owners' and the agent's. The household's
  * own task has nobody of that kind. */
 const taskOwner: Rule = first([
@@ -318,7 +321,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
     [all(equal('isDm', true), equal('groupDm', true)), seenWith('bridgeConnections', 'connection', agentOwners)],
     [all(equal('isDm', true), set('member')), self('member')],
     [equal('isDm', true), seenWith('bridgeConnections', 'connection', agentOwners)]], householdOwner),
-  bridgeSends: seenWith('bridgeIncoming', 'incoming'),
+  bridgeSends: seesSend,
   secrets: householdOwner, secretGrants: householdOwner, secretRequests: householdOwner, secretRules: householdOwner,
   secretRuleAgents: householdOwner, secretUses: householdOwner, secretChanges: householdOwner,
   triggers: trigger,
@@ -562,6 +565,10 @@ export function maySchedule(conversation: { id?: string; venue: string; member: 
  * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
  * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
 export type Woke = 'own' | 'owners' | 'others';
+/** A person mail is sent on the word of: a household member, or an outside account by the key loom knows it by. */
+export type OnWord = { kind: 'member' | 'outside'; id: string };
+/** Who asked for a trigger that names a conversation: such a person, or the agent itself. */
+export type Asker = OnWord | { kind: 'agent'; id: string };
 /** Who may hand a note to the agent's body where, and post there as the agent's own work. The one statement.
  * The agent's own work and a body working for owners: any conversation of that agent, and any channel it
  * has a rule for. A body working for anybody else: only the one channel its own channel's rule names as

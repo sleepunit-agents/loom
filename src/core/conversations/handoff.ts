@@ -21,6 +21,9 @@ export interface HandoffToSelf{
  /** Resolve and judge the target for this job; throws an OperationError to refuse. Reads only. */
  target(work:{job:{id:string;agent:string;conversation:string|null};cv:{id:string;agent:string;venue:string;place:string;member:string|null}},to:HandoffTo):{
   conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:{kind:'member'|'outside';id:string};chain:string[];startedAt:string};
+ /** The person the sending job is working on the word of, if one can be named: a brief to another agent
+  * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
+ word(work:{job:{id:string;agent:string;conversation:string|null}}):{kind:'member'|'outside';id:string}|undefined;
  /** Told after a note is written, for the notice a long chain raises. */
  sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
 }
@@ -72,7 +75,8 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    // and whether it was a direct message.
    const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
    if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
-   const item=cvs.send({conversation:target.id,toKind:'agent',to:input.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string});
+   const word=self?.word({job});
+   const item=cvs.send({conversation:target.id,toKind:'agent',to:input.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
    ctx.changed('conversations',target.id);ctx.changed('inbox',item.id);ctx.changed('turns',target.id);
    return {conversation:target.id,item:item.id};

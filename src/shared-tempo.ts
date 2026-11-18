@@ -1,7 +1,8 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
-import { roomFiring, roomRepeatRefusal, roomTriggerAsker } from './shared-room-triggers.js';
-import type { conversations } from './core/data/schema.js';
+import { asking, roomFiring, roomFull, roomRepeatRefusal, roomTriggerAsker } from './shared-room-triggers.js';
+import { conversations as conversationRows } from './core/data/schema.js';
+import { eq } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import type { Clock } from './core/clock.js';
 import type { DataWrites } from './core/data/writes.js';
@@ -32,7 +33,7 @@ export interface SharedTempoOptions {
   chatMember?(viewer: Viewer): string | undefined;
   /** The conversation the caller's job is in, when the caller is the body of a job: what it may schedule
    * depends on it (policy.ts, maySchedule). Nothing for a person or an agent's own session. */
-  bodyWork?(viewer: Viewer): { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } } | undefined;
+  bodyWork?(viewer: Viewer): { cv: typeof conversationRows.$inferSelect; job: { id: string; agent: string; conversation: string | null } } | undefined;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
@@ -67,6 +68,11 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
       recorded: (viewer, trigger) => { const recorded = recordedTrigger(db, viewer, trigger);
         return trigger.conversation ? { trigger: recorded.trigger, asked: roomTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember),
-      placeRefusal: (viewer, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? ROOM_SCHEDULE_REFUSAL : roomRepeatRefusal(work, trigger, change); } },
+      placeRefusal: (viewer, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? ROOM_SCHEDULE_REFUSAL : roomRepeatRefusal(db, work, trigger, change); },
+      standRefusal: trigger => trigger.conversation ? roomFull(db, trigger.conversation) : undefined,
+      // Changed words, file or times are the changer's: the trigger then runs on their word.
+      reasked: (viewer, trigger, change) => { if (!trigger.conversation || (change.instructions === undefined && change.file === undefined && change.times === undefined)) return undefined;
+        const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;
+        return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } },
   });
 }

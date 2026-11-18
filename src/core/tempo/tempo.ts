@@ -57,8 +57,8 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
         if (!options.roomFiring) throw new Error('This program cannot fire a trigger into a conversation');
         const how = options.roomFiring(t);
         if ('stop' in how) {
-          for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `room-trigger-stopped:${t.id}`, fromKind: 'schedule',
-            words: `The schedule "${t.note}" was stopped and did not fire: ${how.stop}.`, refs: [t.id] });
+          for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `room-trigger-stopped:${occurrence}`, fromKind: 'schedule',
+            words: `The schedule ${JSON.stringify(t.note)} was stopped and did not fire: ${how.stop}.`, refs: [t.id] });
           return 'stop';
         }
         options.conversations.send({ toKind: 'agent', to: t.to!, conversation: t.conversation, source: 'trigger', sourceId: occurrence, fromKind: 'schedule', fromId: t.owner ?? undefined,

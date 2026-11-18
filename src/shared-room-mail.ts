@@ -3,10 +3,10 @@
  * (core/conversations/handoff.ts). What both need is said here once: where such a conversation is posted
  * to, whether it still can be, who a job is working on the word of, and whether that person is still
  * known. Who may do what with it is policy.ts's (maySchedule, mayHandTo). */
-import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
-import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, conversations, inbox } from './core/data/schema.js';
-import { inHousehold, isHouseholdOwner, mayHandTo, membersWithAgent, type Woke } from './policy.js';
+import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
+import { inHousehold, isHouseholdOwner, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
@@ -21,7 +21,7 @@ export const ROOM_REPEAT_MIN_MS = 3_600_000;
 export const CHAIN_NOTICE_EVERY = 25;
 
 type Room = { id: string; agent: string; venue: string; place: string };
-export type OnWord = { kind: 'member' | 'outside'; id: string };
+export type { OnWord };
 export const isBridgeVenue = (venue: string): venue is 'discord' | 'slack' => venue === 'discord' || venue === 'slack';
 
 /** Where a post in this conversation goes: read from its place (pieces/bridges/place.ts), on the agent's
@@ -38,31 +38,52 @@ export function roomAddress(db: DataDatabase, cv: Room): { connection: string; w
  * by (pieces/bridges/incoming.ts): its connection is gone or not in use, or its channel is filtered out. A
  * channel rule that was removed closes nothing: a mention there would still wake the agent. */
 export function roomClosed(db: DataDatabase, cv: Room): string | undefined {
-  const at = roomAddress(db, cv);
+  const found = roomAddress(db, cv), at = found && { ...found, channel: ruleChannel(db, cv, found.channel) };
   if (!at) return 'its connection is gone';
   if (!db.select({ enabled: bridgeConnections.enabled }).from(bridgeConnections).where(eq(bridgeConnections.id, at.connection)).get()?.enabled) return 'its connection is not in use';
   const filters = db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, at.connection)).all();
   if (filters.some(f => f.rule === 'ignore' && f.channel === at.channel) || (!at.direct && filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === at.channel))) return 'its channel is filtered out';
   return undefined;
 }
+/** The channel a conversation's rules are looked up by: a channel rule, a filter and a report target name
+ * a channel, and a Discord thread is under one. Admission reads the parent from the arriving message
+ * (pieces/bridges/incoming.ts, `parent ?? channel`); a conversation's own messages say the same, so the
+ * latest one is asked, and a conversation nobody has spoken in is its place's channel. The one lookup
+ * for every rule about a place: roomClosed, reportsTo and a note's target. */
+export function ruleChannel(db: DataDatabase, cv: { id: string }, placeChannel: string): string {
+  const said = cv.id ? db.select({ channel: bridgeIncoming.channel, parent: bridgeIncoming.parent }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, cv.id)).orderBy(desc(bridgeIncoming.receivedAt)).get() : undefined;
+  return said ? said.parent ?? said.channel : placeChannel;
+}
 /** Whether this person is still known to the household for this agent: a member in the household now, an
  * outside account the agent's owner has given a tier, or the agent itself while it is not removed. By
  * the person and not by the venue: the same answer wherever the conversation is. */
-export function stillKnown(db: DataDatabase, agent: string, who: { kind: 'member' | 'outside' | 'agent'; id: string }): boolean {
+export function stillKnown(db: DataDatabase, agent: string, who: Asker): boolean {
   if (who.kind === 'member') return inHousehold({ kind: 'member', id: who.id }, sharedSharing(db));
   if (who.kind === 'agent') return who.id === agent && !db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, agent)).get()?.removedAt;
   return !!db.select({ tier: agentPeople.tier }).from(agentPeople).where(and(eq(agentPeople.agent, agent), eq(agentPeople.person, who.id))).get();
 }
 /** On whose word a job is working, read from its mail as the worker reads who is in the room
- * (runtime/body-policy.ts): every person its mail is from, or was sent on the word of. Least reach wins:
- * with nobody behind it the work is the agent's own; it is `owners` only if every one of them is a
- * household owner or a member who has the agent; one other person makes it `others`. `person` is the
- * one of least reach, for what is done on this job's word later: a guest before a member, a member before an owner. */
+ * (runtime/body-policy.ts): every person its mail is from, or was sent on the word of, and the member a
+ * private conversation is with. Least reach wins: it is `owners` only if every one of them is a
+ * household owner or a member who has the agent; one other person makes it `others`. `person` is the one
+ * of least reach, for what is done on this job's word later: a guest before a member, a member before an owner.
+ *
+ * What counts as the agent's own work, said once: a job with nobody behind any of its mail, which is a
+ * lane's own start and a firing whose asker is the agent itself (mail from the schedule, on nobody's
+ * word, in a conversation that is no member's). Mail from an agent is never that: a note carries the
+ * word of the body that sent it, and one with no word (a body nobody could be named behind, another
+ * agent's bot writing in a channel) is anybody else's. */
 export function jobWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): { woke: Woke; person?: OnWord } {
-  const people = workerPolicy(db, job).people, sharing = sharedSharing(db), with_ = new Set(membersWithAgent(job.agent, sharing));
+  const policy = workerPolicy(db, job), sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
+  const people = [...policy.people];
+  const member = job.conversation ? db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.member : null;
+  if (member) people.push(inHousehold({ kind: 'member', id: member }, sharing) ? { kind: 'person', person: member, tier: null } : { kind: 'unknown', person: null, tier: null });
+  const mail = policy.mail ?? [];
+  const unspoken = mail.length > 0 && db.select({ id: inbox.id }).from(inbox).where(and(inArray(inbox.id, mail), eq(inbox.fromKind, 'agent'), isNull(inbox.onWord))).all().length > 0;
+  if (unspoken) return { woke: 'others' };
   if (!people.length) return { woke: 'own' };
   const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === 3 ? 2 : 1)
-    : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : with_.has(p.person) ? 4 : 3;
+    : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : have.has(p.person) ? 4 : 3;
   const least = [...people].sort((a, b) => rank(a) - rank(b))[0], lowest = rank(least);
   // Somebody nobody can name is behind it: nothing is done on such a word.
   if (lowest === 0 || least.person === null) return { woke: 'others' };
@@ -83,7 +104,7 @@ export function reportsTo(db: DataDatabase, cv: Room): string | null {
   const at = roomAddress(db, cv);
   if (!at || at.direct || !isBridgeVenue(cv.venue)) return null;
   return db.select({ reportsTo: bridgeChannels.reportsTo }).from(bridgeChannels)
-    .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, at.channel))).get()?.reportsTo ?? null;
+    .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)))).get()?.reportsTo ?? null;
 }
 /** A person as a body is told of them: by what kind they are and the id loom knows them by. */
 export const named = (who: { kind: string; id: string }): string => who.kind === 'member' ? `the member ${who.id}` : who.kind === 'agent' ? 'yourself' : `the outside account ${who.id}`;
@@ -98,6 +119,7 @@ export const channelKey = (platform: string, workspace: string, channel: string)
  * message; that body, with its own context, says what there is to say in its own words. */
 export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'person'; to: string; member: string; source: 'notice'; sourceId: string; fromKind: 'unknown'; words: string; refs: string[] }): unknown }, now: () => string): HandoffToSelf {
   return {
+    word: work => jobWord(db, work.job).person,
     target(work, to) {
       const agent = work.cv.agent;
       let conversation: string | undefined, open: { venue: 'discord' | 'slack'; place: string; label: string } | undefined, key: string, where: string;
@@ -105,7 +127,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? roomAddress(db, cv) : undefined;
         if (!cv || !at || cv.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another Discord or Slack conversation of this agent');
         const closed = roomClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
-        conversation = cv.id; key = channelKey(cv.venue, at.workspace, at.channel); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
+        conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.
         // (Or the one channel its own channel's rule says it reports to: the owner named it there.)

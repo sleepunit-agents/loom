@@ -151,11 +151,13 @@ export class TriggerEngine {
     this.tick();
   }
   /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and who changed them. */
-  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }): void {
+  /** `asked` re-stamps who asked, for a trigger that names a conversation whose words, file or times change: the door's to say. */
+  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: { kind: 'member' | 'outside' | 'agent'; id: string }): void {
     this.open();
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {
       const t = this.get(id);
+      if (asked && t.conversation) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;

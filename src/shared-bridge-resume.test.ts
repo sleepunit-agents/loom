@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 /** A bridge conversation over two bodies: what the second is told when it continues the first one's session,
  * and when it cannot. Real intake, real doors, the real body program; the harness and the place its
  * session files live are stood in for. */
@@ -151,8 +153,34 @@ it('runs a body whose only mail is a firing from the schedule, and posts its ans
  // The schedule's mail arrives in the room with no message from the bridge beside it.
  f.root.writes.run(()=>{f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'trigger',sourceId:'tr-1:now',fromKind:'schedule',words:'[From the schedule, not from a person speaking now.]\n\nSay it is nine',onWordKind:'outside',onWord:JSON.stringify(['slack','TWORK','UUSER'])});});
  expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
- expect(seen[1]).toContain('[From the schedule, not from a person speaking now.]\n\nSay it is nine');
+ // The body is told the schedule's words, and with them what was said in the conversation before: a job a
+ // firing starts has its venue's context like any other job there.
+ const told=JSON.parse(seen[1].slice(seen[1].indexOf('{'))) as {history:{words:string}[];input:string};
+ expect(told.input).toBe('[From the schedule, not from a person speaking now.]\n\nSay it is nine');
+ expect(told.history.map(line=>line.words)).toEqual(['Remind us at nine','I will.']);
  const sends=f.db.select().from(s.bridgeSends).all();
  expect(sends).toMatchObject([{incoming:first.id,text:'I will.'},{incoming:null,conversation:cv,channel:'CROOM',thread:first.thread,text:'It is nine.'}]);
  expect(f.db.select().from(s.inbox).all().filter(item=>item.toKind==='agent').map(item=>item.state)).toEqual(['done','done']);
+});
+
+it('runs a body on a note from another body of the agent: it is told the note is no person, where it came from and the chain, with what was said here before',async()=>{
+ const f=await fixture(),first=await f.hear('Hello there'),cv=first.conversation!,seen:string[]=[];
+ const native:HarnessRun=async(_job,words)=>{seen.push(words);return{text:seen.length===1?'Hello.':'Somebody asked about X.',model:'claude-opus-5-5',actions:[]};};
+ expect(await f.run('one',cv,native,keeper().sessions)).toBe(0);
+ // The agent's own work, in a wake of its own, hands a note to its body in the Slack conversation, through the door.
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id,token='body_'+createHash('sha256').update('lane').digest('hex');
+ f.root.writes.run(()=>{
+  f.db.insert(s.jobs).values({id:'lane',agent:'art',box:'box',conversation:lane,title:'',brief:'',model:'claude-opus-5-5',harness:'claude',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:new Date(f.clock.now()).toISOString()}).run();
+  f.db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'lane',kind:'agent',agent:'art',job:'lane',createdAt:new Date(f.clock.now()).toISOString()}).run();});
+ const handed=await f.root.http.request('http://loom/api/conversation/handoff',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{to:{conversation:cv},clientId:'c1',label:'Note',words:'Tell them about X'}})});
+ expect(handed.status).toBe(200);
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'lane')).run();});
+ const note=f.db.select().from(s.inbox).all().find(item=>item.source==='handoff')!;
+ expect(note).toMatchObject({conversation:cv,onWordKind:null,chain:JSON.stringify([lane])});expect(note.words).not.toContain('Tell them');
+ // The words the job is started with are not copied into its brief: they are sealed.
+ expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
+ const told=JSON.parse(seen[1].slice(seen[1].indexOf('{'))) as {history:{words:string}[];input:string};
+ expect(told.input).toMatch(/^\[A note from another body of yours, not a person speaking\. It was working in its own work \(wake\) \(conversation .*\), on your own work\. .*Hand-offs before this one in this exchange: 0\. If this exchange is no longer making progress, stop and say so to a person instead of handing on\.\]\n\nTell them about X$/s);
+ expect(told.history.map(line=>line.words)).toEqual(['Hello there','Hello.']);
+ expect(f.db.select().from(s.bridgeSends).all().at(-1)).toMatchObject({incoming:null,conversation:cv,text:'Somebody asked about X.'});
 });

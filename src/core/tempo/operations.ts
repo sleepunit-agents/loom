@@ -25,7 +25,11 @@ export interface TempoOperationOptions {
   recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string; asked?: { kind: 'member' | 'outside' | 'agent'; id: string } };
   /** Why this caller may not set, reword, stop, start or run this trigger because of where its job is, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`, of the trigger as recorded. */
-  placeRefusal?(viewer: Viewer, trigger: { conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string }, change?: { times?: string }): string | undefined;
+  placeRefusal?(viewer: Viewer, trigger: { conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null }, change?: { times?: string; file?: string | null }): string | undefined;
+  /** Why a trigger may not be turned on now (its conversation already has as many standing as it may). */
+  standRefusal?(trigger: { conversation?: string | null }): string | undefined;
+  /** Who asks for a trigger that names a conversation, once this caller has changed its words, file or times. */
+  reasked?(viewer: Viewer, trigger: { conversation: string | null }, change: { instructions?: string | null; file?: string | null; times?: string }): { kind: 'member' | 'outside' | 'agent'; id: string } | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }
@@ -59,6 +63,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       // of its agent's that fires outside the room (policy.ts, maySchedule).
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, stored);
       if (refused) throw new OperationError('denied', refused);
+      const full = action === 'start' && stored ? options.standRefusal?.(stored) : undefined;
+      if (full) throw new OperationError('conflict', full);
       tempo.triggers[action](input.id); ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
@@ -68,7 +74,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, stored, change);
       if (refused) throw new OperationError('denied', refused);
-      tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id });
+      tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id }, stored ? options.reasked?.(ctx.viewer, stored, change) : undefined);
       ctx.changed('triggers', target); ctx.changed('triggerEdits', target); return { saved: true };
     },
   }));

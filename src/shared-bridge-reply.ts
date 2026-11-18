@@ -155,7 +155,8 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const closed=roomClosed(db,{id:'',agent,venue:input.to.platform,place});if(closed)throw new OperationError('invalid',`Nothing can be posted there: ${closed}`);
    const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=roomAddress(db,cv)!;
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-   const said=posted([],{conversation:cv.id,since:found.job.claimedAt??found.job.queuedAt});
+   // Its own posts there: each wrote a reply turn of this job's in that conversation.
+   const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).all();
    if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
    try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
    if(!existing){const turn=conversations.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:agent,run:found.job.id,model:input.model,outcome:'progressed'});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);}

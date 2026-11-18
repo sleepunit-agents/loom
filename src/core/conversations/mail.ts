@@ -67,7 +67,9 @@ export class ConversationMail {
     const cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
     const history=items.some(item=>ordinary(item,prepared.get(item.id)))?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
     // A bridge conversation has no thread; what was said earlier in it is its own kept words (bridge-history.ts).
-    const bridged=(item:Item,words:string|null|undefined)=>(item.source==='discord'||item.source==='slack')&&!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
+    // A firing or a note in a bridge's conversation starts a job there like any message, and that body is told what was said there too.
+    const venue=conversations.conversation(conversation).venue,inBridge=venue==='discord'||venue==='slack';
+    const bridged=(item:Item,words:string|null|undefined)=>(item.source==='discord'||item.source==='slack'||inBridge&&(item.source==='trigger'||item.source==='handoff'))&&!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
     const earlier=items.some(item=>bridged(item,prepared.get(item.id)))?prepareBridgeHistory(db,now,conversation):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');

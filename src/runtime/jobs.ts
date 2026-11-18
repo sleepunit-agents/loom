@@ -3,7 +3,7 @@ import {keepJobText} from './job-text.js';
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
@@ -114,6 +114,13 @@ export class Jobs {
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
       if (!mail.some(item => item.job === null)) return {};
+      // A person said stop in this place (stop, below). Until a person speaks there again nothing starts: the
+      // notes and firings that were waiting are parked with the stopped job, and one that arrives meanwhile
+      // waits with them. Only a bridge's place: a lane's own conversation goes on at its next time.
+      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !mail.some(item => item.job === null && (item.fromKind === 'person' || item.fromKind === 'unknown'))) {
+        const last = this.db.select({ state: jobs.state, endedReason: jobs.endedReason }).from(jobs).where(eq(jobs.conversation, conversationId)).orderBy(desc(jobs.queuedAt), desc(sql`${jobs}.rowid`)).get();
+        if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
+      }
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
       // A removed agent keeps its history and its mail, and does not run.
@@ -127,7 +134,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,

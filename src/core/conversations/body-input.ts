@@ -44,7 +44,9 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const {db}=options.service,mail=new ConversationMail(options.service),cvs=options.service.threads.conversations;
   // Validate the exact pending prefix before opening any private ciphertext.
   const prefix=cvs.pending(before.cv.id,before.job.id).slice(0,parsed.input.limit);
-  mailAccess=()=>before.cv.member!==null||prefix.every(item=>item.source!=='handoff'||item.fromKind==='agent'&&item.fromId!==null&&handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project));
+  mailAccess=()=>before.cv.member!==null||prefix.every(item=>item.source!=='handoff'||item.fromKind==='agent'&&item.fromId!==null&&
+   // A note from another body of this same agent (handoff.ts, `to`) is its own mail: there is no peer to be assigned with.
+   (item.fromId===before.cv.agent||handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project)));
   if(prefix.some(item=>!sameMailScope(item,before.cv)))return refuse(403,'Mail scope differs');
   if(!active())return refuse(403,'Authentication ended');
   const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit);

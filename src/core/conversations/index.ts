@@ -125,8 +125,12 @@ export class Conversations {
     const conversation = this.conversation(conversationId);
     const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
     if (job?.conversation !== conversationId || job.agent !== conversation.agent || !liveConversationJob(job.state)) throw new Error('Job is not running in this conversation');
+    // Mail on somebody's word, or from an agent, that was not there when this job was admitted is left for the
+    // next job: this one was claimed for the people behind its own mail, and runs with what they are given.
+    // Admission marks the mail a job was started for (runtime/jobs.ts), so what came later has no job yet.
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
-      or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+      or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all()
+      .filter(item => item.job === jobId || !(item.onWordKind !== null || item.fromKind === 'agent' || item.fromKind === 'schedule') || !job.claimedAt || Date.parse(item.at) <= Date.parse(job.claimedAt));
   }
 
   /** Only the current job can claim this conversation's waiting mail. An
