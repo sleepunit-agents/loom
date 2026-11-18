@@ -31,6 +31,11 @@ interface PlacementInput {
 type Candidate = { box: string; reason: string } | { box: string; placement: Placement; missingPreferred: string[] };
 type Decision = { box: string; outcome: 'taken' | 'passed'; reason: string };
 
+/** Keep a claim explanation bounded even if every configured machine lacks a long list of facts. */
+function describeFacts(facts: readonly string[]): string {
+  return facts.length === 1 ? facts[0] : `${facts[0]} and ${facts.length - 1} more`;
+}
+
 /** Decide once from the household as it stands. Agent order breaks ties in both preference groups. */
 export function decidePlacement(db: DataDatabase, input: PlacementInput): { placement?: Placement; decision: Decision[] } {
   const now = Date.parse(input.now);
@@ -58,7 +63,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
       return { box: id, reason: `Machine does not host ${input.agent}.` };
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, id)).all().map(row => row.fact);
     const missing = (input.needs ?? []).filter(need => !meetsNeed(facts, need));
-    if (missing.length) return { box: id, reason: `Missing required facts: ${missing.join(', ')}.` };
+    if (missing.length) return { box: id, reason: `Missing required facts: ${describeFacts(missing)}.` };
     if (box.slots != null) {
       const occupied = db.select({ n: count() }).from(jobs).where(and(eq(jobs.box, id),
         ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).get()!.n;
@@ -79,8 +84,8 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     const { box } = candidate;
     if ('reason' in candidate) return { box, outcome: 'passed', reason: candidate.reason };
     let facts = '';
-    if (candidate.missingPreferred.length) facts = `Missing preferred facts: ${candidate.missingPreferred.join(', ')}. `;
-    else if (input.prefers?.length) facts = `Matches preferred facts: ${input.prefers.join(', ')}. `;
+    if (candidate.missingPreferred.length) facts = `Missing preferred facts: ${describeFacts(candidate.missingPreferred)}. `;
+    else if (input.prefers?.length) facts = `Matches preferred facts: ${describeFacts(input.prefers)}. `;
     if (candidate === winner) return { box, outcome: 'taken', reason: facts + "First in the agent's order among equally preferred eligible machines." };
     const order = candidate.missingPreferred.length && !winner.missingPreferred.length
       ? 'Another eligible machine meets every preference.' : "Another eligible machine comes first in the agent's order.";
