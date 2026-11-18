@@ -478,7 +478,7 @@ On success the body sends its report alongside settlement. A body with validated
     has made two bodies renew at once and watched the outcome.
   - *Codex, looked at in version 0.162.1*: **not established.** Its program knows the error "refresh token
     was already used", which is what a lost race would be, and holds the word `flock`; whether it locks or
-    re-reads its `auth.json` before it renews was not found. The core house pins 0.164.0, which was not
+    re-reads its `auth.json` before it renews was not found. The core house pins 0.167.0, which was not
     looked at. So Codex's bodies run one at a time on an account by default (`accountSlots`).
   - **The question a supervised check has to answer** before Codex is set above 1: with two Codex bodies
     on one account and its sign-in near the end of its life, do both go on working after both have renewed,

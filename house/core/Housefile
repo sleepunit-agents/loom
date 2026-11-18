@@ -57,7 +57,7 @@ RUN curl -fsSL -o /tmp/claude https://downloads.claude.ai/claude-code-releases/$
  && chmod +x /tmp/claude && /tmp/claude install ${CLAUDE_VERSION} && rm /tmp/claude
 
 # Codex, pinned, at /usr/local/bin/codex. npm's download cache is not kept.
-ARG CODEX_VERSION=0.164.0
+ARG CODEX_VERSION=0.167.0
 RUN npm_config_cache=/tmp/npm-cache npm install -g @openai/codex@${CODEX_VERSION} \
  && rm -rf /tmp/npm-cache
 

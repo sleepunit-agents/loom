@@ -895,7 +895,7 @@ crun and git 2.47.3, on x86-64; it ended with exit code 0. What it showed:
 - A house with no Housefile built on it, and its body found every file of the
   commit, the one its `.dockerignore` would have left out among them.
 - In a body: node v24.18.1 at `/usr/local/bin/node`; Claude Code 2.1.326, whose
-  installed file has the pinned checksum; Codex 0.164.0; each answered
+  installed file has the pinned checksum; Codex 0.167.0; each answered
   `--version`. `HOME` was `/home/agent`, the working directory
   `/home/agent/repo`, the user id 0.
 - Claude Code's sign-in place was `/run/loom/login/claude` (the variable),
