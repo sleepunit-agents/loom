@@ -14,7 +14,7 @@ const slackEvidence = z.object({ id, context_team_id: id.optional(), is_im: z.bo
 type Binding = { platform: 'discord' | 'slack'; workspace: string };
 /** A role Discord made for a bot when it joined (`managed`, with the bot's id in its tags). */
 const discordRole = z.object({ id, managed: z.boolean().optional(), tags: z.object({ bot_id: id.nullish() }).passthrough().nullish() }).passthrough();
-type Lifetime = Binding & { channels: Map<string, DiscordChannel | SlackChannel>; botRoles: Map<string, string> };
+type Lifetime = Binding & { rolesKnown: boolean; channels: Map<string, DiscordChannel | SlackChannel>; botRoles: Map<string, string> };
 
 export class BridgeChannels implements BridgeChannelCache {
   private readonly connections = new Map<string, Lifetime>();
@@ -27,7 +27,7 @@ export class BridgeChannels implements BridgeChannelCache {
   bind(connection: string, binding: Binding) {
     id.parse(connection);
     const source = z.object({ platform: z.enum(bridgeConnections.platform.enumValues), workspace: id }).parse(binding);
-    const life: Lifetime = { ...source, channels: new Map(), botRoles: new Map() };
+    const life: Lifetime = { ...source, rolesKnown:false, channels: new Map(), botRoles: new Map() };
     this.connections.set(connection, life);
     const current = () => this.connections.get(connection) === life;
     return {
@@ -84,8 +84,24 @@ export class BridgeChannels implements BridgeChannelCache {
        * was kept; evidence that is not a list of roles keeps none. */
       roles: (evidence: unknown): void => {
         if (!current() || life.platform !== 'discord') return;
+        life.rolesKnown=false;
         life.botRoles.clear();
-        for (const role of z.array(discordRole).max(1000).parse(evidence)) if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+        const roles = z.array(discordRole).max(1000).parse(evidence);
+        life.rolesKnown=true;
+        for (const role of roles) if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+      },
+      roleEvent: (type: string, data: unknown): void => {
+        if (!current() || life.platform !== 'discord') return;
+        if (type === 'GUILD_ROLE_DELETE') {
+          const event = z.object({ guild_id: z.literal(life.workspace), role_id: id }).safeParse(data);
+          if (event.success) life.botRoles.delete(event.data.role_id);
+        } else if (type === 'GUILD_ROLE_CREATE' || type === 'GUILD_ROLE_UPDATE') {
+          const event = z.object({ guild_id: z.literal(life.workspace), role: discordRole }).safeParse(data);
+          if (!event.success) return;
+          const role = event.data.role;
+          if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+          else life.botRoles.delete(role.id);
+        }
       },
       remove: (channel: string): void => { if (current()) life.channels.delete(channel); },
       close: (): void => { if (current()) this.connections.delete(connection); },
@@ -98,6 +114,7 @@ export class BridgeChannels implements BridgeChannelCache {
     const value = life.channels.get(channel) as DiscordChannel | undefined;
     return value && { ...value };
   }
+  rolesKnown(connection: string): boolean { return !!this.connections.get(connection)?.rolesKnown; }
   /** Discord role id to the bot it is managed for, for this connection's lifetime. Empty until read. */
   botRoles(connection: string): ReadonlyMap<string, string> {
     const life = this.connections.get(connection);

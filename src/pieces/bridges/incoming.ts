@@ -166,7 +166,8 @@ export class BridgeIncoming {
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
       // An explicit bot mention takes precedence over the channel default, a reply, and the thread's starter.
-      else if (!message.isDm && message.mentionsBot && !message.mentions.includes(connection.botUser)) {
+      else if (!message.isDm && !message.mentions.includes(connection.botUser) && (message.mentionsBot ||
+        (connection.platform === 'discord' && !isStopWord(message.text) && peers.some(peer => message.mentions.includes(peer.botUser))))) {
         state = 'dropped'; reason = 'Another agent or no channel answer';
       }
       // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
@@ -219,7 +220,8 @@ export class BridgeIncoming {
           const label = connection.platform === 'discord' ? discordPlace(message, member) : message.thread ?? message.channel;
           const cv = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label, member, direct: message.isDm });
           conversation = cv.id;
-          if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label))))
+          if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label)
+            && (!message.parent || message.parentName || cv.label.endsWith(' under #' + message.parent)))))
             this.db.update(conversations).set({ label }).where(eq(conversations.id, cv.id)).run();
         }
         if (!delivered) {
@@ -244,12 +246,12 @@ export class BridgeIncoming {
   /** Try a held message again from its own row, against the household's rules as they are now. This is
    * the retry once the raw event has expired. A row from before the admission fields were stored cannot
    * say whom it mentioned and is returned as it is. */
-  retry(id: string): typeof bridgeIncoming.$inferSelect | undefined {
+  retry(id: string, names?: Pick<IncomingMessage, 'channelName' | 'parentName'>): typeof bridgeIncoming.$inferSelect | undefined {
     return this.db.transaction(() => {
       const row = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       const message = row && parseIncomingId(row.id, row.connection);
       if (!row || row.state !== 'held' || row.mentions === null || !message) return row;
-      return this.receive({ id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
+      return this.receive({ ...names, id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
         mentions: JSON.parse(row.mentions) as string[], mentionsBot: row.reason?.endsWith(BOT_MENTION_HELD), bot: !!row.bot, webhook: !!row.webhook,
         ...(row.thread === null ? {} : { thread: row.thread }), ...(row.parent === null ? {} : { parent: row.parent }),
         ...(row.repliesTo === null ? {} : { repliesTo: row.repliesTo }), ...(row.groupDm ? { groupDm: true } : {}) }, true, row.receivedAt);

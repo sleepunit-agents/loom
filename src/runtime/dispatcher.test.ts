@@ -204,6 +204,7 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   expect(f.runtime.jobs.admit(incoming.conversation!)).toBeUndefined();
   f.roles[0].harness = 'claude';
   new BridgeIncoming(f.db, f.now).receive({ id: 'm2', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Again', postedAt: f.now(), mentions: [] });
+  f.db.update(conversations).set({label:'Discord channel #old-title'}).where(eq(conversations.id,incoming.conversation!)).run();
   const second = f.runtime.jobs.admit(incoming.conversation!)!, assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(second.id);
   expect(assignment.venueDescription).toBe('Discord direct message with outside');

@@ -48,11 +48,17 @@ export function placeAddress(db: DataDatabase, cv: Place): { connection: string;
   return connection ? { connection: connection.id, workspace: place[0], channel: place[1], thread: place[2], direct: place.length > 3 } : undefined;
 }
 /** The current conversation label is refreshed by Discord ingress. Older conversations kept only an id. */
-export function describePlace(db: DataDatabase, cv: Place, at = placeAddress(db, cv)): string {
+export function describePlace(db: DataDatabase, cv: Place, at = placeAddress(db, cv), includeSlackThread = true): string {
   if (!at) return cv.venue;
-  if (cv.venue !== 'discord') return `${cv.venue} ${at.direct ? 'direct conversation' : 'channel ' + at.channel}${at.thread ? ', thread ' + at.thread : ''}`;
+  if (cv.venue !== 'discord') return `${cv.venue} ${at.direct ? 'direct conversation' : 'channel ' + at.channel}${includeSlackThread && at.thread ? ', thread ' + at.thread : ''}`;
   const saved = db.select({ label: conversations.label, member: conversations.member }).from(conversations).where(eq(conversations.id, cv.id)).get();
-  if (saved?.label.startsWith('Discord ')) return saved.label;
+  // A display label can be edited. A direct conversation always takes its scope and participant
+  // from the place and the mail, regardless of what someone called it.
+  const label = saved?.label;
+  if (!at.direct && label && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) {
+    const expected = at.thread ? /^Discord thread #[^\n]{1,100} under #[^\n]{1,100}$/u : /^Discord channel #[^\n]{1,100}$/u;
+    if (expected.test(label)) return label;
+  }
   const message = db.select({ parent: bridgeIncoming.parent, user: bridgeIncoming.user, groupDm: bridgeIncoming.groupDm }).from(bridgeIncoming)
     .where(eq(bridgeIncoming.conversation, cv.id)).orderBy(desc(bridgeIncoming.receivedAt)).get();
   if (at.direct && !saved?.member && !message) return 'Discord direct message';
@@ -325,7 +331,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         const on = jobWord(db, work.job);
         if (cv.member !== null && (on.woke !== 'own' && !on.person || privateRefusal(cv.member, on.person))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
         there = cv;
-        conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = describePlace(db, cv, at);
+        conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = describePlace(db, cv, at, false);
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.
         // (Or the one channel its own channel's rule says it reports to: the owner named it there.)
@@ -333,7 +339,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         if (cv?.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another conversation');
         there = cv ?? { id: '', agent, venue: to.platform, place };
         conversation = cv?.id; if (!cv) open = { venue: to.platform, place, label: to.thread ?? to.channel };
-        key = channelKey(to.platform, to.workspace, to.channel); where = cv ? describePlace(db, cv) : `${to.platform} channel ${to.channel}`;
+        key = channelKey(to.platform, to.workspace, to.channel); where = cv && to.platform === 'discord' ? describePlace(db, cv) : `${to.platform} channel ${to.channel}`;
       }
       const word = jobWord(db, work.job);
       if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
@@ -345,7 +351,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       // note started hands nowhere. Told so it does not try in vain.
       const answerable = word.woke === 'owners' && !!from && !!word.person && (work.cv.member === null || (word.person.kind === 'member' && word.person.id === work.cv.member)) && !placeClosed(db, work.cv)
         && mayHandTo(word.woke, channelKey(work.cv.venue, from.workspace, ruleChannel(db, work.cv, from.channel)), reportsTo(db, there));
-      const origin = from ? describePlace(db, work.cv, from) : `its own work (${work.cv.venue})`;
+      const origin = from ? describePlace(db, work.cv, from, false) : `its own work (${work.cv.venue})`;
       return { conversation, open, chain, startedAt: before?.startedAt ?? now(), ...(word.person ? { onWord: word.person } : {}),
         told: `[A note from another body of yours, not a person speaking. It was working in ${origin} (conversation ${work.cv.id})${word.person ? `, for ${named(word.person)}` : ', on your own work'}. `
           + `Saying what needs saying here, in ${where}, in your own words, is your job. ${answerable ? `To answer that body, hand a note back to conversation ${work.cv.id}.` : 'A note back to that body would be refused from here.'} `

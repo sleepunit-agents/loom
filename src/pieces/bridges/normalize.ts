@@ -59,14 +59,14 @@ export interface DiscordChannel {
  * it pings, and that is carried separately as `repliesTo`. The list stays the
  * authority on who a written mention resolved to; the text only says which of
  * them were written. */
-function discordSummons(content: string, resolved: string[], roles: string[], botRoles: ReadonlyMap<string, string>): string[] {
+function discordSummons(content: string, resolved: string[], roles: string[], botRoles: ReadonlyMap<string, string>) {
   const written = new Set([...content.matchAll(/<@!?([^<>\s&]+)>/g)].map(match => match[1]));
   // A bot that joined through an integration owns a role of its own name, and Discord's autocomplete
   // offers that role for the bot's name. A written ping of a bot's own role is a mention of that bot.
   // Any other role, `@everyone` and `@here` mention nobody.
   const writtenRoles = new Set([...content.matchAll(/<@&([^<>\s]+)>/g)].map(match => match[1]));
   const bots = roles.filter(role => writtenRoles.has(role)).flatMap(role => botRoles.get(role) ?? []);
-  return [...new Set([...resolved.filter(id => written.has(id)), ...bots])];
+  return { mentions: [...new Set([...resolved.filter(id => written.has(id)), ...bots])], rolePing: roles.some(role => writtenRoles.has(role)) };
 }
 
 /** The most attachments one Discord message carries, which is all that are listed. */
@@ -84,7 +84,7 @@ function discordWords(content: string, attachments: readonly { filename: string;
   return [...(content ? [content] : []), ...lines].join('\n');
 }
 
-export function normalizeDiscord(connection: PlatformConnection, payload: unknown, channel: DiscordChannel, botRoles: ReadonlyMap<string, string> = new Map()): IncomingMessage | null {
+export function normalizeDiscord(connection: PlatformConnection & { botUser?: string }, payload: unknown, channel: DiscordChannel, botRoles: ReadonlyMap<string, string> = new Map(), rolesKnown = true): (IncomingMessage & { awaitRoles?: true }) | null {
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
   const message = discordMessage.parse(dispatch.d);
@@ -92,10 +92,14 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
-  const mentions = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
+  const { mentions, rolePing } = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
   const knownBots = new Set([...botRoles.values(), ...message.mentions.filter(mention => mention.bot).map(mention => mention.id)]);
+  const mentionsBot = mentions.some(id => knownBots.has(id));
+  // A role ping may name another bot. Until the guild's list arrives, wait unless a written bot mention already decides admission.
+  const awaitRoles = !rolesKnown && rolePing && !mentionsBot && !(connection.botUser && mentions.includes(connection.botUser));
   return {
-    ...(mentions.some(id => knownBots.has(id)) && { mentionsBot: true }),
+    ...(awaitRoles && { awaitRoles: true }),
+    ...(mentionsBot && { mentionsBot: true }),
     ...(channel.name && { channelName: channel.name }), ...(channel.parentName && { parentName: channel.parentName }),
     id: message.id, connection: connection.id, channel: message.channel_id,
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),

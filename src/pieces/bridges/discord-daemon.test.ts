@@ -59,8 +59,12 @@ function discordFixture(overrides: Partial<SharedBridgeOptions> = {}) {
     clock.advance(0); await daemon.idle();
     return db.select().from(bridgeIncoming).all().find(row => row.id === `bi:${JSON.stringify(['connection', d.id])}`)!;
   };
+  const dispatch = async (type: string, data: unknown) => {
+    ++seq;
+    await gateways.at(-1)!.commit({type,data,seq}, {session:'fixture',url:'wss://gateway.discord.gg',seq}, Buffer.from(JSON.stringify({op:0,t:type,s:seq,d:data})));
+  };
   const start = async () => { await daemon.ready(); await daemon.idle(); };
-  return { client, db, clock, writes, daemon, request, answers, calls, gateways, errors, say, start };
+  return { client, db, clock, writes, daemon, request, answers, calls, gateways, errors, say, start, dispatch };
 }
 
 it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own role is a mention of the bot', async () => {
@@ -101,11 +105,52 @@ it('leaves a ping of another bot alone even when that bot has no loom connection
   expect(await f.say({ content: `<@${person}> hello`, mentions: [{ id: person }] })).toMatchObject({ state: 'delivered' });
 });
 
-it('connects and takes mentions when the roles cannot be read; a role ping is then nobody\'s', async () => {
+it('connects and takes mentions when the roles cannot be read; a role ping waits for evidence', async () => {
   const f = discordFixture(); f.answers.delete(`GET guilds/${guild}/roles`); await f.start();
   expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
-  expect(await f.say({ content: `<@&${artRole}> hello`, mention_roles: [artRole] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@&${artRole}> hello`, mention_roles: [artRole] })).toBeUndefined();
   expect(await f.say({ content: `<@${bot}> hello`, mentions: [{ id: bot }] })).toMatchObject({ state: 'delivered' });
+});
+
+it('recovers the guild role list after a failed read and follows authenticated role changes', async () => {
+  const f=discordFixture(), key=`GET guilds/${guild}/roles`, roles=f.answers.get(key);
+  f.answers.delete(key); await f.start();
+  f.db.insert(bridgeChannels).values({ platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false }).run();
+  const ping=(role:string)=>f.say({content:`<@&${role}> hello`,mention_roles:[role]});
+  const ordinary='500000000000000009';
+  expect(await ping(markRole)).toBeUndefined();
+  expect(await ping(ordinary)).toBeUndefined();
+  expect(await f.say({content:'ordinary message'})).toMatchObject({state:'delivered'});
+  f.answers.set(key,roles); f.clock.advance(5000); await f.daemon.idle(); f.clock.advance(0); await f.daemon.idle();
+  const retried=f.db.select().from(bridgeIncoming).all();
+  expect(retried.find(row=>row.mentions===JSON.stringify([mark]))?.state).toBe('dropped');
+  expect(retried.find(row=>row.text.includes(ordinary))?.state).toBe('delivered');
+  expect(await ping(markRole)).toMatchObject({state:'dropped'});
+  const role={id:'500000000000000008',managed:true,tags:{bot_id:mark}};
+  await f.dispatch('GUILD_ROLE_CREATE',{guild_id:guild,role});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:'other',role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_UPDATE',{guild_id:guild,role:{...role,tags:{bot_id:bot}}});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:JSON.stringify([bot])});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:guild,role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  expect(f.gateways).toHaveLength(1);
+});
+
+it('delivers while the optional thread parent name is pending', async () => {
+  const f=discordFixture(); await f.start();
+  const thread='700000000000000011';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room,name:'otters'});
+  const original=f.request.getMockImplementation()!;
+  let release!: (response:Response)=>void;
+  f.request.mockImplementation((url,options)=>String(url).endsWith('/channels/'+room)?new Promise(resolve=>{release=resolve;}):original(url,options));
+  const delivery=f.say({channel_id:thread,content:`<@${bot}>`,mentions:[{id:bot}]});
+  try{
+    await vi.waitFor(()=>expect(f.db.select().from(conversations).get()?.label).toBe(`Discord thread #otters under #${room}`));
+  }finally{release?.(Response.json({id:room,guild_id:guild,type:0,name:'pond'}));}
+  expect(await delivery).toMatchObject({state:'delivered'});
+  expect(f.db.select().from(conversations).get()?.label).toBe('Discord thread #otters under #pond');
 });
 
 it('takes a thread started from the bot\'s own message as addressed to it, whoever posted that message', async () => {
@@ -127,6 +172,22 @@ it('takes a thread started from the bot\'s own message as addressed to it, whoev
   expect(await f.say({ channel_id: bare, content: 'nobody' })).toMatchObject({ state: 'dropped', repliesTo: null });
   expect(f.db.select().from(inbox).all()).toHaveLength(2);
   expect(f.errors).toEqual([]);
+});
+
+it('honors written bot mentions over the implicit thread starter or reply author', async () => {
+  const f=discordFixture();
+  f.answers.set(`GET guilds/${guild}/roles`,[]); await f.start();
+  f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  f.db.insert(bridgeConnections).values({id:'marks',platform:'discord',workspace:guild,botUser:mark,agent:'mark',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:new Date(f.clock.now()).toISOString()}).run();
+  const thread='700000000000000008';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room});
+  f.answers.set(`GET channels/${room}/messages/${thread}`,{id:thread,channel_id:room,author:{id:bot}});
+  const foreign={content:`<@${mark}> look`,mentions:[{id:mark,bot:true}]};
+  expect(await f.say({channel_id:thread,...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  // The active peer connection also identifies Mark when the message omits the optional bot flag.
+  expect(await f.say({channel_id:thread,...foreign,mentions:[{id:mark}]})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({type:19,referenced_message:{author:{id:bot}},...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({channel_id:thread,content:`<@${bot}> <@${mark}> look`,mentions:[{id:bot,bot:true},{id:mark,bot:true}]})).toMatchObject({state:'delivered',repliesTo:bot});
 });
 
 it('ends the working job on the stop word through the runtime\'s Stop, and says so once the pass has committed', async () => {

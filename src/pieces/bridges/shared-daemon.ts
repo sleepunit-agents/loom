@@ -10,12 +10,13 @@ import { BridgeReplyNotSent } from './outbound.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, inbox, inboxRefs, jobs, secretChanges } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, conversations, inbox, inboxRefs, jobs, secretChanges } from '../../core/data/schema.js';
 import type { DataWrites } from '../../core/data/writes.js';
 import type { SecretValueSource } from '../secrets/role.js';
 import type { HolderGeneration } from '../secrets/role.js';
 import { bridgeCredentials } from './credentials.js';
 import { sharedBridgeSecretUse } from './shared-secret-use.js';
+import { conversationPlace, discordPlace } from './place.js';
 import { BridgeChannels } from './channels.js';
 import { BridgeReceiver } from './receiver.js';
 import { STOP_WORD, type StopJob } from './incoming.js';
@@ -45,7 +46,7 @@ export interface SharedBridgeOptions {
 }
 type Life={connection:Connection;key:string;generation:string;stamp:number;active:boolean;authenticated:boolean;
  secrets:ReturnType<typeof sharedBridgeSecretUse>;presence?:ReturnType<typeof bridgePresenceApi>;channels?:ReturnType<BridgeChannels['bind']>;
- transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
+ rolesAt?:number;roleRevision?:number;parentLookups?:Map<string, Promise<string | undefined>>;transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
 export class SharedBridges {
  private closed=false;
@@ -163,7 +164,7 @@ export class SharedBridges {
      this.state(row.id,row.enabled?'backoff':'disconnected');continue;
     }
     const old=this.lives.get(row.id);
-    if(old){this.pump(old);continue;}
+    if(old){this.pump(old);if(old.authenticated&&old.rolesAt!==undefined&&old.rolesAt<=this.options.clock.now())this.track(this.readRoles(old));continue;}
     const life={} as Life;
     // The generation and stamp are set first: the secret reader reads them as it is made.
     Object.assign(life,{connection:row,key:configuration(row),generation,stamp:this.stamp(row),active:true,authenticated:false});
@@ -182,6 +183,14 @@ export class SharedBridges {
   }));
   return this.syncing;
  }
+ private async readRoles(life:Life){
+  const row=life.connection,current=()=>this.current(life),revision=life.roleRevision;
+  life.rolesAt=undefined;
+  const roles=await bridgeChannelApi({platform:row.platform,workspace:row.workspace,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).roles();
+  if(!current())return;
+  if(roles&&revision===life.roleRevision){try{life.channels!.roles(roles);if(life.authenticated)this.queuePump(life);return;}catch{this.report();}}
+  life.rolesAt=this.options.clock.now()+5000;
+ }
  private async connect(life:Life){
   const row=life.connection,current=()=>this.current(life);
   try{
@@ -189,13 +198,8 @@ export class SharedBridges {
     secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).authenticate();
    if(!current()||!proof)throw Error();
    life.channels=this.channels.bind(row.id,{platform:row.platform,workspace:row.workspace});
-   // Which roles are a bot's own, so that a ping of one is a mention of that bot (normalize.ts). Read once
-   // for the lifetime, before anything is taken in. Unread, role pings address nobody; mentions still work.
-   if(row.platform==='discord'){
-    const roles=await bridgeChannelApi({platform:row.platform,workspace:row.workspace,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).roles();
-    if(!current())throw Error();
-    try{if(roles)life.channels.roles(roles);}catch{this.report();}
-   }
+   if(row.platform==='discord')await this.readRoles(life);
+   if(!current())throw Error();
    life.authenticated=true;
    const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
@@ -207,7 +211,9 @@ export class SharedBridges {
     life.transport=(this.options.discord??discordGateway)({bot:row.botUser,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,beforeConnect:current,state,
      load:()=>{if(!current())throw Error();return receipts.checkpoint();},
      reset:async()=>{if(!current())throw Error();receipts.reset();},
-     commit:async(_event,checkpoint,raw)=>{if(!current())throw Error();receipts.retain(raw,checkpoint);if(!current())throw Error();this.queuePump(life);},
+     commit:async(event,checkpoint,raw)=>{if(!current())throw Error();receipts.retain(raw,checkpoint);if(!current())throw Error();
+      if(event.type.startsWith('GUILD_ROLE_')){life.roleRevision=(life.roleRevision??0)+1;life.channels!.roleEvent(event.type,event.data);}
+      this.queuePump(life);},
     });
    }else{
     if(!row.appSecret||!proof.app)throw Error();
@@ -237,17 +243,30 @@ export class SharedBridges {
     // under; a thread with no such message, or one that cannot be read, hangs under nobody's.
     const starter=row.platform==='discord'&&evidence&&(evidence.type===10||evidence.type===11)&&typeof evidence.parent_id==='string'?await api.starter(evidence.parent_id,id):undefined;
     if(!current())return;
-    let parentName: string | undefined;
-    if(row.platform==='discord'&&evidence&&[10,11,12].includes(Number(evidence.type))&&evidence.guild_id===row.workspace&&typeof evidence.parent_id==='string'){
-     parentName=this.channels.discord(row.id,evidence.parent_id)?.name;
-     if(!parentName){
-      const parent=await api.channel(evidence.parent_id);if(!current())return;
-      if(parent?.guild_id===row.workspace&&typeof parent.name==='string')parentName=parent.name;
-     }
-    }
+    const parentId=row.platform==='discord'&&evidence&&[10,11,12].includes(Number(evidence.type))&&evidence.guild_id===row.workspace&&typeof evidence.parent_id==='string'?evidence.parent_id:undefined;
+    const parentName=parentId?this.channels.discord(row.id,parentId)?.name:undefined;
     // Details this code cannot classify leave that one channel's events waiting. They must not stop the
     // pass: every other channel of the connection is still to be drained.
     try{if(evidence)life.channels!.put(id,evidence,starter,parentName);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
+    if(parentId&&!parentName&&evidence&&this.channels.discord(row.id,id)?.kind==='thread'){
+     const pending=life.parentLookups??=new Map<string,Promise<string | undefined>>();
+     let lookup=pending.get(parentId);
+     if(!lookup&&pending.size<4){
+      lookup=api.channel(parentId).then(parent=>parent?.id===parentId&&parent.guild_id===row.workspace&&typeof parent.name==='string'?parent.name:undefined).finally(()=>pending.delete(parentId));
+      pending.set(parentId,lookup);
+     }
+     if(lookup)this.track(lookup.then(name=>{
+      if(!name||!current())return;
+      const thread=this.channels.discord(row.id,id);
+      if(thread?.parent!==parentId)return;
+      life.channels!.put(id,evidence,starter,name);
+      const message={channel:id,thread:id,parent:parentId,channelName:thread.name,user:'',isDm:false};
+      const place=conversationPlace(row.workspace,message,null);
+      const update=this.options.db.update(conversations).set({label:discordPlace({...message,parentName:name},null)})
+       .where(and(eq(conversations.agent,row.agent),eq(conversations.venue,'discord'),eq(conversations.place,place),eq(conversations.label,discordPlace(message,null)))).run();
+      if(update.changes)this.notify();
+     }).catch(()=>this.report()));
+    }
    }
    if(!current())return;
    const pendingFiles=new Map<string,SlackFilesPermit['files']>(),pendingDiscord=new Map<string,DiscordFile[]>();
