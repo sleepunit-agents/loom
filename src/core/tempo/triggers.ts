@@ -32,6 +32,9 @@ export const triggerEdit = z.object({
   times: text.optional(), days: text.nullable().optional(), note: text.optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
+/** What a rule about where a caller works is asked of a trigger: what the caller sent for a new one, or the
+ * stored row. The one shape for the door (operations.ts, placeRefusal) and the rule (src/shared-place-triggers.ts). */
+export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null };
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
@@ -151,8 +154,9 @@ export class TriggerEngine {
     });
     this.tick();
   }
-  /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and who changed them. */
-  /** `asked` re-stamps who asked, for a trigger that names a conversation whose words, file or times change: the door's to say. */
+  /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and
+   * who changed them. `asked` re-stamps who asked, for a trigger that names a conversation whose words or
+   * file change: whether to is the door's to say (src/shared-tempo.ts, reasked). */
   edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: Asker): void {
     this.open();
     const c = triggerEdit.parse(change);

@@ -137,15 +137,16 @@ const waitsOnReadable: Rule = first([
 ], all(equal('waitsOnKind', null), equal('waitsOnId', null)));
 /** A bridge connection: household owners, and the members who own its agent. Never the agent itself. */
 const bridgeConnection: Rule = any(householdOwner, agentOwners);
-/** Who may review a reply that did not go out (release a held one, dismiss one held or in doubt): a member
- * who reads it, by the read rule of `bridgeSends`, and who is a household owner, since running the
- * household's bridges is theirs; or, when it answers a direct message, any member who reads it. The owner
- * role does not read a direct message (rule `conversation`), so there the reply is reviewed by the people
- * the message is shown to: the conversation's own member for their private one, the agent's owners for one
- * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
 /** Who reads a post loom queued: whoever reads the message it answers, or, for a post that answers none (a
  * firing's or a note's answer, an agent's own post), whoever reads the conversation it was made in. */
 const seesSend: Rule = any(seenWith('bridgeIncoming', 'incoming'), all(equal('incoming', null), seenWith('conversations', 'conversation')));
+/** Who may review a reply that did not go out (release a held one, dismiss one held or in doubt): a member
+ * who reads it, by the read rule of `bridgeSends`, and who is a household owner, since running the
+ * household's bridges is theirs; or, when it answers a direct message, or answers none and was made in a
+ * direct conversation, any member who reads it. The owner role does not read a direct message (rule
+ * `conversation`), so there the reply is reviewed by the people the message is shown to: the conversation's
+ * own member for their private one, the agent's owners for one from anybody else. So every reply awaiting
+ * review has someone who can see it and decide. Never an agent. */
 const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seesSend,
   any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true)), all(equal('incoming', null), seenWith('conversations', 'conversation', equal('direct', true)))));
 /** Whose a task is when it has no project: a member's own, or an agent's owners' and the agent's. The household's

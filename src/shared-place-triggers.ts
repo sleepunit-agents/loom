@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
-import type { NewTrigger, Trigger } from './core/tempo/triggers.js';
+import type { NewTrigger, Trigger, TriggerAsked } from './core/tempo/triggers.js';
 import { SHARED_PLACE_SCHEDULE_REFUSAL, isSharedPlace, membersWithAgent, type Asker, type Viewer } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { PRIVATE_PLACE_REFUSAL, SHARED_PLACE_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, stillKnown } from './shared-place-mail.js';
@@ -29,8 +29,7 @@ export const RUN_NOW_REFUSAL = 'You are awake: do the work now. Only a body work
 export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it does not fire or start it again.';
 /** Why this job may not do this to a trigger, by whose word it works on (jobWord) and not by where it is.
  * Asked after maySchedule, which holds a shared place's body to its own conversation's triggers. */
-export function sharedPlaceRefusal(db: DataDatabase, work: Work | undefined, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow',
-  trigger: { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null }, change?: { times?: string; file?: string | null }): string | undefined {
+export function sharedPlaceRefusal(db: DataDatabase, work: Work | undefined, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null }): string | undefined {
   if (!work) return undefined;
   const word = jobWord(db, work.job), stored = action !== 'set';
   // No job fires again the trigger whose firing woke it: that would be a loop nobody is in.
