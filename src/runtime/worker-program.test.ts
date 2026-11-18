@@ -112,6 +112,20 @@ it('rejects malformed configuration before reading a token or launching', async 
   expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
+it.each([null, 'private-value', { agents: ['art'], cwd: '/private-path' }])(
+  'stops before credentials or either executor when the machine section is present', async machine => {
+    const f = fixture(), containerExecutor = vi.fn();
+    f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/socket' }, machine }));
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(58);
+    expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: this worker does not support the machine configuration section\n');
+    expect(f.read.mock.calls).toEqual([['/config']]);
+    expect(f.control).not.toHaveBeenCalled();
+    expect(f.executor).not.toHaveBeenCalled();
+    expect(containerExecutor).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+  },
+);
+
 const account = { account: 'subscription', owner: 'member', provider: 'provider' };
 function accountFixture(mode: string, config: unknown) {
   const f = fixture(); f.args = [mode, '/account-command']; f.read.mockResolvedValue(JSON.stringify(config));

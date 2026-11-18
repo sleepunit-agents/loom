@@ -145,7 +145,9 @@ export async function workerProgram(input: {
     }
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
     stage = 'config';
-    const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
+    const raw: unknown = JSON.parse(await input.read(input.args[0]));
+    if (raw !== null && typeof raw === 'object' && Object.hasOwn(raw, 'machine')) throw new WorkerStop('machine');
+    const config = configSchema.parse(raw);
     // Keys a worker with container bodies used to take. It does not go on without them as if they were
     // not there: whoever wrote one expects it to do something.
     if (config.container) for (const [key, present] of [['build', config.build], ['runners', config.runners], ['accountRunners', config.accountRunners],
