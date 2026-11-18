@@ -21,9 +21,10 @@ function fixture(turns?: WorkerTurns, assignment: WorkerAssignment = job) {
   const abort = new AbortController();
   let pulse = () => {};
   const disposed = vi.fn(), clock = { ms: 0 };
-  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms, turns,
+  const silenceExpired = vi.fn();
+  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms, turns, silenceExpired,
     schedule: { every: (_ms, callback) => { pulse = callback; return disposed; } } });
-  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock };
+  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock, silenceExpired };
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 describe('worker work plane', () => {
@@ -44,7 +45,7 @@ describe('worker work plane', () => {
     f.control.repositoryInput = vi.fn(() => input.promise);
     const run = f.run(); await flush();
     expect(f.executor.build).not.toHaveBeenCalled();
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting');
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting', expect.any(AbortSignal));
     input.resolve(bytes); await flush();
     expect(f.executor.build).toHaveBeenCalledWith(job, expect.any(AbortSignal), bytes);
     expect(bytes.toString()).toBe('PRIVATE_REPOSITORY_INPUT');
@@ -63,12 +64,12 @@ describe('worker work plane', () => {
   it('builds before launching, acknowledges actual spawn, reports real exit and bounds logs', async () => {
     const f = fixture(), run = f.run(); await flush();
     expect(f.executor.start).not.toHaveBeenCalled();
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting');
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting', expect.any(AbortSignal));
     f.built.resolve('image:sha'); await flush();
     expect(f.executor.start).toHaveBeenCalledWith(job, 'image:sha', expect.any(AbortSignal));
     expect(f.control.started).not.toHaveBeenCalled(); expect(f.body.release).not.toHaveBeenCalled();
-    f.spawned.resolve(); await flush(); expect(f.control.started).toHaveBeenCalledWith('j', 'image:sha');
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'running');
+    f.spawned.resolve(); await flush(); expect(f.control.started).toHaveBeenCalledWith('j', 'image:sha', expect.any(AbortSignal));
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'running', expect.any(AbortSignal));
     f.exited.resolve({ exitCode: 17, logTail: 'x'.repeat(20_000) });
     expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 17, 'x'.repeat(16_384), 'runner');
     expect(f.body.stop).toHaveBeenCalled(); expect(f.disposed).toHaveBeenCalledOnce();
@@ -139,18 +140,74 @@ describe('worker work plane', () => {
     f.built.resolve('image'); f.spawned.resolve(); await flush(); vi.mocked(f.control.heartbeat).mockResolvedValue(true);
     f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
   });
+  it('probes between periodic heartbeats after a 116-second outage', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture(), run = f.run(); await flush();
+      vi.mocked(f.control.heartbeat).mockRejectedValue(Error('offline'));
+      f.clock.ms = REPORT_MS; f.pulse(); await flush();
+      await vi.advanceTimersByTimeAsync(116_000);
+      f.clock.ms = REPORT_MS + SILENCE_MS;
+      vi.mocked(f.control.heartbeat).mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(f.control.heartbeat).toHaveBeenCalledTimes(2);
+      expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+      f.built.resolve('image'); f.spawned.resolve(); await flush();
+      f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
+    } finally { vi.useRealTimers(); }
+  });
+  it('counts a second outage from a refreshed start acknowledgement', async () => {
+    const f = fixture(), start = deferred<void>();
+    vi.mocked(f.control.started).mockReturnValueOnce(start.promise);
+    const run = f.run(); await flush();
+    f.built.resolve('image'); f.spawned.resolve(); await flush();
+    f.clock.ms = 119_000; start.resolve(); await flush();
+    const delayed = deferred<boolean>();
+    vi.mocked(f.control.heartbeat).mockReturnValueOnce(delayed.promise);
+    f.clock.ms = 134_000; f.pulse(); await flush();
+    f.clock.ms = 194_000; delayed.reject(Error('offline')); await flush();
+    f.clock.ms = 284_000; f.pulse(); await flush();
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
+  });
+  it('survives a 119-second outage that begins during an in-flight heartbeat', async () => {
+    const f = fixture(), run = f.run(); await flush();
+    const pending = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValueOnce(pending.promise);
+    f.clock.ms = 15_000; f.pulse(); await flush();
+    // Loom goes down at 20s. The outstanding request fails at 45s.
+    f.clock.ms = 45_000; pending.reject(Error('offline')); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValue(Error('offline'));
+    f.clock.ms = 136_000; f.pulse(); await flush();
+    vi.mocked(f.control.heartbeat).mockResolvedValue(true);
+    f.clock.ms = 139_000; f.pulse(); await flush();
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    f.built.resolve('image'); f.spawned.resolve(); await flush();
+    f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
+  });
   it('gives the job up once no report has been answered for so long that loom has taken it for lost', async () => {
     for (const phase of ['building', 'running'] as const) {
       const f = fixture(), run = f.run(); await flush();
       if (phase === 'running') { f.built.resolve('image'); f.spawned.resolve(); await flush(); }
       vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
-      // The last answered report was the claim (or the running acknowledgement), at 0. The next try after
-      // this one could not be answered inside the silence interval.
-      f.clock.ms = SILENCE_MS - REPORT_MS - 1; f.pulse(); await flush(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
-      f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); expect(await run).toBe('abandoned');
+      f.clock.ms = REPORT_MS; f.pulse(); await flush();
+      f.clock.ms = REPORT_MS + SILENCE_MS - 1; f.pulse(); await flush();
+      expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+      f.clock.ms = REPORT_MS + SILENCE_MS; f.pulse(); expect(await run).toBe('abandoned');
+      expect(f.silenceExpired).toHaveBeenCalledExactlyOnceWith(SILENCE_MS);
       expect(f.control.finish).not.toHaveBeenCalled(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(true);
       if (phase === 'running') expect(f.body.stop).toHaveBeenCalled();
     }
+  });
+  it('stops the body when the silence window expires during a pending retry', async () => {
+    const f = fixture(), run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValueOnce(new Error('connection refused'));
+    f.clock.ms = REPORT_MS; f.pulse(); await flush();
+    const retry = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValue(retry.promise);
+    f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); await flush();
+    f.clock.ms = REPORT_MS + SILENCE_MS + 1000; f.pulse(); await flush();
+    expect(f.body.stop).toHaveBeenCalled();
+    retry.resolve(true); expect(await run).toBe('abandoned');
+    expect(f.control.finish).not.toHaveBeenCalled();
   });
   it('goes on reporting a job as starting for as long as its build takes', async () => {
     const f = fixture(), run = f.run(); await flush();
@@ -259,7 +316,7 @@ it('enrolls only after build/spawn and hands the private token only after runnin
   vi.mocked(f.body.release).mockImplementation(async input => { expect(input?.token.toString()).toBe('body_'+'a'.repeat(64)); });
   const run = f.run(); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled();
   f.built.resolve('image'); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled(); f.spawned.resolve(); await flush();
-  expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting');
+  expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting', expect.any(AbortSignal));
   enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); await flush(); expect(f.control.started).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(token[0]).not.toBe(0);
   ack.resolve(); await flush(); expect(f.body.release).toHaveBeenCalledOnce(); expect(token.every(byte => byte === 0)).toBe(true);
   f.exited.resolve({ exitCode: 0, logTail: 'body_'+'a'.repeat(64) }); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 0, '', 'body');

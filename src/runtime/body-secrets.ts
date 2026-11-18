@@ -1,4 +1,5 @@
 /** Startup values enter only this receiving child's private native environment. */
+import {BodyContactExpired} from './body-contact.js';
 import type {Clock} from '../core/clock.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {isHouseSecretAlias} from '../pieces/secrets/input.js';
@@ -19,7 +20,7 @@ export function saysNoSecret(text:string,values:readonly Buffer[]):boolean{
 // it can know: the names that sign its harness in to its account, and the ones the harness's adapter sets
 // for its child (each harness lists its own, and only the harness this job runs on is asked), and below,
 // any name its own environment already has.
-export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?:typeof fetch;clock?:Clock}={}){
+export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?:typeof fetch;clock?:Clock;onJobEnded?:()=>void}={}){
  let closed=false,started=false,active:ReturnType<typeof privateSecretClient>|undefined,unlisten:(()=>void)|undefined;
  const inserted:string[]=[],kept:Buffer[]=[];
  const remove=()=>{for(const name of inserted.splice(0))delete environment[name];};
@@ -35,7 +36,7 @@ export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?
   try{
    const checked=bodyInput(job,'startup',bootstrap,true).bootstrap;if(!checked)throw unavailable();
    signal.addEventListener('abort',close,{once:true});unlisten=()=>signal.removeEventListener('abort',close);
-   active=privateSecretClient({url:checked.origin,token:checked.token,signal,fetch:options.fetch,clock:options.clock});
+   active=privateSecretClient({url:checked.origin,token:checked.token,signal,fetch:options.fetch,clock:options.clock,onJobEnded:options.onJobEnded});
    aliases=await active.startup();
    const values:[string,string][]=[];
    for(const [name,bytes] of aliases){
@@ -47,7 +48,7 @@ export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?
    // Validate the entire batch before modifying launch input. Existing account
    // and execution settings remain selected by the explicit worker config.
    for(const [name,text] of values){Object.defineProperty(environment,name,{value:text,writable:true,enumerable:true,configurable:true});inserted.push(name);if(Buffer.byteLength(text)>=STARTUP_SECRET_CHECKED)kept.push(Buffer.from(text),Buffer.from(Buffer.from(text).toString('base64')));}
-  }catch{remove();throw unavailable();}
+  }catch(error){remove();if(error instanceof BodyContactExpired)throw error;throw unavailable();}
   finally{for(const bytes of aliases?.values()??[])bytes.fill(0);aliases?.clear();active?.close();active=undefined;}
  }};
 }

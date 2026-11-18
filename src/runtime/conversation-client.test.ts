@@ -22,11 +22,12 @@ it('takes real encrypted input, reports it received without settling it, and rep
 it('retains only accepted IDs, repeats an uncertain receipt before taking more, and never hands the sink the same mail twice',async()=>{
  const f=await fixture();await f.send('PRIVATE ONCE','one');const native=f.fetcher.getMockImplementation()!;let lost=false;
  f.fetcher.mockImplementation(async(url,init)=>{const response=await native(url,init);if(String(url).endsWith('/accept')&&!lost){lost=true;await response.body?.cancel();throw Error('PRIVATE transport diagnostic');}return response;});
- const accept=vi.fn(async()=>{});await expect(f.client.takeAndAccept(accept)).rejects.toThrow('Conversation body request failed');expect(accept).toHaveBeenCalledTimes(1);expect(f.db.select().from(s.messages).get()?.delivery).toBe('delivered');
+ const timers=vi.spyOn(f.clock,'at'),accept=vi.fn(async()=>{}),taking=f.client.takeAndAccept(accept);await vi.waitFor(()=>expect(timers).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));f.clock.advance(1000);
+ expect(await taking).toEqual({accepted:1,stopRequested:false});expect(accept).toHaveBeenCalledTimes(1);expect(f.db.select().from(s.messages).get()?.delivery).toBe('delivered');
  expect(await f.client.takeAndAccept(accept)).toEqual({accepted:0,stopRequested:false});expect(accept).toHaveBeenCalledTimes(1);expect(f.requests.map(r=>r.url.split('/').at(-1))).toEqual(['take','accept','accept','take']);expect(f.requests[1].body).toEqual(f.requests[2].body);
  // Settling is the same: an uncertain confirmation is sent again under the same operation id.
  lost=false;f.fetcher.mockImplementation(async(url,init)=>{const response=await native(url,init);if(String(url).endsWith('/confirm')&&!lost){lost=true;await response.body?.cancel();throw Error('PRIVATE transport diagnostic');}return response;});
- await expect(f.client.settle()).rejects.toThrow('Conversation body request failed');await f.client.settle();expect(f.requests.at(-1)!.body).toEqual(f.requests.at(-2)!.body);expect(f.db.select().from(s.inbox).get()?.state).toBe('done');
+ const settling=f.client.settle();await vi.waitFor(()=>expect(timers).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));f.clock.advance(1000);await settling;expect(f.requests.at(-1)!.body).toEqual(f.requests.at(-2)!.body);expect(f.db.select().from(s.inbox).get()?.state).toBe('done');
 });
 it('keeps only the accepted prefix after a later sink failure, and settles it with the rest',async()=>{
  const f=await fixture();await f.send('First','one');await f.send('Second','two');const seen:string[]=[];let failed=false;
@@ -44,14 +45,14 @@ it('withholds a later item that expires while an earlier item is being accepted'
  await f.client.takeAndAccept(async row=>{seen.push(row.words);time+=1000;});expect(seen).toEqual(['First',null]);
 });
 it('sanitizes upstream diagnostics and rejects insecure credential URLs before fetching',async()=>{
- const abort=new AbortController(),fetcher=vi.fn<typeof fetch>(async()=>{throw Error('PRIVATE TOKEN URL WORDS');});
+ const abort=new AbortController(),fetcher=vi.fn<typeof fetch>(async()=>new Response('PRIVATE TOKEN URL WORDS',{status:403}));
  for(const url of ['http://remote.invalid','https://user:pass@loom.invalid','https://loom.invalid/path','https://loom.invalid/?token=x'])expect(()=>bodyConversationClient({url,token:raw.body,job:'job',conversation:'cv',signal:abort.signal,fetch:fetcher})).toThrow('Conversation body request failed');
  const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:'cv',signal:abort.signal,fetch:fetcher});clean.push(()=>client.close());await expect(client.status({state:'idle',work:''})).rejects.toThrow(/^Conversation body request failed; outcome may be uncertain$/);expect(fetcher).toHaveBeenCalledTimes(1);
 });
 it('keeps the bounded deadline active while an upstream response body is stalled',async()=>{
  const f=await fixture();let cancel=false;const stream=new ReadableStream<Uint8Array>({cancel(){cancel=true;}});
  const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:f.abort.signal,clock:f.clock,timeoutMs:1000,fetch:async()=>new Response(stream,{headers:{'content-type':'application/json'}})});clean.push(()=>client.close());
- const pending=client.status({state:'idle',work:''});const checked=expect(pending).rejects.toThrow('Conversation body request failed');await Promise.resolve();f.clock.advance(1000);await checked;expect(cancel).toBe(true);
+ const pending=client.status({state:'idle',work:''});const checked=expect(pending).rejects.toThrow('Conversation body request failed');await Promise.resolve();await new Promise(resolve=>setImmediate(resolve));f.clock.advance(1000);f.abort.abort();await checked;expect(cancel).toBe(true);
 });
 it.each(['job','conversation','order','duplicate','limit','extra','extra-item','deadline'] as const)('rejects a malformed %s batch before acceptance or confirmation',async change=>{
  const f=await fixture(),base={id:'one',seq:1,source:'thread',sourceId:'m1',fromKind:'person',fromId:'alice',at:new Date(f.clock.now()).toISOString(),words:'PRIVATE MALFORMED',keepUntil:null,verdict:null,refs:[]};const value:{job:string;conversation:string;items:Record<string,unknown>[];stopRequested:boolean;extra?:boolean}={job:'job',conversation:f.thread.conversation,items:[base],stopRequested:false};
@@ -102,10 +103,9 @@ it.each(['timer','after-await'] as const)('expires private input during its own 
  const checked=expect(pending).rejects.toThrow('Conversation body request failed');await started;if(phase==='timer')f.clock.advance(1000);await checked;
  expect(sinkSignal?.aborted).toBe(true);expect(f.requests.map(row=>row.url.split('/').at(-1))).toEqual(['take']);expect(f.db.select().from(s.messages).get()?.delivery).toBe('sending');expect(f.db.select().from(s.inbox).get()?.state).toBe('taken');if(phase==='timer')release();
 });
-it.each(['http','http-oversize','operation','fetch'] as const)('does not adapt an ordinary %s take failure',async mode=>{
+it.each(['http','http-oversize','operation'] as const)('does not adapt an ordinary %s take failure',async mode=>{
  const f=await fixture(),accept=vi.fn(async()=>{});
- if(mode==='fetch')f.fetcher.mockRejectedValue(Error('Fictitious transport failure'));
- else f.fetcher.mockResolvedValue(Response.json({ok:false,code:'unavailable',message:'Fictitious refusal'},{status:mode.startsWith('http')?503:200,headers:mode==='http-oversize'?{'content-length':'16777217'}:{}}));
+ f.fetcher.mockResolvedValue(Response.json({ok:false,code:'unavailable',message:'Fictitious refusal'},{status:mode.startsWith('http')?403:200,headers:mode==='http-oversize'?{'content-length':'16777217'}:{}}));
  await expect(f.client.takeAndAccept(accept)).rejects.toThrow('Conversation body request failed');
  expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
  expect(new URL(String(f.fetcher.mock.calls[0][0])).pathname).toBe('/api/conversation/take');

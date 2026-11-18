@@ -70,6 +70,11 @@ it('recovers silent jobs and alerts for always-on workers, then cancels its time
   f.worker.started('worker', first.id, 'image');
   f.clock.advance(120_001);
   f.runtime.start();
+  // Time when the server could not receive a report cannot establish worker silence.
+  expect(f.db.select().from(jobs).where(eq(jobs.id, first.id)).get()?.state).toBe('running');
+  f.clock.advance(120_000);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, first.id)).get()?.state).toBe('running');
+  f.clock.advance(30_000);
   expect(f.db.select().from(jobs).where(eq(jobs.id, first.id)).get()?.state).toBe('lost');
   expect(f.jobEnded).toHaveBeenCalledExactlyOnceWith(first.id);
   // The body had not confirmed its mail, so the lost work is queued again as the next attempt.
@@ -143,7 +148,9 @@ it('does not take a jump of the server clock for silence: after one it waits a f
   // Set back an hour: the jobs and machines stamped later than now are not kept hidden for that hour.
   comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'More' });
   const retry = db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
-  fake.advance(5_000); store.claim(retry.id, 'worker'); store.started(retry.id, 'worker', 'image'); machines.heartbeat('worker');
+  fake.advance(Date.parse(retry.retryAt!) - clock.now());
+  expect(store.claim(retry.id, 'worker')?.state).toBe('starting');
+  store.started(retry.id, 'worker', 'image'); machines.heartbeat('worker');
   step -= 3_600_000; fake.advance(30_000);
   expect(store.get(retry.id).state).toBe('running');
   fake.advance(300_000);

@@ -160,12 +160,18 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   f.runtime.claim(job.id, 'worker');
   f.tick(120_001); expect(f.runtime.sweep().map(row => row.id)).toEqual([job.id]);
   // loom's own line on the ending is not in the column that holds a runner's output.
-  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', endedNote: 'Lost while starting: its worker stopped reporting', logTail: null });
+  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', endedNote: 'Lost while starting: no worker report for 120s while loom was listening', logTail: null });
   const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
   expect(retry).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
   expect(working(f)).toEqual([retry.id]);
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
+  // A worker may only discover the outage on its next pulse. Give it time to reap
+  // the old attempt before allowing another worker to claim the replacement.
+  f.tick(150_998);
+  expect(f.runtime.claim(retry.id, 'worker')).toBeUndefined();
+  f.tick(1);
+  expect(f.runtime.claim(retry.id, 'worker')?.state).toBe('starting');
 });
 it('records a Comms Stop the same way whether the worker\'s heartbeat or the body\'s own exit brings the news', () => {
   for (const how of ['heartbeat while starting', 'body exit'] as const) {

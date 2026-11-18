@@ -1,6 +1,6 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
-import { REPORT_MS, SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { logTail } from './log-tail.js';
 import { turnsOf, type WorkerTurns } from './worker-turns.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
@@ -84,9 +84,9 @@ export interface WorkerControl {
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   /** Parent generates raw bytes locally; the server receives only a fingerprint. */
   enrollBody?(id: string, signal: AbortSignal): Promise<BodyBootstrap>;
-  started(id: string, build: string): Promise<void>;
+  started(id: string, build: string, signal?: AbortSignal): Promise<void>;
   /** false means revoked/stopped/lost: cease execution without a finish report. */
-  heartbeat(id: string, state: 'starting' | 'running'): Promise<boolean>;
+  heartbeat(id: string, state: 'starting' | 'running', signal?: AbortSignal): Promise<boolean>;
   /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
   finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy): Promise<void>;
 }
@@ -115,13 +115,11 @@ const STAGE_SAID: Partial<Record<keyof typeof WORKER_EXIT, string>> = {
   buildTime: 'the build ran out of time' };
 
 /** One assignment per invocation, never a local launch retry. The server owns
- * start retries, terminal states and placement. Transport uncertainty aborts the
- * attempt; the server's silence sweep reconciles it, rather than duplicate work.
- * That holds for a poll, the running acknowledgement and a finish: one loom did not answer ends this
- * attempt as abandoned, never the worker. A heartbeat is different, because it is sent again anyway and one
- * in the silence interval is all loom needs (silence.ts): one that loom did not answer is sent again at the
- * next interval, and the attempt is abandoned only when no report has been answered for so long that loom
- * will have taken the job for lost. Without that, one slow answer during a long build lost the job. Only a body that could not be reaped throws.
+ * start retries, terminal states and placement. While loom is unreachable the worker
+ * gives a heartbeat one final second at the silence deadline. A late first failure cannot move
+ * that deadline past the bounds of the last good reply, next pulse and first failed request.
+ * A fresh positive heartbeat clears the outage. An explicit loss of authority cancels at once.
+ * Only a body that could not be reaped throws.
  * A failed start is reported with the WORKER_EXIT code of the stage that failed.
  * A worker process can call again after this resolves, or run several independent
  * slots. Never call this from loom's server/composition root. */
@@ -130,6 +128,8 @@ export async function workOnce(input: {
   schedule?: WorkerSchedule; heartbeatMs?: number;
   /** A clock that only goes forward, in milliseconds; a test names its own. */
   now?: () => number;
+  /** Local observation when repeated unanswered heartbeats exhaust the grace period. */
+  silenceExpired?: (elapsedMs: number) => void;
   /** Whose turn it is for what two bodies cannot have at once (worker-turns.ts), shared by every slot of
    * one worker. Left out, the job waits for nothing: right for a worker with one slot. */
   turns?: WorkerTurns;
@@ -139,11 +139,10 @@ export async function workOnce(input: {
   if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
   let job: WorkerAssignment | undefined;
-  // When this worker sent the last report loom answered. The claim is the first: loom stamps the job when
-  // it arrives, which is no earlier than when it was sent.
   const now = input.now ?? (() => performance.now());
-  let answered = now();
+  let unreachableSince: number | undefined;
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
+  let lastDispatch = now();
   try { job = await control.next(); } catch { return 'abandoned'; }
   if (!job) return 'idle';
   if (job.box !== input.box) throw new Error('Assignment belongs to another worker');
@@ -164,17 +163,51 @@ export async function workOnce(input: {
   let abandoned = false;
   let heartbeat: Promise<void> | undefined;
   const abandon = () => { abandoned = true; cancel(); };
-  const pulse = () => {
-    if (heartbeat || reporting || abort.signal.aborted) return;
-    // Capture the phase at dispatch; started() waits for this report to settle.
-    const sent = now();
-    heartbeat = control.heartbeat(assignment.id, state).then(ok => { if (ok) answered = sent; else abandon(); },
-      // Not answered: nothing is known. Sent again at the next interval, unless that try could no longer be
-      // answered inside the silence interval counted from the last answered report's sending: loom has
-      // then swept the job, or is about to, and will run its work again.
-      () => { if (now() - answered + interval >= SILENCE_MS) abandon(); })
-      .finally(() => { heartbeat = undefined; });
+  let probeTimer: ReturnType<typeof setTimeout>, expiryTimer: ReturnType<typeof setTimeout>;
+  let beatAbort: AbortController | undefined;
+  const deadline = () => Math.min(lastDispatch + SILENCE_MS + WORKER_FAILURE_OBSERVATION_MS, (unreachableSince ?? Infinity) + SILENCE_MS);
+  const expire = () => {
+    if (abandoned) return;
+    abandon();
+    input.silenceExpired?.(Math.floor(now() - (unreachableSince ?? lastDispatch)));
   };
+  const expired = () => {
+    if (now() < deadline() + CONTACT_PROBE_MS) return false;
+    expire(); return true;
+  };
+  let probing = false;
+  const arm = () => {
+    probing = false;
+    clearTimeout(probeTimer); clearTimeout(expiryTimer);
+    const left = deadline() - now();
+    probeTimer = setTimeout(() => {
+      if (abort.signal.aborted || reporting) return;
+      // A request dispatched while Loom was down can still be pending when it returns.
+      pulse();
+    }, Math.max(0, Math.ceil(left)));
+    expiryTimer = setTimeout(() => { if (!abort.signal.aborted && !expired()) arm(); }, Math.max(0, Math.ceil(left + CONTACT_PROBE_MS)));
+  };
+  const pulse = () => {
+    if (abort.signal.aborted || expired() || reporting || probing) return;
+    const probe = now() >= deadline();
+    if (probe) { probing = true; beatAbort?.abort(); }
+    else if (heartbeat) return;
+    const sent = now(), flight = new AbortController();
+    beatAbort = flight;
+    heartbeat = control.heartbeat(assignment.id, state, AbortSignal.any([abort.signal, flight.signal])).then(ok => {
+      if (flight.signal.aborted || abort.signal.aborted) return;
+      if (!ok) abandon();
+      else if (!expired()) { lastDispatch = sent; unreachableSince = undefined; arm(); }
+    }, () => {
+      if (flight.signal.aborted || abort.signal.aborted) return;
+      if (probe) { expire(); return; }
+      if (unreachableSince === undefined) {
+        unreachableSince = now();
+        if (!expired()) arm();
+      }
+    }).finally(() => { if (beatAbort === flight) { heartbeat = undefined; beatAbort = undefined; } });
+  };
+  arm();
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
@@ -235,11 +268,18 @@ export async function workOnce(input: {
     reporting = true;
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
-    // A failed/uncertain running acknowledgement must never be reported as a
-    // failed start: the body already exists. Abort it and leave reconciliation
-    // to the server. No second started() or finish() after that uncertainty.
-    const acknowledged = now();
-    try { await control.started(assignment.id, build); answered = acknowledged; }
+    // The HTTP control retries this report with one receipt. If it cannot establish that
+    // the job is running, reap the body without releasing the brief or reporting a failed start.
+    const startedAt = now();
+    try {
+      await control.started(assignment.id, build, abort.signal);
+      if (abort.signal.aborted) return 'abandoned';
+      // A replay acknowledges the current claim. Its final request was sent no
+      // earlier than one request timeout before this reply, even after earlier retries.
+      lastDispatch = Math.max(startedAt, now() - WORKER_REQUEST_MAX_MS);
+      unreachableSince = undefined;
+      arm();
+    }
     catch { abandon(); return 'abandoned'; }
     // Shutdown can arrive while the acknowledgement is in flight. A successful
     // reply does not restore this worker's authority to release the body.
@@ -279,6 +319,7 @@ export async function workOnce(input: {
     return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by);
   } finally {
     eraseBootstrap(bootstrap);
+    clearTimeout(probeTimer!); clearTimeout(expiryTimer!);
     dispose();
     input.signal.removeEventListener('abort', cancel);
     cancel();

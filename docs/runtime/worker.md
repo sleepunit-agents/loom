@@ -56,7 +56,7 @@ job's log tail; do not print secrets there.
 The worker sends a bearer token through loom's standard operation door. Only
 HTTPS origins are accepted, except HTTP on loopback. Redirects are refused.
 Each request has a unique operation id, a 30-second deadline and 1 MiB limits on
-request and response bodies. Calls are never retried locally after uncertainty.
+request and response bodies. A logical write keeps its operation id across the retries described below.
 The server's authenticated runner door must derive the machine from the token,
 claim only assigned work, and implement:
 
@@ -74,12 +74,36 @@ with container bodies and 1 for one whose bodies are processes (see "Several
 jobs at once"). Each slot runs one job at a time and asks loom for its next when
 it is free; loom itself keeps no count of a machine's jobs. Idle or abandoned
 attempts wait five seconds.
-A heartbeat loom answers with `active: false` cancels local work at once. One loom
-does not answer at all (a timeout, a dropped connection) is sent again at the
-next interval: loom needs one report in its two-minute silence interval, so the
-worker gives a job up only when none has been answered for so long that loom
-will have taken the job for lost. Before, a single unanswered heartbeat ended
-the job, and a machine busy with a long build lost jobs that way. An exception stops the slot, including
+The worker sends job heartbeats every 15 seconds during a build, while waiting for
+an account, and while a body runs. A heartbeat that says the job is inactive ends
+local work immediately. When the server cannot be reached, the worker keeps the
+slot for 120 seconds from the first observed heartbeat failure. It makes
+a final probe with a one-second deadline. A delayed response cannot extend the
+slot beyond 256 seconds from the dispatch of the last acknowledged heartbeat.
+An answered heartbeat resets the window. Each heartbeat gets a fresh operation id
+so the worker always checks the job's current state. Started and finish reports
+use the same id across attempts so a lost response cannot start or finish a job twice.
+
+On startup the server gives previously claimed jobs a full 120 seconds to report.
+Each sweep measures silence from the later of server startup and the last job
+report. The first sweep strictly past 120 seconds of observed silence marks a job
+lost and records the elapsed seconds. A successor to a lost claim can start after
+the usual retry delay and at least 271 seconds from the previous claim’s last report.
+This allows 60 seconds for the last accepted reply to arrive, 15 seconds to the
+next pulse, 60 seconds to observe its timeout, 120 seconds of grace, a one-second
+probe and 15 seconds for the previous worker to stop during a network partition. Queue
+deadlines still use their original timestamps.
+
+With the updated worker and body already running, an active job on a healthy
+worker can survive a server-only outage lasting less than 120 seconds, including
+a compatible database upgrade. The restored server must be ready to accept
+reports and answer the final probe within one second. Heartbeats, replayable
+body requests, and started and finish reports start their two-minute windows
+when the first bounded request fails, including a request already in flight. The operator must preserve the job database, credentials and
+origin. A worker restart ends its processes. An outage during an uncertain
+one-shot credential exchange can still fail that start.
+
+An exception stops the slot, including
 failed process cleanup, so it cannot claim more work after uncertain reaping; it
 stops the worker's other slots too, each of which ends its own body first.
 SIGINT and SIGTERM cancel active work and idle waiting in every slot. The server owns start
@@ -150,8 +174,8 @@ said whose it was, and no stage is guessed.
 | 16 | body config | The machine's body file could not be read or is not valid. |
 | 17 | body envelope | What the worker handed over on stdin is not a body's input. |
 | 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. One exception: mail from a sender nobody looked up turned the job's word after the mail was taken, and the harness always has a shell ("What a body may use"). That mail was taken and not settled; it goes back to the job. |
-| 19 | body report | The first report to loom failed: loom unreachable, or the job no longer this body's. |
-| 20 | body contact | A later report failed while the body was at work: it lost loom, or loom had ended the job. The body dropped what it was doing, whatever stage that was. |
+| 19 | body report | The first report failed validation or Loom refused it for a reason other than the job ending. |
+| 20 | body contact | A required call exhausted its contact budget, Loom confirmed the credential or job ended, or a later status report failed. This includes loss of contact during the first report. |
 | 21 | worker input | Fetching the private repository input. |
 | 22 | worker build | The build command; or, with container bodies, fetching the house's repository or building its image. |
 | 23 | worker launch | Starting the body's process. |
@@ -298,7 +322,7 @@ It receives model roles from the trusted root's `modelRoles()` configuration,
 never from a worker request. A root without configured roles leaves work queued.
 `runtime.next` and heartbeat receipt replays are refused, so an old claim or
 `active:true` cannot restore a finished job. The worker already uses a fresh id
-for each call and never retries an uncertain request. Other report receipts are
+for each new claim or heartbeat. Other report receipts are
 checked against current machine/job authority before replay.
 
 The root owns the silence sweep and closes it on shutdown. Terminal source
@@ -1091,8 +1115,8 @@ After the ordinary running acknowledgement, stdin contains
 model prompt, argv, environment, stored configuration and diagnostics. The raw
 token belongs only to that current job. The parent erases its byte buffer after
 stdin acceptance and on cancellation/failure. A late enrollment or running
-acknowledgement never releases private input after cancellation. Uncertain
-enrollment is not retried.
+acknowledgement never releases private input after cancellation. Enrollment can retry a refused TCP connection before delivery. An ambiguous
+enrollment is not replayed.
 
 Credential-bearing body output is drained without keeping a job log tail in
 both process and container adapters. The outer worker also sends an empty tail,
@@ -1444,7 +1468,18 @@ accepts an owner, token, heartbeat or caller-chosen enrollment timestamp.
 
 `bodyCommandClient` calls the existing Root HTTP operation and generated GraphQL
 doors using only the receiving body's existing credential. Callers supply a stable
-operation ID; uncertain writes are never retried automatically. Current Root policy,
+operation ID. Safe commands resend the same payload and id after a connection
+failure, per-attempt timeout or temporary server outage. Mail confirmation and
+reports use that same receipt mechanism. Mail pickup returns the items still held
+by the same job. GraphQL reads can be repeated. Memory recall warms its results
+without a receipt, so an ambiguous recall is reported to the caller. Private secret
+value reads and confirmations likewise have no replay guarantee. A value read
+can retry a TCP connection refused before delivery. A lost confirmation is final.
+
+Body calls back off from one second to at most ten seconds between attempts,
+for 120 seconds. A final attempt gets at most one further second. An exhausted tool call returns an error to
+the model naming the interval. Lost contact during required body reporting ends
+the body with exit 20. Best-effort final usage keeps its shorter delivery budget. Current Root policy,
 input validation and receipts remain authoritative. A command name cannot change
 the destination origin or select a different credential or caller.
 

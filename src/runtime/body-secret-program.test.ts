@@ -49,7 +49,10 @@ it('observes Stop while default startup consent is pending, without launching a 
 it.each(['abort','status failure'])('cancels pending default startup on %s without a native launch',async mode=>{
  const f=fixture();f.pending();const fetcher=f.options.fetch;let fail=false;
  const running=bodyProgram({...f.options,fetch:async(url,options)=>{if(fail&&String(url).endsWith('/status'))throw new Error(raw);return fetcher(url,options);}});
- await f.planned;if(mode==='abort')f.abort.abort();else{fail=true;f.tick();}
+ await f.planned;if(mode==='abort')f.abort.abort();else{
+  fail=true;f.tick();await new Promise(resolve=>setImmediate(resolve));
+  f.clock.advance(120_000);
+ }
  // An abort stops it in the startup stage; a failed report is recorded as lost contact, whatever stage it interrupted.
- expect(await running).toBe(mode==='abort'?11:20);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.cancel).toHaveBeenCalledOnce();expect(f.errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');expect(f.bytes.every(b=>b===0)).toBe(true);
+ expect(await running).toBe(mode==='abort'?11:20);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.cancel).toHaveBeenCalledOnce();expect(f.errors).toHaveBeenCalledExactlyOnceWith(mode==='abort'?'Body stopped: invalid input or unavailable execution\n':expect.stringMatching(/unavailable after 120 seconds/));expect(f.bytes.every(b=>b===0)).toBe(true);
 });

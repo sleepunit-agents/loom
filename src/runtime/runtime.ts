@@ -39,16 +39,17 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
   // judges. A sweep that comes much later than it was due, or before the one that preceded it, means the
   // clock was stepped or the program stood still: every stamp then looks old (or new) at once, though
   // the workers may never have stopped reporting. After that nothing is called silent until they have
-  // had one whole interval to report against the clock as it now is. The first sweep after a start is
-  // not held back: what went silent while loom was down is found at once.
-  let sweptAt: number | undefined, judgeFrom = -Infinity;
+  // had one whole interval to report against the clock as it now is. A new server likewise gives every claimed job a full interval to reconnect.
+  let sweptAt: number | undefined, judgeFrom = -Infinity, listeningSince: number | undefined;
   const sweep = () => {
     available();
     const at = clock.now();
     if (sweptAt !== undefined && (at < sweptAt || at - sweptAt > interval + SILENCE_MS / 2)) judgeFrom = at + SILENCE_MS;
+    // A wall-clock correction can move the listener opening time into the future.
+    listeningSince = Math.min(listeningSince ?? at, at);
     sweptAt = at;
     const judge = at >= judgeFrom;
-    const over = judge ? jobs.sweep() : [];
+    const over = judge ? jobs.sweep(SILENCE_MS, undefined, listeningSince) : [];
     // These services commit separately. Publish ended-job events even if the
     // machine notice pass fails, so a later tick need not rediscover them.
     try { try { if (judge) machines.sweep(); } finally { options.expire?.(); } }

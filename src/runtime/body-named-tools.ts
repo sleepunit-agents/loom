@@ -1,3 +1,4 @@
+import {BODY_CONTACT_MESSAGE} from './body-contact.js';
 /** A body's named tools: remember, task_claim, note_read and the rest, as a terminal session has them.
  *
  * They come from the one definition (shared-mcp-named.ts) and from nowhere else. In a body, what that
@@ -40,11 +41,20 @@ export function bodyNamedTools(input:{agent:string;generic:readonly BodyModelToo
  const command=input.generic.find(tool=>tool.name===COMMAND)?.execute,query=input.generic.find(tool=>tool.name===QUERY)?.execute;
  if(!input.agent||!command||!query)return [];
  // Each call gets handlers on ports bound to its own signal, so cancelling the call cancels its requests.
- const ports=(signal:AbortSignal):NamedToolPorts=>({agent:input.agent,identityHanded:input.identityHanded===true,valid:()=>!signal.aborted,
-  command:async(operation,payload,id)=>carried(await command({operation,input:payload,id},signal)),
-  query:async request=>{const result=await query({query:request.query,...(request.variables?{variables:request.variables}:{})},signal);if(result.isError)throw new Error('Body tool unavailable');return carried(result) as Awaited<ReturnType<NamedToolPorts['query']>>;}});
  return collect(nobody).map(({name,description,inputSchema})=>({name,description,inputSchema,
-  execute:(args:Record<string,unknown>,signal:AbortSignal)=>collect(ports(signal)).find(tool=>tool.name===name)!.handler(args)}));
+  async execute(args:Record<string,unknown>,signal:AbortSignal){
+   let outage:Awaited<ReturnType<BodyModelTool['execute']>>|undefined;
+   const unwrap=(result:Awaited<ReturnType<BodyModelTool['execute']>>,reading=false)=>{
+    if(result.isError&&result.content[0]?.text===BODY_CONTACT_MESSAGE){outage=result;throw new Error(BODY_CONTACT_MESSAGE);}
+    if(reading&&result.isError)throw new Error('Body tool unavailable');
+    return carried(result);
+   };
+   const ports:NamedToolPorts={agent:input.agent,identityHanded:input.identityHanded===true,valid:()=>!signal.aborted,
+    command:async(operation,payload,id)=>unwrap(await command({operation,input:payload,id},signal)),
+    query:async request=>unwrap(await query({query:request.query,...(request.variables?{variables:request.variables}:{})},signal),true) as Awaited<ReturnType<NamedToolPorts['query']>>};
+   const answer=await collect(ports).find(tool=>tool.name===name)!.handler(args);
+   return outage??answer;
+  }}));
 }
 
 /** Whether one denial entry (harness-traits.ts, denialEntries) takes away the tool with this full name. The

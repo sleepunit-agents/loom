@@ -9,7 +9,7 @@ it.each(['finish','stop','lost'] as const)('ends the exact Comms working interva
  const f=await fixture(),reported=f.db.select().from(s.agentStatus).get()!;
  if(how==='finish')expect((await f.root.http.request('/api/runtime/finish',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({input:{job:'job',exitCode:0,logTail:'PRIVATE DISCARDED'},id:'finished'})})).status).toBe(200);
  else if(how==='stop')f.root.services.runtime.stop('job','alice','reset');
- else {f.root.writes.run(()=>f.db.update(s.jobs).set({heardAt:new Date(f.clock.now()-120001).toISOString()}).where(eq(s.jobs.id,'job')).run());f.root.services.runtime.sweep();
+ else {f.clock.advance(150_000);
   // Its member had asked for this work to stop, so a job that went silent first is stopped by them, not lost and tried again.
   expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()).toMatchObject({state:'stopped',endedBy:'alice',endedReason:'stop'});}
  expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});expect(f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),inArray(s.jobs.state,['queued','starting','running']))).all()).toEqual([]);expect(f.db.select().from(s.agentStatus).get()).toEqual(reported);expect((await f.call('status',{state:'working',work:'Late'},'late')).status).toBe(401);

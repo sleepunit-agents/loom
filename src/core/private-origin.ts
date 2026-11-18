@@ -7,3 +7,12 @@ export function privateOrigin(value: string): URL {
     || origin.protocol !== 'https:' && !(origin.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))) throw new Error('Invalid private origin');
   return origin;
 }
+
+/** A failed connect cannot have delivered the request. For multi-address connects,
+ * every attempted address must have refused it. */
+export function connectionRefused(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if (error instanceof AggregateError) return error.errors.length > 0 && error.errors.every(connectionRefused);
+  if ('code' in error) return error.code === 'ECONNREFUSED';
+  return error instanceof Error && connectionRefused(error.cause);
+}

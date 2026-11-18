@@ -1,3 +1,4 @@
+import {BodyContactExpired} from './body-contact.js';
 /** Portable tools composed into the receiving body's single local MCP server. */
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
@@ -18,7 +19,7 @@ export type BodyProgramToolResult={content:{type:'text';text:string}[];isError?:
 const unavailable=():BodyProgramToolResult=>({isError:true,content:[{type:'text',text:'Body tool unavailable; outcome may be uncertain'}]});
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bodyProgramTools(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof globalThis.fetch;clock?:Clock;
- onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
+ onJobEnded?:()=>void;onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
  /** Reads the files a post names from the body's own working area (body-files.ts). Without it a post carries none. */
  readFiles?:BodyFileReader}){
  const {url,token,signal,fetch,clock,onStop,onStatus,readFiles}=options;
@@ -29,7 +30,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
    let client:ReturnType<typeof bodyCommandClient>|undefined;
    try{
     const current=AbortSignal.any([lifetime,...(requestSignal?[requestSignal]:[])]);if(current.aborted)return unavailable();
-    client=bodyCommandClient({url,token,signal:current,fetch,clock});active.add(client);
+    client=bodyCommandClient({url,token,signal:current,fetch,clock,onJobEnded:options.onJobEnded});active.add(client);
     let value:unknown;
     if(name==='loom_commands')value=await client.command('runtime.commandCatalog',catalogue.parse(args),randomUUID());
     else if(name==='loom_query')value=await client.query(query.parse(args));
@@ -65,7 +66,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
     }else return unavailable();
     if(current.aborted)return unavailable();
     return{...(object(value)&&value.ok===false?{isError:true}:{}),content:[{type:'text',text:JSON.stringify(value)}]};
-   }catch{return unavailable();}finally{if(client){client.close();active.delete(client);}}
+   }catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text',text:error.message}]};return unavailable();}finally{if(client){client.close();active.delete(client);}}
   },
   close(){abort.abort();for(const client of active)client.close();active.clear();},
  };

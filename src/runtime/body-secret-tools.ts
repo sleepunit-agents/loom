@@ -1,3 +1,4 @@
+import {BodyContactExpired} from './body-contact.js';
 /** The receiving body's private model tools. Root credentials never leave this
  * process; only a lifetime-bound local capability enters native MCP config.
  *
@@ -23,7 +24,7 @@ import {saysNoSecret} from './body-secrets.js';
 const TOOL_REQUEST_BYTES=1024*1024,RETAINED_SECRET_BYTES=1024*1024;
 const unavailable=()=>new Error('Private Secret tool unavailable; do not retry an uncertain value with a new attempt');
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
-export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[];
+export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;onJobEnded?:()=>void;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[];
  /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
  agent?:string;
@@ -73,7 +74,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
    if(closed||signal.aborted)return failed();
    try{const current=AbortSignal.any([signal,request.signal,callSignal]);if(current.aborted)throw unavailable();const result=await work(current);if(current.aborted||closed)throw unavailable();return result;}
-   catch{return failed();}
+   catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text' as const,text:error.message}]};return failed();}
   };
   if(secretTools){
   server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:agentSecretRequest},(args,extra)=>run(async signal=>{
