@@ -406,7 +406,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string,replacement?:{prior:string;words:string})=>db.transaction(()=>{
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'|'withdraw'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string,replacement?:{prior:string;words:string})=>db.transaction(()=>{
   const request=proposal.parse({change:raw.change,input:raw.input});
   const proof=request.change==='triggerMachine'?request.input.reviewed:undefined;
   const value=request.change==='triggerMachine'?{change:request.change,input:{trigger:request.input.trigger,machine:request.input.machine}}:request;
@@ -414,11 +414,15 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='triggerMachine'){
    const viewer:Viewer=owner?{kind:'member',id:owner}:{kind:'agent',id:agent,workingFor:where?.member??undefined};
    if(!replacement&&!canRequestMachine(viewer,value.input.trigger))throw new OperationError('denied','This trigger cannot request machine work');
-   // Both assignment tables expose the machine id to the agent. A guessed private id and a missing one answer alike.
-   if(!replacement&&viewer.kind==='agent'&&!db.select({box:boxAgents.box}).from(boxAgents).where(and(eq(boxAgents.box,value.input.machine),eq(boxAgents.agent,agent))).get()
-    &&!db.select({box:agentBoxes.box}).from(agentBoxes).where(and(eq(agentBoxes.box,value.input.machine),eq(agentBoxes.agent,agent))).get())
-    throw new OperationError('invalid','The named machine is unavailable');
-   if(!db.select({id:boxes.id}).from(boxes).where(eq(boxes.id,value.input.machine)).get())throw new OperationError('invalid','The named machine is unavailable');
+   const machine = db.select().from(boxes).where(eq(boxes.id,value.input.machine)).get();
+   if (!machine) throw new OperationError('invalid','The named machine is unavailable');
+   if (!replacement && viewer.kind === 'agent') {
+    const listed = db.select().from(boxAgents).where(and(eq(boxAgents.box,machine.id),eq(boxAgents.agent,agent))).get();
+    const preferred = db.select({box:agentBoxes.box}).from(agentBoxes).where(and(eq(agentBoxes.box,machine.id),eq(agentBoxes.agent,agent))).get();
+    if (!listed && !preferred && !machineMayHost(machine, listed, agent, sharedSharing(db))) {
+     throw new OperationError('invalid','The named machine is unavailable');
+    }
+   }
    if(proof){
     if(!owner)throw new OperationError('denied','Only a household owner can answer this review');
     const review=machineReview(value.input);
@@ -433,8 +437,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    replacement?undefined:eq(approvals.state,'pending'))).get();
   if(existing){
    if(replacement)return existing;
-   if(value.change!=='triggerMachine'||getTrigger(value.input.trigger)?.machine===value.input.machine)
+   if(value.change!=='triggerMachine')throw new OperationError('conflict','A card for this is already waiting for an answer');
+   const {kept} = read(existing);
+   if (seal(value,kept.seal.nonce,before(value)) === kept.seal.digest) {
     throw new OperationError('conflict','A card for this is already waiting for an answer');
+   }
+   service.withdraw(existing.id,agent);
   }
   if(!householdOwners(db).length)throw new OperationError('conflict','No household owner can allow this');
   if(value.change==='triggerMachine'&&!replacement){
@@ -464,7 +472,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  return{
   operation:[operation,apply] as const,
   file,
-  reviewChanged(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,trigger:typeof triggerRows.$inferSelect,words:string){
+  reviewChanged(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'|'withdraw'>,trigger:typeof triggerRows.$inferSelect,words:string){
    if(!trigger.to||!trigger.machine||!trigger.machineApproval)throw new Error('No approved machine request');
    const prior=db.select().from(approvals).where(eq(approvals.id,trigger.machineApproval)).get();
    if(!prior||prior.state!=='used'||prior.agent!==trigger.to)throw new Error('No previous machine approval');

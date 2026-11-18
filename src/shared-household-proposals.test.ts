@@ -778,7 +778,11 @@ it('holds an agent-owned trigger on its named machine and shows its complete wor
   const changed = await look(f,id);
   expect(changed.problem).toContain('changed');
   expect(changed.summary.endsWith(words)).toBe(true);
-  expect((await f.call('approvals/answer',{id,answer:'deny'},'sam')).body.ok).toBe(true);
+  const fresh = await f.call('household/propose',raw,'art');
+  expect(fresh.body).toMatchObject({ok:true,value:{state:'pending'}});
+  expect(f.db.select().from(approvals).where(eq(approvals.id,id)).get()?.state).toBe('withdrawn');
+  expect((await look(f,fresh.body.value!.id)).summary).toContain('Changed report');
+  expect((await f.call('approvals/answer',{id:fresh.body.value!.id,answer:'deny'},'sam')).body.ok).toBe(true);
   expect(f.db.select().from(triggers).where(eq(triggers.id,set.id)).get()?.machine).toBe('remote');
 });
 
@@ -798,7 +802,7 @@ it('records an owner grant for the exact reviewed words and files one replacemen
   const f = fixture(), at = new Date(f.clock.now()).toISOString(), token = 'e'.repeat(64);
   f.db.insert(memberAgents).values({member:'sam',agent:'art'}).onConflictDoNothing().run();
   f.db.insert(boxes).values({id:'work',name:'Workshop',owner:'sam',sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
-  f.db.insert(boxAgents).values({box:'work',agent:'art',lent:false}).run();
+  // The named machine hosts this agent through its owner; ordinary placement need not list it.
   f.db.insert(tokens).values({fingerprint:hash(token),label:'worker',kind:'runner',box:'work',createdAt:at}).run();
   const poll = async (id:string, machine?:unknown) => f.root.http.request('http://loom/api/runtime/next',{
     method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({id,input:machine?{machine}:{}}),
