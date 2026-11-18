@@ -5,11 +5,11 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
   // One unconfirmed intent per action. Retain its receipt after an uncertain
   // reply; a confirmed next click starts a new intent.
   const pending = new Map<string, { payload: string; id: string }>();
-  async function call(action: string, input: object) {
+  async function call(action: string, input: object, piece = 'tempo') {
     const payload = JSON.stringify(input);
     let attempt = pending.get(action);
     if (!attempt || attempt.payload !== payload) { attempt = { payload, id: newId() }; pending.set(action, attempt); }
-    const response = await request(`/api/tempo/${action}`, { method: 'POST', credentials: 'same-origin',
+    const response = await request(`/api/${piece}/${action}`, { method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: attempt.id, input }) });
     const result: unknown = await response.json();
     if (!response.ok || !result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
@@ -19,9 +19,23 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
       if (pending.get(action) === attempt) pending.delete(action);
       throw new TempoFiringFailure(result.value.reason);
     }
+    if (action === 'propose') {
+      if (!('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id || !('state' in result.value) || result.value.state !== 'pending') throw new Error('Tempo could not confirm the machine request.');
+      if (pending.get(action) === attempt) pending.delete(action);
+      return result.value.id;
+    }
     if (action === 'set' ? !('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id : !('saved' in result.value) || result.value.saved !== true) throw new Error('Tempo could not confirm the change.');
     if (pending.get(action) === attempt) pending.delete(action);
   }
-  return { withdrawMachine: id => call('edit', { id, machine: null }), create: input => call('set', input), runNow: id => call('runNow', { id }), stop: id => call('stop', { id }),
-    pause: agent => call('pause', { agent }), resume: agent => call('resume', { agent }) };
+  const change = async (action: string, input: object) => { await call(action, input); };
+  return {
+    async requestMachine(id, machine) {
+      const card = await call('propose', { change: 'triggerMachine', input: { trigger: id, machine }, why: 'Run this trigger on the selected machine.' }, 'household');
+      if (!card) throw new Error('Tempo could not confirm the machine request.');
+      return card;
+    },
+    withdrawMachine: id => change('edit', { id, machine: null }), create: input => change('set', input),
+    runNow: id => change('runNow', { id }), stop: id => change('stop', { id }),
+    pause: agent => change('pause', { agent }), resume: agent => change('resume', { agent }),
+  };
 }

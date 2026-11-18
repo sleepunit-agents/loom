@@ -145,3 +145,15 @@ it('shows the recorded manual firing failure and starts a new intent for a subse
   const ids = request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).id);
   expect(new Set(ids).size).toBe(2);
 });
+
+it('files a request for the selected machine and links to its owner review', async () => {
+  const request = vi.fn<typeof fetch>(async () => Response.json({ ok: true, value: { id: 'card-1', state: 'pending' } }));
+  const visible = { ...snapshot, machines: [{ id: 'remote', name: 'Workshop' }] };
+  await act(async () => { tree = create(h(TempoCard, { snapshot: visible, triggerId: 'tr-1', actions: tempoActions(request) })); });
+  const machine = tree.root.findByProps({ 'aria-label': 'Requested machine' });
+  await act(async () => machine.props.onChange({ target: { value: 'remote' } }));
+  await act(async () => button('Request machine review').props.onClick());
+  expect(request.mock.calls[0]?.[0]).toBe('/api/household/propose');
+  expect(JSON.parse(String(request.mock.calls[0][1]?.body)).input).toMatchObject({ change: 'triggerMachine', input: { trigger: 'tr-1', machine: 'remote' } });
+  expect(tree.root.findByType('a').props.href).toBe('/p/approvals-preview/approval/card-1');
+});
