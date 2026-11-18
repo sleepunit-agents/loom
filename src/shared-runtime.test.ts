@@ -257,6 +257,7 @@ it('reports local worker facts through default HTTP and uses them in the same po
     run: async input => { expect(await input.control.next()).toMatchObject({ id: job.id, box: 'worker' }); },
   })).toBe(0);
   expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker' });
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.slots).toBe(1);
   expect(f.db.select().from(boxFacts).all().sort((a,b) => (a.box+a.fact).localeCompare(b.box+b.fact))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'gpu:5090', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
 });
 it('rolls machine facts and health back with a failed poll receipt and refuses replay', async () => {

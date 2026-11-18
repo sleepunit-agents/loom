@@ -142,9 +142,9 @@ export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observa
 export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
-export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly string[] }) {
+export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number }) {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
-  return operationCaller(input)('health', facts === undefined ? {} : { facts }, z.object({ ok: z.literal(true) }).strict());
+  return operationCaller(input)('health', { facts, slots: input.slots }, z.object({ ok: z.literal(true) }).strict());
 }
 /** The worker's side of a relayed account sign-in: see account-signin-relay.ts. */
 export function workerSignIn(input: WorkerHttpOptions) {
@@ -158,7 +158,7 @@ export function workerSignIn(input: WorkerHttpOptions) {
     done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
-export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
@@ -187,7 +187,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
+    next: async () => (await call('next', { facts, slots: input.slots }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
       const report = operationCaller(options);
