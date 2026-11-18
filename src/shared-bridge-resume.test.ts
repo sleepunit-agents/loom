@@ -143,3 +143,16 @@ it('writes what was sent with a message only for a body that has file tools to o
  expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{...denied,people:[{kind:'person',person:'owner',tier:null}]}})).toBe(0);
  expect(asked).toHaveLength(1);
 });
+
+it('runs a body whose only mail is a firing from the schedule, and posts its answer in the conversation as a new message',async()=>{
+ const f=await fixture(),first=await f.hear('Remind us at nine'),cv=first.conversation!;
+ const native:HarnessRun=async(_job,words)=>{seen.push(words);return{text:seen.length===1?'I will.':'It is nine.',model:'claude-opus-5-5',actions:[]};},seen:string[]=[];
+ expect(await f.run('one',cv,native,keeper().sessions)).toBe(0);
+ // The schedule's mail arrives in the room with no message from the bridge beside it.
+ f.root.writes.run(()=>{f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'trigger',sourceId:'tr-1:now',fromKind:'schedule',words:'[From the schedule, not from a person speaking now.]\n\nSay it is nine',onWordKind:'outside',onWord:JSON.stringify(['slack','TWORK','UUSER'])});});
+ expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
+ expect(seen[1]).toContain('[From the schedule, not from a person speaking now.]\n\nSay it is nine');
+ const sends=f.db.select().from(s.bridgeSends).all();
+ expect(sends).toMatchObject([{incoming:first.id,text:'I will.'},{incoming:null,conversation:cv,channel:'CROOM',thread:first.thread,text:'It is nine.'}]);
+ expect(f.db.select().from(s.inbox).all().filter(item=>item.toKind==='agent').map(item=>item.state)).toEqual(['done','done']);
+});

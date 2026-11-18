@@ -93,7 +93,28 @@ channel (`presence.ts`). Both are best effort.
   Discord a `bridges.say` post may carry up to four files, 600 KB together, each named by a path inside
   the body's working or scratch directory; they are kept with the post (`bridge_send_files`) until it is
   settled.
-- Where a stop word stopped a job the bot says "Stopped here.".
+- A job whose mail is no message from the bridge (a trigger's firing in the conversation, a note from
+  another body of the agent) answers by a post in the conversation itself, addressed from the
+  conversation's place (`bridge_sends.conversation`, with no `incoming`).
+- Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
+  conversation are given to the stopped job and start no work until a person speaks there.
+
+## Between conversations
+
+- A body never posts into or reads another conversation. It hands a note to the agent's body there:
+  `conversation.handoff` with `to`, either `{conversation}` or `{platform, workspace, channel, thread?}`
+  for a channel the agent has a rule for (the conversation is opened if there is none). The note is mail
+  in the target conversation and starts its job. That body is told it is a note from another body of the
+  same agent and not a person, where it came from, on whose word, and the chain so far.
+- Who may hand to where is `mayHandTo` in `src/policy.ts`: the agent's own work and a body working for
+  owners or members who have the agent, anywhere; any other body only to its channel rule's `reportsTo`
+  (set on the `channel` card as `reportsTo: {platform, workspace, channel}`).
+- The receiving job counts the person the sending body worked for as in the room.
+- A chain's start, length and conversations are stored on each note: `inbox.chain_started_at` and
+  `inbox.chain` (a JSON list of conversation ids, oldest first; its length is the count), with the
+  conversation the note came from in `inbox_refs` and the one it went to in `inbox.conversation`.
+- The agent's own work, with no person behind any of its mail, may post a text straight to a ruled channel
+  with `bridges.post`, through the same queue.
 - Every post goes through one queue (`sends.ts`): split at the platform's limit, each part recorded when
   the platform confirms it (`bridge_send_parts`). A post whose outcome is unknown is `uncertain` and is
   never sent again; an owner may dismiss it. While effects are off a post is `held` for an owner to release.

@@ -39,18 +39,47 @@ agent is paused fires when the agent resumes.
 ## Who may schedule, and from where
 
 Who may set a trigger is `maySetTrigger` in `src/policy.ts`. Where the caller
-is working matters too (`maySchedule`, beside it): the body of a job in a
-**room** may set or reword no trigger at all. A room is a Discord or Slack
-conversation that is not one member's own: a channel, a thread, a group direct
-message, or a direct message from somebody who is no member. Such a body is
-refused with "A body working in a room cannot schedule work: ask in your own
-thread, or have an owner schedule it."
+is working matters too (`maySchedule`, beside it). A **room** is a Discord or
+Slack conversation that is not one member's own: a channel, a thread, a group
+direct message, or a direct message from somebody who is no member. The body
+of a job in a room may set, reword, stop, start and run only a trigger that
+**names its own conversation**. Every other call from a room is refused with
+"A body working in a room cannot schedule work: ask in your own thread, or
+have an owner schedule it." A body in one member's own thread or direct
+message is not in a room and is judged by who it is.
 
-The reason: a trigger names an agent or a person, never a conversation, and a
-firing for an agent opens a wake of the agent's own. Words chosen in a room
-would later run outside it, without the room's people and the tool denials
-that go with them. When a trigger can be addressed to a conversation, a room's
-body will be able to set one that comes back into its own room. A body in one
-member's own thread or direct message is not in a room and is judged by who it
-is, as before. The same body can stop, start or run no trigger either: each
+### A trigger that names a conversation
+
+`tempo.set` takes `conversation`: a Discord or Slack conversation of the agent
+the trigger puts to work (`triggers.conversation`). Its firing opens no wake.
+It is mail from the schedule in that conversation and starts a job there like
+any message: the conversation's stored session, and the answer posted in the
+conversation as a new message. Words limit, time zone and occurrence ids are
+those of every trigger. The rules are in `src/shared-room-triggers.ts`.
+
+- **Who asked** is recorded with it (`asked_by_kind`, `asked_by`, `asked_at`).
+  Set by a room's body, it is the person whose message started the job that
+  set it; when the job's mail is from several people, the one of least reach.
+  Set by a person, it is that member. Set by the agent outside a room, it is
+  the agent. Nobody loom cannot name is ever the asker.
+- **A firing runs on the asker's word.** The mail carries the asker
+  (`inbox.on_word_kind`, `on_word`), and the job counts them as in the room at
+  the tier they have when it is claimed (`src/runtime/body-policy.ts`): a guest
+  asker brings the tools a guest's body is not given. With the agent or an
+  owner as asker only the always-denied tools apply. The body is told the mail
+  is from the schedule, who asked and when.
+- **Stopped when it can no longer fire.** At a firing loom asks whether the
+  asker is still known to the agent (a member in the household now, or an
+  outside account that still has a tier), and whether the conversation is
+  there and can be posted to (its connection in use, its channel not filtered
+  out). If not, nothing is delivered, the trigger is stopped, and the agent's
+  owners get one notice saying why. **A channel rule that was removed does not
+  by itself stop a firing: a mention there would still wake the agent.**
+- **Bounds.** At most 10 triggers stand at once for one conversation
+  (`ROOM_TRIGGERS_MAX`). Set or reworded from a room, a repeating one lists
+  times at least an hour apart (`ROOM_REPEAT_MIN_MS`) and watches no event.
+- An owner, and the agent in its own thread, see, reword and stop these like
+  any trigger. A room's body reads its agent's triggers as before, all of
+  them, and can change only its own conversation's (see the accepted
+  trade-offs).
 would decide in the room what happens outside it.

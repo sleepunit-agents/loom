@@ -884,9 +884,10 @@ Entries are grouped by the part of the program they belong to.
   only within one family of models. Its keep time is the household's for words, counted from the oldest
   erasable word it holds (`conversation_sessions.started_at`): when it was first saved, or earlier when
   its first body started fresh and was handed older words of a direct conversation, whose time the body
-  tells loom. A save within the keep time leaves that start as it is. So no erasable word in a session
-  outlives its keep time, and the next body then starts fresh. A room's words are kept without limit and
-  do not move the start.
+  tells loom. A save within the keep time leaves that start as it is. Only erasable words count: the words
+  of a direct conversation, each of which has an erase time. A room's words are kept without limit, have
+  no erase time, and do not move the start, however old the history handed in. So no erasable word in a
+  session outlives its keep time, and a room's session is counted from its first save.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also
   removes the one kept before); a conversation answered after the session was last saved (its body died
@@ -946,23 +947,43 @@ Entries are grouped by the part of the program they belong to.
   an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
 - Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
 
-### A room's body schedules nothing
-- What: the body of a job in a room (a Discord or Slack conversation that is not one member's own: a
-  channel, a thread, a group direct message, a direct message from somebody who is no member) may not set
-  reword, stop, start or run any trigger. `tempo.set`, `tempo.edit`, `tempo.stop`, `tempo.start` and
-  `tempo.runNow` refuse it with "A body working in a room cannot schedule work: ask in your own thread, or
-  have an owner schedule it." A body in one member's own thread or direct message, a person, and an
-  agent's own session are judged as before.
-- Where: `isRoom`, `maySchedule` and `ROOM_SCHEDULE_REFUSAL` in `src/policy.ts`, beside `maySetTrigger`;
-  asked by the Tempo door (`placeRefusal` in `src/core/tempo/operations.ts`, wired in `src/shared-tempo.ts`
-  from the body's own conversation).
-- Why: a room's body works under the room's limits: who is in it, and the tools an agent's body is not
-  given when a guest is. A trigger it set for its agent would fire later as the agent's own wake, a new
-  job with no room, running words chosen in the room without those limits. The rule wanted is narrower:
-  a room's body may schedule work that comes back into the same conversation under the same limits. A
-  trigger cannot name a conversation today, so there is no such trigger to allow, and all are refused.
-- Would change it: a trigger that names a conversation, whose firing is mail in that conversation and so
-  a job with its room's people and denials. `maySchedule` then lets that one case through.
+### A room's body schedules only into its own conversation
+- What: the body of a job in a room (a Discord or Slack conversation that is not one member's own) may
+  set, reword, stop, start and run only a trigger naming its own conversation. Every other Tempo write
+  from a room is refused with "A body working in a room cannot schedule work: ask in your own thread, or
+  have an owner schedule it." Such a trigger fires as mail in that conversation, on its asker's word.
+- Where: `isRoom`, `maySchedule` and `ROOM_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-room-triggers.ts`;
+  `docs/runtime/tempo.md`.
+- Why: a room's body works under the room's limits. A trigger it set for its agent's own wake would run
+  words chosen in the room without them. One that comes back into the room runs under them.
+- **Open: a room's body still reads all of its agent's triggers.** Reads go through the query door, which
+  judges a body by its agent and the member it works for, and does not know what conversation its job is
+  in. So a room's body can see its agent's other schedules (their notes, times and instructions) though
+  it can change none. The fix is to carry the caller's conversation on `Viewer`, set where the body's
+  credential is resolved, and add a clause to the `trigger` read rule. It was left out of this round
+  because `Viewer` is the type every rule takes.
+- Would change it: that `Viewer` change.
+
+### Bodies of one agent speak to each other by notes, never by posting or reading across
+- What: a body does not post into, or read, a conversation other than its own. It hands a note to the
+  agent's body there (`conversation.handoff` with `to`), loom starts that conversation's job, and that
+  body says it in its own words. A body working for owners or members who have the agent, and the agent's
+  own work, may hand to any conversation or ruled channel of the agent. A body working for anybody else
+  may hand only to the channel its own channel's rule names (`reportsTo`), and nowhere with none named.
+  A mixed batch of mail counts as anybody else's: least reach wins. The one direct post is the agent's
+  own work, with no person behind it, to a ruled channel (`bridges.post`).
+- Where: `mayHandTo` in `src/policy.ts`; `src/shared-room-mail.ts`; `src/core/conversations/handoff.ts`.
+- Why: each body has the context of its own venue, and a note crosses with only what the sender chose to
+  say. Reach follows the person who woke the body, not the venue.
+- Accepted with it: no chain of notes is refused for its length. Each note shows its chain to the body that
+  receives it, which is told to stop and say so to a person when the exchange is not getting anywhere,
+  and the household's owners are told at 25 hand-offs and each further 25 (`CHAIN_NOTICE_EVERY`). A stop
+  word in either room ends that room's job, and the notes and firings waiting there wait for a person to
+  speak. A job started by a note or a firing alone is told no kept history: a note carries what it needs,
+  and the conversation's stored session carries the rest where there is one. In a Slack room a post that
+  answers no message starts a thread of its own, so a reply to it is a new conversation.
+- Would change it: bodies that need to read another conversation. Jonathan's principle for that is on
+  record (a body woken by an owner may read what the agent is party to, by person and not venue); nothing is built for it.
 
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
