@@ -679,18 +679,18 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  const stoppedFor=f.db.select().from(inbox).where(eq(inbox.source,'slack')).all().find(item=>item.sourceId!=='bi:bot'&&item.sourceId!=='bi:guest')!.id;
  const end=(id:string)=>f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,id)).run();});
  const released=all.admission(cv);expect(released).toMatchObject({started:true,behind:true,job:{conversation:cv}});
- // Owners first, and the agent's own work goes with the owners: the first job is the firings', the parked one with the
- // one that came while it was stopped, and not the stopped job's any more.
+ // Owners first, and the agent's own work goes with the owners: the first job is the firings'. The one that came
+ // while it was stopped starts it, and takes the parked one, which is on the same key, along.
  expect([firing,next].map(id=>job(id))).toMatchObject(Array.from({length:2},()=>({job:released.job!.id,state:'waiting'})));expect(jobWord(f.db,released.job!).woke).toBe('own');
- // Everything else waits for a job of its own asker, what the stopped job held and what was parked with it as fresh mail.
- expect([note,later,spoke,stoppedFor].map(id=>job(id))).toMatchObject(Array.from({length:4},()=>({job:null,state:'waiting'})));
- // Then the others, the oldest first: the guest's message the stopped job had taken, on the guest's word.
- end(released.job!.id);const guests=all.admission(cv);
- expect(job(stoppedFor).job).toBe(guests.job!.id);expect([note,later,spoke].map(id=>job(id).job)).toEqual([null,null,null]);expect(jobWord(f.db,guests.job!)).toEqual({woke:'others',person:{kind:'outside',id:GUEST}});
+ // The later note and the message wait for their own job. What the stopped job left behind stays with it for now.
+ expect([later,spoke].map(id=>job(id))).toMatchObject(Array.from({length:2},()=>({job:null,state:'waiting'})));
+ expect([note,stoppedFor].map(id=>job(id))).toMatchObject(Array.from({length:2},()=>({job:'body',state:'waiting'})));
  // Then the notes. They carry nobody's word. The message that released them is here one loom can name nobody by (it
- // has no receipt of its own), so it is on the same key and shares their job.
- end(guests.job!.id);const nobodys=all.admission(cv);
+ // has no receipt of its own), so it is on the same key and shares their job, and the parked note goes with them.
+ end(released.job!.id);const nobodys=all.admission(cv);
  expect([note,later,spoke].map(id=>job(id).job)).toEqual(Array.from({length:3},()=>nobodys.job!.id));expect(jobWord(f.db,nobodys.job!)).toEqual({woke:'others'});
+ // The guest's message the stopped job had taken is that guest's: nobody else's message brings it back.
+ end(nobodys.job!.id);expect(all.admission(cv)).toEqual({});expect(job(stoppedFor)).toMatchObject({job:'body',state:'waiting'});
  // Outside a bridge a stop parks nothing: a lane's waiting mail is as it was, for the lane's next job.
  const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
  let waits='';f.root.writes.run(()=>{f.db.update(jobs).set({conversation:lane}).where(eq(jobs.id,'other')).run();waits=f.root.services.conversations.send({conversation:lane,toKind:'agent',to:'art',source:'trigger',sourceId:'lane-firing',fromKind:'schedule',words:'Next'}).id;});
@@ -799,14 +799,14 @@ it('sets a guest\'s job aside while no machine has taken it when an owner writes
  // A guest's job is queued: no machine has room for it yet. It may wait a day.
  const guests=say('lodger asks','lodger'),waiting=all.admission(pond).job!;
  expect(job(waiting.id).state).toBe('queued');expect(row(guests).job).toBe(waiting.id);
- // The owner writes. The guest's job is set aside, with a plain note and no failure, and its mail waits again as fresh
- // mail; the owners' job is formed at once and is the one a machine may take.
+ // The owner writes. The guest's job is set aside, with a plain note and no failure, and its mail waits with it;
+ // the owners' job is formed at once and is the one a machine may take.
  const owners=say('owner asks','owner'),started=all.admission(pond);
  expect(started).toMatchObject({started:true,behind:true,job:{state:'queued',brief:'owner asks'}});expect(started.job!.id).not.toBe(waiting.id);
  expect(job(waiting.id)).toMatchObject({state:'stopped',endedBy:null,endedReason:null,exitCode:null,endedNote:SET_ASIDE_NOTE});
- expect(row(owners).job).toBe(started.job!.id);expect(row(guests)).toMatchObject({state:'waiting',job:null});
+ expect(row(owners).job).toBe(started.job!.id);expect(row(guests)).toMatchObject({state:'waiting',job:waiting.id});
  expect(jobWord(f.db,started.job!).woke).toBe('owners');
- // When the owners' job has ended the guest's mail gets its job again.
+ // When the owners' job has ended the guest's mail gets its job again, with nobody writing: loom set it aside, and loom brings it back.
  end(started.job!.id);const again=all.admission(pond);
  expect(again).toMatchObject({started:true});expect(row(guests).job).toBe(again.job!.id);expect(jobWord(f.db,again.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
  // A machine takes it. Now an owner's message waits for it to end: a claimed job is not interrupted.
@@ -819,26 +819,24 @@ it('sets a guest\'s job aside while no machine has taken it when an owner writes
  const behind=say('lodger asks again','lodger');
  expect(all.admission(pond)).toMatchObject({job:{id:ownersJob.id,state:'queued'},behind:true});expect(row(behind).job).toBeNull();
 });
-it('carries mail an ended job left behind into no other asker\'s job: when somebody speaks it gets a job of its own asker',async()=>{
- const {f}=await sharedPlace(),all=runnable(f),stamp=new Date(f.clock.now()).toISOString();
- f.root.writes.run(()=>{f.db.insert(members).values({id:'lodger',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
- const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
- const say=(words:string,fromId:string)=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:words,words,fromKind:'person',fromId}).id;});return id;};
- const row=(id:string)=>f.db.select().from(inbox).where(eq(inbox.id,id)).get()!;
+it('carries mail an ended job left behind into no other asker\'s job, and forms no job from it until its own asker writes again',async()=>{
+ const {f,all,pond,say,row}=await pondPlace();
  // A guest's job ended with its mail unanswered: out of attempts, or never placed within the queue deadline.
  const guests=say('lodger asks','lodger'),failed=all.admission(pond).job!;
  f.root.writes.run(()=>f.db.update(jobs).set({state:'failed'}).where(eq(jobs.id,failed.id)).run());
  expect(row(guests)).toMatchObject({state:'waiting',job:failed.id});expect(all.admission(pond)).toEqual({});
- // The owner speaks. The job that starts is the owner's alone, on owners' word; the guest's mail is not marked into it.
+ // The owner speaks. The job that starts is the owner's alone, on owners' word. The guest's mail is not marked into
+ // it, and is not handed back as fresh either: nothing waits behind this job.
  const owners=say('owner asks','owner'),started=all.admission(pond);
- expect(started).toMatchObject({started:true,behind:true,job:{brief:'owner asks'}});expect(row(owners).job).toBe(started.job!.id);
- expect(row(guests)).toMatchObject({state:'waiting',job:null});
+ expect(started).toMatchObject({started:true,job:{brief:'owner asks'}});expect(started.behind).toBeFalsy();expect(row(owners).job).toBe(started.job!.id);
+ expect(row(guests)).toMatchObject({state:'waiting',job:failed.id});
  expect(jobWord(f.db,started.job!)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
  expect(jobRoom(f.db,started.job!)).toMatchObject({word:'owners',mail:[owners]});
- // It waits for a job of its own, which is the guest's and runs at the guest's reach.
  f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,started.job!.id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,started.job!.id)).run();});
- const next=all.admission(pond);
- expect(next).toMatchObject({started:true});expect(row(guests).job).toBe(next.job!.id);expect(jobWord(f.db,next.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
+ expect(all.admission(pond)).toEqual({});
+ // The guest writes again: that message takes the old one along, in the guest's own job, at the guest's reach.
+ const again=say('lodger asks again','lodger'),next=all.admission(pond);
+ expect(next).toMatchObject({started:true});expect([row(guests).job,row(again).job]).toEqual([next.job!.id,next.job!.id]);expect(jobWord(f.db,next.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
 });
 it('holds a late answer to a card to the same rule: the owner\'s joins the running owners\' job, and anybody else\'s waits for the next',async()=>{
  const {f,work}=await sharedPlace(),stamp=new Date(f.clock.now()).toISOString(),mail=f.root.services.conversations;
@@ -1556,4 +1554,88 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  // A body on the owners' word asks in its own words alone, whoever reads the room, and may send a link.
  expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?',link:'https://example.invalid/doors'}})).status).toBe(200);
  expect(asked().at(-1)).toMatchObject({to:'owner',words:'Which door?',link:'https://example.invalid/doors'});
+});
+/** The household around a pond conversation: an owner who has art, and two members who do not. */
+async function pondPlace(){
+ const {f,cv}=await sharedPlace(),all=runnable(f),stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values(['lodger','sam'].map(id=>({id,role:'member' as const,joinedAt:stamp}))).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ const say=(words:string,fromId:string)=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:words,words,fromKind:'person',fromId}).id;});return id;};
+ const row=(id:string)=>f.db.select().from(inbox).where(eq(inbox.id,id)).get()!;
+ /** One whole chain: the job and every retry fail after starting, through the real claim and finish. How many attempts it had. */
+ const failChain=(first:string)=>{let id:string|undefined=first,attempts=0;
+  while(id){f.root.writes.run(()=>f.db.update(jobs).set({retryAt:null}).where(eq(jobs.id,id!)).run());
+   expect(all.claim(id,'box'),'claim').toBeTruthy();all.started(id,'box','build');f.root.writes.run(()=>f.root.services.conversations.take(pond,id!));
+   const done=all.finish(id,'box',1);attempts++;id=done.retry?.id;}
+  return attempts;};
+ return {f,cv,all,pond,say,row,failChain};
+}
+it('forms no job for an owner\'s request from a guest\'s message: one an owner stopped, reset or wrote off is settled, and one that ran out of attempts waits for an owner',async()=>{
+ for(const reason of ['stop','write-off','reset','failed'] as const){
+  const {f,all,pond,say,row}=await pondPlace();
+  const owners=say('owner asks: delete the staging data','owner'),first=all.admission(pond).job!;
+  expect(jobWord(f.db,first).woke).toBe('owners');
+  // The owner ends it (a stop word, or by hand), or it ran out of attempts.
+  if(reason==='failed')f.root.writes.run(()=>f.db.update(jobs).set({state:'failed'}).where(eq(jobs.id,first.id)).run());
+  else f.root.writes.run(()=>{all.stop(first.id,'owner',reason);});
+  // Ended by a person, the request is settled with the reason and waits for nothing. Out of attempts, it waits for its own asker.
+  if(reason==='failed')expect(row(owners)).toMatchObject({state:'waiting',job:first.id});
+  else expect(row(owners),reason).toMatchObject({state:'resolved',job:first.id,resolution:expect.stringContaining(reason==='stop'?'stop':reason)});
+  expect(all.admission(pond),reason).toEqual({});
+  // A guest says anything. The job that starts is the guest's alone: the owner's request is in no job, and is not handed back as fresh.
+  const guests=say('lodger says hi','lodger'),started=all.admission(pond);
+  expect(started,reason).toMatchObject({started:true,job:{brief:'lodger says hi'}});expect(started.behind).toBeFalsy();
+  expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
+  expect(row(guests).job).toBe(started.job!.id);expect(row(owners).job).toBe(first.id);
+  f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,started.job!.id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,started.job!.id)).run();});
+  expect(all.admission(pond),reason).toEqual({});
+  // Only an owner writing again brings back what ran out of attempts, in the owners' own job.
+  if(reason==='failed'){const again=say('owner asks again','owner'),next=all.admission(pond);expect(next.started).toBe(true);expect([row(owners).job,row(again).job]).toEqual([next.job!.id,next.job!.id]);expect(jobWord(f.db,next.job!).woke).toBe('owners');}
+ }
+});
+it('leaves a stop said: an owner\'s stop word while a guest\'s message waits is followed by the guest\'s job, never by the stopped request again',async()=>{
+ const {f,all,pond,say,row}=await pondPlace();
+ const owners=say('owner asks: delete the staging data','owner'),job=all.admission(pond).job!,guests=say('lodger says hi','lodger');
+ expect(all.claim(job.id,'box')).toBeTruthy();all.started(job.id,'box','build');f.root.writes.run(()=>f.root.services.conversations.take(pond,job.id));
+ expect(row(owners)).toMatchObject({state:'taken',job:job.id});expect(row(guests)).toMatchObject({state:'waiting',job:null});
+ f.root.writes.run(()=>{all.stop(job.id,'owner','stop');});
+ expect(row(owners)).toMatchObject({state:'resolved',job:job.id});
+ const next=all.admission(pond);
+ expect(next).toMatchObject({started:true,job:{brief:'lodger says hi'}});expect(jobWord(f.db,next.job!).woke).toBe('others');
+ expect(f.db.select().from(jobs).where(eq(jobs.conversation,pond)).all().filter(row=>jobWord(f.db,row).woke==='owners'&&row.id!==job.id)).toEqual([]);
+});
+it('gives two askers whose jobs always fail one chain of attempts each, and nothing more until one of them writes again',async()=>{
+ const {f,all,pond,say,row,failChain}=await pondPlace();
+ const a=say('sam asks','sam'),first=all.admission(pond).job!;
+ expect(failChain(first.id)).toBe(4);expect(all.admission(pond)).toEqual({});
+ // The other asker writes once. Their chain runs and fails; nobody writes; nothing more is formed, for either.
+ const b=say('lodger asks','lodger'),second=all.admission(pond);
+ expect(second.started).toBe(true);expect(jobWord(f.db,second.job!).person).toEqual({kind:'member',id:'lodger'});expect(second.behind).toBeFalsy();
+ expect(row(a).job).not.toBeNull();expect(row(a).job).not.toBe(second.job!.id);
+ expect(failChain(second.job!.id)).toBe(4);
+ expect(all.admission(pond)).toEqual({});expect(f.db.select().from(jobs).where(eq(jobs.conversation,pond)).all()).toHaveLength(8);
+ expect([row(a).state,row(b).state]).toEqual(['waiting','waiting']);
+ // Sam writes again: Sam's mail, old and new, gets one more chain. The lodger's is not touched.
+ const again=say('sam asks again','sam'),third=all.admission(pond);
+ expect(third.started).toBe(true);expect([row(a).job,row(again).job]).toEqual([third.job!.id,third.job!.id]);expect(row(b).job).not.toBe(third.job!.id);
+});
+it('retries a guest\'s job it set aside for an owner after the owners\' job, with nobody writing, and counts its attempts on from where they stood',async()=>{
+ const {f,all,pond,say,row}=await pondPlace();
+ // A guest's job has failed twice and its third attempt is queued.
+ const guests=say('lodger asks','lodger');let attempt=all.admission(pond).job!;
+ for(let n=0;n<2;n++){f.root.writes.run(()=>f.db.update(jobs).set({retryAt:null}).where(eq(jobs.id,attempt.id)).run());all.claim(attempt.id,'box');all.started(attempt.id,'box','build');f.root.writes.run(()=>f.root.services.conversations.take(pond,attempt.id));attempt=all.finish(attempt.id,'box',1).retry!;}
+ expect(attempt).toMatchObject({state:'queued'});expect(row(guests).job).toBe(attempt.id);
+ // The owner writes: it is set aside, and the owners' job goes first.
+ say('owner asks','owner');const owners=all.admission(pond);
+ expect(owners).toMatchObject({started:true,behind:true});expect(jobWord(f.db,owners.job!).woke).toBe('owners');
+ expect(f.db.select().from(jobs).where(eq(jobs.id,attempt.id)).get()).toMatchObject({state:'stopped',endedNote:SET_ASIDE_NOTE});
+ expect(row(guests)).toMatchObject({state:'waiting',job:attempt.id});
+ f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,owners.job!.id)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,owners.job!.id)).run();});
+ // Nobody writes. The guest's mail gets its job again, as the attempt it was: the one before it is its predecessor still.
+ const again=all.admission(pond);
+ expect(again.started).toBe(true);expect(row(guests).job).toBe(again.job!.id);expect(again.job!.retryOf).toBe(attempt.retryOf);expect(again.job!.retryOf).not.toBeNull();
+ // So it has the attempts it had left, two, and no more.
+ let left=0,id:string|undefined=again.job!.id;
+ while(id){f.root.writes.run(()=>f.db.update(jobs).set({retryAt:null}).where(eq(jobs.id,id!)).run());all.claim(id,'box');all.started(id,'box','build');f.root.writes.run(()=>f.root.services.conversations.take(pond,id!));id=all.finish(id,'box',1).retry?.id;left++;}
+ expect(left).toBe(2);expect(all.admission(pond)).toEqual({});
 });

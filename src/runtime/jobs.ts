@@ -40,6 +40,8 @@ const UNSETTLED_NOTE = 'Finished without settling its mail';
 /** What loom records on a job of somebody who is not an owner that it set aside, before any machine took it, because
  * an owner's mail came to wait in its conversation (Jobs.admission). Not a failure: nothing ran, and its mail waits. */
 export const SET_ASIDE_NOTE = 'Set aside before any machine took it: mail on the owners\' word came to this conversation, and the owners\' job goes first. Its mail waits for a job of its own.';
+/** What loom records on the mail of an owners' job a person ended: why that request waits for nothing (Jobs.stop). */
+export const STOPPED_NOTE = { stop: 'Stopped: a person said stop where the work was', reset: 'Ended by hand (reset)', 'write-off': 'Ended by hand (write-off)' } as const;
 /** What admission answers: the conversation's unended job, or why its waiting mail did not become one. */
 export interface Admission {
   job?: Job;
@@ -91,19 +93,22 @@ export class Jobs {
    * Work that ran out of attempts and work that was stopped need fresh mail to resume.
    *
    * One job holds one asker's mail (shared-place-mail.ts, askers): reach follows who asked, never who else
-   * is in the room. Owners first (the owner's ruling, 2026-11-18): when mail on the owners' key waits, with
-   * the agent's own work, that job is formed; otherwise the oldest mail no job has been formed for decides
-   * whose job this is. Everything waiting on that key goes with it, mail an ended job left behind included.
-   * Whatever waits on another key is left for a job of its own, formed when this one has ended: jobs in one
-   * conversation run one at a time. Mail an ended job left behind on another key is given back as fresh mail
-   * in the same write, so it is neither carried into this asker's job nor forgotten.
+   * is in the room. Owners first (the owner's ruling, 2026-11-18): when fresh mail on the owners' key waits,
+   * with the agent's own work, that job is formed; otherwise the oldest fresh mail decides whose job this is.
+   * Fresh mail is mail no job has been formed for. Whatever is fresh on another key waits for a job of its
+   * own, formed when this one has ended: jobs in one conversation run one at a time.
    *
-   * And a job on anybody else's key that no machine has taken yet holds no owner behind it. When mail on the
-   * owners' key comes to wait while such a job is still queued, that job is set aside (stopped by loom, with
-   * SET_ASIDE_NOTE, its mail given back as fresh) and the owners' job is formed in the same write, so it is
-   * the one a machine may take. A job a machine has claimed is not interrupted: the owners' mail waits for
-   * it to end. A conversation still has one unended job. A set-aside job that was a retry starts its
-   * attempts again when its mail is next jobbed. */
+   * Mail an ended job left behind (out of attempts, never placed, stopped, parked by a stop word) is never
+   * revived by somebody else. It goes into a job only when its own asker next writes: fresh mail on the same
+   * key takes it along. Mail on another key forms no job from it, and it is never handed back as fresh, so
+   * two askers' failing mail cannot re-job each other with nobody writing.
+   *
+   * One exception, which loom itself makes. A job on anybody else's key that no machine has taken yet holds
+   * no owner behind it: when mail on the owners' key comes to wait while such a job is still queued, that
+   * job is set aside (stopped by loom, with SET_ASIDE_NOTE) and the owners' job is formed in the same write.
+   * Mail of a set-aside job counts as fresh: it is jobbed again after the owners' job with nobody writing,
+   * and the new job takes the set-aside job's place in its chain of attempts, so the count carries on. A job
+   * a machine has claimed is not interrupted. A conversation still has one unended job. */
   admit(conversationId: string): Job | undefined { return this.admission(conversationId).job; }
 
   /** The notices that say why this mail got no job: one for each of the agent's owners, or for the household's
@@ -153,21 +158,25 @@ export class Jobs {
       if (!conversation) throw new Error('Conversation not found');
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
       const waits = () => this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
-      let waiting = waits();
+      const waiting = waits();
+      // The jobs loom set aside for an owner whose mail still waits: that mail starts a job again, with nobody writing.
+      const aside = () => { const bound = [...new Set(waiting.flatMap(item => item.job ? [item.job] : []))];
+        return new Map((bound.length ? this.db.select().from(jobs).where(and(inArray(jobs.id, bound), eq(jobs.state, 'stopped'), eq(jobs.endedNote, SET_ASIDE_NOTE))).all() : []).map(row => [row.id, row])); };
+      let setAside = aside();
+      /** Mail that may start a job: mail no job has been formed for, and mail of a job loom set aside. */
+      const fresh = (item: typeof waiting[number]) => item.job === null || setAside.has(item.job);
       if (existing) {
-        const behind = waiting.filter(item => item.job !== existing.id), held = waiting.filter(item => item.job === existing.id);
+        const behind = waiting.filter(item => item.job !== existing.id && fresh(item)), held = waiting.filter(item => item.job === existing.id);
         // Owners first: a queued job nobody has claimed, on anybody else's key, with owners' mail behind it, is set aside.
-        const key = existing.state === 'queued' && held.length && behind.some(item => item.job === null) ? askers(this.db, { agent: conversation.agent, conversation: conversationId }) : undefined;
-        if (!key || key(held[0].id) === OWNERS_KEY || !behind.some(item => item.job === null && key(item.id) === OWNERS_KEY)) return { job: existing, behind: behind.length > 0 };
-        const at = this.now();
-        this.end(existing, 'stopped', { endedAt: at, endedNote: SET_ASIDE_NOTE });
-        this.db.update(inbox).set({ job: null, changedAt: at }).where(and(eq(inbox.job, existing.id), eq(inbox.state, 'waiting'))).run();
-        waiting = waits();
+        const key = existing.state === 'queued' && held.length && behind.length ? askers(this.db, { agent: conversation.agent, conversation: conversationId }) : undefined;
+        if (!key || key(held[0].id) === OWNERS_KEY || !behind.some(item => key(item.id) === OWNERS_KEY)) return { job: existing, behind: behind.length > 0 };
+        this.end(existing, 'stopped', { endedAt: this.now(), endedNote: SET_ASIDE_NOTE });
+        setAside = aside();
       }
       if (!waiting.length) return {};
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
-      if (!waiting.some(item => item.job === null)) return {};
+      if (!waiting.some(fresh)) return {};
       // A person said stop in this place (stop, below). Until a person speaks there again nothing starts: the
       // notes and firings that were waiting are parked with the stopped job, and one that arrives meanwhile
       // waits with them. Only a bridge's place: a lane's own conversation goes on at its next time.
@@ -176,13 +185,13 @@ export class Jobs {
       const spoke = (item: typeof waiting[number]) => item.fromKind === 'person' || (item.fromKind === 'unknown' && !!this.db.select({ id: bridgeIncoming.id }).from(inboxRefs)
         .innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref)).where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, conversationId), eq(bridgeIncoming.state, 'delivered'),
           or(isNull(bridgeIncoming.bot), eq(bridgeIncoming.bot, false)), or(isNull(bridgeIncoming.webhook), eq(bridgeIncoming.webhook, false)))).get());
-      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !waiting.some(item => item.job === null && spoke(item))) {
+      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !waiting.some(item => fresh(item) && spoke(item))) {
         const last = this.db.select({ state: jobs.state, endedReason: jobs.endedReason }).from(jobs).where(eq(jobs.conversation, conversationId)).orderBy(desc(jobs.queuedAt), desc(sql`${jobs}.rowid`)).get();
         if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
       }
       // Work is about to start for what waits here. First, what was sent on the word of somebody no longer known is dropped.
       const gone = this.wordUnknown(conversation.agent, conversation.member, waiting), mail = waiting.filter(item => !gone.has(item.id));
-      if (!mail.some(item => item.job === null)) return gone.size ? { noticed: true } : {};
+      if (!mail.some(fresh)) return gone.size ? { noticed: true } : {};
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
       // A removed agent keeps its history and its mail, and does not run.
@@ -192,8 +201,11 @@ export class Jobs {
       if (!model) return this.declined(conversation.agent, mail, 'the agent has no model to run on');
       const at = this.now();
       const key = askers(this.db, { agent: conversation.agent, conversation: conversationId });
-      const asked = mail.some(item => key(item.id) === OWNERS_KEY) ? OWNERS_KEY : key(mail.find(item => item.job === null)!.id);
-      const mine = mail.filter(item => key(item.id) === asked), rest = mail.filter(item => key(item.id) !== asked);
+      const starters = mail.filter(fresh), asked = starters.some(item => key(item.id) === OWNERS_KEY) ? OWNERS_KEY : key(starters[0].id);
+      // Everything waiting on that key goes along, what an ended job left behind on it included. Nothing on another key does.
+      const mine = mail.filter(item => key(item.id) === asked), behind = starters.some(item => key(item.id) !== asked);
+      // A job that takes up what loom set aside stands where that job stood among its attempts.
+      const resumed = mine.map(item => item.job ? setAside.get(item.job) : undefined).find(row => row !== undefined);
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
@@ -204,15 +216,14 @@ export class Jobs {
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
         houseRepository: settings.houseRepository, houseFile: settings.houseFile, houseBranch: settings.houseBranch, queuedAt: at,
+        ...(resumed?.retryOf ? { retryOf: resumed.retryOf } : {}),
       }).returning().get();
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
       const waitingHere = and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'));
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(waitingHere, inArray(inbox.id, mine.map(item => item.id)))).run();
-      const left = rest.filter(item => item.job !== null).map(item => item.id);
-      if (left.length) this.db.update(inbox).set({ job: null, changedAt: at }).where(and(waitingHere, inArray(inbox.id, left))).run();
       this.delivery(job.id,'held');
       for (const item of mail) this.mail.resolveSource('notice', `mail-not-admitted:${JSON.stringify([conversation.agent, item.id])}`, 'Work was started');
-      return { job, started: true, ...(rest.length ? { behind: true } : {}) };
+      return { job, started: true, ...(behind ? { behind: true } : {}) };
     }, { behavior: 'immediate' });
   }
 
@@ -363,6 +374,13 @@ export class Jobs {
       const job = this.get(id);
       if (!jobUnended(job.state)) throw new Error('Job has ended');
       const ended = this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
+      // A person ending an owners' job settles that request. Its mail is closed with the reason and does not wait: left
+      // waiting, it would be jobbed again at owners' reach by the next mail on the owners' key, a firing's included,
+      // and a stop would not stay said. A job on anybody else's key keeps its mail, which only that person's next
+      // message takes up. Asked before anything is parked below: what is parked was never this job's request.
+      const own = job.conversation ? this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).all() : [];
+      if (own.length) { const key = askers(this.db, { agent: job.agent, conversation: job.conversation! });
+        if (own.every(item => key(item.id) === OWNERS_KEY)) for (const item of own) this.mail.resolveItem(item.id, STOPPED_NOTE[reason]); }
       // A person said stop where the work is. Mail waiting there that no person sent (a note from another
       // body, a trigger's firing) and that no job has taken would start the next job as if nobody had: it is
       // given to the stopped job, which is what "waits for fresh mail" means for the mail that job took
