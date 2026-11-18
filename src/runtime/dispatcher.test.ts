@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations, inbox, threads } from '../core/data/schema.js';
+import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, bridgeChannels, bridgePeople, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher, UNHELD_NOTE } from './dispatcher.js';
 import { LOOM_EXIT } from './job-exit.js';
@@ -199,21 +199,44 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.jobs.get(job.id)).toMatchObject({ state: 'failed', exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: UNHELD_NOTE });
   expect(UNHELD_NOTE).toBe('Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.');
-  // Its mail starts nothing again by itself; the next message does, and on a harness that can be held the job is claimed with the rules.
+  // Its mail is closed with that reason, so it starts nothing again; the next message does, and on a harness that can be held the job is claimed with the rules.
+  expect(f.db.select().from(inbox).where(eq(inbox.job, job.id)).all()).toMatchObject([{ state: 'resolved', resolution: UNHELD_NOTE }]);
   expect(f.runtime.jobs.admit(incoming.conversation!)).toBeUndefined();
   f.roles[0].harness = 'claude';
   new BridgeIncoming(f.db, f.now).receive({ id: 'm2', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Again', postedAt: f.now(), mentions: [] });
   const second = f.runtime.jobs.admit(incoming.conversation!)!, assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(second.id);
   expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: f.db.select().from(inbox).where(eq(inbox.job, second.id)).all().map(item => item.id).sort(), word: 'others' });
-  // The message the ended job never answered goes to this one with the new one.
-  expect(assignment.run.policy!.mail).toHaveLength(2);
+  // The message the ended job never answered was closed with it, and is not carried into this one.
+  expect(assignment.run.policy!.mail).toHaveLength(1);
   // An owners' job that no harness can run for another reason (a denied tool, on Codex) waits as before: a setting may change.
   f.roles[0].harness = 'codex'; f.runtime.jobs.stop(second.id, 'owner', 'write-off');
   const thread = f.comms.open({ agent: 'art', venue: 'loom', place: 'owners-thread', label: 'thread', member: 'owner' });
   f.comms.send({ toKind: 'agent', to: 'art', conversation: thread.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Owner work' });
   const own = f.runtime.jobs.admit(thread.id)!;
   expect(f.runtime.next('first')).toBeUndefined(); expect(f.runtime.jobs.get(own.id).state).toBe('queued');
+});
+it('settles the mail of a job no harness can hold, so an owner\'s next message there starts an owners\' job that runs', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: 'w', channel: 'room', answers: 'art', botsMayTalk: false }).run();
+  f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'owner-there', member: 'owner' }).run();
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['discord', 'w', 'outside']), tier: 2 }).run();
+  const hear = (id: string, user: string) => new BridgeIncoming(f.db, f.now).receive({ id, connection: 'c', channel: 'room', isDm: false, user, text: 'Work', postedAt: f.now(), mentions: ['bot-art'] });
+  // The agent's only model runs on Codex. A guest writes in a shared place: no harness can hold the job, and it is ended with the plain note.
+  const guest = hear('m1', 'outside'); expect(guest.state).toBe('delivered');
+  const first = f.runtime.jobs.admit(guest.conversation!)!;
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.jobs.get(first.id)).toMatchObject({ state: 'failed', endedNote: UNHELD_NOTE });
+  // The mail that made it anybody else's is closed with that reason: it is carried into no later job.
+  expect(f.db.select().from(inbox).where(eq(inbox.conversation, guest.conversation!)).all()).toMatchObject([{ state: 'resolved', resolution: UNHELD_NOTE }]);
+  // An owner writes in the same conversation: that job works on owners' word and is placed.
+  const owner = hear('m2', 'owner-there'); expect(owner.conversation).toBe(guest.conversation);
+  const second = f.runtime.jobs.admit(owner.conversation!)!, assignment = f.runtime.next('first')!;
+  expect(assignment).toMatchObject({ id: second.id, harness: 'codex' });
+  expect(assignment.run.policy.word).toBe('owners');
+  expect(assignment.run.policy.mail).toHaveLength(1);
 });
 it('passes over a model whose harness would refuse the job for the agent\'s next allowed model', () => {
   const f = fixture();

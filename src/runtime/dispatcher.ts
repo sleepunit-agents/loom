@@ -2,7 +2,8 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
-import { jobRoom } from '../shared-place-mail.js';
+import { lateMailWaits } from '../core/conversations/index.js';
+import { jobRoom, othersMail } from '../shared-place-mail.js';
 import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
@@ -54,7 +55,9 @@ export class Dispatcher {
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
         // it is ended now and says why. Any other job that cannot be placed waits, as before.
-        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE); continue; }
+        // The mail that made it anybody else's is closed with the same reason, so it lowers no later job: an
+        // owner's next message in that conversation starts a job on owners' word, which runs.
+        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job)); continue; }
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
@@ -66,7 +69,7 @@ export class Dispatcher {
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
         const thread = this.currentThread(claimed);
-        if(thread)new Threads(this.db,this.now).working(thread.id,true);
+        if(thread)new Threads(this.db,this.now,lateMailWaits).working(thread.id,true);
         const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
         return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
@@ -124,7 +127,7 @@ export class Dispatcher {
         // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.
         if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
         const thread = this.currentThread(job);
-        if (thread) new Threads(this.db, this.now).working(thread.id, true);
+        if (thread) new Threads(this.db, this.now, lateMailWaits).working(thread.id, true);
       }
       // The worker reports a live process in the state the job is already in; its report moves no job.
       this.jobs.heartbeat(id, box, state);

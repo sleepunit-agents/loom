@@ -374,12 +374,19 @@ export class Jobs {
   }
 
   /** Ends a queued job that can never be placed, at once and with the reason, instead of leaving it to the
-   * queue deadline. Like a job the deadline ends, it is failed by loom and not tried again; its mail waits,
-   * and goes to the job the next fresh mail starts. Whether a job is such a one is the dispatcher's to say (Dispatcher.next). */
-  unplaceable(id: string, note: string): Job | undefined {
+   * queue deadline. Like a job the deadline ends, it is failed by loom and not tried again. `settle` is the
+   * mail that makes it unplaceable (for a job on anybody else's word, the mail that makes it so): that mail
+   * is closed with the same reason, in the same write. Left waiting it would go to the job the next fresh
+   * mail starts (admission marks everything that waits), make that job unplaceable too, and so on for every
+   * later message in the conversation. The rest of its mail waits as before, for that next job. Whether a
+   * job is such a one, and which mail makes it so, is the dispatcher's to say (Dispatcher.next). */
+  unplaceable(id: string, note: string, settle: readonly string[] = []): Job | undefined {
     const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!job || job.state !== 'queued') return undefined;
-    return this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
+    const ended = this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
+    for (const item of this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).all())
+      if (settle.includes(item.id)) this.mail.resolveItem(item.id, note);
+    return ended;
   }
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
