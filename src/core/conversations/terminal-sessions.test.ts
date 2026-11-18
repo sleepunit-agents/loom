@@ -59,5 +59,20 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     db.update(jobs).set({conversation:null}).where(eq(jobs.id,first.job)).run();
     await expect(send({...turn,eventId:'crossed'})).rejects.toThrow('records disagree');
     expect(db.select().from(messages).all()).toHaveLength(1);
+    db.update(jobs).set({conversation:first.conversation}).where(eq(jobs.id,first.job)).run();
+    const resumed={...open,instanceId:'resumed'};
+    await send(resumed);
+    await send({...event,action:'end',instanceId:'old'});
+    expect(db.select().from(jobs).where(eq(jobs.id,first.job)).get()?.state).toBe('running');
+    const childJob=db.select().from(jobs).all().find(j=>j.id!==first.job)!;
+    expect(db.select().from(jobUsage).where(eq(jobUsage.job,childJob.id)).get()?.model).toBeNull();
+    const {CommsMessages}=await import('./messages.js');
+    const comms=new CommsMessages(db,{seal:async()=>Buffer.from('sealed'),open:async()=>'words',hash:()=>'hash'},()=>now);
+    comms.delete(first.thread);
+    await send({...event,action:'end',instanceId:'resumed'});
+    await send({...usage,revision:10,report:{source:'transcript',tokensIn:150}});
+    expect(db.select().from(jobs).where(eq(jobs.id,first.job)).get()?.state).toBe('done');
+    expect(db.select().from(jobUsage).where(eq(jobUsage.job,childJob.id)).get()?.tokensIn).toBe(150);
+    await expect(send(resumed)).rejects.toThrow('deleted');
   } finally { client.close(); }
 });

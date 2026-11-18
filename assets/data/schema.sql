@@ -1305,6 +1305,7 @@ CREATE TABLE `terminal_sessions` (
 	`job` text PRIMARY KEY NOT NULL,
 	`thread` text,
 	`session_id` text NOT NULL,
+	`instance_id` text,
 	`machine` text NOT NULL,
 	`member` text NOT NULL,
 	`agent` text NOT NULL,

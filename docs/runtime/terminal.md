@@ -172,6 +172,7 @@ Unbound terminal credentials continue to work for their existing tools.
 The hook sends an authenticated `POST /api/terminal/session` operation with
 `{id,input}`. Use a fresh operation ID for a new activity and the same ID when
 retrying it. Every input names the machine, harness and harness session ID.
+Installed hooks also send an `instanceId` identifying this CLI process. On resume, the latest open takes over lifecycle reporting. Delayed usage from the previous process can still settle. Deleting the thread erases its words while the process can finish reporting cost and end.
 Loom supplies the member from the binding. Machine control is the trust
 assumption here. Anyone with the credential can report what was typed there.
 

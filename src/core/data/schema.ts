@@ -2003,6 +2003,7 @@ export const terminalSessions = sqliteTable('terminal_sessions', {
   job: text('job').primaryKey().notNull().references(() => jobs.id),
   thread: text('thread').references(() => threads.id, {onDelete:'set null'}),
   sessionId: text('session_id').notNull(),
+  instanceId: text('instance_id'),
   machine: text('machine').notNull().references(() => boxes.id),
   member: text('member').notNull().references(() => members.id),
   agent: text('agent').notNull().references(() => agents.id),
