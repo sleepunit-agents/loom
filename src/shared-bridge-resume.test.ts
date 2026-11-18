@@ -128,9 +128,9 @@ it('writes what was sent with a message only for a body that has file tools to o
  expect(asked).toEqual([]);expect(seen[0]).toBe('IDENTITY\n\nLook at this');
  expect(await f.run('two',(await f.hear('And this')).conversation!,native,keeper().sessions,{reach:'loom',saveAttachments})).toBe(0);
  expect(asked).toEqual([]);
- // A body with the harness's own tools is: for the messages it took, into its own scratch directory.
+ // A body with the harness's own tools, working for its owners, is: for the messages it took, into its own scratch directory.
  const third=await f.hear('And this one');
- expect(await f.run('three',third.conversation!,native,keeper().sessions,{reach:'all',saveAttachments})).toBe(0);
+ expect(await f.run('three',third.conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{people:[],deniedTools:[],word:'owners'}})).toBe(0);
  expect(asked).toHaveLength(1);expect(asked[0].scratch).toBe('/scratch-of-this-body');
  // The one message this job took, by the id loom keeps its files under.
  expect(asked[0].incoming).toEqual([f.db.select().from(s.bridgeIncoming).all().find(row=>row.text==='And this one')!.id]);
@@ -138,7 +138,7 @@ it('writes what was sent with a message only for a body that has file tools to o
  // A body on such a machine whose file tools are among those it is not given (a guest is in the room, and
  // the owner denies guests' bodies Read) is given none either: loom's doors are no way around a denial.
  asked.length=0;
- const denied={people:[{kind:'outside' as const,person:'someone',tier:2 as const}],deniedTools:[{pattern:'Read',guestsOnly:true}],mail:[]};
+ const denied={people:[{kind:'outside' as const,person:'someone',tier:2 as const}],deniedTools:[{pattern:'Read',guestsOnly:true}],mail:[],word:'others' as const};
  expect(await f.run('four',(await f.hear('With a guest')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:denied})).toBe(0);
  expect(asked).toEqual([]);
  // The same denial for guests only, with no guest in the room, takes nothing away.
