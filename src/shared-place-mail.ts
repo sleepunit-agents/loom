@@ -22,8 +22,10 @@ export const UNPOSTABLE_REFUSAL = 'Nothing can be posted there: on Discord a thr
 export const targetPostable = (to: { platform: 'discord' | 'slack'; channel: string; thread?: string }): boolean => postable(to.platform, to) && !(to.platform === 'discord' && to.thread !== undefined);
 /** The most triggers that may stand at once naming one conversation. */
 export const PLACE_TRIGGERS_MAX = 10;
-/** The least time between two firings of a repeating trigger set from a shared place. */
-export const SHARED_PLACE_REPEAT_MIN_MS = 3_600_000;
+/** The hour, said once: the least time between two listed times of a repeating trigger set on the word of
+ * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
+ * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */
+export const WORD_REPEAT_MIN_MS = 3_600_000;
 /** A chain of hand-offs this long, and each further one this long, is told to the household's owners. It refuses nothing. */
 export const CHAIN_NOTICE_EVERY = 25;
 
@@ -68,6 +70,20 @@ export function stillKnown(db: DataDatabase, agent: string, who: Asker): boolean
   if (who.kind === 'member') return inHousehold({ kind: 'member', id: who.id }, sharedSharing(db));
   if (who.kind === 'agent') return who.id === agent && !db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, agent)).get()?.removedAt;
   return !!db.select({ tier: agentPeople.tier }).from(agentPeople).where(and(eq(agentPeople.agent, agent), eq(agentPeople.person, who.id))).get();
+}
+/** The reach of one person's word for this agent, as it stands now: the agent itself is its own work; a
+ * household owner and a member who has the agent are `owners`; anybody else is `others`. */
+export function wordReach(db: DataDatabase, agent: string, who: Asker): Woke {
+  if (who.kind === 'agent') return 'own';
+  const sharing = sharedSharing(db);
+  return who.kind === 'member' && (isHouseholdOwner({ kind: 'member', id: who.id }, sharing) || membersWithAgent(agent, sharing).includes(who.id)) ? 'owners' : 'others';
+}
+/** Why mail on this word is not delivered into a conversation that is one member's private one, or nothing:
+ * only that member's word, and the agent's own work (no word at all), go in. The one statement, asked where a
+ * firing is made and where a note is admitted; the doors ask it early so the caller hears why. */
+export function privateRefusal(member: string | null, word: Asker | undefined): string | undefined {
+  if (member === null || !word || word.kind === 'agent' || (word.kind === 'member' && word.id === member)) return undefined;
+  return `its conversation is private to the member ${member}, and ${named(word)}, who asked for it, is not that member`;
 }
 /** On whose word a job is working, read from its mail as the worker reads who is in the room
  * (runtime/body-policy.ts): every person its mail is from, or was sent on the word of, and the member a
@@ -136,7 +152,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         const closed = placeClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
         // One member's private conversation is handed to only on that member's word, or by the agent's own work.
         const on = jobWord(db, work.job);
-        if (cv.member !== null && !(on.woke === 'own' || (on.person?.kind === 'member' && on.person.id === cv.member))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
+        if (cv.member !== null && (on.woke !== 'own' && !on.person || privateRefusal(cv.member, on.person))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
         there = cv;
         conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
       } else {

@@ -102,7 +102,7 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   (`tempo.runNow`): it is awake and does the work now. Its trigger carries its
   own words: naming a `file` of the household's repository is refused on
   `tempo.set` and `tempo.edit`. A repeating one lists times at least an hour
-  apart (`SHARED_PLACE_REPEAT_MIN_MS`) and watches no event; that is asked
+  apart (`WORD_REPEAT_MIN_MS`) and watches no event; that is asked
   when it is set and when its times change, never to stop, start or reword one.
 - An owner, and the agent in its own thread, see, reword and stop these like
   any trigger. A body working for anybody but owners reads its agent's triggers

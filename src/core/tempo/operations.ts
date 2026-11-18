@@ -27,7 +27,7 @@ export interface TempoOperationOptions {
   /** Why this caller may not set, reword, stop, start or run this trigger because of whose word its job works on, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
-  placeRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null }): string | undefined;
+  placeRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null; instructions?: string | null }): string | undefined;
   /** Why a trigger may not be turned on now (its conversation already has as many standing as it may). */
   standRefusal?(trigger: { conversation?: string | null }): string | undefined;
   /** Who asks for a trigger that names a conversation, once this caller has changed its words, file or times. */

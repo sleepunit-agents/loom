@@ -8,7 +8,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
-import { named, stillKnown } from '../shared-place-mail.js';
+import { named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
@@ -108,15 +108,17 @@ export class Jobs {
    * person is no longer known to the agent (shared-place-mail.ts, stillKnown: the one meaning, asked of a
    * trigger's asker as it fires) it starts nothing. It is closed with that reason, and the people the
    * agent's notices go to are told. Asked as a job is about to start, of everything then waiting: mail
-   * parked by a stop word is asked about when it is released, not when it is parked. A brief from another
+   * parked by a stop word is asked about when it is released, not when it is parked. The same is asked of a
+   * conversation that is one member's private one: mail on anybody else's word is not delivered into it. A brief from another
    * agent is not this: its word is known to the agent that sent it, and counts for least reach (jobWord). */
-  private wordUnknown(agent: string, mail: readonly (typeof inbox.$inferSelect)[]): Set<string> {
+  private wordUnknown(agent: string, member: string | null, mail: readonly (typeof inbox.$inferSelect)[]): Set<string> {
     const gone = new Set<string>();
     for (const item of mail) {
       if (!item.onWordKind || !item.onWord || !(item.source === 'trigger' || (item.source === 'handoff' && item.fromKind === 'agent' && item.fromId === agent))) continue;
       const who = { kind: item.onWordKind, id: item.onWord };
-      if (stillKnown(this.db, agent, who)) continue;
-      const why = `${named(who)}, on whose word it was sent, is no longer known to ${agent}`;
+      // And into one member's private conversation only that member's word goes (the agent's own work has no word).
+      const why = stillKnown(this.db, agent, who) ? privateRefusal(member, who)?.replace('who asked for it', 'on whose word it was sent') : `${named(who)}, on whose word it was sent, is no longer known to ${agent}`;
+      if (!why) continue;
       this.mail.resolveItem(item.id, why); gone.add(item.id);
       for (const member of agentsPeople(agent, sharedSharing(this.db))) this.mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `word-unknown:${item.id}`, fromKind: 'unknown',
         words: `${item.source === 'trigger' ? 'A firing of a schedule' : `A note between bodies of ${agent}`} in conversation ${item.conversation} was dropped and started no work: ${why}.`, refs: [agent] });
@@ -150,7 +152,7 @@ export class Jobs {
         if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
       }
       // Work is about to start for what waits here. First, what was sent on the word of somebody no longer known is dropped.
-      const gone = this.wordUnknown(conversation.agent, waiting), mail = waiting.filter(item => !gone.has(item.id));
+      const gone = this.wordUnknown(conversation.agent, conversation.member, waiting), mail = waiting.filter(item => !gone.has(item.id));
       if (!mail.some(item => item.job === null)) return gone.size ? { noticed: true } : {};
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();

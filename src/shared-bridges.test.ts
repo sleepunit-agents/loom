@@ -13,7 +13,9 @@ import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX} from './shared-place-mail.js';
+import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
+import {triggerLog} from './core/data/schema.js';
+import {WOKEN_BY_MAIL_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
@@ -870,7 +872,75 @@ it('holds a shared place\'s body to the shared-place bounds only when it works f
  // Least reach wins in a mixed batch: with somebody loom cannot name beside her, every bound is back.
  f.root.writes.run(()=>{const item=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'notice',sourceId:'somebody',fromKind:'unknown',words:'Me too'});f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item.id)).run();});
  expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv})).toEqual({woke:'others'});
- for(const [name,trigger,message] of asks().slice(1))expect(await f.call('tempo','set',trigger),name).toMatchObject({status:403,body:{message}});
+ // (A firing is among this job's mail too, so what would fire into its own conversation is refused for that.)
+ for(const [name,trigger] of asks())expect((await f.call('tempo','set',trigger)).status,name).toBe(403);
  expect((await f.call('tempo','stop',{id:outside.id})).status).toBe(403);
  void work;
+});
+
+it('delivers mail into one member\'s private conversation only on that member\'s word or as the agent\'s own work: at the doors, at the firing and at admission',async()=>{
+ const {f,cv,once}=await sharedPlace(),all=runnable(f),stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'kim',agent:'art'}]).run();});
+ const kims=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','DKIM',null,['member','kim']]),label:'kim',member:'kim',direct:true}).id;
+ const own=once({conversation:kims});expect((await f.call('tempo','set',own,token.other)).status).toBe(200);
+ const row=()=>f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()!,fired=()=>f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all();
+ // A household owner rewords it, as a person and through a body woken by the owner: refused, and the asker stays.
+ expect(await f.call('tempo','edit',{id:own.id,instructions:'The owner\'s words'},token.owner)).toMatchObject({status:403,body:{message:PRIVATE_PLACE_REFUSAL}});
+ f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());
+ expect(await f.call('tempo','edit',{id:own.id,instructions:'The owner\'s words'})).toMatchObject({status:403,body:{message:PRIVATE_PLACE_REFUSAL}});
+ expect(row()).toMatchObject({instructions:'Post the numbers',askedByKind:'agent',askedBy:'art'});
+ // The owner may move its times: the words and the asker are as they were.
+ f.root.writes.run(()=>f.db.update(triggers).set({times:'09:00',lifespan:'until-stopped'}).where(eq(triggers.id,own.id)).run());
+ expect((await f.call('tempo','edit',{id:own.id,times:'10:00'},token.owner)).status).toBe(200);expect(row()).toMatchObject({askedByKind:'agent',instructions:'Post the numbers'});
+ // With the door out of the way (the row written as a reword by the owner would leave it), the firing holds on
+ // its own: nothing is delivered into Kim's conversation, the trigger is stopped, and the agent's people are told.
+ f.root.writes.run(()=>f.db.update(triggers).set({askedByKind:'member',askedBy:'owner',instructions:'The owner\'s words'}).where(eq(triggers.id,own.id)).run());
+ expect((await f.call('tempo','runNow',{id:own.id},token.other)).status).toBe(200);
+ expect(fired()).toEqual([]);expect(row()).toMatchObject({enabled:false,state:'stopped'});
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().map(item=>item.words)).toContainEqual(expect.stringContaining('its conversation is private to the member kim, and the member owner, who asked for it, is not that member'));
+ // On Kim's own word it fires there.
+ f.root.writes.run(()=>f.db.update(triggers).set({askedByKind:'member',askedBy:'kim',enabled:true,state:'standing'}).where(eq(triggers.id,own.id)).run());
+ expect((await f.call('tempo','runNow',{id:own.id},token.other)).status).toBe(200);expect(fired()).toMatchObject([{conversation:kims,onWordKind:'member',onWord:'kim'}]);
+ f.root.writes.run(()=>f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'trigger')).run());
+ // A note is asked the same at admission: on the owner's word it is dropped with a notice, on Kim's it starts her conversation's job.
+ const note=(id:string,on:string)=>{let item='';f.root.writes.run(()=>{item=f.root.services.conversations.send({conversation:kims,toKind:'agent',to:'art',source:'handoff',sourceId:id,fromKind:'agent',fromId:'art',words:null as never,onWordKind:'member',onWord:on,chain:JSON.stringify([cv]),chainStartedAt:stamp}).id;});return item;};
+ const owners=note('owners','owner');expect(all.admission(kims)).toEqual({noticed:true});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,owners)).get()).toMatchObject({state:'resolved',resolution:expect.stringContaining('private to the member kim')});
+ note('kims','kim');expect(all.admission(kims)).toMatchObject({started:true,job:{conversation:kims,member:'kim'}});
+});
+it('ends a loop of firings on a guest\'s word: a job a firing or a note woke schedules nothing, and such firings into one conversation come an hour apart',async()=>{
+ const {f,cv,once}=await sharedPlace();
+ expect(WORD_REPEAT_MIN_MS).toBe(3_600_000);
+ const mine=once(),second=once();for(const trigger of [mine,second])expect((await f.call('tempo','set',trigger)).status).toBe(200);
+ const fired=()=>f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all(),row=(id:string)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get()!;
+ // The first fires, and its firing is the job's mail.
+ expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);expect(fired()).toHaveLength(1);
+ const first=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'slack')).run();f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.source,'trigger')).run();});
+ // The two ways round the hourly rule: move a trigger to a minute ahead, or set a fresh one a minute ahead each time. Neither, nor a start or a run.
+ const soon=new Date(f.clock.now()+60_000).toISOString();
+ expect(await f.call('tempo','edit',{id:second.id,times:soon})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(await f.call('tempo','set',once({times:soon}))).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:second.id,instructions:'Again'})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ for(const action of ['start','runNow'])expect((await f.call('tempo',action,{id:second.id})).status,action).toBe(403);
+ expect(row(second.id)).toMatchObject({times:second.times,instructions:'Post the numbers'});
+ // It may still stop what the same person asked for.
+ expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);
+ // With the doors out of the way (the row moved to a minute ahead, as the edit would leave it), the firing itself
+ // holds: a second firing on the guest's word inside the hour is not delivered and not lost. It is put off to the hour.
+ f.root.writes.run(()=>f.db.update(triggers).set({times:soon,nextDueAt:soon}).where(eq(triggers.id,second.id)).run());
+ f.clock.advance(60_000);f.root.services.tempo.triggers.tick();
+ const mark=new Date(Date.parse(first)+WORD_REPEAT_MIN_MS).toISOString();
+ expect(fired()).toHaveLength(1);expect(row(second.id)).toMatchObject({enabled:true,state:'standing',nextDueAt:mark,lastFiredAt:null});
+ // Fired again by hand meanwhile, it is the one put-off firing still.
+ expect((await f.call('tempo','runNow',{id:second.id},token.other)).status).toBe(200);
+ expect(fired()).toHaveLength(1);expect(row(second.id).nextDueAt).toBe(mark);
+ expect(f.db.select().from(triggerLog).all().filter(log=>log.trigger===second.id&&log.event==='put off')).toMatchObject([{note:mark}]);
+ // At the hour it is delivered, once.
+ f.clock.advance(WORD_REPEAT_MIN_MS);
+ expect(fired()).toHaveLength(2);expect(row(second.id)).toMatchObject({enabled:false,state:'fired'});
+ // An owner's trigger there is held to no hour.
+ f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
+ const owners=once({ownerKind:'member',owner:'owner'});expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:owners.id},token.owner)).status).toBe(200);expect(fired()).toHaveLength(3);
 });
