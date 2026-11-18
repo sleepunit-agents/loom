@@ -53,9 +53,11 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
       .innerJoin(threads,eq(threads.id,terminalSessions.thread))
       .innerJoin(conversations,eq(conversations.id,threads.conversation))
       .innerJoin(messages,and(eq(messages.thread,threads.id),eq(messages.run,terminalSessions.job)))
-      .where(and(eq(terminalSessions.member,viewer.id),eq(terminalSessions.agent,agent.id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt),
+      .where(and(eq(jobs.conversation,threads.conversation),eq(jobs.box,terminalSessions.machine),
+        eq(jobs.agent,terminalSessions.agent),eq(jobs.member,terminalSessions.member),eq(jobs.startedByKind,'terminal'),
+        eq(terminalSessions.member,viewer.id),eq(terminalSessions.agent,agent.id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt),
         eq(conversations.member,viewer.id),eq(conversations.agent,agent.id),eq(conversations.venue,'terminal'),
-        eq(jobs.state,'running'),sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`,isNull(threads.archivedAt),
+        eq(jobs.state,'running'),sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`,
         eq(messages.sender,viewer.id),eq(messages.kind,'message'),isNotNull(messages.words))).all() : [];
     const days = commsKeepDays(db);
     const candidates: Evidence[] = retained.flatMap(({row,conversation,machine}) =>

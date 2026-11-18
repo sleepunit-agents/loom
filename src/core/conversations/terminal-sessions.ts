@@ -3,6 +3,7 @@ import { and, eq, inArray, lte } from 'drizzle-orm';
 import type { TerminalEvent } from '../../shared-terminal-input.js';
 import type { DataDatabase } from '../data/database.js';
 import { jobs, jobUsage, terminalRuns, terminalSessions } from '../data/schema.js';
+import { OperationError } from '../operations/index.js';
 import { CommsMessages } from './messages.js';
 import type { WordsKey } from './words.js';
 
@@ -15,8 +16,7 @@ function finish(db: DataDatabase, parent: string, state: 'done' | 'lost', at: st
   const group = db.select({ job: terminalRuns.job }).from(terminalRuns).where(eq(terminalRuns.parent,parent));
   const ended = db.update(jobs).set({state,endedAt:at}).where(and(inArray(jobs.id,group),eq(jobs.state,'running'))).returning().all();
   for (const job of ended) {
-    const wallMs = job.claimedAt ? Math.max(0, Date.parse(at) - Date.parse(job.claimedAt)) : null;
-    db.insert(jobUsage).values({job:job.id,source:'none',harness:job.harness,model:job.model || null,wallMs}).onConflictDoNothing().run();
+    db.insert(jobUsage).values({job:job.id,source:'none',harness:job.harness,model:job.model || null}).onConflictDoNothing().run();
   }
 }
 
@@ -39,7 +39,7 @@ export class TerminalSessions {
 
   /** Only sealing runs asynchronously. The caller rechecks the grant before the returned commit. */
   async prepare(scope: TerminalScope, event: TerminalEvent) {
-    if (scope.machine !== event.machine) throw new Error('Terminal machine differs from its credential');
+    if (scope.machine !== event.machine) throw new OperationError('denied','Terminal machine differs from its credential');
     const words = event.action === 'turn' ? await this.key.seal(event.words) : null;
     return () => this.db.transaction(() => {
       const at = this.now();
@@ -47,27 +47,33 @@ export class TerminalSessions {
         eq(terminalSessions.agent,scope.agent),eq(terminalSessions.member,scope.member),eq(terminalSessions.harness,event.harness),
         eq(terminalSessions.sessionId,event.sessionId))).get();
       if (!session) {
-        if (event.action !== 'open') throw new Error('Terminal session has not opened');
+        if (event.action !== 'open') throw new OperationError('conflict','Terminal session has not opened');
         session = this.open(scope,event,at);
       }
-      if (!session.thread) throw new Error('Terminal thread was deleted');
+      if (!session.thread) throw new OperationError('conflict','Terminal thread was deleted');
       const thread = this.messages.threads.thread(session.thread);
       const parent = this.db.select().from(jobs).where(eq(jobs.id,session.job)).get()!;
-      const result = {conversation:thread.conversation,thread:thread.id,job:parent.id};
-      if (parent.state !== 'running') {
-        if (event.action === 'end') {
-          if (parent.state === 'lost') this.db.update(jobs).set({state:'done'}).where(eq(jobs.id,parent.id)).run();
-          return result;
-        }
-        if (event.action !== 'open' && parent.state !== 'lost') throw new Error('Terminal session has ended');
-        this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at}).where(eq(jobs.id,parent.id)).run();
+      const cv = this.messages.threads.conversations.conversation(thread.conversation);
+      if (cv.venue !== 'terminal' || cv.member !== scope.member || cv.agent !== scope.agent ||
+          parent.startedByKind !== 'terminal' || parent.box !== scope.machine || parent.member !== scope.member ||
+          parent.agent !== scope.agent || parent.conversation !== cv.id || parent.harness !== event.harness)
+        throw new Error('Terminal records disagree');
+      const result = {conversation:cv.id,thread:thread.id,job:parent.id};
+      if (event.action === 'usage') {
+        // A reporter may finish reading a large transcript after the harness has exited.
+        this.usage(parent,event,at);
+        return result;
       }
-      if (event.action === 'end') finish(this.db,parent.id,'done',at);
-      else {
-        if (event.action === 'turn') this.messages.recordObserved(thread.id,event.role,event.eventId,words!,parent.id);
-        if (event.action === 'usage') this.usage(parent,event,at);
-        this.db.update(jobs).set({heardAt:at}).where(eq(jobs.id,parent.id)).run();
+      if (event.action === 'end') {
+        if (parent.state === 'running') finish(this.db,parent.id,'done',at);
+        else if (parent.state === 'lost') this.db.update(jobs).set({state:'done'}).where(eq(jobs.id,parent.id)).run();
+        return result;
       }
+      if (parent.state !== 'running' && parent.state !== 'lost' && event.action !== 'open')
+        throw new OperationError('conflict','Terminal session has ended');
+      if (event.action === 'turn' && !this.messages.recordObserved(thread.id,event.role,event.eventId,words!,parent.id))
+        return result;
+      this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at}).where(eq(jobs.id,parent.id)).run();
       return result;
     });
   }
@@ -87,14 +93,20 @@ export class TerminalSessions {
 
   private usage(parent: Job, event: Extract<TerminalEvent,{action:'usage'}>, at: string) {
     const run = this.db.select().from(terminalRuns).where(and(eq(terminalRuns.parent,parent.id),eq(terminalRuns.runId,event.runId))).get();
-    if (run && event.revision <= run.revision) return;
+    if (run) {
+      const prior = this.db.select().from(jobs).where(eq(jobs.id,run.job)).get();
+      if (!prior || prior.startedByKind !== 'terminal' || prior.member !== parent.member || prior.agent !== parent.agent ||
+          prior.box !== parent.box || (event.runId === 'main' ? prior.id !== parent.id : prior.id === parent.id || prior.conversation !== null))
+        throw new Error('Terminal run records disagree');
+      if (event.revision <= run.revision) return;
+    }
     const id = run?.job ?? 'job-'+randomUUID();
     const report = event.report;
     if (!run) {
       this.db.insert(jobs).values({id,member:parent.member,agent:parent.agent,box:parent.box,
-        title:event.description || 'Terminal subagent',brief:'',state:'running',model:report.model ?? parent.model,harness:parent.harness,
+        title:event.description || 'Terminal subagent',brief:'',state:parent.state,endedAt:parent.endedAt,model:report.model ?? parent.model,harness:parent.harness,
         startedByKind:'terminal',startedBy:parent.startedBy,houseRepository:'',houseFile:'',houseBranch:'',
-        queuedAt:at,claimedAt:at,heardAt:at}).run();
+        queuedAt:parent.endedAt ?? at,claimedAt:parent.endedAt ?? at,heardAt:parent.endedAt ?? at}).run();
       this.db.insert(terminalRuns).values({job:id,parent:parent.id,runId:event.runId,revision:event.revision}).run();
     } else this.db.update(terminalRuns).set({revision:event.revision}).where(eq(terminalRuns.job,id)).run();
     const values = {source:report.source,tokensIn:report.tokensIn ?? null,tokensOut:report.tokensOut ?? null,
@@ -102,6 +114,6 @@ export class TerminalSessions {
       toolCalls:report.toolCalls ?? null,tools:report.tools ?? null,largestContext:report.largestContext ?? null,
       wallMs:report.wallMs ?? null,harness:parent.harness,model:report.model ?? (parent.model || null)};
     this.db.insert(jobUsage).values({job:id,...values}).onConflictDoUpdate({target:jobUsage.job,set:values}).run();
-    this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at,...(id !== parent.id && event.description ? {title:event.description} : {}),...(report.model ? {model:report.model} : {})}).where(eq(jobs.id,id)).run();
+    this.db.update(jobs).set({...(id !== parent.id ? {state:parent.state,endedAt:parent.endedAt,heardAt:parent.endedAt ?? at} : {}),...(id !== parent.id && event.description ? {title:event.description} : {}),...(report.model ? {model:report.model} : {})}).where(eq(jobs.id,id)).run();
   }
 }

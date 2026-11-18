@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
@@ -41,12 +42,20 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     now = '2026-11-18T00:16:00.000Z';
     expect(expireTerminalSessions(db,now)).toBe(1);
     expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','lost']);
+    await send(turn);
+    await send(usage);
+    expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','lost']);
     expect(await send({...event,action:'heartbeat'})).toEqual(first);
     await send({...event,action:'end'});
     await expect(send({...event,action:'heartbeat'})).rejects.toThrow('ended');
+    await send({...usage,revision:3,report:{source:'transcript',tokensIn:79}});
+    expect(db.select().from(jobs).all().every(j=>j.state !== 'running')).toBe(true);
     expect(await send(open)).toEqual(first);
-    await send({...usage,revision:3,report:{source:'transcript',tokensIn:80}});
+    await send({...usage,revision:4,report:{source:'transcript',tokensIn:80}});
     expect(db.select().from(jobUsage).all().find(r => r.tokensIn === 80)).toBeTruthy();
     expect(db.select().from(jobs).all()).toHaveLength(2);
+    db.update(jobs).set({conversation:null}).where(eq(jobs.id,first.job)).run();
+    await expect(send({...turn,eventId:'crossed'})).rejects.toThrow('records disagree');
+    expect(db.select().from(messages).all()).toHaveLength(1);
   } finally { client.close(); }
 });

@@ -70,15 +70,17 @@ export class CommsMessages {
   }
 
   /** A turn already delivered in the terminal. Record it without queueing another delivery. */
-  recordObserved(thread: string, role: 'member' | 'agent', clientId: string, words: Buffer, run: string): Message {
+  recordObserved(thread: string, role: 'member' | 'agent', clientId: string, words: Buffer, run: string): boolean {
     return this.db.transaction(() => {
       const { cv } = this.context(thread);
       const sender = role === 'member' ? cv.member : cv.agent;
       if (!sender) throw new Error('A private thread is required');
-      return this.retry(thread, sender, clientId) ?? this.append({
+      if (this.retry(thread, sender, clientId)) return false;
+      this.append({
         thread, sender, clientId, kind: role === 'member' ? 'message' : 'reply', words, run,
         delivery: null,
       }, []);
+      return true;
     });
   }
 

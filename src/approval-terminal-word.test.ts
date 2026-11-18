@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
 import { TerminalSessions } from './core/conversations/terminal-sessions.js';
-import { boxes, members, messages } from './core/data/schema.js';
+import { boxes, members, messages, jobs } from './core/data/schema.js';
 
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const done of cleanup.splice(0).reverse())await done();});
@@ -13,7 +13,7 @@ it('attaches only a unique retained human turn from the signing owner’s open t
   const key={machine:'box',sessionId:'session',harness:'claude'};
   const scope={machine:'box',agent:'art',member:'alice'};
   const send=async(event:Parameters<typeof sessions.prepare>[1])=>(await sessions.prepare(scope,event))();
-  const {conversation}=await send({...key,action:'open',cwd:'/src',model:null});
+  const {conversation,job}=await send({...key,action:'open',cwd:'/src',model:null});
   const quote='Apply the fixture';
   await send({...key,action:'turn',role:'agent',eventId:'reply',words:quote});
   const calls=new Map<string,()=>Promise<Response>>();
@@ -43,6 +43,9 @@ it('attaches only a unique retained human turn from the signing owner’s open t
   f.db.update(boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(boxes.id,'box')).run();
   expect(await answer('revoked-machine')).toContain('unverified');
   f.db.update(boxes).set({revokedAt:null}).where(eq(boxes.id,'box')).run();
+  f.db.update(jobs).set({member:'bob'}).where(eq(jobs.id,job)).run();
+  expect(await answer('crossed-parent')).toContain('unverified');
+  f.db.update(jobs).set({member:'alice'}).where(eq(jobs.id,job)).run();
   await send({...key,action:'end'});
   expect(await answer('ended')).toContain('unverified');
 });

@@ -154,7 +154,7 @@ prepared at creation.
 
 ### Answering an approval on the owner's word
 
-An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or `deny`, and optional `onWord: {venue: "terminal", through: "art", quote: "..."}`. The terminal attribution is unverified. Omitting it gives the ordinary owner answer.
+An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or `deny`, and optional `onWord: {venue: "terminal", through: "art", quote: "..."}`. A unique retained human turn in an open terminal session for the signing owner and named agent supplies the conversation, turn and machine. Missing, unreadable or ambiguous words leave an unverified attribution. Omitting it gives the ordinary owner answer.
 
 A body working on its owners' word can answer with `onWord: {quote}` when exactly one eligible message in its credential's job contains the quote. If several match, quote a longer passage. A body that knows the inbox item can still use `onWord: {item, quote}` to name it directly. Loom checks a human bridge message against the venue link or reads the signed-in member's Comms message. The writer must still be a household owner and able to answer the card. The quote is 1–500 characters, copied exactly. One message can support multiple cards, including cards filed by the same agent. Card-specific checks, such as a merge head still matching, apply.
 
@@ -191,7 +191,7 @@ the transcript. Tool arguments, output, and intermediate reasoning stay out
 of the report.
 
 A session ages out after fifteen minutes without a heartbeat or another
-accepted activity. This allows quiet stretches during an answer and bounds
+submitted turn or open. Usage updates may arrive after end and do not renew presence. This allows quiet stretches during an answer and bounds
 how long a crashed terminal appears live. An idle terminal can disappear and
 reappear on its next activity. Ended sessions can resume with the same
 harness session ID. Control of the process stays on its machine.
