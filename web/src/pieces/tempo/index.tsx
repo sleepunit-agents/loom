@@ -1,3 +1,4 @@
+import { useDataQuery } from '../../data/graphql';
 import { MachineAccess } from './machine-access';
 import { TempoFiringFailure, type TempoActions } from './actions';
 import { CreateTrigger } from './create';
@@ -68,6 +69,12 @@ export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSna
   return <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} />;
 }
 
+function ApprovedWords({ id }: { id: string }) {
+  const query = useDataQuery<{ tempoMachineWordsMatch: boolean | null }>('query ApprovedWords($id:String!){tempoMachineWordsMatch(id:$id)}', { id });
+  const match = query.status === 'live' ? query.data?.tempoMachineWordsMatch : undefined;
+  return <div><dt>Approved words</dt><dd>{match === true ? 'Match at last check' : match === false ? 'Changed since approval' : 'Comparison unavailable'}</dd></div>;
+}
+
 function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
@@ -82,6 +89,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       <div><dt>Target</dt><dd>{target(trigger)}</dd></div>
       {trigger.machine && <div><dt>Requested machine</dt><dd>{trigger.machineRow?.name ?? trigger.machine}</dd><dt>Approval record</dt><dd>{trigger.machineApproval ?? 'None'}</dd></div>}
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
+      {trigger.machineApproval && <ApprovedWords id={trigger.id} />}
       {trigger.machineApprovalRow?.decidedBy && <div><dt>Allowed by</dt><dd>{trigger.machineApprovalRow.decidedBy}</dd></div>}
       {trigger.machineApprovalRow?.decidedAt && <div><dt>Allowed at</dt><dd>{time(trigger.machineApprovalRow.decidedAt)}</dd></div>}
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}

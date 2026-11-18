@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3';
-import { expect,it } from 'vitest';
+import { expect,it,vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { household, members, agents, tempoSettings } from '../data/schema.js';
+import { createHash } from 'node:crypto';
+import { household, members, agents, tempoSettings, boxes, triggers, approvals } from '../data/schema.js';
 import { tempoQueryFields } from './queries.js';
 it('projects only the timezone and the caller\'s own timings to member/agent schemas and gives no value to other callers',()=>{
  const client=new Database(':memory:'),db=createDataSchema(client);
@@ -19,7 +20,7 @@ it('projects only the timezone and the caller\'s own timings to member/agent sch
    expect(tempoQueryFields(db,viewer).tempoTimezone.resolve()).toBeNull();expect(tempoQueryFields(db,viewer).tempoTimings.resolve()).toBeNull();
   }
   for(const kind of ['runner','service'] as const)expect(tempoQueryFields(db,{kind,id:'caller'}).tempoTimezone.resolve()).toBeNull();
-  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoTimezone','tempoTimings']);
+  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoTimezone','tempoTimings','tempoMachineWordsMatch']);
  } finally {client.close();}
 });
 it('reads the caller\'s own timings, with the defaults until it has changed one, and never another caller\'s',()=>{
@@ -32,5 +33,30 @@ it('reads the caller\'s own timings, with the defaults until it has changed one,
   expect(tempoQueryFields(db,{kind:'agent',id:'art'}).tempoTimings.resolve()).toEqual({settleSeconds:5,dimDays:1,muteDays:7});
   expect(tempoQueryFields(db,{kind:'agent',id:'sam'}).tempoTimings.resolve()).toBeNull();
   for(const kind of ['runner','service'] as const)expect(tempoQueryFields(db,{kind,id:'sam'}).tempoTimings.resolve()).toBeNull();
+ } finally {client.close();}
+});
+
+it('checks current machine words only for a visible trigger with an approved digest', () => {
+ const client = new Database(':memory:'), db = createDataSchema(client);
+ try {
+  const at = '2026-11-15T00:00:00Z';
+  db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(boxes).values({ id: 'b', name: 'Loom', owner: 'sam', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  db.insert(approvals).values({ id:'a', kind:'setting', target:'t', what:'Machine', why:'Run', agent:'art', actingFor:'sam', askedFrom:'tempo', state:'used', minutes:1, ask:'Allow?', ifYes:'Allow', ifNo:'Stop', details:'', askedAt:at }).run();
+  db.insert(triggers).values({ id:'t', ownerKind:'agent', owner:'art', sourceKind:'time', lifespan:'once', targetKind:'inbox', toKind:'agent', to:'art', file:'lane.md', note:'Check', enabled:true, state:'standing', createdAt:at, changedAt:at, machine:'b', machineApproval:'a', machineWords:createHash('sha256').update('é\r\n').digest('hex') }).run();
+  const read = vi.fn(() => 'é\r\n');
+  const match = (id: string, member: string) => tempoQueryFields(db, {kind:'member',id:member},read).tempoMachineWordsMatch.resolve(null,{id});
+  expect(match('t','gone')).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+  expect(match('t','sam')).toBe(true);
+  read.mockReturnValue('é\n');
+  expect(match('t','sam')).toBe(false);
+  read.mockImplementation(() => {throw Error('Private path');});
+  expect(match('t','sam')).toBeNull();
+  db.update(triggers).set({machineApproval:null,machineWords:null}).where(eq(triggers.id,'t')).run();
+  read.mockClear();
+  expect(match('t','sam')).toBeNull();
+  expect(read).not.toHaveBeenCalled();
  } finally {client.close();}
 });
