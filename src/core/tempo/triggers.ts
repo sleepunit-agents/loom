@@ -398,6 +398,13 @@ export class TriggerEngine {
   close() { this.closed = true; this.cancel?.(); }
 }
 
+/** One more row of a trigger's log, written for it by the composition in the write that sets or changes the trigger:
+ * what the engine itself does not know to say (src/shared-place-triggers.ts, a come-back that follows another). */
+export function logTrigger(db: DataDatabase, at: string, trigger: string, event: string, note: string): void {
+  const seq = (db.select({ seq: max(triggerLog.seq) }).from(triggerLog).get()?.seq ?? 0) + 1;
+  db.insert(triggerLog).values({ seq, trigger, at, event, note }).run();
+}
+
 /** Every trigger filed under one project is filed under another: for a merge of the two (shared-projects.ts). */
 export function refileTriggers(db: DataDatabase, from: string, into: string): void {
   db.update(triggers).set({ project: into }).where(eq(triggers.project, from)).run();

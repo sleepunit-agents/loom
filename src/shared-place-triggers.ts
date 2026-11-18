@@ -1,12 +1,12 @@
 /** A trigger that names a conversation (`triggers.conversation`): its firing is mail from the schedule in
  * that Discord or Slack conversation, starting a job there like any message, on the word of whoever asked
  * for it. Set, bounded and fired by the rules here; who may is policy.ts's (maySetTrigger, maySchedule). */
-import { and, desc, eq, inArray, max } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggerLog, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { z } from 'zod';
-import { editsWords, wordsChanged, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
+import { editsWords, logTrigger, wordsChanged, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
 import { nextTime } from './core/tempo/calendar.js';
 import { householdTimezone } from './core/data/household-settings.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type OnWord, type Viewer } from './policy.js';
@@ -82,8 +82,7 @@ export function continueComeBack(db: DataDatabase, now: string, work: Work | und
   const woke = db.select({ ref: inboxRefs.ref }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id)).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'trigger'))).all()
     .filter(row => row.ref !== trigger && db.select({ id: triggers.id }).from(triggers).where(eq(triggers.id, row.ref)).get()).map(row => comeBack(db, row.ref)).sort((a, b) => b.count - a.count)[0];
   if (!woke || comeBack(db, trigger).count > woke.count) return;
-  const seq = (db.select({ seq: max(triggerLog.seq) }).from(triggerLog).get()?.seq ?? 0) + 1;
-  db.insert(triggerLog).values({ seq, trigger, at: now, event: COMES_BACK, note: JSON.stringify([woke.root, woke.count + 1]) }).run();
+  logTrigger(db, now, trigger, COMES_BACK, JSON.stringify([woke.root, woke.count + 1]));
 }
 /** Whether a trigger fires more than once: it is not once-only and its time is not one date. The one statement of
  * "repeating", for what a body may set on anybody else's word without an owner (ownersFirst). */
