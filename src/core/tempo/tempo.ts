@@ -59,7 +59,8 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
         const how = options.placeFiring(t);
         if ('stop' in how) {
           for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `place-trigger-stopped:${occurrence}`, fromKind: 'schedule',
-            words: `The schedule ${JSON.stringify(t.note)} was stopped and did not fire: ${how.stop}.`, refs: [t.id] });
+            // loom's words first, and the trigger's note last and named as somebody's: a body working for anybody may have written it.
+            words: `A schedule was stopped and did not fire: ${how.stop}. Its note, in the words of whoever set it and not loom's: ${JSON.stringify(t.note)}`, refs: [t.id] });
           return 'stop';
         }
         options.conversations.send({ toKind: 'agent', to: t.to!, conversation: t.conversation, source: 'trigger', sourceId: occurrence, fromKind: 'schedule', fromId: t.owner ?? undefined,

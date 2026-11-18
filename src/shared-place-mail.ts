@@ -129,7 +129,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
     word: work => jobWord(db, work.job).person,
     target(work, to) {
       const agent = work.cv.agent;
-      let conversation: string | undefined, open: { venue: 'discord' | 'slack'; place: string; label: string } | undefined, key: string, where: string;
+      let conversation: string | undefined, open: { venue: 'discord' | 'slack'; place: string; label: string } | undefined, key: string, where: string, there: Place;
       if ('conversation' in to) {
         const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? placeAddress(db, cv) : undefined;
         if (!cv || !at || cv.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another Discord or Slack conversation of this agent');
@@ -137,6 +137,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         // One member's private conversation is handed to only on that member's word, or by the agent's own work.
         const on = jobWord(db, work.job);
         if (cv.member !== null && !(on.woke === 'own' || (on.person?.kind === 'member' && on.person.id === cv.member))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
+        there = cv;
         conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.
@@ -148,6 +149,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
         const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
         if (cv?.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another conversation');
+        there = cv ?? { id: '', agent, venue: to.platform, place };
         conversation = cv?.id; if (!cv) open = { venue: to.platform, place, label: to.thread ?? to.channel };
         key = channelKey(to.platform, to.workspace, to.channel); where = `${to.platform} channel ${to.channel}`;
       }
@@ -155,10 +157,14 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
         throw new OperationError('denied', 'This body may hand a note only to the channel its own channel reports to, and its channel names none or another');
       const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = placeAddress(db, work.cv);
+      // Whether the body this reaches could hand a note back, as far as can be known now: it will work on this
+      // note's word at most, so the same questions are asked of the way back. Told so it does not try in vain.
+      const answerable = !!from && !!word.person && (work.cv.member === null || (word.person.kind === 'member' && word.person.id === work.cv.member)) && !placeClosed(db, work.cv)
+        && mayHandTo(word.woke, channelKey(work.cv.venue, from.workspace, ruleChannel(db, work.cv, from.channel)), reportsTo(db, there));
       const origin = from ? `${work.cv.venue} ${from.direct ? 'direct conversation' : `channel ${from.channel}`}` : `its own work (${work.cv.venue})`;
       return { conversation, open, chain, startedAt: before?.startedAt ?? now(), ...(word.person ? { onWord: word.person } : {}),
         told: `[A note from another body of yours, not a person speaking. It was working in ${origin} (conversation ${work.cv.id})${word.person ? `, for ${named(word.person)}` : ', on your own work'}. `
-          + `Saying what needs saying here, in ${where}, in your own words, is your job. To answer that body, hand a note back to conversation ${work.cv.id}. `
+          + `Saying what needs saying here, in ${where}, in your own words, is your job. ${answerable ? `To answer that body, hand a note back to conversation ${work.cv.id}.` : 'A note back to that body would be refused from here.'} `
           + `Hand-offs before this one in this exchange: ${chain.length}${chain.length ? ` (through conversations ${chain.join(', ')})` : ''}. If this exchange is no longer making progress, stop and say so to a person instead of handing on.]` };
     },
     sent(note) {

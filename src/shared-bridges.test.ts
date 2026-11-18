@@ -16,7 +16,7 @@ import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX} from './shared-place-mail.js';
 import {RUN_NOW_REFUSAL,SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,reportsTo,placeClosed} from './shared-place-mail.js';
+import {jobWord,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 import {bridgeChannelFilters} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -434,6 +434,8 @@ it('stops such a trigger, with one notice, when its asker is no longer known or 
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
  expect(f.db.select().from(triggers).where(eq(triggers.id,asked.id)).get()).toMatchObject({enabled:false,state:'stopped'});
  expect(notices()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining('who asked for it, is no longer known to art')}]);
+ // loom's own words come first and say whose the quoted words are: a note a guest's body wrote cannot pass as loom's.
+ expect(notices()[0].words).toBe(`A schedule was stopped and did not fire: the outside account ${GUEST}, who asked for it, is no longer known to art. Its note, in the words of whoever set it and not loom's: "Daily numbers"`);
  // The connection is turned off: the same, for the conversation.
  f.root.writes.run(()=>{f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run();f.db.update(bridgeConnections).set({enabled:false}).run();});
  expect((await f.call('tempo','runNow',{id:closed.id},token.other)).status).toBe(200);
@@ -740,4 +742,24 @@ it('queues no answer to a firing or a note once the conversation\'s channel is f
  f.root.writes.run(()=>f.db.delete(bridgeChannelFilters).run());
  expect((await f.call('bridges','reply',{id:randomUUID(),text:'The numbers',model:'observed'},token.other)).status).toBe(200);
  expect(f.db.select().from(bridgeSends).all()).toMatchObject([{incoming:null,conversation:cv,state:'held'}]);
+});
+
+it('tells the body a note reaches how to answer only when a note back would be taken',async()=>{
+ const {f,cv,work}=await sharedPlace();
+ f.root.writes.run(()=>{f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CPOND',answers:'art',botsMayTalk:false}).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CPOND'])}).where(eq(bridgeChannels.channel,'CROOM')).run();
+  f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const hand=selfHandoff(f.db,{send:()=>undefined},()=>new Date(f.clock.now()).toISOString()),row=(id:string)=>f.db.select().from(conversations).where(eq(conversations.id,id)).get()!;
+ const told=(job:string,from:string,to:unknown)=>hand.target({job:{id:job,agent:'art',conversation:from},cv:row(from)},to as never).told,pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
+ const back=`To answer that body, hand a note back to conversation ${cv}.`,none='A note back to that body would be refused from here.';
+ // On a guest's word, to the channel this one reports to: that channel reports nowhere, so its body could hand nothing back.
+ expect(told('body',cv,pond)).toContain(none);expect(told('body',cv,pond)).not.toContain('To answer that body');
+ // On an owner's word the body there may hand to any conversation of the agent.
+ f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());
+ expect(told('body',cv,pond)).toContain(back);expect(told('body',cv,pond)).not.toContain(none);
+ // On a guest's word again, into a channel that reports back here: the answer is that one hand-off.
+ f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'unknown',fromId:null}).where(eq(inbox.job,'body')).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CROOM'])}).where(eq(bridgeChannels.channel,'CPOND')).run();});
+ expect(told('body',cv,pond)).toContain(back);
+ // The agent's own work in a wake: a wake is never a note's target, and a note on nobody's word hands nowhere.
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[]);
+ expect(told('other',lane,pond)).toContain(none);expect(told('other',lane,pond)).not.toContain('To answer that body');
 });
