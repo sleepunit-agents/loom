@@ -32,9 +32,9 @@ export interface TempoOperationOptions {
    * composition has asked them, and nothing is set or changed here. `waits` is what the caller is told, and `card`
    * the approval that waits. Asked after `wordRefusal`. Nothing for anything the caller may do itself. */
   ownersFirst?(viewer: Viewer, ask: { action: 'set'; trigger: NewTrigger } | { action: 'edit'; trigger: Trigger; change: TriggerEdit }): { id: string; card: string; waits: string } | undefined;
-  /** Told once a trigger has come to stand, set or turned back on, in the same write: for the notice a
-   * conversation with many standing raises. It refuses nothing. */
-  stood?(trigger: { id: string; conversation?: string | null }): void;
+  /** Told once a trigger has been set, turned back on or changed, in the same write: for the notice a conversation
+   * with many standing raises, and for the record of a come-back that follows another. It refuses nothing. */
+  stood?(viewer: Viewer, action: 'set' | 'start' | 'edit', trigger: { id: string; conversation?: string | null }): void;
   /** Who asks for a trigger that names a conversation, once this caller has changed its words, file or times. */
   reasked?(viewer: Viewer, trigger: { conversation: string | null }, change: { instructions?: string | null; file?: string | null; note?: string; times?: string }): Asker | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
@@ -64,7 +64,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { id: first.id, waits: first.waits }; }
       const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
-      const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(row); ctx.changed('triggers', row.id); return { id: row.id }; },
+      const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,
@@ -74,7 +74,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       // runs and stops nothing of its agent's that fires outside its own conversation (policy.ts, maySchedule).
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
-      tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(stored);
+      tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
@@ -87,6 +87,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const first = stored && options.ownersFirst?.(ctx.viewer, { action: 'edit', trigger: stored, change });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { saved: false, waits: first.waits }; }
       tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id }, stored ? options.reasked?.(ctx.viewer, stored, change) : undefined);
+      if (stored) options.stood?.(ctx.viewer, 'edit', stored);
       ctx.changed('triggers', target); ctx.changed('triggerEdits', target); return { saved: true };
     },
   }));

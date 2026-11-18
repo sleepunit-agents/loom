@@ -1,9 +1,9 @@
 /** A trigger that names a conversation (`triggers.conversation`): its firing is mail from the schedule in
  * that Discord or Slack conversation, starting a job there like any message, on the word of whoever asked
  * for it. Set, bounded and fired by the rules here; who may is policy.ts's (maySetTrigger, maySchedule). */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
-import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
+import { conversations, inbox, inboxRefs, triggerLog, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { z } from 'zod';
 import { editsWords, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
@@ -19,7 +19,7 @@ export const WORD_ASKER_REFUSAL = 'Somebody else asked for this schedule: only t
 export const RUN_NOW_REFUSAL = 'You are awake: do the work now. Only a body working for the agent\'s owners, or the agent\'s own work, fires a schedule by hand.';
 export const WORD_EVENT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners fires at listed times, never on an event.';
 export const WORD_PART_REFUSAL = 'Somebody with less reach than you asked for this schedule, and a firing never carries one person\'s text on another\'s word: give both a new note and new instructions (or a file), or leave its words alone.';
-export const WOKEN_BY_MAIL_REFUSAL = 'A firing or a note woke this job, and it is not working for the agent\'s owners: it sets, changes, starts and runs no schedule. It may stop one the same person asked for.';
+export const WOKEN_BY_MAIL_REFUSAL = 'A firing or a note woke this job, and it is not working for the agent\'s owners: it may set a one-time schedule to come back to its work here, and it sets, changes and starts no repeating one. It may stop one the same person asked for.';
 export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it does not fire or start it again.';
 /** Why this job may not do this to a trigger, by whose word it works on (jobWord) and never by where it sits.
  * For every job: it does not fire or start again the trigger whose firing is in its mail. A job working for
@@ -41,15 +41,40 @@ export function wordRefusal(db: DataDatabase, work: Work | undefined, action: 's
   if (!maySchedule(word.woke, work.cv, trigger)) return WORD_SCHEDULE_REFUSAL;
   // A body working for anybody but owners is awake and does its work now.
   if (action === 'runNow') return RUN_NOW_REFUSAL;
-  // A firing or a note woke it: it schedules nothing more, so no chain of firings runs on such a word with nobody
-  // speaking. It may stop what the same person asked for (below).
-  if (action !== 'stop' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), inArray(inbox.source, ['trigger', 'handoff']))).get()) return WOKEN_BY_MAIL_REFUSAL;
+  // A firing or a note woke it: nobody is speaking. It may come back to work it is doing, with a one-time trigger, as
+  // often as the work needs; a chain of those is made loud to the agent's people (comeBack) and refused at no length.
+  // A repeating one is for a person to ask for: it sets, changes and starts none. It may stop what the same person
+  // asked for (below).
+  if (action !== 'stop' && repeats(action === 'edit' ? { lifespan: trigger.lifespan, times: change?.times ?? trigger.times } : trigger)
+    && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), inArray(inbox.source, ['trigger', 'handoff']))).get()) return WOKEN_BY_MAIL_REFUSAL;
   // A trigger keeps to its asker: such a body touches only what the same person asked for.
   if (stored && !(word.person && word.person.kind === trigger.askedByKind && word.person.id === trigger.askedBy)) return WORD_ASKER_REFUSAL;
   // Words only: a file is the household repository's, and what it says is not this body's to bring into the conversation.
   if (action === 'edit' ? change?.file != null : action === 'set' && trigger.file != null) return WORD_FILE_REFUSAL;
   // Listed times only: nobody but owners sets a trigger that watches an event.
   return action === 'set' && trigger.sourceKind !== undefined && trigger.sourceKind !== 'time' ? WORD_EVENT_REFUSAL : undefined;
+}
+/** Each time a chain of come-backs has grown by this many firings, the agent's people are told. It refuses nothing. */
+export const COME_BACK_NOTICE_EVERY = 5;
+const COMES_BACK = 'comes back';
+/** Where a trigger's firing stands in a chain of come-backs: the trigger the chain began with, and which firing in
+ * a row this one is. A trigger nothing is recorded for begins a chain: a person's message, or an owner, asked for it. */
+function comeBack(db: DataDatabase, trigger: string): { root: string; count: number } {
+  const noted = db.select({ note: triggerLog.note }).from(triggerLog).where(and(eq(triggerLog.trigger, trigger), eq(triggerLog.event, COMES_BACK))).orderBy(desc(triggerLog.seq)).get();
+  if (noted) try { const [root, count] = JSON.parse(noted.note) as [string, number]; if (typeof root === 'string' && Number.isInteger(count) && count > 0) return { root, count }; } catch { /* a row this program did not write begins a chain */ }
+  return { root: trigger, count: 1 };
+}
+/** Record that a trigger continues a chain of come-backs: a job on anybody else's word that a firing woke has set it,
+ * or moved it, so its firing follows that one with nobody speaking. Kept in the trigger's own log (event
+ * `comes back`, note `[first trigger, which firing in a row]`), in the write that sets or changes the trigger.
+ * Nothing for any other job. */
+export function continueComeBack(db: DataDatabase, now: string, work: Work | undefined, trigger: string): void {
+  if (!work || jobWord(db, work.job).woke !== 'others') return;
+  const woke = db.select({ ref: inboxRefs.ref }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id)).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'trigger'))).all()
+    .filter(row => row.ref !== trigger && db.select({ id: triggers.id }).from(triggers).where(eq(triggers.id, row.ref)).get()).map(row => comeBack(db, row.ref)).sort((a, b) => b.count - a.count)[0];
+  if (!woke || comeBack(db, trigger).count > woke.count) return;
+  const seq = (db.select({ seq: max(triggerLog.seq) }).from(triggerLog).get()?.seq ?? 0) + 1;
+  db.insert(triggerLog).values({ seq, trigger, at: now, event: COMES_BACK, note: JSON.stringify([woke.root, woke.count + 1]) }).run();
 }
 /** Whether a trigger fires more than once: it is not once-only and its time is not one date. The one statement of
  * "repeating", for what a body may set on anybody else's word without an owner (ownersFirst). */
@@ -196,8 +221,9 @@ export function placeTriggerAsker(db: DataDatabase, viewer: Viewer, trigger: New
 /** Asked as such a trigger fires (core/tempo/tempo.ts): the one place every firing into a conversation
  * passes, whatever door set or changed the trigger. It is stopped, with a notice, when its conversation is
  * gone or closed, when its asker is no longer known, and when the conversation is one member's private one
- * and the asker is anybody else. No firing is put off or held back for how soon it follows another. */
-export function placeFiring(db: DataDatabase, trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: { kind: 'member' | 'outside'; id: string } } {
+ * and the asker is anybody else. No firing is put off or held back for how soon it follows another; a long chain of
+ * come-backs is answered with `loud`, a notice for the agent's people. */
+export function placeFiring(db: DataDatabase, trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: { kind: 'member' | 'outside'; id: string }; loud?: { tell: string[]; key: string; words: string } } {
   const agent = trigger.to!, asker = { kind: trigger.askedByKind!, id: trigger.askedBy! };
   const cv = db.select().from(conversations).where(eq(conversations.id, trigger.conversation!)).get();
   const others = wordReach(db, agent, asker) === 'others';
@@ -207,6 +233,11 @@ export function placeFiring(db: DataDatabase, trigger: Trigger): { stop: string;
     // The doors let nobody but owners set a trigger that watches an event; one that stands on another word is stopped here.
     ?? (others && trigger.sourceKind !== 'time' ? `it watches an event, and ${named(asker)}, who asked for it, is not one of ${agent}'s owners` : undefined);
   if (why) return { stop: why, tell: tellOwners(db, agent) };
-  return { told: `[From the schedule, not from a person speaking now: ${JSON.stringify(trigger.note.replace(/[\[\]]/g, ''))}. ${asker.kind === 'agent' ? 'You set it yourself' : `Asked for by ${named(asker)}`} at ${trigger.askedAt}. What you answer is posted in this conversation as a new message.]`,
+  // Loud, not a stop: a chain of come-backs on anybody else's word, each set by the job the one before woke, is told
+  // to the agent's people each time it has grown by COME_BACK_NOTICE_EVERY.
+  const back = others ? comeBack(db, trigger.id) : undefined;
+  const loud = back && back.count % COME_BACK_NOTICE_EVERY === 0 ? { tell: tellOwners(db, agent), key: `come-back-chain:${JSON.stringify([back.root, back.count])}`,
+    words: `Bodies of ${agent} have come back to their work in conversation ${cv!.id} ${back.count} times in a row, each on a schedule set by the job the one before woke, on the word of ${named(asker)}. Nothing was stopped: say stop in that conversation if it should end.` } : undefined;
+  return { ...(loud ? { loud } : {}), told: `[From the schedule, not from a person speaking now: ${JSON.stringify(trigger.note.replace(/[\[\]]/g, ''))}. ${asker.kind === 'agent' ? 'You set it yourself' : `Asked for by ${named(asker)}`} at ${trigger.askedAt}. What you answer is posted in this conversation as a new message.]`,
     ...(asker.kind === 'agent' ? {} : { onWord: { kind: asker.kind, id: asker.id } }) };
 }

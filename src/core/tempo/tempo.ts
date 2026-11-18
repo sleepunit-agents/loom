@@ -28,9 +28,10 @@ export interface TempoOptions {
   worksFor?(trigger: Trigger): string | undefined;
   /** For a trigger that names a conversation, asked as it fires: either why it can no longer fire (its
    * asker is no longer known, or the conversation is gone or cannot be posted to) and whom to tell, or how
-   * its mail is sent: the words it is told under and the person on whose word.
+   * its mail is sent: the words it is told under and the person on whose word, with a notice (`loud`) for the people it
+   * names when the firing is one the agent's people should hear of. A notice stops nothing.
    * Without it such a trigger fails. */
-  placeFiring?(trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: OnWord };
+  placeFiring?(trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: OnWord; loud?: { tell: string[]; key: string; words: string } };
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
@@ -64,6 +65,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
             words: `A schedule was stopped and did not fire: ${how.stop}. Its note, in the words of whoever set it and not loom's: ${JSON.stringify(t.note)}`, refs: [t.id] });
           return 'stop';
         }
+        for (const member of how.loud?.tell ?? []) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: how.loud!.key, fromKind: 'schedule', words: how.loud!.words, refs: [t.id] });
         options.conversations.send({ toKind: 'agent', to: t.to!, conversation: t.conversation, source: 'trigger', sourceId: occurrence, fromKind: 'schedule', fromId: t.owner ?? undefined,
           words: `${how.told}\n\n${words}`, agent: t.to!, refs: [t.id], ...(how.onWord ? { onWordKind: how.onWord.kind, onWord: how.onWord.id } : {}) });
         return;

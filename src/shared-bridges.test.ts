@@ -15,7 +15,8 @@ import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVATE_PLACE_REFUSAL} from './shared-place-mail.js';
 import {SCHEDULE_ASKED,WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
-import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,repeats} from './shared-place-triggers.js';
+import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,repeats} from './shared-place-triggers.js';
+import {triggerLog} from './core/data/schema.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
@@ -1097,32 +1098,58 @@ it('delivers mail into one member\'s private conversation only on that member\'s
  expect(f.db.select().from(inbox).where(eq(inbox.id,owners)).get()).toMatchObject({state:'resolved',resolution:expect.stringContaining('private to the member kim')});
  note('kims','kim');expect(all.admission(kims)).toMatchObject({started:true,job:{conversation:kims,member:'kim'}});
 });
-it('ends a loop of firings on a guest\'s word: a job a firing or a note woke schedules nothing, and such firings into one conversation come an hour apart',async()=>{
- const {f,cv,once}=await sharedPlace();
+it('lets a job a firing woke on a guest\'s word come back to its work with a one-time trigger, sets it no repeating one, and tells the agent\'s people of every fifth come-back in a row',async()=>{
+ const {f,cv,once,allowed}=await sharedPlace();
  expect(repeats({times:'09:00',lifespan:'until-stopped'})).toBe(true);expect(repeats({times:'09:00,09:01',lifespan:'once'})).toBe(false);expect(repeats({times:'2026-12-01T09:00:00Z',lifespan:'until-stopped'})).toBe(false);expect(repeats({times:'09:00,10:00',lifespan:'today'})).toBe(true);
- const mine=once(),second=once();for(const trigger of [mine,second])expect((await f.call('tempo','set',trigger)).status).toBe(200);
+ const mine=once(),second=once({lifespan:'until-stopped'}),daily=once({lifespan:'until-stopped',times:'09:00'});
+ for(const trigger of [mine,second])expect((await f.call('tempo','set',trigger)).status).toBe(200);
+ await allowed(daily);
  const fired=()=>f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all(),row=(id:string)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get()!;
- // The first fires, and its firing is the job's mail.
+ /** The firing of this trigger becomes the mail of the body's job, as admission would mark it. */
+ const woke=(id:string)=>f.root.writes.run(()=>{const item=f.db.select({item:inboxRefs.item}).from(inboxRefs).where(eq(inboxRefs.ref,id)).all().map(ref=>ref.item).find(item=>fired().some(mail=>mail.id===item))!;f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item)).run();});
+ // The first fires, and its firing is the job's mail: nobody is speaking now.
  expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);expect(fired()).toHaveLength(1);
- f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'slack')).run();f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.source,'trigger')).run();});
- // The two ways round the hourly rule: move a trigger to a minute ahead, or set a fresh one a minute ahead each time. Neither, nor a start or a run.
- const soon=new Date(f.clock.now()+60_000).toISOString();
- expect(await f.call('tempo','edit',{id:second.id,times:soon})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
- expect(await f.call('tempo','set',once({times:soon}))).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
- expect(await f.call('tempo','edit',{id:second.id,instructions:'Again'})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
- for(const action of ['start','runNow'])expect((await f.call('tempo',action,{id:second.id})).status,action).toBe(403);
- expect(row(second.id)).toMatchObject({times:second.times,instructions:'Post the numbers'});
- // It may still stop what the same person asked for.
- expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);
- // No firing is held back for how soon it follows another: a second on the guest's word a minute later is delivered
- // at its time (the row moved to a minute ahead, as the edit would leave it).
- f.root.writes.run(()=>f.db.update(triggers).set({times:soon,nextDueAt:soon}).where(eq(triggers.id,second.id)).run());
- f.clock.advance(60_000);f.root.services.tempo.triggers.tick();
- expect(fired()).toHaveLength(2);expect(row(second.id)).toMatchObject({enabled:false,state:'fired',lastFiredAt:soon});
- // An owner's trigger there fires as before.
- f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
- const owners=once({ownerKind:'member',owner:'owner'});expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);
- expect((await f.call('tempo','runNow',{id:owners.id},token.owner)).status).toBe(200);expect(fired()).toHaveLength(3);
+ f.root.writes.run(()=>f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'slack')).run());woke(mine.id);
+ // It may come back to work it is doing: a one-time trigger is set, and one is moved, with nobody asked.
+ const soon=()=>new Date(f.clock.now()+60_000).toISOString();
+ let next=once({times:soon()});expect((await f.call('tempo','set',next)).status).toBe(200);
+ expect((await f.call('tempo','edit',{id:second.id,instructions:'Look again'})).status).toBe(200);
+ // It sets, changes and starts no repeating one, and asks no owner for one: that is for a person to ask.
+ const cards=f.db.select().from(approvals).all().length;
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00'}))).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:second.id,times:'09:00'})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:daily.id,instructions:'Again'})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(WOKEN_BY_MAIL_REFUSAL).toBe('A firing or a note woke this job, and it is not working for the agent\'s owners: it may set a one-time schedule to come back to its work here, and it sets, changes and starts no repeating one. It may stop one the same person asked for.');
+ // It may still stop what the same person asked for, and not start it again; it fires nothing by hand, and never again the trigger that woke it.
+ expect((await f.call('tempo','stop',{id:daily.id})).status).toBe(200);
+ expect(await f.call('tempo','start',{id:daily.id})).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(await f.call('tempo','runNow',{id:second.id})).toMatchObject({status:403,body:{message:RUN_NOW_REFUSAL}});
+ expect(await f.call('tempo','runNow',{id:mine.id})).toMatchObject({status:403,body:{message:REFIRE_REFUSAL}});
+ expect(f.db.select().from(approvals).all()).toHaveLength(cards);expect(row(second.id)).toMatchObject({times:second.times});
+ // A chain of come-backs with each set by the job the last one woke is refused at no length. The agent's people are
+ // told at the fifth firing in a row from the first, and at each further fifth.
+ expect(COME_BACK_NOTICE_EVERY).toBe(5);
+ const told=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('come-back-chain:'));
+ for(let n=2;n<=2*COME_BACK_NOTICE_EVERY;n++){
+  // (Fired by the agent's own work here, so the test's clock stays where the jobs' credentials are good.)
+  expect((await f.call('tempo','runNow',{id:next.id},token.other)).status).toBe(200);
+  expect(fired(),String(n)).toHaveLength(n);expect(row(next.id)).toMatchObject({state:'fired'});
+  expect(told(),String(n)).toHaveLength(Math.floor(n/COME_BACK_NOTICE_EVERY));
+  woke(next.id);next=once({times:soon()});expect((await f.call('tempo','set',next)).status,String(n)).toBe(200);
+ }
+ expect(told()[0]).toMatchObject({toKind:'person',to:'owner',words:`Bodies of art have come back to their work in conversation ${cv} 5 times in a row, each on a schedule set by the job the one before woke, on the word of the outside account ${GUEST}. Nothing was stopped: say stop in that conversation if it should end.`});
+ expect(told()[1].words).toContain('10 times in a row');
+ // A come-back a person's message asked for starts its own count: the one set at the start, moved, fires as a first.
+ expect(f.db.select().from(triggerLog).all().filter(log=>log.event==='comes back'&&log.trigger===mine.id)).toEqual([]);
+});
+it('lets a job a note woke on a guest\'s word come back to its work the same way, and sets it no repeating schedule',async()=>{
+ const {f,cv,once}=await sharedPlace();
+ expect((await f.call('tempo','set',once())).status).toBe(200);
+ f.root.writes.run(()=>{const item=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'handoff',sourceId:'a-note',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'outside',onWord:GUEST,chain:JSON.stringify(['elsewhere']),chainStartedAt:new Date(f.clock.now()).toISOString()});
+  f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item.id)).run();});
+ expect((await f.call('tempo','set',once())).status).toBe(200);
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00'}))).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
+ expect(f.db.select().from(approvals).all()).toEqual([]);
 });
 
 it('lets a guest\'s word go one hop, tells the agent\'s people of every fifth note it hands and refuses none, and reads a report target only from a rule of the agent\'s own',async()=>{
@@ -1279,13 +1306,6 @@ it('stops at the firing a trigger that watches an event on the word of anybody b
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toEqual([]);
  expect(f.db.select().from(triggers).where(eq(triggers.id,mine.id)).get()).toMatchObject({enabled:false,state:'stopped'});
  expect(f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().map(item=>item.words)).toContainEqual(expect.stringContaining('it watches an event'));
-});
-it('lets a job a note woke on a guest\'s word schedule nothing, as one a firing woke',async()=>{
- const {f,cv,once}=await sharedPlace();
- expect((await f.call('tempo','set',once())).status).toBe(200);
- f.root.writes.run(()=>{const item=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'handoff',sourceId:'a-note',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'outside',onWord:GUEST,chain:JSON.stringify(['elsewhere']),chainStartedAt:new Date(f.clock.now()).toISOString()});
-  f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,item.id)).run();});
- expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:WOKEN_BY_MAIL_REFUSAL}});
 });
 it('drops at admission a firing that waits in one member\'s private conversation on somebody else\'s word',async()=>{
  const {f,kims}=await kimsTrigger(),all=runnable(f);
