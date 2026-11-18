@@ -30,9 +30,9 @@ export const BODY_EXIT = {
   envelope: 17,
   /** The assignment names a harness or a venue this body cannot serve. */
   assignment: 18,
-  /** The first report to loom failed: loom unreachable, or the job no longer this body's. */
+  /** The first report to loom was refused or its acknowledgement was invalid. */
   report: 19,
-  /** A later report failed while the body was at work: it lost loom, or loom had ended the job. The body
+  /** The body exhausted its contact budget, or a later report failed while it was at work. The body
    * dropped what it was doing, whatever stage that was; the harness is not to blame. */
   contact: 20,
   /** The body's own tools server, which the harness is given, could not be started. (The next free number:

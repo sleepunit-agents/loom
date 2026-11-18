@@ -1,4 +1,5 @@
 /** Startup values enter only this receiving child's private native environment. */
+import {BodyContactExpired} from './body-contact.js';
 import type {Clock} from '../core/clock.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {isHouseSecretAlias} from '../pieces/secrets/input.js';
@@ -47,7 +48,7 @@ export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?
    // Validate the entire batch before modifying launch input. Existing account
    // and execution settings remain selected by the explicit worker config.
    for(const [name,text] of values){Object.defineProperty(environment,name,{value:text,writable:true,enumerable:true,configurable:true});inserted.push(name);if(Buffer.byteLength(text)>=STARTUP_SECRET_CHECKED)kept.push(Buffer.from(text),Buffer.from(Buffer.from(text).toString('base64')));}
-  }catch{remove();throw unavailable();}
+  }catch(error){remove();if(error instanceof BodyContactExpired)throw error;throw unavailable();}
   finally{for(const bytes of aliases?.values()??[])bytes.fill(0);aliases?.clear();active?.close();active=undefined;}
  }};
 }

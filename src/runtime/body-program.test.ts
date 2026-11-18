@@ -81,7 +81,7 @@ it('erases bootstrap at cancellation while startup remains pending, before its p
 it.each(['the model fails','loom does not take the reply'] as const)('leaves its mail unsettled for the next attempt when %s',async how=>{
  const f=fixture(),fetcher=f.options.fetch;
  if(how==='the model fails')f.native.mockImplementation(async()=>{throw new Error();});
- expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(how==='loom does not take the reply'&&String(url).endsWith('/message'))throw new Error();return fetcher(url,init);}}))
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(how==='loom does not take the reply'&&String(url).endsWith('/message'))return new Response(null,{status:403});return fetcher(url,init);}}))
   .toBe(how==='the model fails'?BODY_EXIT.harness:BODY_EXIT.record);
  expect(f.calls.some(row=>row.path==='accept')).toBe(true);expect(f.calls.some(row=>row.path==='confirm')).toBe(false);
 });
@@ -116,7 +116,7 @@ it('ends native work when a status report fails mid-run, publishes no late reply
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,statuses=0;const started=new Promise<void>(resolve=>{entered=resolve;});
  f.native.mockImplementation(async(_job,_words,signal)=>{entered();await new Promise<void>((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('cancelled')),{once:true}));throw new Error();});
  const pending=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
-  if(String(url).endsWith('/status')&&++statuses>2)throw new Error(raw);return fetcher(url,init);
+  if(String(url).endsWith('/status')&&++statuses>2)return new Response(null,{status:403});return fetcher(url,init);
  }});
  await started;tick();expect(await pending).toBe(BODY_EXIT.contact);expect(exitStage(BODY_EXIT.contact,'body')).toBe('body contact');expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
@@ -262,14 +262,14 @@ it.each([
 ] as const)('says it lost loom when %s fails, whatever stage it was in',async(_,failing,stop)=>{
  const f=fixture(),fetcher=f.options.fetch;let statuses=0;
  expect(await bodyProgram({...f.options,fetch:async(url,init)=>{
-  if(String(url).endsWith('/status')&&++statuses===failing)throw new Error(raw);
+  if(String(url).endsWith('/status')&&++statuses===failing)return new Response(null,{status:403});
   const response=await fetcher(url,init);if(stop&&String(url).endsWith('/status'))f.stop();return response;
  }})).toBe(BODY_EXIT.contact);
  expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
 it('says the first report failed when the report that it left for a Stop seen there fails',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let statuses=0;f.stop();
- expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(String(url).endsWith("/status")&&++statuses>=2)throw new Error();return fetcher(url,init);}})).toBe(BODY_EXIT.report);
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(String(url).endsWith("/status")&&++statuses>=2)return new Response(null,{status:403});return fetcher(url,init);}})).toBe(BODY_EXIT.report);
 });
 it('fails as mail, before loading anything for it, when a bridge job took words and no bridge message',async()=>{
  const f=fixture(),fetcher=f.options.fetch,loadMemory=vi.fn(async()=>null),value=JSON.parse(f.input.toString());value.job.venue='slack';value.job.thread=null;
@@ -389,4 +389,38 @@ it('keeps its credential until a measured report is acknowledged after a fast re
  const native = async () => ({text:'Answer', model:'observed', actions:[], usage:{source:'report' as const,tokensOut:7}});
  expect(await bodyProgram({...f.options,native,fetch:fetcher})).toBe(0);
  expect(acknowledged).toBe(true);
+});
+
+it('keeps the same native work running while a report reconnects to Loom',async()=>{
+ const f=fixture(),clock=new FakeClock();
+ let beat!:()=>void,started!:()=>void,finish!:()=>void,failed=false;
+ const running=new Promise<void>(resolve=>{started=resolve;});
+ const done=new Promise<void>(resolve=>{finish=resolve;});
+ const reports:string[]=[];
+ const native=vi.fn(async(_job:WorkerAssignment,_words:string,signal:AbortSignal)=>{
+  started();await done;expect(signal.aborted).toBe(false);
+  return{text:'Answer after restart',model:'observed',actions:[]};
+ });
+ const pending=bodyProgram({...f.options,native,clock,schedule:{every:(_ms,tick)=>{beat=tick;return()=>{};}},
+  fetch:async(url,init)=>{
+   if(String(url).endsWith('/status')){
+    reports.push(String(init?.body));
+    if(reports.length===3){failed=true;throw new Error('Connection closed');}
+   }
+   return f.options.fetch(url,init);
+  }});
+ await running;beat();await new Promise(resolve=>setImmediate(resolve));
+ expect(failed).toBe(true);expect(native.mock.calls[0][2].aborted).toBe(false);
+ clock.advance(1000);await new Promise(resolve=>setImmediate(resolve));
+ expect(reports[3]).toBe(reports[2]);finish();
+ expect(await pending).toBe(0);expect(native).toHaveBeenCalledTimes(1);
+ expect(f.calls.filter(row=>row.path==='message')).toHaveLength(1);
+});
+
+it('reports contact loss when the first status cannot reach Loom for two minutes',async()=>{
+ const f=fixture(),clock=new FakeClock(),fetcher=vi.fn<typeof fetch>().mockRejectedValue(Error('offline'));
+ const result=bodyProgram({...f.options,clock,fetch:fetcher});
+ await vi.waitFor(()=>expect(fetcher).toHaveBeenCalled());
+ clock.advance(120000);
+ expect(await result).toBe(BODY_EXIT.contact);expect(f.native).not.toHaveBeenCalled();
 });

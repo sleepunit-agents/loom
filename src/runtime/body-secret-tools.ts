@@ -1,3 +1,4 @@
+import {BodyContactExpired} from './body-contact.js';
 /** The receiving body's private model tools. Root credentials never leave this
  * process; only a lifetime-bound local capability enters native MCP config.
  *
@@ -73,7 +74,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
    if(closed||signal.aborted)return failed();
    try{const current=AbortSignal.any([signal,request.signal,callSignal]);if(current.aborted)throw unavailable();const result=await work(current);if(current.aborted||closed)throw unavailable();return result;}
-   catch{return failed();}
+   catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text' as const,text:error.message}]};return failed();}
   };
   if(secretTools){
   server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:agentSecretRequest},(args,extra)=>run(async signal=>{

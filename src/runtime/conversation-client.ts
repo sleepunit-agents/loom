@@ -1,3 +1,4 @@
+import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,BODY_CONTACT_MS} from './body-contact.js';
 /** Current-body client. The parent supplies its existing enrolled body bearer.
  * Words travel only through a bounded response and the body's acceptance sink.
  * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
@@ -36,17 +37,21 @@ type Reply=Turn&{clientId:string;words:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
 export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
+ const {token,job,conversation}=options;
  const clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??BODY_REQUEST_MS;
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
- if(!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!validBodyRequestMs(timeout))throw unavailable();
+ if(!token||/[\0\r\n]/.test(token)||!job||!conversation||!validBodyRequestMs(timeout))throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]);
  let closed=false,taking=false,received:{id:string;items:string[]}|undefined,settling:{id:string;items:string[]}|undefined;
  const unsettled:string[]=[];
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation',requestTimeout=timeout):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation',requestTimeout?:number):Promise<T>{
   if(!current())throw unavailable();
-  const abort=new AbortController(),end=clock.now()+Math.min(timeout,requestTimeout);controllers.add(abort);
+  let body:string;try{body=JSON.stringify({input,...(id?{id}:{})});}catch{throw unavailable();}
+  if(Buffer.byteLength(body)>DOOR_REQUEST_BYTES)throw unavailable();
+  return retryBodyContact(clock,lifetime,unavailable,async remaining=>{
+  const abort=new AbortController(),end=clock.now()+Math.min(timeout,remaining);controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
   const cancel=clock.at(end,stop),valid=()=>current()&&!abort.signal.aborted&&clock.now()<end;
   let rejectAbort!:()=>void,response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
@@ -54,21 +59,23 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   const aborted=new Promise<never>((_resolve,reject)=>{rejectAbort=()=>reject(unavailable());abort.signal.addEventListener('abort',rejectAbort,{once:true});});
   try{
    return await Promise.race([(async()=>{
-    const body=JSON.stringify({input,...(id?{id}:{})});if(Buffer.byteLength(body)>DOOR_REQUEST_BYTES||!valid())throw unavailable();
-    const flight=request(new URL('/api/'+namespace+'/'+name,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+options.token,'content-type':'application/json'},body});
+    if(!valid())throw unavailable();
+    const flight=request(new URL('/api/'+namespace+'/'+name,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body});
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
-    response=await flight;
+    response=await flight.catch(()=>{throw new BodyTransportFailure();});
+    if(!response.redirected&&temporaryStatus(response.status))throw new BodyTransportFailure();
     if(!valid()||response.redirected||!response.ok||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
-    for(;;){const part=await reader.read();if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
+    for(;;){const part=await reader.read().catch(()=>{throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
     joined=Buffer.concat(chunks);const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(JSON.parse(joined.toString('utf8')));if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch(error){if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
+  }catch(error){if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}
   }
+  },requestTimeout??BODY_CONTACT_MS);
  }
  const saved=z.object({saved:z.literal(true)}).strict(),messageResult=z.object({saved:z.literal(true),seq:z.number().int()}).strict();
  // Each report keeps its operation id until loom has answered it, so a repeat after a lost answer is the same write.
@@ -79,13 +86,13 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
    try{
     await reportReceived();
     let requested=limit,input:z.infer<typeof batch>;
-    for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
+    for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw error;requested=Math.max(1,Math.floor(requested/2));}}
     const multipleHistories=input.items.filter(row=>row.history.length>0).length>1;
     const malformedRows=input.items.some((row,index)=>
      (row.history.length>0&&row.source!=='thread'&&row.source!=='discord'&&row.source!=='slack'&&row.source!=='trigger'&&row.source!=='handoff')||
      (index>0&&row.seq<=input.items[index-1].seq)||
      row.history.some((line,previous)=>previous>0&&line.seq<=row.history[previous-1].seq));
-    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||
+    if(input.job!==job||input.conversation!==conversation||input.items.length>requested||
      new Set(input.items.map(row=>row.id)).size!==input.items.length||multipleHistories||malformedRows)throw unavailable();
     let accepted=0;
     for(const row of input.items){
@@ -110,7 +117,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
      received??={id:randomUUID(),items:[]};received.items.push(row.id);unsettled.push(row.id);accepted++;
     }
     await reportReceived();return {accepted,stopRequested:input.stopRequested};
-   }catch{throw unavailable();}finally{taking=false;}
+   }catch(error){if(error instanceof BodyContactExpired)throw error;throw unavailable();}finally{taking=false;}
   },
   /** Settle every item accepted so far. Call once its answer is recorded, or when it needs none. */
   async settle():Promise<void>{

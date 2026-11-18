@@ -49,11 +49,10 @@ it('cancels a late response on close and never retries an uncertain write',async
  let release!:(response:Response)=>void;const flight=new Promise<Response>(resolve=>{release=resolve;}),fetcher=vi.fn<typeof fetch>(()=>flight),value=client(fetcher),pending=value.command('fixture.write',{},'stable');void pending.catch(()=>{});value.close();await expect(pending).rejects.toThrow(error);const cancel=vi.fn();release(new Response(new ReadableStream({cancel}),{headers:{'content-type':'application/json'}}));await flight;await Promise.resolve();expect(cancel).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledOnce();await expect(value.command('fixture.write',{},'stable')).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
 });
 it('bounds request lifetime and rejects later calls after external abort',async()=>{
- const clock=new FakeClock(),abort=new AbortController(),fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{})),value=client(fetcher,abort.signal,clock),pending=value.command('fixture.write',{},'stable');void pending.catch(()=>{});clock.advance(15000);await expect(pending).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();abort.abort();await expect(value.command('fixture.write',{},'stable')).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
+ const clock=new FakeClock(),abort=new AbortController(),fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{})),value=client(fetcher,abort.signal,clock),pending=value.command('fixture.write',{},'stable');void pending.catch(()=>{});clock.advance(15000);expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);abort.abort();await expect(pending).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();abort.abort();await expect(value.command('fixture.write',{},'stable')).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
 });
-it.each(['network','raw-token','escaped-token','bad-json','bad-utf8','bad-status','bad-type','redirect','length','overflow']as const)('refuses %s response without leaking the Root bearer',async mode=>{
+it.each(['raw-token','escaped-token','bad-json','bad-utf8','bad-status','bad-type','redirect','length','overflow']as const)('refuses %s response without leaking the Root bearer',async mode=>{
  const bytes=mode==='overflow'?new Uint8Array(16777217).fill(65):undefined,fetcher=vi.fn<typeof fetch>(async()=>{
-  if(mode==='network')throw Error('Upstream echoed '+raw.body);
   if(bytes)return new Response(new ReadableStream({start(controller){controller.enqueue(bytes);controller.close();}}),{headers:{'content-type':'application/json'}});
   const text=mode==='raw-token'?JSON.stringify({ok:true,value:raw.body}):mode==='escaped-token'?'{"ok":true,"value":"\\u0062'+raw.body.slice(1)+'"}':mode==='bad-json'?'not JSON':JSON.stringify({ok:true,value:'value'});
   if(mode==='redirect')return{redirected:true,body:new ReadableStream(),headers:new Headers({'content-type':'application/json'})}as Response;
@@ -72,7 +71,7 @@ it.each([0,30001,1.5,NaN])('rejects invalid request timeout %s before fetch',tim
  const fetcher=vi.fn<typeof fetch>();expect(()=>bodyCommandClient({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,timeoutMs,fetch:fetcher})).toThrow(error);expect(fetcher).not.toHaveBeenCalled();
 });
 it('accepts the maximum deadline and rejects credential header injection before any request',async()=>{
- const clock=new FakeClock(),fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{})),value=bodyCommandClient({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,clock,timeoutMs:30000,fetch:fetcher});clean.push(value.close);let settled=false;const pending=value.command('fixture.write',{},'stable');void pending.then(()=>{settled=true;},()=>{settled=true;});clock.advance(29999);await Promise.resolve();expect(settled).toBe(false);clock.advance(1);await expect(pending).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
+ const clock=new FakeClock(),fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{})),value=bodyCommandClient({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,clock,timeoutMs:30000,fetch:fetcher});clean.push(value.close);let settled=false;const pending=value.command('fixture.write',{},'stable');void pending.then(()=>{settled=true;},()=>{settled=true;});clock.advance(29999);await Promise.resolve();expect(settled).toBe(false);clock.advance(1);expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);value.close();await expect(pending).rejects.toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
  expect(()=>bodyCommandClient({url:'https://loom.example',token:raw.body+String.fromCharCode(13,10)+'Host: evil',signal:new AbortController().signal,fetch:fetcher})).toThrow(error);expect(fetcher).toHaveBeenCalledOnce();
 });
 it.each(['command','query']as const)('does not publish %s data when abort wins the response-completion microtask boundary',async mode=>{
@@ -129,4 +128,27 @@ it.each(['json','utf8'])('erases received chunks, owned copies and joined bytes 
  vi.spyOn(Buffer,'from').mockImplementation((...args:Parameters<typeof Buffer.from>)=>{const value=Reflect.apply(copy,Buffer,args)as ReturnType<typeof Buffer.from>;if((args[0]as unknown)===original)owned.push(value);return value;});
  vi.spyOn(Buffer,'concat').mockImplementation((list,length)=>{const value=join(list,length);if(value.includes(marker))owned.push(value);return value;});
  const value=client(async()=>new Response(new ReadableStream({start(controller){controller.enqueue(original);controller.close();}}),{headers:{'content-type':'application/json'}}));await expect(value.command('fixture.read',{},'one')).rejects.toThrow(error);expect(owned).toHaveLength(2);for(const bytes of[original,...owned])expect(bytes.every(byte=>byte===0)).toBe(true);
+});
+
+it('replays a lost command acknowledgement with its original id and commits the effect once',async()=>{
+ const f=await fixture();
+ f.root.operations.register({name:'fixture.increment',write:true,input:z.object({}).strict(),output:z.string(),
+  may:viewer=>viewer.kind==='agent'&&viewer.id==='art',
+  run(){
+   const about=f.db.select().from(s.agents).where(eq(s.agents.id,'art')).get()!.about+'!';
+   f.db.update(s.agents).set({about}).where(eq(s.agents.id,'art')).run();
+   return about;
+  }});
+ const rootFetch=f.fetcher.getMockImplementation()!;
+ f.fetcher.mockImplementationOnce(async(url,init)=>{
+  const reply=await rootFetch(url,init);await reply.body?.cancel();throw new Error('Lost after commit');
+ });
+ const timers=vi.spyOn(f.clock,'at');
+ const pending=f.value.command('fixture.increment',{},'same-through-restart');
+ await vi.waitFor(()=>expect(timers).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));
+ f.clock.advance(1000);
+ expect(await pending).toEqual({ok:true,value:'!'});
+ expect(f.fetcher).toHaveBeenCalledTimes(2);
+ expect(f.fetcher.mock.calls[0][1]?.body).toEqual(f.fetcher.mock.calls[1][1]?.body);
+ expect(f.db.select().from(s.agents).where(eq(s.agents.id,'art')).get()?.about).toBe('!');
 });

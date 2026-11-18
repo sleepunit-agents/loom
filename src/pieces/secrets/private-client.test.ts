@@ -57,3 +57,13 @@ it.each(['abort','close'] as const)('cancels pending startup consent on %s witho
  const clock=new FakeClock(),abort=new AbortController(),fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({aliases:[{alias:'GRANTED'}],pending:true}));const client=privateSecretClient({...options(fetch),signal:abort.signal,clock,timeoutMs:100});
  try{const pending=client.startup(),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);for(let i=0;i<32;i++)await Promise.resolve();clock.advance(999);expect(fetch).toHaveBeenCalledOnce();if(kind==='abort')abort.abort();else client.close();await refused;clock.advance(10000);for(let i=0;i<8;i++)await Promise.resolve();expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
 });
+it('retries the startup alias listing after a connection failure before reading any private value',async()=>{
+ const fetcher=vi.fn<typeof fetch>().mockRejectedValueOnce(Error('lost metadata')).mockResolvedValueOnce(Response.json({aliases:[]}));
+ const config=options(fetcher),scheduled=vi.spyOn(config.clock,'at'),client=privateSecretClient(config);
+ const result=client.startup();void result.catch(()=>{});
+ try{
+  await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(config.clock.now()+1000,expect.any(Function)));
+  config.clock.advance(1000);expect(await result).toEqual(new Map());
+  expect(fetcher.mock.calls.map(([url])=>new URL(String(url)).pathname)).toEqual(['/api/secrets/private/startup','/api/secrets/private/startup']);
+ }finally{client.close();}
+});

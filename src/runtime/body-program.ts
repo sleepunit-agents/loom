@@ -15,6 +15,7 @@ import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
+import {BodyContactExpired} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
@@ -265,7 +266,8 @@ export async function bodyProgram(input: {
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
     await tell({ state: 'idle', work: '' });
     return 0;
-  } catch {
+  } catch (error) {
+    if(error instanceof BodyContactExpired)unavailable=true;
     await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await tell(left);return BODY_EXIT.stopped;}catch{}
