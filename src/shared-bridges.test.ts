@@ -260,7 +260,7 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
 // What a body may schedule depends on where its job is (policy.ts, maySchedule). A room's body would be
 // setting words that later run as the agent's own wake, outside the room and its limits; Tempo cannot yet
 // address a firing to a conversation, so every trigger from a room's body is refused.
-it('refuses every trigger a room\'s body sets or rewords, with a line that says what to do instead',async()=>{
+it('refuses every trigger a room\'s body sets, rewords, stops, starts or runs, with a line that says what to do instead',async()=>{
  const f=fixture();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
  // A Slack channel, and its sender an outside account: a room, with a guest in it.
@@ -280,7 +280,11 @@ it('refuses every trigger a room\'s body sets or rewords, with a line that says 
  // Nor may the room's body reword that trigger: the words would run the same way.
  expect(await f.call('tempo','edit',{id:owned.id,instructions:'Reworded in the room'})).toMatchObject({status:403,body:{message:line}});
  expect(f.db.select().from(triggers).all()).toMatchObject([{id:owned.id,instructions:'Set outside any room'}]);
+ // Nor stop it, start it, or fire it at a time of its choosing: each would decide in the room what happens outside it.
+ for(const action of ['stop','start','runNow'])expect(await f.call('tempo',action,{id:owned.id}),action).toMatchObject({status:403,body:{message:line}});
+ expect(f.db.select().from(triggers).get()).toMatchObject({state:'standing',lastFiredAt:null});
  expect((await f.call('tempo','edit',{id:owned.id,instructions:'Reworded outside it'},token.other)).status).toBe(200);
+ expect((await f.call('tempo','stop',{id:owned.id},token.other)).status).toBe(200);
 });
 it('attaches the earlier words of a bridge conversation to one piece of mail in a batch, not to each',async()=>{
  const f=fixture(()=>true,true);f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();

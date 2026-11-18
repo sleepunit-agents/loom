@@ -540,7 +540,9 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
  * room's limits: the people in it, and the tools an agent's body is not given when a guest is among them.
  * A trigger such a body set for its agent would fire later as the agent's own wake, a job with no room and
  * none of those limits, running words chosen in the room. So a room's body may set, or reword, a trigger
- * only if its firing comes back into that same conversation, as a job with the room's limits.
+ * only if its firing comes back into that same conversation, as a job with the room's limits. Starting,
+ * running and stopping are held to the same triggers: a room's body that could fire its agent's own
+ * trigger at will, or stop its scheduled work, would be choosing in the room what happens outside it.
  *
  * Tempo cannot address a conversation: a trigger names an agent or a person, and a firing for an agent
  * opens a wake of its own (core/tempo/tempo.ts). So today no trigger is one a room's body may set, and
@@ -552,7 +554,7 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
 export const isRoom = (conversation: { venue: string; member: string | null }): boolean =>
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
 export const ROOM_SCHEDULE_REFUSAL = 'A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
-/** Whether the body of a job in this conversation may set or reword this trigger, as far as where it works goes. */
+/** Whether the body of a job in this conversation may set, reword, stop, start or run this trigger, as far as where it works goes. */
 export function maySchedule(conversation: { venue: string; member: string | null }, _trigger: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>): boolean {
   return !isRoom(conversation);
 }

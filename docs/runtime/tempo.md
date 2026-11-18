@@ -52,4 +52,5 @@ would later run outside it, without the room's people and the tool denials
 that go with them. When a trigger can be addressed to a conversation, a room's
 body will be able to set one that comes back into its own room. A body in one
 member's own thread or direct message is not in a room and is judged by who it
-is, as before. Stopping, starting and running a trigger are not changed.
+is, as before. The same body can stop, start or run no trigger either: each
+would decide in the room what happens outside it.

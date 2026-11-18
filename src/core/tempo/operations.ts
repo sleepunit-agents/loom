@@ -23,7 +23,7 @@ export interface TempoOperationOptions {
    * triggerAsSet), and with it the member its work is for, if any. `authorize` judges a `set` by the same
    * reading. Without it, as given and for nobody. */
   recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string };
-  /** Why this caller may not set or reword this trigger because of where its job is, in words for the
+  /** Why this caller may not set, reword, stop, start or run this trigger because of where its job is, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`, of the trigger as recorded. */
   placeRefusal?(viewer: Viewer, trigger: Pick<NewTrigger, 'ownerKind' | 'owner' | 'toKind' | 'to'>): string | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
@@ -54,6 +54,10 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     name: `tempo.${action}`, input: id, output: saved,
     may: (viewer, input) => triggerAccess(viewer, input.id, action),
     run(ctx, input) {
+      // Where the caller works matters for these as for setting: a room's body starts, runs and stops nothing
+      // of its agent's that fires outside the room (policy.ts, maySchedule).
+      const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, stored);
+      if (refused) throw new OperationError('denied', refused);
       tempo.triggers[action](input.id); ctx.changed('triggers', input.id); return { saved: true };
     },
   }));

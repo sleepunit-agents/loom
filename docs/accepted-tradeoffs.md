@@ -949,10 +949,10 @@ Entries are grouped by the part of the program they belong to.
 ### A room's body schedules nothing
 - What: the body of a job in a room (a Discord or Slack conversation that is not one member's own: a
   channel, a thread, a group direct message, a direct message from somebody who is no member) may not set
-  or reword any trigger. `tempo.set` and `tempo.edit` refuse it with "A body working in a room cannot
-  schedule work: ask in your own thread, or have an owner schedule it." A body in one member's own thread
-  or direct message, a person, and an agent's own session are judged as before. Stopping, starting and
-  running an existing trigger from a room are not changed.
+  reword, stop, start or run any trigger. `tempo.set`, `tempo.edit`, `tempo.stop`, `tempo.start` and
+  `tempo.runNow` refuse it with "A body working in a room cannot schedule work: ask in your own thread, or
+  have an owner schedule it." A body in one member's own thread or direct message, a person, and an
+  agent's own session are judged as before.
 - Where: `isRoom`, `maySchedule` and `ROOM_SCHEDULE_REFUSAL` in `src/policy.ts`, beside `maySetTrigger`;
   asked by the Tempo door (`placeRefusal` in `src/core/tempo/operations.ts`, wired in `src/shared-tempo.ts`
   from the body's own conversation).
