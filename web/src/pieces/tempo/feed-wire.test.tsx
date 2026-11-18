@@ -24,7 +24,7 @@ it('shares the window connection with another app and clears both readers on acc
     expect(sinks.size).toBe(2);
     const push = (query: string, value: unknown) => sinks.get(query)!.next({data: {observe: {revision: 1, patches: [{path: [], removed: false, value}]}}});
     await act(async () => {
-      push(tempoQuery, {__typename: 'Query', tempoTimezone: 'UTC', triggers: [], triggerLog: [{__typename: 'TriggerLogSelectItem', seq: 1, trigger: 't', event: 'set', at: '2026-11-14T00:00:00Z', note: 'Private'}], agentPauses: []});
+      push(tempoQuery, {__typename: 'Query', tempoTimezone: 'UTC', tempoMachineReviewer: null, boxes: [], triggers: [], triggerLog: [{__typename: 'TriggerLogSelectItem', seq: 1, trigger: 't', event: 'set', at: '2026-11-14T00:00:00Z', note: 'Private'}], agentPauses: []});
       push('other', {__typename: 'Query', agents: [{__typename: 'AgentsSelectItem', id: 'art'}]});
     });
     expect(tree!.root.findByType('tempo').props.snapshot.events).toHaveLength(1);

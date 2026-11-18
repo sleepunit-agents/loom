@@ -3,7 +3,7 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
-import {mkdirSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {FakeClock} from './core/clock.js';
@@ -83,6 +83,10 @@ it.each(['knowledge','people','memories','notes'] as const)('refuses to start on
  await expect(f.start()).rejects.toThrow(`The Memory file ${path} cannot be used by this program`);
  await expect(f.start()).rejects.toThrow('newer program');
  expect(shape(path)).toEqual(before);expect(version(path)).toBe(99);
+ // The CLI reads its web root from the private program file. Use the same fixture
+ // assets as start() so a checkout without a built web app reaches the store check.
+ const program = join(f.home,'program.json');
+ writeFileSync(program,JSON.stringify({...JSON.parse(readFileSync(program,'utf8')), webRoot:f.webRoot}));
  // The operator is told which file and why.
  const printed:string[]=[];
  expect(await serve(['--home',f.home,'--port','0'],{stdout:()=>{},stderr:text=>printed.push(text)})).toBe(2);

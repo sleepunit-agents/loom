@@ -16,18 +16,11 @@ const start = Date.UTC(2026, 10, 18), token = 'r'.repeat(64);
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const stop of cleanup.splice(0).reverse()) await stop(); });
 
-function seed(file: string, old: boolean, pendingMail: boolean) {
+function seed(file: string, pendingMail: boolean) {
   const sqlite = new Database(file);
   const at = new Date(start).toISOString();
   try {
-    if (old) {
-      // Match createDataSchema: one durable fixture commit, not a disk sync for every index.
-      sqlite.transaction(() => {
-        sqlite.exec(readFileSync(new URL('../core/data/shipped-shapes/12.sql', import.meta.url), 'utf8'));
-        const mark = sqlite.prepare('INSERT INTO migrations VALUES (?, ?)');
-        for (let n = 1; n <= 12; n++) mark.run(n, at);
-      })();
-    } else createDataSchema(sqlite);
+    createDataSchema(sqlite);
     const db = dataDatabase(sqlite, () => at);
     db.insert(s.members).values({id:'alice', role:'member', joinedAt:at}).run();
     db.insert(s.agents).values({id:'art', about:'', markBg:'#000', markFg:'#fff', faceShape:'pebble', faceEyes:'dot'}).run();
@@ -42,13 +35,33 @@ function seed(file: string, old: boolean, pendingMail: boolean) {
     db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Runner',kind:'runner',box:'box',createdAt:at}).run();
     db.insert(s.conversations).values({id:'cv', agent:'art', member:'alice', venue:'loom',place:'thread', label:'Fixture', direct:true, startedAt:at,lastAt:at, turnCount:0}).run();
     db.insert(s.threads).values({id:'thread',conversation:'cv',title:'Fixture',titledBy:'member',pinned:false,openedAt:at,lastAt:at,readSeq:0,working:false,stopRequested:false}).run();
-    // Use the common columns: the pre-upgrade fixture has no machine column.
-    sqlite.prepare(`INSERT INTO jobs
-      (id, agent, member, conversation, title, state, brief, model, started_by_kind, started_by,
-       house_repository, house_file, house_branch, queued_at)
-      VALUES ('job','art','alice','cv','Fixture','queued','','fixture','member','alice',
-       'fixture','Housefile','next',?)`).run(at);
+    db.insert(s.jobs).values({id:'job',agent:'art',member:'alice',conversation:'cv',title:'Fixture',state:'queued',brief:'',model:'fixture',startedByKind:'member',startedBy:'alice',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:at}).run();
     if (pendingMail) db.insert(s.inbox).values({id:'mail',toKind:'agent',to:'art',conversation:'cv',source:'thread',sourceId:'thread',fromKind:'person',fromId:'alice',at,state:'waiting',job:'job',changedAt:at}).run();
+  } finally { sqlite.close(); }
+}
+
+// Both test servers run this checkout. At the restart boundary, put the first server's
+// committed records in the actual historical schema that the second server must upgrade.
+function historicalSnapshot(source: string, destination: string) {
+  const sqlite = new Database(destination);
+  try {
+    sqlite.pragma('foreign_keys = OFF');
+    sqlite.prepare('ATTACH DATABASE ? AS running').run(source);
+    sqlite.transaction(() => {
+      sqlite.exec(readFileSync(new URL('../core/data/shipped-shapes/12.sql', import.meta.url), 'utf8'));
+      // Restore committed rows verbatim, without firing their original effects again.
+      const triggers = sqlite.prepare("SELECT name, sql FROM main.sqlite_schema WHERE type='trigger' ORDER BY rowid").all() as {name:string;sql:string}[];
+      for (const trigger of triggers) sqlite.exec(`DROP TRIGGER main."${trigger.name}"`);
+      const tables = sqlite.prepare("SELECT name FROM main.sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='migrations' ORDER BY rowid").pluck().all() as string[];
+      for (const table of tables) {
+        const columns = sqlite.prepare("SELECT name FROM pragma_table_info(?, 'main')").pluck().all(table) as string[];
+        const fields = columns.map(column => '"' + column + '"').join(', ');
+        sqlite.exec(`INSERT INTO main."${table}" (${fields}) SELECT ${fields} FROM running."${table}"`);
+      }
+      sqlite.exec('INSERT INTO main.migrations SELECT * FROM running.migrations WHERE number <= 12');
+      for (const trigger of triggers) sqlite.exec(trigger.sql);
+      expect(sqlite.pragma('main.foreign_key_check')).toEqual([]);
+    })();
   } finally { sqlite.close(); }
 }
 
@@ -81,8 +94,9 @@ it.each([
 ])('restarts the server after $seconds s with a job $phase (schema upgrade $schema)', async ({seconds,phase,schema}) => {
   const directory = mkdtempSync(join(tmpdir(),'loom-restart-'));
   cleanup.push(() => rmSync(directory,{recursive:true,force:true}));
-  const file = join(directory,'household.sqlite'), overdue = seconds > 120;
-  seed(file,schema,overdue);
+  let file = join(directory,'household.sqlite');
+  const overdue = seconds > 120;
+  seed(file,overdue);
   let time = start;
   const serve = async (port: number, upgrade: boolean, hold = false) => {
     const server = fixtureProcess('server',directory,[file,String(port),String(time),upgrade?'upgrade':'existing',hold?'tool':'']);
@@ -130,6 +144,11 @@ it.each([
     await reach(committed.then(reply => {expect(reply).toBe('committed');}));
   }
   await first.stop();
+  if (schema) {
+    const oldFile = join(directory,'before-upgrade.sqlite');
+    historicalSnapshot(file,oldFile);
+    file = oldFile;
+  }
   for (let elapsed = 0; elapsed < seconds*1000; elapsed += REPORT_MS) {
     time = start + elapsed; report = undefined; tick();
     if (report) await Promise.resolve(report).catch(() => {});
