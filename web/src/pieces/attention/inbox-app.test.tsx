@@ -67,6 +67,16 @@ it.each([['task','t-1','Open task','/p/tasks-preview/task/t-1'], ['approval','a-
   await act(async () => { button('Dismiss notice').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.dismissResult', { id: 'result-1' });
 });
+it('opens the answered approval from its decision tell', async () => {
+  setup(row({ source: 'approval', sourceId: 'a-card:tell:allow', refs: ['a-card'], answers: null,
+    waitsOnKind: null, waitsOnId: null, canAnswer: false, read: true }));
+  const go = vi.fn();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
+  expect(button('Yes')).toBeUndefined();
+  expect(text()).not.toContain('Answer this at its source.');
+  await act(async () => { button('Open Approvals').props.onClick(); });
+  expect(go).toHaveBeenCalledWith('/p/approvals-preview/approval/a-card');
+});
 it('withdraws private question and answer words at their independent deadlines and on access loss', async () => {
   vi.useFakeTimers(); const now = Date.parse('2026-11-14T18:00:00.000Z'); vi.setSystemTime(now);
   setup(row({ thread: 'th:private', read: true, state: 'answered', body: { words: 'PRIVATE QUESTION' }, answerText: 'PRIVATE ANSWER', answer: 'words',

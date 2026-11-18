@@ -46,7 +46,7 @@ function QuestionReader({ item, actions, inline, sourceCard }: { item: InboxItem
       <div>{(['full', 'dim', 'mute'] as const).map(value => <Button key={value} disabled={busy || value === item.volume} onClick={() => void volume(value)}>{value === 'full' ? 'Full' : value === 'dim' ? 'Dim' : 'Mute'}</Button>)}</div>
     </section>}
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
-    {waiting && managed(item) && !sourceCard && <p>Answer this at its source.</p>}
+    {waiting && item.answers && managed(item) && !sourceCard && <p>Answer this at its source.</p>}
     {managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
     {waiting && item.answers && item.body && !managed(item) && actions?.answer && <section aria-label="Record your answer" className="grid gap-2">
       {item.answers === 'yes-no' && <div><Button disabled={busy} onClick={() => void answer('yes')}>{inline ? 'Allow' : 'Yes'}</Button><Button disabled={busy} onClick={() => void answer('no')}>{inline ? 'Deny' : 'No'}</Button></div>}

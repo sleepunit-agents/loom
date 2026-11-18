@@ -53,6 +53,9 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
 }
 function Details({ approval: a, snapshot, actions, renderChange, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean } & ChangePresentation) {
   const change = renderChange?.(a);
+  const decision = snapshot.record.filter(r => r.approval === a.id && (r.event === 'allow' || r.event === 'deny'))
+    .reduce<(typeof snapshot.record)[number] | undefined>((last, row) => !last || row.seq > last.seq ? row : last, undefined);
+  const attribution = decision?.note.match(/^(Allowed|Denied) by /) ? decision.note : undefined;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
@@ -64,7 +67,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
     {a.problem && <section><h3>This cannot be allowed as it stands</h3><p>{a.problem}</p></section>}
     <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
     <Answer key={a.id} approval={a} actions={actions} />
-    {a.decidedBy && <p>Answered by {a.decidedBy}</p>}
+    {a.decidedBy && <p>{attribution ?? 'Answered by '+a.decidedBy}</p>}
     {a.expiresAt && <p>Allowance ends {time(a.expiresAt)} · {snapshot.timezone}</p>}
     {!inline && <>
       {!change && a.details && <section><h3>Details</h3><p className="whitespace-pre-wrap">{a.details}</p></section>}

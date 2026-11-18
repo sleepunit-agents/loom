@@ -119,3 +119,10 @@ it('says the program\'s own refusal of an answer as it is, and shows what alread
   await draw(snapshot, { allow: vi.fn(), deny: vi.fn() });
   expect(JSON.stringify(tree.toJSON())).not.toContain('cannot be allowed');
 });
+
+it('shows the quoted decision on the inline approval card', async () => {
+ const note='Allowed by sam through art, on their words: “Go ahead” (conversation room, message msg, item item)';
+ await draw({...snapshot,approvals:[{...approval,state:'allowed',decidedBy:'sam'}],
+   record:[{seq:1,at:approval.askedAt,event:'allow',approval:approval.id,agent:'art',note}]});
+ expect(JSON.stringify(tree.toJSON())).toContain(note);
+});
