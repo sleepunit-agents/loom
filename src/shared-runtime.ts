@@ -12,7 +12,7 @@ import { harnessCannotRun } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
 import { WORKER_EXIT_BY } from './runtime/job-exit.js';
-import { machineFacts } from './runtime/machine-facts.js';
+import { workerFacts, machineReport } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 import { claimedJobStates } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
@@ -41,7 +41,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     return box;
   };
   operations.register({ name: 'runtime.health', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ facts: machineFacts.optional() }).strict(), output: ack, may: machine,
+    input: z.object({ facts: workerFacts.optional() }).strict(), output: ack, may: machine,
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
     run(ctx, input) {
       const box = runner(ctx.viewer); dispatcher.machines.heartbeat(box, input.facts);
@@ -49,13 +49,13 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ facts: machineFacts.optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ facts: workerFacts.optional(), machine: machineReport.optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
     run(ctx, input) {
       const ended: string[] = [];
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.machine);
       ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);
       for (const id of ended) ctx.changed('job', id);
       if (ended.length) unplaced.set(input, ended);

@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { boxes, boxFacts, inbox, members } from '../core/data/schema.js';
-import { Machines } from './machines.js';
+import { Machines, readMachineReport } from './machines.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -110,4 +110,29 @@ it('counts a machine stamped later than now from now, so a clock set back does n
   expect(db.select().from(boxes).get()?.lastSeenAt).toBe(now());
   advance(120_001);
   expect(service.sweep().map(row => row.words)).toEqual(['Machine worker has stopped reporting.']);
+});
+
+it('retains a staged worker report across health updates, and withdraws it on the next legacy poll', () => {
+  const { db, service, add } = fixture();
+  add('worker'); add('other');
+  const report = { version: 1 as const, enabled: false as const, user: 'art', cwd: '/home/art', agents: ['art'] };
+  service.poll('worker', ['gpu'], report);
+  expect(readMachineReport(db, 'worker')).toEqual(report);
+  expect(readMachineReport(db, 'other')).toBeUndefined();
+  service.heartbeat('worker', ['fast']);
+  expect(readMachineReport(db, 'worker')).toEqual(report);
+  service.poll('worker');
+  expect(readMachineReport(db, 'worker')).toBeUndefined();
+  expect(db.select().from(boxFacts).all().map(row => row.fact)).toEqual(['fast']);
+});
+it('rejects reserved machine metadata as generic worker facts and ignores an owner copy of a report', () => {
+  const { db, service, add } = fixture(); add('worker');
+  const report = { version: 1 as const, enabled: false as const, user: 'art', cwd: '/home/art', agents: ['art'] };
+  service.poll('worker', undefined, report);
+  const saved = db.select().from(boxFacts).get()!;
+  for (const fact of [saved.fact, 'loom:machine-bodies', 'loom:MACHINE-USER:art']) {
+    expect(() => service.heartbeat('worker', [fact])).toThrow();
+  }
+  db.update(boxFacts).set({ fromOwner: true }).run();
+  expect(readMachineReport(db, 'worker')).toBeUndefined();
 });

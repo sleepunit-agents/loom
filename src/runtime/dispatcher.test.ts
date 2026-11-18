@@ -366,5 +366,5 @@ it('ignores legacy owner capability labels omitted from a worker report', () => 
   f.db.insert(jobNeeds).values({ job: f.job.id, need }).run();
   f.db.insert(boxFacts).values({ box: 'first', fact: need, fromOwner: true }).run();
   expect(f.runtime.next('first', [])).toBeUndefined();
-  expect(f.runtime.next('first', [need])?.id).toBe(f.job.id);
+  expect(() => f.runtime.next('first', [need])).toThrow();
 });

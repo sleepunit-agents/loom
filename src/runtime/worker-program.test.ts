@@ -123,7 +123,7 @@ it('validates staged machine settings but gives only ordinary facts and containe
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...base, machine }) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker: machine configuration validated; host execution is disabled\n');
-  expect(f.control).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ facts: ['gpu'] }));
+  expect(f.control).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ facts: ['gpu'], machine: { version: 1, enabled: false, user: stagedMachine.user, cwd: plan.cwd, agents: ['art'] } }));
   expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...base, state }, { say: expect.any(Function) });
   expect(f.executor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledTimes(2);

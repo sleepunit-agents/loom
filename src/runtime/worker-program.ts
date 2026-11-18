@@ -5,7 +5,7 @@ import { workerTurns } from './worker-turns.js';
 import { keyPart } from './worker-mounts.js';
 import { z } from 'zod';
 import { userInfo } from 'node:os';
-import { machineFacts } from './machine-facts.js';
+import { workerFacts, machineReport, type MachineReport } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
@@ -42,7 +42,7 @@ const accountCommand = z.object({
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const configSchema = z.object({
-  facts: machineFacts.refine(facts => facts.every(fact => !fact.startsWith('loom:machine-') && fact !== 'loom:machine')).optional(),
+  facts: workerFacts.optional(),
   machine: z.unknown().optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   /** A directory of this worker's own, where it records the builds and bodies it starts and keeps each
@@ -157,10 +157,15 @@ export async function workerProgram(input: {
     stage = 'config';
     const raw: unknown = JSON.parse(await input.read(input.args[0]));
     const { machine, ...config } = configSchema.parse(raw);
+    let report: MachineReport | undefined;
     if (machine !== undefined) {
       const staged = stagedMachine.safeParse(machine);
       if (!config.container || !staged.success || staged.data.user !== userInfo().username
         || (staged.data.slots ?? 1) > (config.slots ?? HOUSE_SLOTS_DEFAULT)) throw new WorkerStop('machine');
+      const { user, cwd, agents } = staged.data;
+      const status = machineReport.safeParse({ version: 1, enabled: false, user, cwd, agents });
+      if (!status.success) throw new WorkerStop('machine');
+      report = status.data;
       input.error('Worker: machine configuration validated; host execution is disabled\n');
     }
     // Keys a worker with container bodies used to take. It does not go on without them as if they were
@@ -174,7 +179,7 @@ export async function workerProgram(input: {
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
     const remote = { url: config.url, token, signal: abort.signal };
-    const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
+    const control = (input.control ?? httpWorkerControl)({ ...remote, ...(config.facts && { facts: config.facts }), ...(report && { machine: report }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container

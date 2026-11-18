@@ -17,6 +17,7 @@ import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
 import { wordsKey } from './pieces/comms/crypto.js';
 import { bodyConversationClient } from './runtime/conversation-client.js';
+import { readMachineReport } from './runtime/machines.js';
 import { workOnce } from './runtime/worker.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -527,4 +528,23 @@ it('keeps a machine assignment out of the legacy worker poll even after a capabi
   expect(await (await f.call('next', {}, 'another-old-worker-poll')).json()).toMatchObject({
     ok: true, value: { id: ordinary.id, box: 'worker' },
   });
+});
+
+it('accepts staged status only on the authenticated worker poll and clears it on a subsequent legacy poll', async () => {
+  const f = fixture();
+  const machine = { version: 1 as const, enabled: false as const, user: 'art', cwd: '/work', agents: ['art'] };
+  for (const bearer of [ownerCredential, agentCredential]) {
+    expect((await f.call('next', { machine }, 'unauthorized', bearer)).status).toBe(403);
+  }
+  const client = httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal, machine,
+    fetch: async (input, init) => f.root.http.fetch(new Request(input, init)) });
+  await client.next();
+  expect(readMachineReport(f.db, 'worker')).toEqual(machine);
+  expect(readMachineReport(f.db, 'other')).toBeUndefined();
+  expect((await f.call('health', { facts: ['rack:one'] }, 'health-report')).status).toBe(200);
+  expect(readMachineReport(f.db, 'worker')).toEqual(machine);
+  expect((await f.call('next', { facts: ['loom:machine-user:spoofed'] }, 'forged')).status).toBe(400);
+  expect((await f.call('next', { machine: { ...machine, enabled: true } }, 'unsupported')).status).toBe(400);
+  await f.control.next();
+  expect(readMachineReport(f.db, 'worker')).toBeUndefined();
 });

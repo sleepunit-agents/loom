@@ -10,6 +10,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
+import type { MachineReport } from './machine-facts.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
@@ -37,8 +38,8 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[]) {
-    this.machines.heartbeat(box, facts);
+  next(box: string, facts?: readonly string[], ended?: string[], machine?: MachineReport) {
+    this.machines.poll(box, facts, machine);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       if (machine.reportOnly) return;

@@ -7,7 +7,7 @@ import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { privateOrigin } from '../core/private-origin.js';
-import { machineFacts } from './machine-facts.js';
+import { workerFacts, machineReport, type MachineReport } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
@@ -97,7 +97,7 @@ export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: 
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
 export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly string[] }) {
-  const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
+  const facts = input.facts === undefined ? undefined : workerFacts.parse(input.facts);
   return operationCaller(input)('health', facts === undefined ? {} : { facts }, z.object({ ok: z.literal(true) }).strict());
 }
 /** The worker's side of a relayed account sign-in: see account-signin-relay.ts. */
@@ -112,8 +112,9 @@ export function workerSignIn(input: WorkerHttpOptions) {
     done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
-export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
-  const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[]; machine?: MachineReport }): WorkerControl {
+  const facts = input.facts === undefined ? undefined : workerFacts.parse(input.facts);
+  const poll = { ...(facts && { facts }), ...(input.machine && { machine: machineReport.parse(input.machine) }) };
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
   return {
@@ -132,7 +133,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
     },
     repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??PRIVATE_SECRET_TIMEOUT_MS,PRIVATE_SECRET_TIMEOUT_MS),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
-    next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
+    next: async () => (await call('next', poll, workerAssignment.nullable())) ?? undefined,
     started: async (job, build) => { await call('started', { job, build }, ack); },
     heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn

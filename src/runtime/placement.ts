@@ -1,4 +1,5 @@
 import { currentAccountCapacity } from './account-windows.js';
+import { reservedMachineFact } from './machine-facts.js';
 import { SILENCE_MS } from './silence.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -51,7 +52,7 @@ export function selectPlacement(db: DataDatabase, input: {
     if (!Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS) continue;
     if (!machineMayHost(box, listed.get(box.id), input.agent, sharing)) continue;
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all()
-      .filter(row => !row.fromOwner || !row.fact.startsWith('loom:'))
+      .filter(row => !reservedMachineFact(row.fact) && (!row.fromOwner || !row.fact.startsWith('loom:')))
       .map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;
     for (const model of models) {

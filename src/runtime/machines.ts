@@ -1,7 +1,7 @@
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { machineFacts } from './machine-facts.js';
+import { machineReport, workerFacts, type MachineReport } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { SILENCE_MS } from './silence.js';
@@ -9,12 +9,33 @@ import { SILENCE_MS } from './silence.js';
 type Box = typeof boxes.$inferSelect;
 const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastSeenAt ?? box.enrolledAt])}`;
 
+// A newline was never legal in generic facts, including facts older workers could submit.
+const reportPrefix = 'loom:machine-report:\n';
+const reserved = sql`(lower(${boxFacts.fact}) = 'loom:machine' or lower(${boxFacts.fact}) glob 'loom:machine[-:]*')`;
+
+/** The last authenticated poll, for display. Legacy labels carry no structured report. */
+export function readMachineReport(db: DataDatabase, id: string): MachineReport | undefined {
+  const rows = db.select().from(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false),
+    sql`substr(${boxFacts.fact}, 1, ${reportPrefix.length}) = ${reportPrefix}`)).all();
+  if (rows.length !== 1) return undefined;
+  try { return machineReport.parse(JSON.parse(rows[0].fact.slice(reportPrefix.length))); }
+  catch { return undefined; }
+}
+
 /** Timers belong to the composition root, so tests and callers can supply time. */
 export class Machines {
   constructor(readonly db: DataDatabase, readonly now: () => string) {}
 
   heartbeat(id: string, facts?: readonly string[]): Box {
-    const reported = facts === undefined ? undefined : machineFacts.parse(facts);
+    return this.record(id, facts);
+  }
+
+  poll(id: string, facts?: readonly string[], machine?: MachineReport): Box {
+    return this.record(id, facts, { machine: machine === undefined ? undefined : machineReport.parse(machine) });
+  }
+
+  private record(id: string, facts?: readonly string[], poll?: { machine?: MachineReport }): Box {
+    const reported = facts === undefined ? undefined : workerFacts.parse(facts);
     return this.db.transaction(() => {
       const box = this.db.select().from(boxes).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).get();
       if (!box) throw new Error('Machine not available');
@@ -25,10 +46,15 @@ export class Machines {
       // clock caught up, and a kept future stamp would hide the machine from placement for as long.
       if (reported !== undefined) {
         // A worker report supersedes a legacy owner label only in the reserved namespace.
-        this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).run();
+        this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false), sql`not ${reserved}`)).run();
         if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoUpdate({
           target: [boxFacts.box, boxFacts.fact], set: { fromOwner: false }, setWhere: sql`${boxFacts.fact} GLOB 'loom:*'`,
         }).run();
+      }
+      if (poll) {
+        this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false), reserved)).run();
+        if (poll.machine) this.db.insert(boxFacts).values({ box: id, fromOwner: false, fact: reportPrefix + JSON.stringify(poll.machine) })
+          .onConflictDoUpdate({ target: [boxFacts.box, boxFacts.fact], set: { fromOwner: false } }).run();
       }
       new Conversations(this.db, () => at, lateMailWaits).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
       return this.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, id)).returning().get()!;
