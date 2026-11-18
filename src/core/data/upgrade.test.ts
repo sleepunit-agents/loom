@@ -318,7 +318,14 @@ describe('upgrading a household database', () => {
 
   it('adds placement fields to a schema 13 household without inventing historical decisions', () => {
     const old = household(13);
+    old.prepare("INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art','','','','pebble','dot')").run();
+    old.prepare("INSERT INTO agent_run_settings (agent,house_repository,house_file,house_branch,nested_containers,gpu) VALUES ('art','repo','','main',0,1)").run();
+    old.prepare("INSERT INTO jobs (id,agent,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES ('old','art','old job','queued','','m','agent','art','repo','','main',?)").run(at);
+    old.prepare("INSERT INTO job_needs VALUES ('old','gpu')").run();
     upgradeDataSchema(old, () => at);
+    expect(old.prepare('SELECT id, state, prefers, placement_decision FROM jobs').get()).toEqual({ id: 'old', state: 'queued', prefers: null, placement_decision: null });
+    expect(old.prepare('SELECT gpu, prefers FROM agent_run_settings').get()).toEqual({ gpu: 1, prefers: null });
+    expect(old.prepare('SELECT need FROM job_needs').get()).toEqual({ need: 'gpu' });
     for (const [table, fields] of Object.entries({ triggers: ['needs', 'prefers'], jobs: ['prefers', 'placement_decision'], agent_run_settings: ['prefers'], boxes: ['slots'] })) {
       const columns = old.prepare(`SELECT name, dflt_value FROM pragma_table_info(?)`).all(table);
       for (const name of fields) expect(columns).toContainEqual({ name, dflt_value: null });

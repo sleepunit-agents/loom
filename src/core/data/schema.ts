@@ -720,8 +720,6 @@ export const approvalRecord = sqliteTable('approval_record', {
 
 /** One row per trigger. Schedules, lanes, one-off wakes and parked waits are all rows here. */
 export const triggers = sqliteTable('triggers', {
-  needs: text('needs', { mode: 'json' }).$type<string[]>(),
-  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   id: text('id').primaryKey().notNull(),
   ownerKind: text('owner_kind', { enum: ["member", "agent", "household"] }).notNull(),
   owner: text('owner'),
@@ -756,6 +754,8 @@ export const triggers = sqliteTable('triggers', {
   askedByKind: text('asked_by_kind', { enum: ["member", "outside", "agent"] }),
   askedBy: text('asked_by'),
   askedAt: text('asked_at'),
+  needs: text('needs', { mode: 'json' }).$type<string[]>(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('triggers_asked_at_utc', utc(t.askedAt)),
   check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
@@ -899,7 +899,6 @@ export const changeSync = sqliteTable('change_sync', {
 
 /** One row per machine with a worker on it. */
 export const boxes = sqliteTable('boxes', {
-  slots: integer('slots'),
   id: text('id').primaryKey().notNull(),
   name: text('name').notNull(),
   owner: text('owner').notNull().references((): AnySQLiteColumn => members.id),
@@ -910,6 +909,7 @@ export const boxes = sqliteTable('boxes', {
   enrolledAt: text('enrolled_at').notNull(),
   lastSeenAt: text('last_seen_at'),
   revokedAt: text('revoked_at'),
+  slots: integer('slots'),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -943,8 +943,6 @@ export const boxFacts = sqliteTable('box_facts', {
 
 /** One row per run of an agent. */
 export const jobs = sqliteTable('jobs', {
-  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
-  placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
   id: text('id').primaryKey().notNull(),
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   project: text('project').references((): AnySQLiteColumn => projects.id),
@@ -980,6 +978,8 @@ export const jobs = sqliteTable('jobs', {
   claimedAt: text('claimed_at'),
   heardAt: text('heard_at'),
   endedAt: text('ended_at'),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
 }, t => [
   check('jobs_retry_at_utc', utc(t.retryAt)),
   check('jobs_queued_at_utc', utc(t.queuedAt)),
@@ -1021,7 +1021,6 @@ export const jobNeeds = sqliteTable('job_needs', {
 
 /** How and where each agent runs. */
 export const agentRunSettings = sqliteTable('agent_run_settings', {
-  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   agent: text('agent').primaryKey().notNull().references((): AnySQLiteColumn => agents.id),
   houseRepository: text('house_repository').notNull(),
   houseFile: text('house_file').notNull(),
@@ -1029,6 +1028,7 @@ export const agentRunSettings = sqliteTable('agent_run_settings', {
   repositorySecret: text('repository_secret').references((): AnySQLiteColumn => secrets.name),
   nestedContainers: integer('nested_containers', { mode: 'boolean' }).notNull(),
   gpu: integer('gpu', { mode: 'boolean' }).notNull(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('agent_run_settings_nested_containers_boolean', sql`${t.nestedContainers} in (0, 1)`),
   check('agent_run_settings_gpu_boolean', sql`${t.gpu} in (0, 1)`),

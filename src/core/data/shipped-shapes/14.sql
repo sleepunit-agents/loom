@@ -670,8 +670,6 @@ CREATE TABLE `approval_record` (
 );
 
 CREATE TABLE `triggers` (
-	`needs` text,
-	`prefers` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_kind` text NOT NULL,
 	`owner` text,
@@ -700,6 +698,8 @@ CREATE TABLE `triggers` (
 	`asked_by_kind` text,
 	`asked_by` text,
 	`asked_at` text,
+	`needs` text,
+	`prefers` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "triggers_asked_at_utc" CHECK("triggers"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."asked_at") = "triggers"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."asked_at") = "triggers"."asked_at", 0)),
@@ -834,7 +834,6 @@ CREATE TABLE `change_sync` (
 );
 
 CREATE TABLE `boxes` (
-	`slots` integer,
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`owner` text NOT NULL,
@@ -845,6 +844,7 @@ CREATE TABLE `boxes` (
 	`enrolled_at` text NOT NULL,
 	`last_seen_at` text,
 	`revoked_at` text,
+	`slots` integer,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
 	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),
@@ -876,8 +876,6 @@ CREATE TABLE `box_facts` (
 );
 
 CREATE TABLE `jobs` (
-	`prefers` text,
-	`placement_decision` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`agent` text NOT NULL,
 	`project` text,
@@ -908,6 +906,8 @@ CREATE TABLE `jobs` (
 	`claimed_at` text,
 	`heard_at` text,
 	`ended_at` text,
+	`prefers` text,
+	`placement_decision` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
@@ -937,7 +937,6 @@ CREATE TABLE `job_needs` (
 );
 
 CREATE TABLE `agent_run_settings` (
-	`prefers` text,
 	`agent` text PRIMARY KEY NOT NULL,
 	`house_repository` text NOT NULL,
 	`house_file` text NOT NULL,
@@ -945,6 +944,7 @@ CREATE TABLE `agent_run_settings` (
 	`repository_secret` text,
 	`nested_containers` integer NOT NULL,
 	`gpu` integer NOT NULL,
+	`prefers` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`repository_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "agent_run_settings_nested_containers_boolean" CHECK("agent_run_settings"."nested_containers" in (0, 1)),
