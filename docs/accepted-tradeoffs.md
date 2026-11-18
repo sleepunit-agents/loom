@@ -1503,3 +1503,7 @@ On success the body sends its report alongside settlement. A body with validated
 ### A body can answer a card on a household owner's quoted word
 
 The bound job, its admitted mail, current household role and venue account link establish the writer. A stolen linked chat account is a stolen approval. Loom verifies the quoted substring. With `onWord: {quote}`, exactly one eligible message must contain the quote. If several match, quote a longer passage. The agent interprets assent, scope and which cards the words cover. A mistaken or compromised agent with eligible mail could misattribute the decision. Each quote survives message retention on the card's permanent record and is visible to readers of that card. The owner gets an Inbox item with the quote. A terminal attribution cites a unique retained owner turn in an open terminal session when the words can be verified. Otherwise the owner's credential supplies an unverified attestation.
+
+### Trigger words and the worker account
+
+A digest identifies the trigger text an owner read. The agent also receives identity, memory, conversation history and data it looks up while running. A process with the worker's OS identity has that user's filesystem and service access, including any readable credentials. Schema 14 reserves the request fields while execution remains disabled.

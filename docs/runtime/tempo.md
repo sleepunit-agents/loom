@@ -158,3 +158,7 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   any trigger. A body working for anybody but owners reads its agent's triggers
   as before, all of them, and can change only its own conversation's (see the
   accepted trade-offs).
+
+### Machine requests
+
+The database can store a machine request. A trigger carrying one fails its firing before reading a repository file or sending mail. Tempo has no operation to grant machine execution.

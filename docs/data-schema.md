@@ -264,3 +264,5 @@ must call `expire(now)` before lookup, as the existing dispatcher does.
 writes canonical millisecond UTC strings and does not create tables, schedule
 work, check permission, or publish changes. `src/shared-root.ts` gives it to the
 dispatcher, so every operation the program runs keeps its receipt in this table.
+
+Schema 14 adds nullable machine references to triggers and jobs. A trigger may also store an approval reference and a lowercase hexadecimal SHA-256 digest together. Upgrading leaves these fields null on existing rows.

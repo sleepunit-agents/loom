@@ -1583,3 +1583,7 @@ Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separat
 Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. agy 1.5.11 reports input, output, and cache read tokens on its result. Its completed tool steps supply the tool names and counts. Its turn count does not establish a model-call count. A prompt run with an isolated, unsigned-in home returned an authentication error with explicit zero token counts.
 
 For the GraphQL queries, count definitions and observations, see [Reading job usage](job-usage.md).
+
+### Machine-marked assignments
+
+A worker receiving an assignment with a machine approval reports worker exit 33 before starting a build or process. There is currently no worker configuration that enables per-trigger host execution. Existing process workers still run ordinary assignments as their OS user.
