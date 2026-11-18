@@ -416,3 +416,9 @@ describe('upgrading a household database', () => {
     expect(everything(old)).toEqual(before);
   });
 });
+
+it('starts upgraded machines without inspection grants or diagnostic history',()=>{
+ const db=household(14);upgradeDataSchema(db);
+ expect(db.prepare('select readers from boxes').all()).toEqual([]);
+ expect(db.prepare('select * from machine_reads').all()).toEqual([]);
+});

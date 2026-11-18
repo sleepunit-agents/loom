@@ -323,6 +323,10 @@ const upgrades: readonly (readonly string[])[] = [
    'ALTER TABLE triggers ADD COLUMN needs text', 'ALTER TABLE triggers ADD COLUMN prefers text',
    'ALTER TABLE agent_run_settings ADD COLUMN prefers text',
    'ALTER TABLE jobs ADD COLUMN prefers text', 'ALTER TABLE jobs ADD COLUMN placement_decision text'],
+  // 15: machine inspection grants and metadata-only history.
+  ['ALTER TABLE boxes ADD COLUMN readers text',
+   "CREATE TABLE `machine_reads` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`machine` text NOT NULL,\n\t`agent` text NOT NULL,\n\t`job` text NOT NULL,\n\t`conversation` text,\n\t`word` text NOT NULL,\n\t`person` text,\n\t`read` text NOT NULL,\n\t`args` text NOT NULL,\n\t`asked_at` text NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`outcome` text NOT NULL\n);",
+   "CREATE INDEX `machine_reads_machine_time` ON `machine_reads` (`machine`,`asked_at`);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
