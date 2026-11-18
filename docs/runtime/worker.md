@@ -197,6 +197,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 54 | git 2.32.0 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 | 56 | the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on |
+| 58 | the configuration contains a top-level `machine` section. This worker has no machine executor. It stops before reading its token file. |
 | 57 | another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine's houses. The line ends with the key of the one that is in use, in brackets: `(container.socket)` or `(accountLogins.subscription-a.claude.source)` (see "One worker for an engine") |
 
 A worker that stops cannot report its own end, so loom records the job it held

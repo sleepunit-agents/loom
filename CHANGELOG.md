@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Schema 14 reserves fields for machine-bound triggers and jobs. Workers and Tempo refuse machine execution. The machine settings form reserves labels beginning with `loom:` for worker reports.
+- Schema 14 reserves fields for machine-bound triggers and jobs. Tempo checks the full current instructions against any stored digest at firing. Editors can withdraw a request and its approval reference together. A worker given a machine section stops before reading its token. Workers and Tempo refuse machine execution. The machine settings form reserves labels beginning with `loom:` for worker reports.
 
 - Machine-bound terminal hooks can record private conversations, show live sessions, report measured main and subagent usage, and supply retained source turns for owner-word approvals. Schema 13 adds the machine binding and observed-session records.
 

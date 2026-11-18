@@ -161,4 +161,8 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
 
 ### Machine requests
 
-The database can store a machine request. A trigger carrying one fails its firing before reading a repository file or sending mail. Tempo has no operation to grant machine execution.
+The database can store a machine request. When the request has a stored digest, Tempo reads the current instructions at each firing, including a manual firing. It compares the SHA-256 digest of the full text, including trailing newlines. For a repository file the digest covers the text returned by the repository reader. A mismatch records a failed firing. Even matching text cannot start a machine body in this version.
+
+Keep the complete routine in the trigger instructions or in the single repository file. An instruction to read a second file leaves that file outside the digest. Earlier conversation, identity, ledger data and tool results are also outside it.
+
+An editor can withdraw a request with `tempo.edit` by passing `{"id":"<trigger-id>","machine":null}`. This clears the stored machine, approval reference and digest in the same transaction. A later ordinary firing follows ordinary placement, which can select a process worker if the installation still has one.
