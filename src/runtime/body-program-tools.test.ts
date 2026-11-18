@@ -7,6 +7,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {ListToolsRequestSchema,CallToolRequestSchema} from '@modelcontextprotocol/sdk/types.js';
 import {bodyProgramTools} from './body-program-tools.js';
+import {BodyFileRefused} from './body-files.js';
 import {bodyFixture,bodyCredentials as raw} from '../../test/fixtures/conversation-body.js';
 import * as s from '../core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -34,7 +35,7 @@ it('preserves current Root permissions and stable write receipts',async()=>{
  f.db.update(s.jobs).set({state:'done'}).run();expect(await f.call('loom_commands',{})).toMatchObject({isError:true});expect(await f.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});
 });
 it.each([
- ['conversation.take',{}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
+ ['conversation.take',{}],['conversation.session',{}],['conversation.sessionSave',{session:null}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
  ['conversation.status',{state:'idle',work:''}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
 ]as const)('keeps runtime-owned %s facts and private routes out of model calls',async(operation,input)=>{
  const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'forged'})).toMatchObject({isError:true});expect(f.db.select().from(s.turns).all()).toHaveLength(0);expect(f.fetcher.mock.calls.some(([url])=>String(url).includes('/api/'+operation.replace('.','/')))).toBe(false);
@@ -87,4 +88,25 @@ it('publishes only generic code-interface metadata through actual MCP discovery'
  const f=await fixture();f.db.update(s.agents).set({about:'PRIVATE_DESCRIPTOR_RECORD_CANARY'}).where(eq(s.agents.id,'art')).run();f.db.insert(s.secrets).values({name:'PRIVATE_DESCRIPTOR_SECRET_CANARY',description:'PRIVATE_SECRET_DESCRIPTION',changedAt:new Date(f.clock.now()).toISOString(),changedBy:'alice'}).run();
  const offered=(await f.client.listTools()).tools,encoded=JSON.stringify(offered);for(const value of[raw.body,raw.member,raw.runner,raw.agent,'PRIVATE_DESCRIPTOR_RECORD_CANARY','PRIVATE_DESCRIPTOR_SECRET_CANARY','PRIVATE_SECRET_DESCRIPTION','https://loom.example'])expect(encoded).not.toContain(value);
  expect(offered.map(tool=>({name:tool.name,properties:Object.keys(tool.inputSchema.properties??{}).sort()}))).toEqual([{name:'loom_commands',properties:['name']},{name:'loom_command',properties:['id','input','operation']},{name:'loom_query',properties:['operationName','query','variables']}]);expect(f.fetcher).not.toHaveBeenCalled();
+});
+it('reads a post\'s files from the body\'s own area by the path the model gives, and hands loom a name and bytes',async()=>{
+ const f=await bodyFixture(clean),seen:unknown[]=[];
+ f.root.operations.register({name:'bridges.say',write:true,input:z.object({id:z.string(),text:z.string(),files:z.array(z.object({name:z.string(),contents:z.string()}).strict()).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:()=>true,run(_ctx,input){seen.push(input);return{saved:true as const};}});
+ const asked:string[][]=[];
+ const readFiles=(paths:readonly string[])=>{asked.push([...paths]);if(paths.some(path=>path.startsWith('/etc')))throw new BodyFileRefused("Not inside this body's working area: "+paths[0]);return paths.map(path=>({name:path.split('/').pop()!,contents:Buffer.from('BYTES OF '+path)}));};
+ const make=(reader?:typeof readFiles)=>{const tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,fetch:async(input,init)=>f.root.http.fetch(new Request(input,init)),clock:f.clock,onStop(){},onStatus(){},...(reader?{readFiles:reader}:{})});clean.push(tools.close);return tools;};
+ const tools=make(readFiles),text=(value:{content:{text:string}[]})=>value.content[0].text;
+ expect(JSON.parse(text(await tools.call('loom_command',{operation:'bridges.say',input:{id:'one',text:'Here',files:[{path:'out/plot.png'}]},id:'one'})))).toEqual({ok:true,value:{saved:true}});
+ expect(asked).toEqual([['out/plot.png']]);
+ expect(seen).toEqual([{id:'one',text:'Here',files:[{name:'plot.png',contents:Buffer.from('BYTES OF out/plot.png').toString('base64')}]}]);
+ // A path outside the area never reaches loom; the model is told which path and why.
+ const refused=await tools.call('loom_command',{operation:'bridges.say',input:{id:'two',text:'Here',files:[{path:'/etc/passwd'}]},id:'two'});
+ expect(refused.isError).toBe(true);expect(text(refused)).toBe("Not inside this body's working area: /etc/passwd");
+ // Bytes of the model's own making under a file's name are not a file: only a path is.
+ for(const files of [[{name:'x',contents:'QUJD'}],[{path:'a',name:'b'}],[],'out/plot.png'])expect((await tools.call('loom_command',{operation:'bridges.say',input:{id:'three',text:'x',files},id:'three'})).isError).toBe(true);
+ expect(seen).toHaveLength(1);
+ // Without files a post is as before, and a body with no reader posts none.
+ expect(JSON.parse(text(await tools.call('loom_command',{operation:'bridges.say',input:{id:'four',text:'Plain'},id:'four'})))).toMatchObject({ok:true});
+ expect((await make().call('loom_command',{operation:'bridges.say',input:{id:'five',text:'x',files:[{path:'out/plot.png'}]},id:'five'})).isError).toBe(true);
+ expect(seen).toHaveLength(2);
 });

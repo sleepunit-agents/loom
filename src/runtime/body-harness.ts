@@ -16,7 +16,15 @@ import type { WorkerAssignment } from './worker.js';
 import type { HarnessTraits } from './harness-traits.js';
 import { BODY_EXTENSION_TOOLS_MAX, TOOL_NAME } from './body-model-tools.js';
 
-export interface HarnessReply { text: string; model: string; actions: { model: string }[] }
+export interface HarnessReply { text: string; model: string; actions: { model: string }[];
+  /** The id of the session the harness kept for this run, when it was asked to keep one and did. */
+  session?: string }
+/** Asks a harness that can keep its own record of a run to keep it, and to continue an earlier one when
+ * `resume` names it. Left out, the harness keeps nothing, as before. */
+export interface HarnessSession { resume?: string }
+/** The harness could not continue the session it was given, and neither said nor did anything: the caller
+ * may run the same work afresh. Any other failure is the plain `harnessUnavailable`. */
+export class HarnessResumeUnavailable extends Error { constructor() { super('Native execution unavailable'); } }
 export type HarnessSpawn = (command: string, args: readonly string[], options: {
   cwd: string; env: NodeJS.ProcessEnv; shell: false; detached: false; stdio: 'pipe' | ['pipe', 'pipe', 'pipe', 'pipe'];
 }) => ChildProcessWithoutNullStreams;
@@ -31,12 +39,24 @@ export interface HarnessInput {
   /** 'loom': loom's tools only. 'all': the harness's own tools too (files, shell, the web). */
   reach?: 'loom' | 'all';
 }
-export type HarnessRun = (job: WorkerAssignment, words: string, signal: AbortSignal) => Promise<HarnessReply>;
+export type HarnessRun = (job: WorkerAssignment, words: string, signal: AbortSignal, session?: HarnessSession) => Promise<HarnessReply>;
 export type BodyHarness = (input: HarnessInput) => HarnessRun;
 /** One harness, whole: what it can run and how it is run. This is the only thing body-harnesses.ts lists,
  * so there is no listing an adapter without its traits. */
 export interface Harness extends HarnessTraits {
   run: BodyHarness;
+  /** For a harness that can keep a session and continue it: everything about where it keeps one, said
+   * once, by the adapter. Absent: it keeps none. body-session.ts packs and restores by these and knows no
+   * harness's layout itself. */
+  sessions?: {
+    /** The harness's own directory, under which every session file is. */
+    root(env: Readonly<Record<string, string | undefined>>): string;
+    /** Whether a path under that directory is one of this session's files. A pack holds nothing else. */
+    owns(relative: string, session: string): boolean;
+    /** This session's files as they are now, as paths under `root`, found without following a link at any
+     * step (unfollowed.ts). `root` here is the directory's real path. */
+    files(root: string, session: string): string[];
+  };
   /** Remove what the harness leaves outside the body's scratch directory (see harnessLeftovers). */
   leftovers?(scratch: string, env: Readonly<Record<string, string | undefined>>): void;
 }
@@ -49,6 +69,16 @@ export const BODY_SCRATCH = 'LOOM_BODY_SCRATCH';
 /** The name every harness is given a body's tools server under. A terminal session registers loom's own
  * door under the same name (docs/runtime/terminal.md), so a tool has one name in both places. */
 export const BODY_TOOLS_SERVER = 'loom';
+/** Always set in a body's environment by a container worker, so that an image's own value never stands:
+ * to `1` only when the place the body's harness keeps its
+ * sessions is this body's alone for this one job: the body runs in a house's container, whose home goes
+ * with it, and no mount is, holds, or is inside that place (house-layout.ts, houseSessions); to `0`
+ * otherwise. The account's sign-in is mounted elsewhere and does not count. A body run as a plain process
+ * is never told `1`, and the worker takes the variable out of a configured environment: its
+ * harness's directory is the machine's, shared with every other body and left behind. Nothing private to
+ * one conversation may be left in a shared place, so a harness session is kept only where this is set
+ * (body-session.ts). */
+export const BODY_OWN_HARNESS = 'LOOM_BODY_OWN_HARNESS';
 /** Every tool loom serves a body is named with this prefix, then the tool's own name. */
 export const harnessToolPrefix = `mcp__${BODY_TOOLS_SERVER}__`;
 const toolName = TOOL_NAME;

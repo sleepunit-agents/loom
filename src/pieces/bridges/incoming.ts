@@ -1,6 +1,10 @@
 /** Trusted bridge ingress. Platform adapters supply authenticated event fields;
  * person identity comes exclusively from household person links.
  *
+ * A person's message is taken only from somebody the household knows: an account linked to a member who is
+ * in the household now, or one the answering agent's owner has given a tier. Anybody else is dropped, in a
+ * room and in a direct message alike.
+ *
  * Who counts is the household's answer as it is now (policy.ts, inHousehold), asked each time a message is
  * received or tried again. A person link stands for its member only while that member is in the household:
  * removing a member keeps the link, and their account is then nobody's. A connection speaks for its agent
@@ -10,11 +14,12 @@
 import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
+import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
-import { inHousehold } from '../../policy.js';
+import { holds, inHousehold, rules } from '../../policy.js';
+import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -49,11 +54,35 @@ function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thre
   &&row.user===message.user&&row.postedAt===message.postedAt;
 }
 
+/** Why a person's message was not delivered: nobody the household knows sent it. */
+export const UNKNOWN_SENDER = 'Unknown sender';
+/** Why a message was neither delivered nor answered: it was the stop word, and it stopped a job. */
+export const STOP_WORD = 'Stop word';
+/** Why a stop word loom came to late is neither acted on nor delivered: too late to stop what it was said about. */
+export const STOP_WORD_LATE = 'Stop word, too late to stop anything';
+/** How long after it was said a stop word still stops: taken in later than this, it is spent. Said once. */
+export const STOP_WORD_FRESH_MS = 120_000;
+/** A message that is only "stop" or "cancel", in any case, with trailing full stops or exclamation marks
+ * and its mentions set aside. The list is the earlier bridge's. */
+export function isStopWord(text: string): boolean {
+  return /^(stop|cancel)[.!]*$/i.test(text.replace(/<@[!&]?[^<>\s]+>/g, '').trim());
+}
+/** Ends a job on a member's word, inside the caller's transaction. The runtime's: bridges write no job. */
+export type StopJob = (job: string, member: string) => void;
+/** Why a bot's message was not delivered. */
+export const BOT_NOT_ADMITTED = 'Bot did not mention this agent, or bots may not talk here';
+
 export class BridgeIncoming {
   private readonly conversations: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {
+  private stopped: { job: string; incoming: string }[] = [];
+  /** `stop` ends a job the way an owner's Stop does. Without it the stop word is an ordinary message. */
+  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), private readonly stop?: StopJob) {
     this.conversations = new Conversations(db, now);
   }
+
+  /** The jobs stop words have ended since this was last asked, each with the message that said it, for
+   * the caller to announce and to answer once its transaction has committed. */
+  takeStopped(): { job: string; incoming: string }[] { return this.stopped.splice(0); }
 
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. A held event is tried again
@@ -117,8 +146,33 @@ export class BridgeIncoming {
       else if (message.isDm && connection.platform === 'discord' && this.db.select({ id: bridgeConnections.id }).from(bridgeConnections)
         .where(and(eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.botUser, connection.botUser), eq(bridgeConnections.enabled, true), isNull(bridgeConnections.removedAt), ne(bridgeConnections.workspace, connection.workspace))).get()) { state = 'held'; reason = 'Bot is connected in another guild'; }
       else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
-      else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
-      else if (!message.isDm && !addressed.has(connection.botUser)) {
+      // A stop word that loom comes to late is spent: one that was held and is tried again, and one first
+      // taken in more than STOP_WORD_FRESH_MS after it was said (its frame waited in the spool, or loom was
+      // down). It was said about whatever was working when it was said, and must not stop a job that started
+      // since, nor arrive later as a message nobody meant. It is dropped, saying so, whoever said it.
+      else if (isStopWord(message.text) && (existing || Date.parse(this.now()) - Date.parse(message.postedAt) > STOP_WORD_FRESH_MS)) { state = 'dropped'; reason = STOP_WORD_LATE; }
+      // A bot wakes an agent only by writing its mention, and only where the channel's rule lets bots talk. A
+      // reply, a thread and the channel's own agent count for people alone, so two agents cannot wake each other
+      // unless each chooses to. The platform's own flag says what a bot is; one that is no agent of this
+      // household is delivered as from nobody.
+      else if (message.bot || message.webhook || sender) {
+        if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
+      }
+      else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
+      // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
+      // working, and not said to another agent: that job is ended and the message is nobody's mail. It is
+      // acted on only as the message is first taken in, and only fresh (a held or late one is spent, above),
+      // and names the one job found unended here then, so it can never reach a later one. Anywhere else, and from anybody else,
+      // the same words are an ordinary message.
+      else if (link && this.stop && isStopWord(message.text) && (addressed.has(connection.botUser) || !peers.some(p => addressed.has(p.botUser)))
+        && holds(rules.stopJob, { kind: 'member', id: link.member }, { agent: connection.agent }, sharing)) {
+        const place = conversationPlace(connection.workspace, message, message.isDm && !message.groupDm ? link.member : null);
+        const working = this.db.select({ id: jobs.id }).from(jobs).innerJoin(conversations, eq(conversations.id, jobs.conversation))
+          .where(and(eq(conversations.agent, connection.agent), eq(conversations.venue, connection.platform), eq(conversations.place, place), inArray(jobs.state, unendedJobStates))).get();
+        if (working) { this.stop(working.id, link.member); this.stopped.push({ job: working.id, incoming: id }); state = 'dropped'; reason = STOP_WORD; }
+      }
+      // In a room, a person's message that addresses nobody goes to the agent that answers the room.
+      if (state === 'delivered' && !message.isDm && !(message.bot || message.webhook || sender) && !addressed.has(connection.botUser)) {
         if (peers.some(p => addressed.has(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
       const at = this.now();
@@ -162,6 +216,14 @@ export class BridgeIncoming {
       // A dropped message is never delivered or tried again, and nobody is shown it: it keeps no words.
       return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null, ...(state === 'dropped' ? { text: '' } : {}) }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
+  }
+
+  /** Whether this agent's owner has placed the outside account: a tier of any rank, set by a card the owner
+   * allowed (shared-agent-body-policy.ts). With a person link, this is everybody a message is taken from.
+   * A tier admits; it never says who somebody is (docs/accepted-tradeoffs.md, "A stranger wakes nothing"). */
+  private hasTier(connection: Pick<typeof bridgeConnections.$inferSelect, 'platform' | 'workspace' | 'agent'>, user: string): boolean {
+    return !!this.db.select({ tier: agentPeople.tier }).from(agentPeople)
+      .where(and(eq(agentPeople.agent, connection.agent), eq(agentPeople.person, outsidePersonKey(connection.platform, connection.workspace, user)))).get();
   }
 
   /** Try a held message again from its own row, against the household's rules as they are now. This is

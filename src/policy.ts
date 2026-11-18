@@ -137,14 +137,18 @@ const waitsOnReadable: Rule = first([
 ], all(equal('waitsOnKind', null), equal('waitsOnId', null)));
 /** A bridge connection: household owners, and the members who own its agent. Never the agent itself. */
 const bridgeConnection: Rule = any(householdOwner, agentOwners);
+/** Who reads a post loom queued: whoever reads the message it answers, or, for a post that answers none (a
+ * firing's or a note's answer, an agent's own post), whoever reads the conversation it was made in. */
+const seesSend: Rule = any(seenWith('bridgeIncoming', 'incoming'), all(equal('incoming', null), seenWith('conversations', 'conversation')));
 /** Who may review a reply that did not go out (release a held one, dismiss one held or in doubt): a member
  * who reads it, by the read rule of `bridgeSends`, and who is a household owner, since running the
- * household's bridges is theirs; or, when it answers a direct message, any member who reads it. The owner
- * role does not read a direct message (rule `conversation`), so there the reply is reviewed by the people
- * the message is shown to: the conversation's own member for their private one, the agent's owners for one
- * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
-const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seenWith('bridgeIncoming', 'incoming'),
-  any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true))));
+ * household's bridges is theirs; or, when it answers a direct message, or answers none and was made in a
+ * direct conversation, any member who reads it. The owner role does not read a direct message (rule
+ * `conversation`), so there the reply is reviewed by the people the message is shown to: the conversation's
+ * own member for their private one, the agent's owners for one from anybody else. So every reply awaiting
+ * review has someone who can see it and decide. Never an agent. */
+const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seesSend,
+  any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true)), all(equal('incoming', null), seenWith('conversations', 'conversation', equal('direct', true)))));
 /** Whose a task is when it has no project: a member's own, or an agent's owners' and the agent's. The household's
  * own task has nobody of that kind. */
 const taskOwner: Rule = first([
@@ -318,7 +322,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
     [all(equal('isDm', true), equal('groupDm', true)), seenWith('bridgeConnections', 'connection', agentOwners)],
     [all(equal('isDm', true), set('member')), self('member')],
     [equal('isDm', true), seenWith('bridgeConnections', 'connection', agentOwners)]], householdOwner),
-  bridgeSends: seenWith('bridgeIncoming', 'incoming'),
+  bridgeSends: seesSend,
   secrets: householdOwner, secretGrants: householdOwner, secretRequests: householdOwner, secretRules: householdOwner,
   secretRuleAgents: householdOwner, secretUses: householdOwner, secretChanges: householdOwner,
   triggers: trigger,
@@ -444,8 +448,8 @@ export const OWN_WORK = 'agent:';
  *  - work for a member (their own thread, their trigger): that member;
  *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
  *    member). Written `agent:<id>`, which no member's id can be;
- *  - anything else for no member (a room on a bridge, a handoff with no member): `unknown`. People outside
- *    the household talk to an agent in a room; what is asked there is nobody's account.
+ *  - anything else for no member (a shared place on a bridge, a handoff with no member): `unknown`. People outside
+ *    the household talk to an agent in a shared place; what is asked there is nobody's account.
  * A handoff carries the member it was opened for (core/conversations/handoff.ts), so work handed on for a
  * person is still that person's: the first case.
  * `workPrincipal` names the principal; `rulesPerson` says which rules it reads. */
@@ -532,6 +536,40 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
     : owner || own || t.ownerKind === 'member' && v.kind === 'member' && t.owner === v.id;
   if (!authored || t.project && !(Object.hasOwn(s.projects, t.project) && holds(rules.project, v, { id: t.project }, s))) return false;
   return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : owner || own;
+}
+/** On whose word a body works limits what it may schedule; where it sits does not. A **shared place** is a
+ * Discord or Slack conversation that is not one member's own: a channel, a thread, a group direct message,
+ * a direct message from somebody who is no member. Its body works with whoever is in the room: the people
+ * behind its mail, and the tools a body is not given when one of them is a guest. A trigger set on the
+ * word of anybody but owners for the agent's own wake would later run words chosen there without any of
+ * that. So a job on such a word sets, rewords, stops, starts and runs only a trigger whose firing comes
+ * back into the shared place it is working in (`triggers.conversation`), as a job on its asker's word and
+ * under the bounds in src/shared-place-triggers.ts. A job working for owners, or the agent's own work, is
+ * held to none of this wherever it sits, a shared place included: maySetTrigger decides for it, as for a
+ * person and for an agent's own session. Least reach wins in a mixed batch (jobWord). */
+export const isSharedPlace = (conversation: { venue: string; member: string | null }): boolean =>
+  (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
+export const WORD_SCHEDULE_REFUSAL = 'This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.';
+/** Whether a job on this word, working in this conversation, may set, reword, stop, start or run this trigger: any, unless
+ * it works for anybody but owners; then only one naming the shared place it is working in. The one statement. */
+export function maySchedule(woke: Woke, conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
+  return woke !== 'others' || (isSharedPlace(conversation) && !!conversation.id && trigger.conversation === conversation.id);
+}
+/** On whose word a body is working, by least reach (shared-place-mail.ts, jobWord): the agent's own work,
+ * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
+ * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
+export type Woke = 'own' | 'owners' | 'others';
+/** A person mail is sent on the word of: a household member, or an outside account by the key loom knows it by. */
+export type OnWord = { kind: 'member' | 'outside'; id: string };
+/** Who asked for a trigger that names a conversation: such a person, or the agent itself. */
+export type Asker = OnWord | { kind: 'agent'; id: string };
+/** Who may hand a note to the agent's body where, and post there as the agent's own work. The one statement.
+ * The agent's own work and a body working for owners: any conversation of that agent, and any channel it
+ * has a rule for. A body working for anybody else: only the one channel its own channel's rule names as
+ * where it reports (`reportsTo`); with none named, nowhere. A stranger wakes no body and so hands nothing.
+ * By the person and not by the venue: the same person has the same reach on Discord and on Slack. */
+export function mayHandTo(woke: Woke, target: string, reportsTo: string | null): boolean {
+  return woke !== 'others' || (reportsTo !== null && target === reportsTo);
 }
 /** Who may fire a trigger by hand, or turn a stopped one back on: someone who reads it (rule `trigger`,
  * which the caller checks on the stored row) and who may put its agent to work (directsAgent), as for

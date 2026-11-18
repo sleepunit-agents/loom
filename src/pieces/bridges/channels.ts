@@ -12,7 +12,9 @@ const id = z.string().min(1).max(256);
 const discordEvidence = z.object({ id, type: z.number().int(), guild_id: id.nullish(), parent_id: id.nullish() });
 const slackEvidence = z.object({ id, context_team_id: id.optional(), is_im: z.boolean().optional(), is_mpim: z.boolean().optional(), is_channel: z.boolean().optional(), is_group: z.boolean().optional() });
 type Binding = { platform: 'discord' | 'slack'; workspace: string };
-type Lifetime = Binding & { channels: Map<string, DiscordChannel | SlackChannel> };
+/** A role Discord made for a bot when it joined (`managed`, with the bot's id in its tags). */
+const discordRole = z.object({ id, managed: z.boolean().optional(), tags: z.object({ bot_id: id.nullish() }).passthrough().nullish() }).passthrough();
+type Lifetime = Binding & { channels: Map<string, DiscordChannel | SlackChannel>; botRoles: Map<string, string> };
 
 export class BridgeChannels implements BridgeChannelCache {
   private readonly connections = new Map<string, Lifetime>();
@@ -25,7 +27,7 @@ export class BridgeChannels implements BridgeChannelCache {
   bind(connection: string, binding: Binding) {
     id.parse(connection);
     const source = z.object({ platform: z.enum(bridgeConnections.platform.enumValues), workspace: id }).parse(binding);
-    const life: Lifetime = { ...source, channels: new Map() };
+    const life: Lifetime = { ...source, channels: new Map(), botRoles: new Map() };
     this.connections.set(connection, life);
     const current = () => this.connections.get(connection) === life;
     return {
@@ -34,7 +36,9 @@ export class BridgeChannels implements BridgeChannelCache {
        * A Discord kind loom carries no conversation in is remembered as `other`
        * and returns false; malformed/mismatched evidence throws.
        */
-      put: (channel: string, evidence: unknown): boolean => {
+      /** `starter` is who wrote the message a Discord thread was started from, when the adapter could
+       * read it (channel-api.ts): a thread under a bot's message addresses that bot (normalize.ts). */
+      put: (channel: string, evidence: unknown, starter?: string): boolean => {
         if (!current()) return false;
         id.parse(channel);
         life.channels.delete(channel);
@@ -50,7 +54,7 @@ export class BridgeChannels implements BridgeChannelCache {
             if ([0, 5].includes(raw.type)) value = { id: channel, guild: life.workspace, kind: 'channel' };
             else if ([10, 11, 12].includes(raw.type)) {
               if (!raw.parent_id || raw.parent_id === channel) throw Error('Discord thread needs a parent');
-              value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id };
+              value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id, ...(starter !== undefined ? { starter: id.parse(starter) } : {}) };
             } else {
               // Remembered, so its messages are set aside at once and nobody asks Discord about it again
               // (docs/accepted-tradeoffs.md, "Some Discord channels carry no conversation").
@@ -75,6 +79,14 @@ export class BridgeChannels implements BridgeChannelCache {
         }
         return true;
       },
+      /** The guild's roles as Discord lists them. Kept: each role Discord manages for a bot, by the bot it
+       * is for. A ping of such a role is a mention of that bot; no other role is anybody's. Replaces what
+       * was kept; evidence that is not a list of roles keeps none. */
+      roles: (evidence: unknown): void => {
+        if (!current() || life.platform !== 'discord') return;
+        life.botRoles.clear();
+        for (const role of z.array(discordRole).max(1000).parse(evidence)) if (role.managed && role.tags?.bot_id) life.botRoles.set(role.id, role.tags.bot_id);
+      },
       remove: (channel: string): void => { if (current()) life.channels.delete(channel); },
       close: (): void => { if (current()) this.connections.delete(connection); },
     };
@@ -85,6 +97,11 @@ export class BridgeChannels implements BridgeChannelCache {
     if (life?.platform !== 'discord') return;
     const value = life.channels.get(channel) as DiscordChannel | undefined;
     return value && { ...value };
+  }
+  /** Discord role id to the bot it is managed for, for this connection's lifetime. Empty until read. */
+  botRoles(connection: string): ReadonlyMap<string, string> {
+    const life = this.connections.get(connection);
+    return new Map(life?.platform === 'discord' ? life.botRoles : []);
   }
   slack(connection: string, channel: string): SlackChannel | undefined {
     const life = this.connections.get(connection);

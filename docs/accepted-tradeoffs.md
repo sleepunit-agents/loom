@@ -719,6 +719,274 @@ Entries are grouped by the part of the program they belong to.
   and only for a member who is in the household now: removing a member keeps their link, and intake
   (`incoming.ts`) and the run policy (`body-policy.ts`) then take the account for an outside one.
 
+### A stranger wakes nothing, and a tier is what admits an outsider
+- What: a person's message is taken only from an account linked to a member who is in the household now
+  (`bridge_people`), or one the answering agent's owner has given a tier (`agent_people`). Anybody else is
+  dropped with the reason `Unknown sender`, in a shared place and in a direct message, and keeps no words. There is
+  no setting that lets everyone in a channel or on a connection talk to an agent.
+- Where: `receive` in `src/pieces/bridges/incoming.ts` (`hasTier`). What a guest's body is not given is
+  `src/runtime/harness-traits.ts` (`hasGuest`, `deniedTools`): a sender who is no member and is not at tier 3
+  is a guest, and one guest applies the agent's guests-only tool denials to the whole job.
+- Why: the bot can be written to by anyone who shares a server or a workspace with it, and a body acts with
+  the agent's tools. The owner places each outsider by a card (`bodyPolicy`), which already decides what
+  that person's body may not do; the same statement admits them, so there is one list and no second
+  authority. A tier admits and never says who somebody is: such a message is from nobody in the household.
+- Would change it: wanting an open room where anyone may talk to an agent as a guest. That is a setting on
+  the channel's rule (a column), off unless an owner turns it on. Or wanting to admit a person by their
+  People card: that is a link from the outside account to the card, kept beside the member link.
+
+### A bot wakes an agent only by writing its mention
+- What: a message from a bot or a webhook is delivered only in a channel whose rule has `botsMayTalk` on,
+  and only when it mentions the agent's bot in writing. A bot's reply, its post in a thread under the
+  agent's message, and the channel's own agent do not count for a bot, and a bot is never delivered in a
+  direct message. A bot that is another agent of this household is recorded as that agent; any other bot
+  or webhook is recorded as from nobody, so it is a guest.
+- Where: `receive` in `src/pieces/bridges/incoming.ts`.
+- Why: two agents in one room must not be able to answer each other for ever. With a written mention as the
+  only way in, each turn between bots is one a body chose to ask for. What a bot is comes from the
+  platform's own flag, so a household does not have to register every bot it lets speak.
+- Would change it: a channel that is one agent's private line to one bot, where every post should wake it
+  (the old bridge's "pair" channels). That is a second setting on the channel's rule.
+
+### A Discord post pings the users an agent names, and nothing else
+- What: a post by loom on Discord allows user mentions and no others (`allowed_mentions: {parse: ['users'],
+  replied_user: false}`). A written `<@id>` pings that person or bot. `@everyone`, `@here` and every role
+  stay words. Slack posts ping nobody: their text is escaped.
+- Where: `DISCORD_PINGS` in `src/pieces/bridges/reply-api.ts`, the one sender of every post.
+- Why: an agent has to be able to call a person's attention, and a written mention is the only thing that
+  wakes another bot (see "A bot wakes an agent only by writing its mention"). A model's text is not
+  trusted with a ping of a whole server or a whole role.
+- Would change it: a household wanting an agent to ping a role. Then the roles it may ping are named on the
+  connection, and only those are allowed.
+
+### A Discord attachment is a link in the words and a file in the body's scratch directory
+- What: a Discord message's attachments, ten at most, are listed after its words, one line each, with name,
+  type, size and Discord's own signed link (which stops working after about a day). The first five of a
+  delivered message, each up to 8 MB, are also fetched and kept as a Slack message's files are
+  (`bridge_files`, fourteen days, or the keep time for a direct conversation). A link is used only when it
+  is on `cdn.discordapp.com` or `media.discordapp.net`; an HTML page is never kept. Before its harness
+  starts, a body with file tools of its own (`hasFileTools`) writes the kept files of the messages it took into its own scratch
+  directory (at most ten files and 32 MB a run, any type that was kept) and its input names each path.
+  A file that could not be fetched, or was not fetched yet when the body started, is only its link.
+- Where: `discordWords` in `src/pieces/bridges/normalize.ts`; `discord-files.ts` and the pump in
+  `shared-daemon.ts`; `files.ts` (`HANDED_FILE_BYTES`); the body's side is `src/runtime/body-attachments.ts`.
+- Why: a message that is only a picture has words and is answered, and a model can open the picture as a
+  file, which it cannot do with bytes in a tool result. The scratch directory is the body's alone and is
+  removed with it, so nothing sent to one conversation is left for another. The fetch is separate from
+  delivery so that a slow or failed download never holds a message back.
+- Would change it: bodies starting before a file has arrived often enough to matter. Then admission waits
+  for a message's files, or the body waits for them.
+
+### Who a Discord thread hangs under is read once, from its starter message
+- What: a message in a thread, that is not itself a reply, answers whoever wrote the message the thread was
+  started from, so a thread under a bot's message addresses that bot whoever posted the message (loom, the
+  old bridge, a script with the same token). The author is read when loom first meets the thread and kept
+  for the connection's lifetime. A thread made on its own, or whose starter was deleted or cannot be read,
+  hangs under nobody's message. Which roles are a bot's own is read the same way, once when the connection
+  starts: a role made afterwards counts from the next reconnect.
+- Where: `starter` and `roles` in `src/pieces/bridges/channel-api.ts`, kept by `channels.ts`, used by
+  `normalizeDiscord`; the reads are made in `shared-daemon.ts`.
+- Why: Discord's message event carries neither. One read for a thread and one for a guild's roles is the
+  least that tells them, and both are stable.
+- Would change it: role pings that fail after a bot is re-invited. Then `GUILD_ROLE_UPDATE` is listened for.
+
+### The stop word ends the job, and only a member who may end it can say it
+- What: a bridge message that is only "stop" or "cancel" (any case, trailing `.` or `!`, mentions aside),
+  from a linked member who may end the agent's jobs (`rules.stopJob`: a household owner, or a member who has
+  the agent), in a place where a job of that agent's has not ended, ends that job (`ended_reason` `stop`,
+  `ended_by` the member). The message is recorded as dropped with the reason `Stop word`, keeps no words and
+  is never delivered or answered. With no such job, or from anybody else, the same words are an ordinary
+  message. Where a job was stopped the bot says "Stopped here.", one post through the send queue to the
+  place the stop was said (`STOPPED_LINE` in `sends.ts`); it is the only post loom makes to a message that
+  was not delivered.
+- Where: `receive` and `isStopWord` in `src/pieces/bridges/incoming.ts`; the job is ended by `Jobs.stop`
+  (`src/runtime/jobs.ts`), handed in by `src/shared-root.ts`.
+- Why: a person watching an agent go wrong in a channel needs to stop it from there. The stop is acted on
+  only as the message is first taken in, and only while it is fresh. A stop word that loom comes to late is
+  spent: one that was held (its connection was off, or any other reason) and is tried again, and one first
+  taken in more than two minutes after it was said (`STOP_WORD_FRESH_MS`: its frame waited in the spool,
+  or loom was down). It is dropped with the reason `Stop word, too late to stop anything`, stops no job
+  that started since, and is not delivered as a message either, whoever said it. So a "stop" that loom
+  first acts on more than two minutes late
+  stops nothing. A job records the member who ended it, so an outside account with only a tier cannot
+  stop one. The job is ended, not asked to stop: a bridge conversation has no Comms thread to carry a Stop
+  a body would notice, and work that was stopped needs fresh mail to start again.
+- Would change it: wanting guests to stop work they started. That needs a job to record an outside
+  account as who ended it.
+
+### A body may say more during its run, a bounded number of times, with small files on Discord
+- What: `bridges.say` lets the body that holds a bridge conversation's job post one more message, to the
+  channel and thread of the latest bridge message the job took. It goes through the send queue the reply
+  uses, so it is split, receipted, held while effects are off and reviewed like a reply. It settles no mail
+  and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
+  for the mail one job took, the reply among them.
+  On Discord such a post may carry files: at most four, 600 KB together, and only from a body that has
+  file tools of its own (`hasFileTools`: the machine gives its bodies the harness's own tools, and
+  reading files is not among those this job's body is not given). The model names each by a path.
+  The body program opens it once, never following a link at its last step, and asks the rest of the open
+  file: it must be a regular file with one name, and the kernel must place it inside the body's working
+  directory or its scratch directory. A hard link is refused by its second name, since one made inside
+  the area to a file outside cannot be told apart; a file of the body's own with two names is refused
+  too. The bytes are kept with the post (`bridge_send_files`) while it may still be sent (`pending`,
+  `sending`, or `held` for a person), and go in the same write that makes it `sent`, `dismissed` or
+  `uncertain`, by whichever path, the start-up after a crash included (`dropSettledFiles`). They go out
+  with its last part. Slack posts carry no files.
+- Where: `src/shared-bridge-reply.ts` (`speaking`, `BRIDGE_POSTS_PER_JOB`); the queue is
+  `src/pieces/bridges/sends.ts`; the limits are `send-file-limit.ts`; the path is read by
+  `src/runtime/body-files.ts`, called from `body-program-tools.ts`; the form is built in `reply-api.ts`.
+- Why: an agent on a long piece of work says what it is doing, and sends a result as it has it. One queue
+  means one rule for what a post may be and one record of what was posted. A file is named by path so
+  that what is posted is a file the body really has, and so that the bytes pass from the body program to
+  loom without the model handling them. The size is what one request through loom's door carries
+  (`DOOR_REQUEST_BYTES`, 1 MB, base64 in JSON). Slack's upload needs a scope the client's app does not have.
+- Would change it: bodies needing to post larger files. Then a post's files are sent to loom in pieces,
+  or the door's limit is raised for this one route.
+
+### Taken and working are shown on Discord, best effort
+- What: when a running job has taken a Discord message the bot reacts 👀 to it, and while that mail is
+  unanswered it keeps the typing indicator showing in the channel. The reaction is taken off when the mail
+  is settled, by the reply or by the job ending. A call Discord refuses is tried again on a later pass
+  while it is still wanted and is otherwise dropped: it changes no job, mail, send or connection, and is
+  not reported. Which messages carry the reaction is kept in memory only, so a restart of loom between a
+  job taking a message and answering it leaves that 👀 on. Slack shows neither.
+- Where: `src/pieces/bridges/presence.ts` (`workingOn` reads what to show; `BridgePresence` shows it),
+  called by `shared-daemon.ts` after committed writes and on its five-second pass.
+- Why: a job can take minutes, or wait behind another, and a person who sees nothing asks again. The
+  reaction is removed because the reply is the acknowledgment; left on, every answered message would keep
+  one. It is read from the mail and the job and not sent by the body, so a body that dies still has its
+  reaction taken off, and nothing about showing it can fail the work. Slack's app has no reactions scope
+  and Slack has no typing call for bots; adding a scope is a change to the client's workspace.
+- Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
+  and cleared at start.
+
+### A harness session is kept between bodies, sealed, for the next body alone
+- What: a bridge conversation's body continues the session the last body of that conversation left. When
+  it has answered, the body packs the harness's own files for the session (for Claude Code, the transcript
+  `projects/<directory>/<session>.jsonl` and the tool results beside it), gzipped, and hands them to loom;
+  loom keeps one for a conversation and harness (`conversation_sessions`), sealed with the household's
+  words key. The next body of the same harness is handed it, puts the files back and tells the harness to
+  continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
+  agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+- Where a session is kept at all: only where the place the harness keeps its sessions is that body's
+  alone for that one job. A restored session is the conversation's words in plain files. In a house that
+  place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in
+  `src/runtime/house-layout.ts` states the places once), thrown away with the body, and the account's
+  sign-in is mounted elsewhere (`/run/loom/login/<harness>`), so the two do not meet. The worker always
+  tells the body, `LOOM_BODY_OWN_HARNESS=1` or `=0`, so an image's own value never stands: 1 unless a
+  mount is, holds, or is inside the place. An agent's own mount at `.claude` or under it turns resume off
+  for that agent. The body also checks that its harness really keeps its sessions at that place, and
+  that the place and every step from the home down to it is a real directory and not a link; it never
+  makes the directory: the house's image does. A body run as a plain process is never told so, whatever its configuration says: its harness's
+  directory is the machine's, shared with every other body and left behind. Wherever the place is not the
+  body's own, no session is kept or restored and the body starts fresh with the kept history.
+- Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
+  700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is handed on
+  only within one family of models. Its keep time is the household's for words, counted from the oldest
+  erasable word it holds (`conversation_sessions.started_at`): when it was first saved, or earlier when
+  its first body started fresh and was handed older words of a direct conversation, whose time the body
+  tells loom. A save within the keep time leaves that start as it is. Only erasable words count: the words
+  of a direct conversation, each of which has an erase time. A room's words are kept without limit, have
+  no erase time, and do not move the start, however old the history handed in. So no erasable word in a
+  session outlives its keep time, and a room's session is counted from its first save.
+- Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
+  different harness or family of models; a session past the keep time; one too large to pack (which also
+  removes the one kept before); a conversation answered after the session was last saved (its body died
+  after replying, or another harness answered since), so that a session behind what was said is never
+  continued; a harness that cannot continue the session it was handed and ends having said nothing, in
+  which case the same body runs the work once more, afresh. A body that is handed nothing it can continue
+  tells loom at once, and what was kept is removed; one past its keep time is removed by the words' sweep.
+- Who can read it: nobody but the body holding the conversation's job. The table is not served by the
+  query door and no page shows it, to an owner either: a session is the model's own record of the
+  conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
+  that body, of a bridge conversation, and the body program keeps both from the model's own tools, so a
+  model cannot store a session of its own making for the next body to continue. A session's files are
+  found, read, put back and removed without following a link at any step (`src/runtime/unfollowed.ts`);
+  a pack that is refused leaves no file or directory it made. Where a harness keeps a session is said
+  once, by its adapter (`sessions` in `claude-body.ts`). A conversation has one unended job at a time, so two bodies cannot each continue and save one
+  session.
+- Where: `src/core/conversations/sessions.ts` and `shared-conversation-sessions.ts`; the body's side is
+  `src/runtime/body-session.ts`, `body-program.ts` and the adapter (`claude-body.ts`, `sessionFiles`).
+- Why: without it a model remembers what was said and not what it did: the files it read, its tool
+  results, its reasoning. loom keeps the session, not a worker, because a body's container is thrown away
+  and the next body may run on any machine. Sealed and unread because it holds the words of what may be a
+  private conversation. The body removes the files from its machine once they are handed over.
+- What this costs: a continued session re-reads all of itself on every message, and grows until it passes
+  the size limit and the conversation starts fresh. A conversation that never pauses still starts fresh
+  once in every keep time. A continued session does not see changes to the agent's identity pages until
+  it next starts fresh. A worker that runs bodies as processes has no resume at all.
+- Would change it: wanting resume for bodies run as processes. Each would need a directory of its own for
+  the harness's sessions, removed when the body ends, with the sign-in elsewhere, as a house has. Or:
+  sessions passing 700 KB so often that conversations keep starting over; then a session is sent in
+  pieces, or the harness's own compaction is asked for before the limit. Or Codex bodies answering on
+  bridges: its sessions directory is packed the same way, in its adapter, and given a place in the layout.
+
+### A bridge body that starts fresh is handed what was said, not what was done
+- What: a body that does not continue a session (above) is handed the earlier words of its conversation:
+  the messages an earlier body finished with and what was posted back, newest first up to 1 MB and a
+  hundred lines, then in order. Words erased at the keep time (a direct conversation's) are not there to
+  hand over, and a line due to be erased carries that time.
+- Where: `src/core/conversations/bridge-history.ts`, attached once by `prepareTake` in `mail.ts`; the body
+  accepts it in `src/runtime/conversation-client.ts`. A Comms thread's is `history-context.ts`.
+- Why: it needs nothing kept but what loom keeps anyway, so it is always there to fall back on. It is the
+  conversation's own words given to the conversation's own job, so nothing is read that the mail does not
+  already show.
+- Would change it: handing it to a continued session too, if sessions prove to miss things said by others
+  in a shared place while no body was running. Today a continued session is told only its own new mail.
+
+### A channel's brief is a page of the agent's, and a missing one is told, not fatal
+- What: a channel's rule may name a brief (`bridge_channels.brief`): the name of a role page of the
+  answering agent, `roles/<brief>.md` in its Memory, beside the page for the venue. The body of every
+  conversation in that channel is given it after the agent's identity and before the mail. When the agent
+  has no page of that name the body works without it, and loom tells the agent's owners in their Inbox,
+  once for a channel and brief. A direct conversation has no brief.
+- Where: the rule is `src/pieces/bridges/settings.ts`; the body asks loom for the name and reports a
+  missing page (`bridges.brief`, `bridges.briefMissing` in `src/shared-bridge-reply.ts`) and reads the page
+  itself (`bodyChannelBrief` in `src/runtime/body-memory-identity.ts`).
+- Why: what an agent should keep in mind in one room (a client's channel) is the agent's own writing and
+  belongs with its other pages, where it is versioned and read by the agent. The rule only names it, so
+  an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
+- Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
+
+### A body working for anybody but owners schedules only into its own shared place
+- What: a job with anybody but owners behind it (a guest, a member who does not have the agent, somebody
+  loom cannot name) may set, reword, stop and start only a trigger naming the shared place it is working
+  in (a Discord or Slack conversation that is not one member's own), with its own words, at listed times
+  an hour apart. Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
+  that conversation, on its asker's word. A job working for owners, and the agent's own work, is held to
+  none of this in a shared place: reach follows the person, not the venue.
+- Where: `isSharedPlace`, `maySchedule` and `WORD_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
+  `docs/runtime/tempo.md`.
+- Why: such a body works under the limits of whoever is in the room. A trigger it set for its agent's
+  own wake would run words chosen there without them. One that comes back into the conversation runs under them.
+- **Open: a body working for a guest still reads all of its agent's triggers.** Reads go through the query door, which
+  judges a body by its agent and the member it works for, and knows neither what conversation its job is
+  in nor on whose word it works. So a guest-woken body can see its agent's other schedules (their notes, times
+  and instructions) though it can change none. The fix is to carry the caller's conversation on `Viewer`, set where the body's
+  credential is resolved, and add a clause to the `trigger` read rule. It was left out of this round
+  because `Viewer` is the type every rule takes.
+- Would change it: that `Viewer` change.
+
+### Bodies of one agent speak to each other by notes, never by posting or reading across
+- What: a body does not post into, or read, a conversation other than its own. It hands a note to the
+  agent's body there (`conversation.handoff` with `to`), loom starts that conversation's job, and that
+  body says it in its own words. A body working for owners or members who have the agent, and the agent's
+  own work, may hand to any conversation or ruled channel of the agent. A body working for anybody else
+  may hand only to the channel its own channel's rule names (`reportsTo`), and nowhere with none named.
+  A mixed batch of mail counts as anybody else's: least reach wins. The one direct post is the agent's
+  own work, with no person behind it, to a ruled channel (`bridges.post`).
+- Where: `mayHandTo` in `src/policy.ts`; `src/shared-place-mail.ts`; `src/core/conversations/handoff.ts`.
+- Why: each body has the context of its own venue, and a note crosses with only what the sender chose to
+  say. Reach follows the person who woke the body, not the venue.
+- Accepted with it: no chain of notes is refused for its length. Each note shows its chain to the body that
+  receives it, which is told to stop and say so to a person when the exchange is not getting anywhere,
+  and the household's owners are told at 25 hand-offs and each further 25 (`CHAIN_NOTICE_EVERY`). A stop
+  word in either place ends that place's job, and the notes and firings waiting there wait for a person to
+  speak. A job started by a note or a firing is handed the conversation's kept history like any other job
+  there, and the stored session where there is one. In a Slack channel a post that answers no message
+  starts a thread of its own, so a reply to it is a new conversation.
+- Would change it: bodies that need to read another conversation. Jonathan's principle for that is on
+  record (a body woken by an owner may read what the agent is party to, by person and not venue); nothing is built for it.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "59a0323b387baa0d5a3dacc1aafeb27f87dcba4eb57a80456835c5fcc52d5bde",
+  "sourceSha256": "e6e29310077affdfc9c8d88fc7c17d7e68af89876af8f0c606a7175f058774d4",
   "promises": [
     {
       "id": "data-001",
@@ -143,16 +143,26 @@
     },
     {
       "id": "data-023",
-      "promise": "bridge_file_messages Which messages carried each kept Slack attachment. A file shared in two messages is listed under both and kept once.",
+      "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-024",
-      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-025",
+      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-026",
+      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-027",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {

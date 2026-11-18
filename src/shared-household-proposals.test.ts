@@ -224,7 +224,7 @@ it('proposes secret rules, the secrets default, bridge settings, tempo timings a
   expect(await allow(await propose('houseSecrets', { agent: 'art', repository: null, secrets: [{ alias: 'GITHUB_TOKEN', secret: 'github-token' }] }))).toMatchObject({ ok: true });
   expect(f.db.select().from(agentHouseSecrets).all()).toEqual([{ agent: 'art', alias: 'GITHUB_TOKEN', secret: 'github-token' }]);
   expect(await allow(await propose('bridge', { action: 'channel', platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false }))).toMatchObject({ ok: true });
-  expect(f.db.select().from(bridgeChannels).all()).toEqual([{ platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false }]);
+  expect(f.db.select().from(bridgeChannels).all()).toEqual([{ platform: 'discord', workspace: 'pond', channel: 'general', answers: 'art', botsMayTalk: false, brief: null, reportsTo: null }]);
   expect(await allow(await propose('bridge', { action: 'person', platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }))).toMatchObject({ ok: true });
   expect(f.db.select().from(bridgePeople).all()).toEqual([{ platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }]);
   const timings = await propose('tempoTimings', { who: { kind: 'person', id: 'sam' }, settleSeconds: 60 });
@@ -580,7 +580,7 @@ it('lets an agent ask to be let onto a project; allowing it adds that one agent 
   f.db.insert(projectRepositories).values({ project: 'garden', repository: 'github:fixture/garden' }).run();
   const others = () => [f.root.services.projects.describe('garden'), f.root.services.projects.describe('shut')];
   const untouched = others();
-  // mark is told in a room to work on pond, and asks from there.
+  // mark is told in a shared place to work on pond, and asks from there.
   f.db.insert(conversations).values({ id: 'cv-room', agent: 'mark', venue: 'slack', place: 'room', label: 'Room', startedAt: at, lastAt: at, turnCount: 0 }).run();
   const card = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'pond', agent: 'mark' }, why: 'Sam asked me to work on pond and I am not on it' },
     { conversation: 'cv-room', member: null, project: null })).value;

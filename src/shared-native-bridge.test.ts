@@ -25,11 +25,14 @@ it.each([{platform:'discord',revoke:false},{platform:'slack',revoke:false},{plat
  db.insert(s.members).values({id:'owner',role:'owner',joinedAt:now()}).run();db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(s.boxes).values({id:'box',name:'Box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
  db.insert(s.secrets).values(['TOKEN','APP'].map(name=>({name,description:'Synthetic',changedAt:now(),changedBy:'owner'}))).run();
  db.insert(s.bridgeConnections).values({id:'connection',platform,workspace,botUser:bot,agent:'art',tokenSecret:'TOKEN',appSecret:platform==='slack'?'APP':null,enabled:true,state:'disconnected',stateAt:now()}).run();db.insert(s.bridgeChannels).values({platform,workspace,channel,answers:'art',botsMayTalk:false}).run();
+ // The outside account that writes has been placed by the agent's owner: a stranger's message is not taken.
+ db.insert(s.agentPeople).values({agent:'art',person:JSON.stringify([platform,workspace,platform==='discord'?'623456789012345678':'UUSER']),tier:2}).run();
  let discord!:DiscordGatewayOptions,slack!:Parameters<typeof bridgeSlackSocket>[0];
  const request=vi.fn<typeof fetch>(async(url,options)=>{
   const path=String(url);
   if(path.endsWith('users/@me'))return Response.json({id:bot,bot:true});
   if(path.endsWith('guilds/'+workspace))return Response.json({id:workspace});
+  if(path.endsWith('guilds/'+workspace+'/roles'))return Response.json([]);
   if(path.endsWith('channels/'+channel)&&options?.method==='GET')return Response.json({id:channel,guild_id:workspace,type:0});
   if(path.endsWith('channels/'+channel+'/messages'))return Response.json({id:'523456789012345678',channel_id:channel});
   if(path.endsWith('auth.test'))return Response.json({ok:true,user_id:bot,team_id:workspace,bot_id:'BBOT'});

@@ -58,6 +58,9 @@ import { OperationError, Operations, failure, type Change } from './core/operati
 import { householdService } from './apps/household.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { registerSharedJobControl } from './shared-job-control.js';
+import { Jobs } from './runtime/jobs.js';
+import { ConversationSessions } from './core/conversations/sessions.js';
+import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
@@ -79,6 +82,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
+import { selfHandoff } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
@@ -260,6 +264,9 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
+    // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
+    stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},
+    jobsEnded:ids=>{for(const id of ids)jobEnded(id);tempo?.capacityChanged();},
     reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
   const lastSecretChange=()=>db.select({id:sql<number>`coalesce(max(rowid),0)`}).from(secretChanges).get()!.id;
   let secretChange=bridgeDaemon?lastSecretChange():0;
@@ -269,7 +276,10 @@ export function sharedRoot(options: {
   });
   startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   comms?.install(operations);
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion);
+  // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
+  const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
+  if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()));
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -337,6 +347,7 @@ export function sharedRoot(options: {
   const settingsBinding = sharedTempoSettings(bodyScope);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
+    bodyWork: viewer => bodyScope(viewer),
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }

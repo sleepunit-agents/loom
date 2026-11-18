@@ -1,267 +1,169 @@
-# Bridges: one shuttle for the household, a conversation as the unit
+# Bridges: Discord and Slack as places an agent is spoken to
 
-*2026-10-28. Status: **accepted** (Jonathan, terminal, 2026-10-28: "send em"). Jonathan, terminal: "imagine this. magical
-future loom is running on its box, and loom-shuttle is running there with it,
-and the slack bridge is enabled. its running there, on the loom box, once
-instance. a message comes in from slack... it goes oh ok, this is for: agent
-Art from: people Loren on Slack in a DM. if there's an existing session for
-that, it gets fed this... if there's a previous session, we bring it back up
-and send the new stuff. if that combo has never existed before, we spin up a
-brand new session." A design doc in the `docs/specs/` sense: what will be
-built, and what the tests must pin. t-1434. Builds on
-[owners.md](owners.md), [agents-in-people.md](agents-in-people.md) and
-[runtime.md](runtime.md).*
+*Rewritten 2026-11-17 to say what the code does. The page this replaces described an earlier design (one
+"shuttle" service, bodies in an agent's warm house, session slots); that program was removed, and the
+older specs that cite this page for it ([agent-runtime.md](agent-runtime.md),
+[piece-storage.md](piece-storage.md), [projects.md](projects.md)) describe that earlier design too. The
+decisions behind each rule here, and what would change them, are in
+[accepted-tradeoffs.md](../accepted-tradeoffs.md), "Bridges and conversations".*
 
-## Why
+The code is `src/pieces/bridges/`, with its doors in `src/shared-bridge-commands.ts` and
+`src/shared-bridge-reply.ts`.
 
-Today a bridge is a house per agent per platform, and the house is two things
-fused: the **interface** (a connection to Slack or Discord) and the **bodies**
-(Claude sessions started inside that same house, in the agent's repo, with its
-secrets).
+## What there is
 
-- **It doesn't scale.** Sixty agents on Slack and Discord would be 120 houses,
-  each up all day, mostly idle.
-- **Each agent's bridge is its own copy.** Mark's Discord runs the same
-  shuttle code as Art's, but from his own `shuttle.json`, `routes.json` and
-  `people.json`, kept by hand in his repo. The Bridges board in loom shows
-  Art's only.
-- **The data is in files.** Who a Slack id is, who may do what, which channel
-  belongs to which agent: all in JSON beside the bridge. Jonathan, 2026-10-28:
-  "if it's a file and not coming right out of loom's db, it's probably wrong"
-  (notes/decisions/2026-10-28-loom-owns-the-data.md in Art's repo).
+- **A connection** is one agent's bot on one platform in one workspace (a Discord guild, a Slack team):
+  `bridge_connections`. It names the secret its token comes from (and, for Slack, the app token's). The
+  bridge reads the token from loom's secret holder each time it uses it. One daemon in loom holds every
+  enabled connection: a Gateway session for Discord, a Socket Mode connection for Slack.
+- **A channel rule** says which agent answers a room when nobody is addressed, whether bots may talk
+  there, and optionally a **brief**: the name of a role page of that agent's, given to the body of every
+  conversation in the room. `bridge_channels`.
+- **A filter** on a connection lists rooms it ignores, or the only rooms it answers:
+  `bridge_channel_filters`. An `only` filter chooses rooms; it never drops a direct message.
+- **A person link** says which household member an outside account is: `bridge_people`.
+- **A tier** is how an agent's owner places an outside account that is no member: `agent_people`.
 
-## The shape
+All five are changed by a card: the agent files it with `household.propose` (`change: "bridge"`, or
+`"bodyPolicy"` for tiers) and a household owner allows it. Nothing else changes them. An owner releases
+or dismisses a held or doubtful reply with `bridges.command`.
 
-One **shuttle service** runs on loom's box, as the household's (not any
-agent's). It holds every agent's platform connections, routes each message to
-a **conversation**, and gets that conversation a **body** in the agent's own
-house when it needs one.
+Read them with the generated queries, for example a connection's state:
 
-```
-Slack / Discord ──► shuttle (one, on loom's box)
-                      │  which agent?  which person?  which venue?
-                      ▼
-                   conversation (agent, who, venue)
-                      │  live body?  feed it
-                      │  ended?      resume it in the agent's house
-                      │  new?        start one, with the brief
-                      ▼
-                   the agent's house (loom-box): bodies are sessions in it
+```graphql
+{ bridgeConnections { id platform agent enabled state stateAt } }
 ```
 
-### Connections: one bot per agent per platform
+`state` is `connecting`, `connected`, `backoff` or `disconnected`. `bridgeActivity` counts what each
+connection received, delivered and held in the last day.
 
-An agent keeps its own identity on each platform: Art's Slack app, Mark's
-Discord bot. Mark talking as his own user is worth keeping. The shuttle holds
-one connection for each, in one process: a Discord poller per bot token, a
-Slack socket per app.
+## A message coming in
 
-- **What an agent connects to is loom's**: each agent's Setup gets a Bridges
-  section listing the platforms it's on and the secret each token comes from.
-  No `shuttle.json`.
-- **Adding an agent to Slack** is a form on its Setup page, not a new house.
+1. The platform's frame is stored before it is acknowledged (`bridge_raw_events`), then read. For Discord
+   the daemon first learns the channel's kind, and for a thread who wrote the message it was started from.
+2. `receive` in `incoming.ts` decides, in this order:
+   - the connection is off: **held**, and tried again for a day;
+   - the room is ignored, or outside an `only` filter: dropped;
+   - it is the bot's own post: dropped;
+   - **a bot or webhook** is delivered only in a shared place whose rule lets bots talk, and only if it writes this
+     agent's mention. It is never delivered in a direct message;
+   - **a person** is delivered only if their account is linked to a member who is in the household now, or
+     the agent's owner has given the account a tier. A stranger is dropped, in a shared place and in a direct
+     message;
+   - **the stop word** ("stop" or "cancel" alone) from a linked member who may end the agent's jobs, where
+     a job of the agent's is working, ends that job and is not delivered;
+   - in a shared place, a person's message is the agent's when it addresses the agent, or addresses nobody and the
+     place's rule names the agent.
+3. **Addressed** means: a written mention of the bot; on Discord a written ping of the role Discord manages
+   for the bot; a reply to one of the bot's messages; a message in a thread that hangs under one of the
+   bot's messages. Nothing looser: a bot that has only spoken in a thread, or spoke last, is not addressed.
+4. A delivered message joins a **conversation** (`place.ts`): one per Discord channel, one per Discord
+   thread, one per Slack thread in a shared place, one per direct conversation. A one-to-one direct conversation
+   with a linked member is private to that member.
+5. The message becomes mail in the agent's inbox, and the runtime starts a job for the conversation if it
+   has none. A Discord message's attachments are listed in its words with Discord's link. The files of a
+   delivered message are fetched and kept fourteen days (`bridge_files`): Slack's with the connection's
+   credential, Discord's first five up to 8 MB each from its signed links.
 
-### Routing: which agent a message is for
+A dropped message keeps no words. An edit is not read.
 
-1. **A DM** is for the agent whose bot received it.
-2. **In a shared channel**, a mention decides: `@art …` in #mark is Art's, and
-   Mark doesn't answer. Two things address a bot exactly as its mention does: an
-   explicit reply to one of its messages (with or without the reply ping), and
-   a message in a thread that hangs under one of its messages. Nothing looser
-   does: a bot that has only spoken in a thread, or spoke last in the channel,
-   is not addressed by what follows. This is the "primary, mention-only" rule the Discord
-   bridge already follows, made the rule for every platform.
-3. **No mention** goes to the channel's **primary** agent, if it has one. A
-   channel's primary is set in loom (the agent's Bridges section, or the
-   channel's own row), not in `routes.json`.
-4. **Several bots see the same message** in a shared channel. The shuttle
-   handles each platform message once (by its id), then hands it to each
-   addressed agent once.
+## The job
 
-### The conversation is the unit
+A body takes the conversation's waiting mail. Before that it asks loom for the harness session the last
+body of this conversation left (`conversation_sessions`, sealed, at most 700 KB packed, kept for the
+household's keep time for words). Handed one, it continues it and is told only the new mail. Otherwise
+it starts fresh and is told what was said earlier in the conversation
+(`src/core/conversations/bridge-history.ts`). When it has answered it hands the session back. Only Claude
+Code keeps sessions so far.
 
-> **Moved (2026-11-02):** the conversation's *record* (who, where, when, the turns' metadata, the digests) is core's
-> now: [conversations.md](conversations.md). What follows is the adapter's side: routing a message to the
-> conversation's body, and its session state, which is mechanism and stays the piece's. An adapter writes **one turn
-> per delivered message or action, never merged**, through `POST /api/loom/conversations/turn` (as the runtime).
+A body with file tools finds the kept files of the messages it took written into its scratch directory,
+named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
+such page the work goes on and the agent's owners get one notice.
 
-A conversation is keyed by **(agent, who, venue)**: Art · Loren · Slack DM, or
-Mark · #pond · Discord. Its record (owned by the shuttle piece, reached
-through loom) holds the conversation's state, its body if it has one, and its
-continuity.
+A sender who is not a member and is not at tier 3 makes the job a guest's, and the agent's guests-only
+tool denials apply to it.
 
-- **A live body** for the key gets the message fed in: today's inbox hook,
-  which shuttle already has.
-- **A conversation with an ended body** is resumed: a body starts in the
-  agent's house with that conversation's session restored (see Continuity),
-  and gets the new messages.
-- **A conversation never seen before** gets a new body with the brief: who's
-  talking (their People card, as the agent knows them), where, and what the
-  agent may do for them.
+While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
+channel (`presence.ts`). Both are best effort.
 
-**The `loom` venue** ([comms.md](comms.md)) is the one core carries itself: Comms threads in loom's app, for an
-agent's owners only. Core is its adapter, and it keeps the adapters' rules: one turn per delivered message, presence
-through `status`, and a refusal for good marked `permanent`.
+## The answer
 
-### Bodies: sessions in the agent's house, not a house each
+- The body's final text is posted as the reply to the last message it took (`bridges.reply`). During its
+  run it may post more with `bridges.say`. At most twenty posts are made for the mail one job took. On
+  Discord a `bridges.say` post may carry up to four files, 600 KB together, each named by a path inside
+  the body's working or scratch directory; they are kept with the post (`bridge_send_files`) until it is
+  settled.
+- What a body may schedule follows whose word its job works on, not the place (`docs/runtime/tempo.md`):
+  working for owners, or as the agent's own work, it schedules from a shared place what it could from the
+  owner's own thread; working for anybody else, only into the shared place it is in, at listed times an
+  hour apart, with its own words.
+- A job whose mail is no message from the bridge (a trigger's firing in the conversation, a note from
+  another body of the agent) answers by a post in the conversation itself, addressed from the
+  conversation's place (`bridge_sends.conversation`, with no `incoming`).
+- Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
+  conversation are given to the stopped job, and neither they nor one that arrives later start any work
+  until a person speaks there. (Only in a bridge's conversation: a stop elsewhere parks nothing.) A person speaking is mail from a member, or a delivered message from an
+  account that is no bot and no webhook.
 
-The scaling answer is to separate houses from conversations:
+## Between conversations
 
-- **An agent has a warm house while any of its conversations is active**, on
-  any box that may host it. Its bodies are sessions inside that house, one per
-  active conversation, sharing its repo, tools and secrets. A busy agent gets a
-  second house when the first is full; an idle agent has none.
-- **The house is stopped after it's been idle a while** (no live body for N
-  minutes), and started again on the next message.
-- **Measured 2026-10-28** (Art's repo, notes/bridges/2026-10-28-body-start.md):
-  a cold house is running about 10 s after it's asked for (12.0 s, 9.3 s, on
-  loom's box with the image cached); a session's process in a warm house starts
-  in about 0.1 s. Everything after that (the session loading, the model
-  answering) is the same either way. So a warm house saves about 10 s on a
-  conversation's first message: keep it warm while a conversation is active and
-  for a few minutes after, and let a new conversation after a quiet spell pay
-  the 10 s once. A shared pool only if remote boxes prove much slower.
-- Sixty agents, mostly idle, are a handful of houses at any moment, not 120.
+- A body never posts into or reads another conversation. It hands a note to the agent's body there:
+  `conversation.handoff` with `to`, either `{conversation}` or `{platform, workspace, channel, thread?}`
+  for a channel the agent has a rule for (the conversation is opened if there is none). The note is mail
+  in the target conversation and starts its job. That body is told it is a note from another body of the
+  same agent and not a person, where it came from, on whose word, and the chain so far.
+- Who may hand to where is `mayHandTo` in `src/policy.ts`: the agent's own work and a body working for
+  owners or members who have the agent, anywhere; any other body only to its channel rule's `reportsTo`
+  (set on the `channel` card as `reportsTo: {platform, workspace, channel}`).
+- The receiving job counts the person the sending body worked for as in the room.
+- Into one member's private conversation only that member's word goes, and the agent's own work. This is
+  asked where a note is admitted and where a firing is made, not only at the doors: a note or a firing on
+  anybody else's word is not delivered there; the note is dropped, or the trigger stopped, with a notice.
+- A guest's word goes one hop. A job on anybody else's word that a note or a brief started hands nothing
+  on, to its own body elsewhere or to a peer agent; one a person's message or a firing started may hand
+  to its own channel's report target and may brief a peer agent. Such a job hands at most 5 notes and
+  briefs together (`NOTES_PER_JOB`): a flood guard on one job, not a limit on an exchange.
+- A report target is read from the rule of the agent that answers the channel, and the `channel` card
+  takes one only on a bridge of that agent's.
+- A note on the word of somebody no longer known (a member who left, an outside account with no tier
+  now) starts no job. Admission closes it with that reason and tells the members who have the agent, or
+  the household's owners. A firing still waiting when its asker stops being known goes the same way. A
+  note parked by a stop word is asked about when it is released.
+- The note says how to answer (a note back to the conversation it came from) only when that would be
+  taken, and otherwise says a note back would be refused.
+- A channel target's thread is judged before a conversation is opened for it: none on Discord, where a
+  thread is a channel of its own; on Slack, the time of the message that started it.
+- A chain's start, length and conversations are stored on each note: `inbox.chain_started_at` and
+  `inbox.chain` (a JSON list of conversation ids, oldest first; its length is the count), with the
+  conversation the note came from in `inbox_refs` and the one it went to in `inbox.conversation`.
+- What counts as the agent's own work is said once (`jobWord` in `src/shared-place-mail.ts`): a job with
+  nobody behind any of its mail, which is a lane's own start and a firing the agent itself asked for.
+  Mail from an agent is never that. A brief between agents carries the sending job's word, and agent
+  mail on nobody's word, or a household agent's bot writing in a channel, counts as anybody else's.
+- Mail on somebody's word, from an agent or from the schedule, that arrives after a job was admitted is
+  left for the next job, so a job never runs a guest's note under the policy it was claimed with for an
+  owner. What a job was admitted for is marked by admission (`inbox.job`), not told by a clock.
+- A job whose mail is no bridge message may also post during its run with `bridges.say`; it goes where
+  its answer will.
+- Neither its answer nor such a post is queued while the conversation's place is closed (its connection
+  gone or off, its channel filtered out): the body is told why.
+- A post that answers no message is seen and reviewed by whoever sees its conversation, and in a direct
+  conversation is erased at the keep time with the conversation's other words.
+- A thread's rules (its channel rule, filters and report target) are its parent channel's, read by one
+  function (`ruleChannel`), as admission reads them.
+- The agent's own work, with no person behind any of its mail, may post a text straight to a ruled channel
+  with `bridges.post`, through the same queue.
+- Every post goes through one queue (`sends.ts`): split at the platform's limit, each part recorded when
+  the platform confirms it (`bridge_send_parts`). A post whose outcome is unknown is `uncertain` and is
+  never sent again; an owner may dismiss it. While effects are off a post is `held` for an owner to release.
+- On Discord a post may ping the users whose mention the agent wrote, and nothing else. On Slack a post
+  pings nobody.
 
-### Capacity is squishy, not a hard cap
+## Not built
 
-Jonathan: "if we say slack can have 5 bodies per agent, that needs to be a
-little squishy. imagine we have 5, a 6th comes in, and one of those 5 is idle,
-but not so idle we've killed it. might as well answer the 6th so it doesn't
-sit."
-
-- **The limit counts busy bodies, not existing ones.** A body that has
-  answered and is waiting for a reply is idle. It stays warm (so its
-  conversation continues instantly) but doesn't hold a slot.
-- **A new conversation over the limit takes a warm idle body's place** rather
-  than waiting: the least recently active idle body is ended (its conversation
-  saved) and the new one starts in its house.
-- **Only busy bodies wait.** A message waits only when the agent has its limit
-  of bodies mid-turn, and the board says so.
-- **The real limit is the box,** not a number per platform: memory and CPU
-  decide how many warm bodies a house keeps. The number is a default, not a
-  wall.
-
-### Continuity
-
-A resumed conversation should feel like the same one, on any box.
-
-- **Each conversation has a slot** (loom-box's slots, as lanes use them): the
-  session's state is saved when its body ends and restored when it resumes,
-  so `--resume` works wherever the next house runs.
-- **When the harness changes, or the slot is gone,** the fallback is a summary
-  handoff: the agent's loom memory of the conversation, plus its last N turns.
-- **How long continuity lasts** is per venue. A DM continues for weeks; a busy
-  channel thread starts fresh after a quiet day.
-
-### Who someone is, and what they may do
-
-**Jonathan, 2026-10-28:** "shuttle is a loom extension, right? so loom the
-ecosystem can own it just fine. it can still belong to shuttle if that's what
-makes sense. extensions need the ability to store proper data and such."
-
-- **The gates belong to shuttle**: who a platform id is (this Slack id is
-  `jonathan-barket`), and what each person may do with each agent (tiers,
-  grants, restricts). Gates are per agent: Loren may be a guest of Art's and
-  trusted by Mark.
-- **Shuttle keeps them in its loom store** ([piece-storage.md](piece-storage.md)),
-  not in `people.json`: an **owner-written collection**, which a piece can
-  change only while it's acting on an owner's page action. A body, an agent's
-  token, or the piece serving an agent's call can't write it. That's the
-  enforced owner-only surface notes/decisions/2026-10-21-shuttle-beside-loom.md
-  named as its reopen trigger, and this ruling closes that reopen.
-- **People still describes, the gates authorize.** An agent-written card never
-  grants anything, and People's `where` handles are not the authority for who
-  an id is. The gate entry is, keyed by the same slug.
-
-### Harnesses
-
-Bodies run on whatever harness the agent's house runs (shuttle's runner seam:
-Claude today, Codex next). Mid-turn input (feeding a live body) is per harness.
-Where a harness can't take it, the message waits for the turn to end.
-
-### Upgrades
-
-One service upgrades the way bridges do now
-([shuttle#22](https://github.com/sleepunit-agents/shuttle/pull/22)): when idle
-and behind, it stops cleanly and starts fresh. Agent houses pick up their
-repo the same way.
-
-## Moving there
-
-Each step ships on its own.
-
-1. **Measure.** Done on loom's box (above); a remote box (`one`) still to
-   measure before the defaults are settled.
-2. **Gates and identities into shuttle's loom store** (after piece storage,
-   [piece-storage.md](piece-storage.md)): an owner-written collection, its page
-   (on Bridges), and a migration from Art's and Mark's `people.json`.
-3. **Agents' bridge settings into shuttle's loom store**: platforms, token
-   secrets, channel primaries, shown on each agent's Setup. A migration from
-   `shuttle.json` and `routes.json`.
-4. **One shuttle, every agent's connections** (after step 5, see "Bodies
-   before the one service"): the household's shuttle service holds Art's and
-   Mark's bots and routes by the rules above; bodies stay in each agent's house. The Bridges board covers every agent,
-   and owner scoping applies to it.
-5. **Bodies in the agent's house**: conversations, warm houses, busy-only
-   capacity, and slots for continuity. The bridge stops running bodies itself.
-6. **Retire the per-agent bridge houses and files.**
-
-### Bodies before the one service (2026-10-28, building step 4)
-
-Jonathan, terminal, 2026-10-28: "shuttle would just spawn the right body for
-the job. like shuttle itself doesn't host the bodies, it just tells who to wake
-up and response to what."
-
-Step 4 as first written ("runs bodies as it does today, still in its own
-house") would put every agent's bodies in the household's shuttle house: Art's
-bodies beside Mark's repo, Mark's secrets and Mark's bot token. Today each
-agent's bridge is in that agent's own house, so each agent's bodies see only
-its own things. Step 4 alone would undo that. So **step 5 ships first**, while
-each bridge is still in its agent's house, and step 4 then only moves the
-connections:
-
-- **A body host** runs in the agent's house: shuttle's code, as that agent. It
-  takes body requests for its agent from shuttle's store (`bodies`, an `agent`
-  collection: each agent reads and writes only its own), starts each with the
-  local runner (`claude --bg` today), and writes back each body's status
-  (busy, idle, done, its last entry). Follow-ups for a live body go the same
-  way, into its local inbox.
-- **The bridge's runner becomes a remote one**: `start` writes a request,
-  `list`/`working`/`done`/`last_entry` read the statuses the host writes. The
-  core, dispatch and reaper don't change: they already talk to a runner.
-- **Warm house**: when a request has no host to take it (no heartbeat in the
-  last minute), the bridge asks loom-box for a house for that agent
-  (`loom box up --agent a`) with the body host as its task. The host exits
-  after it's had no live body for the idle time; the next request starts a
-  house again (about 10 s).
-- **Continuity**: each conversation's session is kept in the store
-  (`convos`, a piece collection keyed by agent, who and venue); the host
-  restores it before `--resume`. That's how a conversation resumes in whichever
-  house runs next. Slots stay for lanes (one house per slot doesn't fit many
-  conversations in one house).
-
-Then step 4 moves only the connections into the one service, which holds no
-agent's repo or secrets beyond its bot tokens.
-
-## What the tests must pin
-
-- A DM to an agent's bot reaches that agent; in a shared channel a mention of
-  another agent reaches that one alone; no mention reaches the channel's
-  primary, or nobody.
-- One platform message seen by several bots is handled once per addressed agent.
-- The same (agent, who, venue) reaches the same conversation: a live body is
-  fed; an ended one is resumed with its slot; a new key starts a body with the
-  brief.
-- Over the limit with a warm idle body, a new conversation starts at once, and
-  the idle one's conversation is saved, not lost. With every body busy, it
-  waits, and the board says why.
-- A gate changes only through an owner's action. An agent token, or anything a
-  body can call, is refused.
-- A household with no migrated data behaves as today.
-
-## Open questions
-
-- **Default warm-idle time and busy limit**, once `one` is measured too.
-- **One warm house per agent, or a pool per box?** Start with per agent; a
-  shared pool only if cold start forces it.
+- A setting that lets everyone in a shared place talk to an agent as a guest (a column on the channel's rule).
+- A link from an outside account to a People card (a column on the person link).
+- Rooms where a bot's every post wakes an agent without a mention: a bot wakes an agent only by writing
+  its mention.
+- Reading an edit.
+- Sessions for harnesses other than Claude Code, and posts with files on Slack.

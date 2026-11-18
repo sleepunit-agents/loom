@@ -1,16 +1,22 @@
 /** Trusted shared configuration service. External permissions belong at the
  * operation door; installed modules use this service directly. */
-import { and, eq, ne } from 'drizzle-orm';
+import { channelTarget } from '../../core/conversations/channel-target.js';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople } from '../../core/data/schema.js';
 import { reviewReply } from './sends.js';
+import { PAGE_NAME } from '../../slug.js';
 const text=z.string().trim().min(1).max(200), platform=z.enum(bridgeConnections.platform.enumValues);
 const address={platform,workspace:text};
 export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('connection'),id:text,platform,agent:text,workspace:text,botUser:text,tokenSecret:text,appSecret:text.nullable(),enabled:z.boolean(),only:z.array(text).max(200),ignore:z.array(text).max(200)}).strict(),
  z.object({action:z.literal('disconnect'),id:text}).strict(),
- z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean()}).strict(),
+ // `brief` names a role page of the answering agent (roles/<brief>.md in its Memory), handed to the body of
+ // every conversation in the channel beside the venue's own page. Left out or null: the channel has none.
+ z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().regex(PAGE_NAME).nullable().optional(),
+  // Where a body working in this channel for a guest may hand a note: one channel on any of the answering agent's bridges.
+  reportsTo:channelTarget.omit({thread:true}).strict().nullable().optional()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),
@@ -70,7 +76,10 @@ export class BridgeSettings {
      if(!this.db.update(bridgeConnections).set({enabled:false,state:'disconnected',stateAt:this.now()}).where(eq(bridgeConnections.id,input.id)).run().changes)throw Error('Unknown connection');break;
     }
     case 'channel':{
-     const {action:_action,...row}=input;this.db.insert(bridgeChannels).values(row).onConflictDoUpdate({target:[bridgeChannels.platform,bridgeChannels.workspace,bridgeChannels.channel],set:row}).run();break;
+     // Where its guests' bodies report is a channel on one of the answering agent's own bridges (schema.ts, reportsTo).
+     if(input.reportsTo&&!this.db.select({id:bridgeConnections.id}).from(bridgeConnections).where(and(eq(bridgeConnections.platform,input.reportsTo.platform),eq(bridgeConnections.workspace,input.reportsTo.workspace),eq(bridgeConnections.agent,input.answers),isNull(bridgeConnections.removedAt))).get())
+      throw Error('A report target is a channel on one of the answering agent\'s bridges');
+     const {action:_action,brief,reportsTo,...rest}=input,row={...rest,brief:brief??null,reportsTo:reportsTo?JSON.stringify([reportsTo.platform,reportsTo.workspace,reportsTo.channel]):null};this.db.insert(bridgeChannels).values(row).onConflictDoUpdate({target:[bridgeChannels.platform,bridgeChannels.workspace,bridgeChannels.channel],set:row}).run();break;
     }
     case 'removeChannel':this.db.delete(bridgeChannels).where(and(eq(bridgeChannels.platform,input.platform),eq(bridgeChannels.workspace,input.workspace),eq(bridgeChannels.channel,input.channel))).run();break;
     case 'person':{

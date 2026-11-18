@@ -14,7 +14,7 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
     .from(agentDeniedTools).where(eq(agentDeniedTools.agent, job.agent))
     .orderBy(asc(agentDeniedTools.pattern), asc(agentDeniedTools.guestsOnly)).all();
   const people = new Map<string, WorkerRunPolicy['people'][number]>();
-  const items = db.select({ id: inbox.id, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId })
+  const items = db.select({ id: inbox.id, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord })
     .from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
       or(eq(inbox.job, job.id), job.conversation ? and(eq(inbox.conversation, job.conversation), isNull(inbox.job), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute')) : undefined))).all();
   type Tier = WorkerRunPolicy['people'][number]['tier'];
@@ -39,6 +39,15 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
   };
   const sharing = sharedSharing(db);
   for (const item of items) {
+    // Mail sent on somebody's word (a trigger's firing in a shared place, a note from another body) brings that
+    // person into the room as they stand now: a member while in the household, an outside account at the
+    // tier it has now, and otherwise somebody nobody vouches for.
+    if (item.onWordKind && item.onWord) {
+      const on = item.onWordKind === 'member'
+        ? (inHousehold({ kind: 'member', id: item.onWord }, sharing) ? { kind: 'person' as const, person: item.onWord, tier: null } : { kind: 'unknown' as const, person: null, tier: null })
+        : { kind: 'outside' as const, person: item.onWord, tier: tierOf(item.onWord) };
+      people.set(JSON.stringify([on.kind, on.person]), on);
+    }
     if (item.fromKind !== 'person' && item.fromKind !== 'unknown') continue;
     let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null, tier: Tier = null;
     // The item says who sent it when it arrived. Whether that member is in the household is asked now

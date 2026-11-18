@@ -17,7 +17,7 @@ import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
 import { BridgeEvents, RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
-import { BridgeIncoming } from './incoming.js';
+import { BridgeIncoming, type StopJob } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
 
 const id = z.string().min(1).max(256);
@@ -35,6 +35,8 @@ const slackChannelField = z.object({ channel: id });
 export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
+  /** Discord role id to the bot it is managed for; none known is an empty map. */
+  botRoles?(connection: string): ReadonlyMap<string, string>;
   slack(connection: string, channel: string): SlackChannel | undefined;
 }
 
@@ -49,11 +51,11 @@ export class BridgeReceiver {
   /** `lost` hears of what can no longer be delivered: `events` received and never read before their frames
    * expired, and `held` messages closed after HELD_LIFETIME. */
   constructor(private db: DataDatabase, private clock: Clock, private channels: BridgeChannelCache,
-    private lost: (expired: { events: number; held: number }) => void = () => {}) {
+    private lost: (expired: { events: number; held: number }) => void = () => {}, stop?: StopJob) {
     this.events = new BridgeEvents(db, clock, events => lost({ events, held: this.closeExpiredHeld() }));
     // Rows left held by a process that stopped before they could be closed.
     this.closeHeld();
-    this.incoming = new BridgeIncoming(db, () => new Date(clock.now()).toISOString());
+    this.incoming = new BridgeIncoming(db, () => new Date(clock.now()).toISOString(), stop);
   }
 
   /** The checkpoint must be the authenticated transport's cursor for this frame. */
@@ -156,7 +158,7 @@ export class BridgeReceiver {
           if (frame.t !== 'MESSAGE_CREATE' || this.elsewhere(source, frame.d)) return;
           const channel = this.channels.discord(connection, channelField.parse(frame.d).channel_id);
           if (!channel) return false;
-          message = normalizeDiscord(source, frame, channel);
+          message = normalizeDiscord(source, frame, channel, this.channels.botRoles?.(connection));
         } else {
           const frame = slackFrame.parse(payload);
           const event = frame.payload.event;
@@ -182,6 +184,9 @@ export class BridgeReceiver {
     if (failed) throw failure;
     return count;
   }
+
+  /** The jobs that stop words ended in the passes since this was last asked (incoming.ts). */
+  takeStopped(): { job: string; incoming: string }[] { return this.incoming.takeStopped(); }
 
   /** A Discord gateway session is the bot's, not the guild's: it also carries the messages of every other
    * guild the bot has been added to. Those are not this connection's. The frame's own guild id is enough to

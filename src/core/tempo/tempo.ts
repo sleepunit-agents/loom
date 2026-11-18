@@ -1,3 +1,4 @@
+import type { OnWord } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
 import { SettledInbox, type AdmitInbox } from './settle.js';
@@ -10,7 +11,8 @@ import { TempoSources } from './sources.js';
 export interface TempoConversations {
   open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null; member?: string }): { id: string; member?: string | null };
   send(input: { toKind: 'person' | 'agent'; to: string; conversation?: string; source: 'trigger' | 'notice'; sourceId: string;
-    fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[] }): unknown;
+    fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[];
+    onWordKind?: OnWord['kind']; onWord?: string }): unknown;
 }
 export interface TempoOptions {
   conversations: TempoConversations;
@@ -24,6 +26,11 @@ export interface TempoOptions {
    * (read from `triggers.member`; src/shared-tempo.ts). Throws when that member may no longer be worked for; the firing then
    * fails. Without it every firing is the agent's own. */
   worksFor?(trigger: Trigger): string | undefined;
+  /** For a trigger that names a conversation, asked as it fires: either why it can no longer fire (its
+   * asker is no longer known, or the conversation is gone or cannot be posted to) and whom to tell, or how
+   * its mail is sent: the words it is told under and the person on whose word; or the time it is put off to.
+   * Without it such a trigger fails. */
+  placeFiring?(trigger: Trigger): { stop: string; tell: string[] } | { putOff: string } | { told: string; onWord?: OnWord };
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
@@ -46,6 +53,23 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
+      // A trigger that names a conversation is mail there, on its asker's word, and opens no wake. One that
+      // can no longer fire is stopped here, in the firing's transaction, and its agent's owners are told once.
+      if (t.conversation) {
+        if (!options.placeFiring) throw new Error('This program cannot fire a trigger into a conversation');
+        const how = options.placeFiring(t);
+        if ('stop' in how) {
+          for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `place-trigger-stopped:${occurrence}`, fromKind: 'schedule',
+            // loom's words first, and the trigger's note last and named as somebody's: a body working for anybody may have written it.
+            words: `A schedule was stopped and did not fire: ${how.stop}. Its note, in the words of whoever set it and not loom's: ${JSON.stringify(t.note)}`, refs: [t.id] });
+          return 'stop';
+        }
+        // Not delivered now and not lost: the engine keeps the trigger due at that time.
+        if ('putOff' in how) return how;
+        options.conversations.send({ toKind: 'agent', to: t.to!, conversation: t.conversation, source: 'trigger', sourceId: occurrence, fromKind: 'schedule', fromId: t.owner ?? undefined,
+          words: `${how.told}\n\n${words}`, agent: t.to!, refs: [t.id], ...(how.onWord ? { onWordKind: how.onWord.kind, onWord: how.onWord.id } : {}) });
+        return;
+      }
       // Work for a member is that member's private conversation with the agent, so the job it starts is
       // theirs (runtime/jobs.ts copies the conversation's member). It has its own place: the trigger's
       // own conversation, if it has fired as the agent's before, stays the agent's.

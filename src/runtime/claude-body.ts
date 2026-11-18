@@ -11,10 +11,16 @@
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
+import { homedir } from 'node:os';
+import { join, normalize, sep } from 'node:path';
+import { filesUnfollowed, listUnfollowed } from './unfollowed.js';
+import { HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
+import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { deniedTools } from './harness-traits.js';
 import { bodyDeniedTools } from './body-named-tools.js';
 
+/** What marks an event of the model's own in the harness's output. */
+const SPOKE = '"type":"assistant"';
 /** The spawn seam a test supplies; the same one every harness takes. */
 export type ClaudeSpawn = HarnessSpawn;
 /** What the adapter sets in the child's environment when the body has tools, unless the machine's body file
@@ -31,21 +37,31 @@ export const claudeBody: BodyHarness = input => {
   const allowed=[...(input.mcpTools??['request_secret','use_secret'].map(name=>harnessToolPrefix+name))];
   try{if(input.mcpTools&&!control)throw harnessUnavailable();harnessToolNames(allowed);}catch(error){control?.fill(0);throw error;}
   if(control)for(const [name,value] of Object.entries(claudeToolSettings))env[name]??=value;
-  return async (job, words, signal) => {
+  return async (job, words, signal, keep) => {
     if(control&&used)throw harnessUnavailable();used=true;
     if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES){control?.fill(0);throw harnessUnavailable();}
     // With the named tools a denied generic tool takes with it, and old server names read as the present one.
     const denied = bodyDeniedTools(deniedTools(job.run?.policy));
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
-    const session = randomUUID();
-    const args = ['-p', '--model', job.model, '--session-id', session,
-      '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
+    // Asked to keep a session, Claude Code writes its transcript under its own directory (sessionFiles below)
+    // and can continue one by id. Otherwise nothing is written, as before. A continued session keeps its id
+    // unless the program gives it another; either way the id every event carries is the one reported.
+    const resume = keep?.resume;
+    if (resume !== undefined && !SESSION_ID.test(resume)) { control?.fill(0); throw harnessUnavailable(); }
+    let session: string | undefined = resume ? undefined : randomUUID(), spoke = false, tail = '';
+    const args = ['-p', '--model', job.model, ...(resume ? ['--resume', resume] : ['--session-id', session!]),
+      '--output-format', 'stream-json', '--verbose', ...(keep ? [] : ['--no-session-persistence']),
       // With full reach nothing asks and nothing is listed: everything is allowed except what is denied below.
       '--permission-mode', input.reach==='all'?'bypassPermissions':'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
       ...(control&&input.reach!=='all'?['--allowedTools',...allowed]:[]),
       ...(denied.length ? ['--disallowedTools', ...denied] : [])];
-    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control });
+    let output: Buffer;
+    try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
+      // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
+      onOutput: chunk => { const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
+    // A session that cannot be continued ends the program before the model is asked anything.
+    catch { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : harnessUnavailable(); }
     try {
       const rows: unknown[] = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
       let result: string | undefined, last: { text: string; model: string } | undefined;
@@ -53,7 +69,8 @@ export const claudeBody: BodyHarness = input => {
       for (const raw of rows) {
         if (!raw || typeof raw !== 'object') throw harnessUnavailable();
         const row = z.object({type:z.string(),session_id:z.string()}).passthrough().parse(raw);
-        if (row.session_id !== session) throw harnessUnavailable();
+        session ??= row.session_id;
+        if (row.session_id !== session || !SESSION_ID.test(session)) throw harnessUnavailable();
         if (row.type === 'assistant' && row.parent_tool_use_id === null && !row.error && !row.aborted && !row.agent_id) {
           const message = z.object({model:z.string().regex(harnessModel),content:z.array(z.object({type:z.string(),text:z.string().optional()}).passthrough())}).parse(row.message);
           const text = message.content.filter(part => part.type === 'text').map(part => {
@@ -69,12 +86,30 @@ export const claudeBody: BodyHarness = input => {
       }
       // A configured/requested/init model is never evidence of a response.
       if (!last || result !== last.text) throw harnessUnavailable();
-      return { ...last, actions };
+      return { ...last, actions, ...(keep && session ? { session } : {}) };
     } catch { throw harnessUnavailable(); }
     finally { output.fill(0); }
   };
 };
-export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody,
+/** Where Claude Code keeps a session, said here and nowhere else: under its own directory
+ * (`CLAUDE_CONFIG_DIR`, or `.claude` in the home), `projects/<the working directory, slugged>/<session>.jsonl`
+ * is the transcript, and a directory of the same name beside it holds the larger tool results. */
+const SESSION_FILES_FOUND = 256;
+const claudeSessions: NonNullable<Harness['sessions']> = {
+  root: env => env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), '.claude'),
+  owns(relative, session) {
+    if (!SESSION_ID.test(session) || normalize(relative) !== relative || relative.includes('\0')) return false;
+    const parts = relative.split(sep);
+    return parts.length >= 3 && parts[0] === 'projects' && !parts.includes('..') && !parts.includes('.') && !parts.includes('')
+      && (parts.length === 3 ? parts[2] === `${session}.jsonl` : parts[2] === session);
+  },
+  files(root, session) {
+    if (!SESSION_ID.test(session)) return [];
+    // Every step is looked at as it is: a `projects`, a project directory or anything below that is a link is passed over.
+    return listUnfollowed(root, 'projects').flatMap(project => [`${session}.jsonl`, session].flatMap(name => filesUnfollowed(root, join('projects', project, name), SESSION_FILES_FOUND)));
+  },
+};
+export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody, sessions: claudeSessions,
   // Claude Code on a cloud provider signs in with that provider's own variables.
   reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name) || Object.hasOwn(claudeToolSettings, name)
     || !!env.CLAUDE_CODE_USE_BEDROCK && /^AWS_/.test(name)

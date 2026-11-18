@@ -25,7 +25,7 @@ const id = 'a'.repeat(64);
 const coreDigest = 'e'.repeat(64), moment = Date.UTC(2026, 10, 17, 12), core = coreImage(coreDigest, coreWeek(moment));
 const coreContext = () => { const tar = new PassThrough(); tar.end('core'); return tar; };
 const commit = 'c'.repeat(40), built = houseImage(job.house, commit, core), imageId = `sha256:${'b'.repeat(64)}`;
-const houseLabels = { 'loom.house': '2', 'loom.house.harnesses': 'harness unlisted', 'io.buildah.version': '1.39' };
+const houseLabels = { 'loom.house': '2', 'loom.house.harnesses': 'harness unlisted claude', 'io.buildah.version': '1.39' };
 function frame(text: string, stream = 1) { const bytes = Buffer.from(text); const header = Buffer.alloc(8); header[0] = stream; header.writeUInt32BE(bytes.length, 4); return Buffer.concat([header, bytes]); }
 /** What loom's body program is handed on stdin with its job: a credential of its own. */
 const bootstrap = () => ({ origin: 'https://loom.example', job: job.id, token: Buffer.from('body_' + 'a'.repeat(64)) });
@@ -79,7 +79,7 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   // The image by the id it was inspected under; its node, the worker's body program, the harness's body
   // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
   expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
-    Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`], Tty: false, ExposedPorts: {},
+    Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`, 'LOOM_BODY_OWN_HARNESS=0'], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [programAsked()], DeviceRequests: [] } });
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: built, bootstrap: handed });
@@ -206,7 +206,7 @@ it('does not copy ambient worker credentials into container environment override
     const body = f.start(); await body.spawned;
     // Docker can retain baked image values; this list contains only configured
     // overrides and never copies worker process.env or the loom bearer token.
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`] }); await body.stop();
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`, 'LOOM_BODY_OWN_HARNESS=0'] }); await body.stop();
   } finally { vi.unstubAllEnvs(); }
 });
 it('keeps running without a body timeout after both setup and cleanup intervals', async () => {
@@ -358,6 +358,30 @@ function house(inspected: unknown = expectedReport, container: Record<string, un
   return { ...f, executor };
 }
 type Spec = { HostConfig: { Runtime: string; Mounts: unknown[] } };
+
+it('tells a body the place its harness keeps sessions is its own unless a mount is, holds, or is inside that place', async () => {
+  const claude = { ...job, harness: 'claude' };
+  const env = async (f: ReturnType<typeof house>, assignment = claude) => { const body = f.executor.start(assignment, built, f.abort.signal); await body.spawned; const spec = f.engine.json.mock.calls.find(call => String(call[1]).startsWith('/containers/create'))![2] as { Env: string[] }; await body.stop();
+    // Always said, one way or the other, and once: the worker's value holds over an image's `ENV LOOM_BODY_OWN_HARNESS=1`.
+    const said = spec.Env.filter(entry => entry.startsWith('LOOM_BODY_OWN_HARNESS=')); expect(said).toHaveLength(1); expect(['LOOM_BODY_OWN_HARNESS=1', 'LOOM_BODY_OWN_HARNESS=0']).toContain(said[0]);
+    return said[0] === 'LOOM_BODY_OWN_HARNESS=1'; };
+  const logins = { account: { claude: { source: loginA } }, other: { claude: { source: loginB } } } as unknown as typeof accountLogins;
+  const withMounts = (mounts: { source: string; target: string; readOnly?: boolean }[]) =>
+    house([reported(loginA, '/run/loom/login/claude', true), ...mounts.map(mount => reported(mount.source, `/home/agent/${mount.target}`, mount.readOnly === false))], { mounts: { art: mounts } }, logins);
+  // The usual house: the account's sign-in mounted writable at its own place, the agent's directories elsewhere
+  // under the home. The harness's own directory is the container's, so the body may keep a session there.
+  expect(await env(withMounts(houseMounts))).toBe(true);
+  expect(await env(withMounts([]))).toBe(true);
+  // An agent's mount at that place, inside it, or holding it (read-only too: it is still not the body's own).
+  for (const target of ['.claude', '.claude/projects', '.claude/projects/-home-agent-repo']) {
+    expect(await env(withMounts([{ source: stamps, target, readOnly: false }])), target).toBe(false);
+    expect(await env(withMounts([{ source: mirror, target }])), target).toBe(false);
+  }
+  // A place beside it, with a name that only starts the same, is not it.
+  expect(await env(withMounts([{ source: stamps, target: '.claude-notes', readOnly: false }]))).toBe(true);
+  // A harness with no sessions place in the layout is told it is not, too.
+  expect(await env(house(), job)).toBe(false);
+});
 
 it('asks the engine for runc unless the configuration names crun, and for nothing else', async () => {
   for (const [runtime, sent] of [[undefined, 'runc'], ['runc', 'runc'], ['crun', 'crun']] as const) {
@@ -1094,9 +1118,10 @@ it('tells every body the repository, the branch and the exact commit its house w
   const f = fixture(), there = f.engine.images.getMockImplementation()!;
   // An image whose own ENV names the same three: an engine gives a container's own variables over an image's.
   f.engine.images.mockImplementation(async (method, path, body, signal) => method === 'GET' && !path.startsWith('/images/json')
-    ? { Id: imageId, Config: { Labels: houseLabels, Env: ['LOOM_HOUSE_COMMIT=' + 'f'.repeat(40), 'LOOM_HOUSE_BRANCH=of-the-image', 'LOOM_HOUSE_REPOSITORY=https://example.com/elsewhere.git', 'HOME=/root'] } } : there(method, path, body, signal));
+    ? { Id: imageId, Config: { Labels: houseLabels, Env: ['LOOM_HOUSE_COMMIT=' + 'f'.repeat(40), 'LOOM_HOUSE_BRANCH=of-the-image', 'LOOM_HOUSE_REPOSITORY=https://example.com/elsewhere.git', 'HOME=/root', 'LOOM_BODY_OWN_HARNESS=1'] } } : there(method, path, body, signal));
   const body = f.start(); await body.spawned;
-  expect(envOf(f)).toEqual({ LOOM_BODY_SCRATCH: '/tmp', HOME: '/home/agent', LOOM_HOUSE_REPOSITORY: 'https://example.com/org/house.git', LOOM_HOUSE_BRANCH: 'next', LOOM_HOUSE_COMMIT: commit });
+  // And an image that says for itself that its harness directory is the body's own: the worker says, here that it is not.
+  expect(envOf(f)).toEqual({ LOOM_BODY_SCRATCH: '/tmp', HOME: '/home/agent', LOOM_HOUSE_REPOSITORY: 'https://example.com/org/house.git', LOOM_HOUSE_BRANCH: 'next', LOOM_HOUSE_COMMIT: commit, LOOM_BODY_OWN_HARNESS: '0' });
   // Each once, and set by the worker on the container: nothing of the image's is copied into what it asks for.
   const asked = (f.engine.json.mock.calls[0][2] as { Env: string[] }).Env;
   expect(asked.filter(entry => entry.startsWith('LOOM_HOUSE_'))).toHaveLength(3); expect(asked.join()).not.toContain('of-the-image');

@@ -256,7 +256,7 @@ when something is wrong.*
   - a handoff carries the member it was opened for, so work handed on for a person is still that person's
     and reads that person's rules;
   - a room on Discord or Slack, and a handoff for no member, are nobody's and always ask: people outside the
-    household talk to an agent in a room.
+    household talk to an agent in a shared place.
 
   The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. The agent's own account is for merges
   and commands: for any other kind of card it reads no rule, from a terminal and from a lane alike, and a

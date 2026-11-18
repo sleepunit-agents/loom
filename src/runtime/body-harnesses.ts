@@ -35,10 +35,15 @@ export function bodyHarness(name: string, input: HarnessInput): HarnessRun {
   const harness = listed(name);
   if (!harness) throw harnessUnavailable();
   const run = harness.run(input);
-  return async (job, words, signal) => {
+  return async (job, words, signal, session) => {
     if (job.harness !== name || refusesJob(harness, job.run?.policy, input.reach ?? 'loom')) throw harnessUnavailable();
-    return run(job, words, signal);
+    // Only a harness that says where its sessions are is asked to keep one.
+    return harness.sessions && session ? run(job, words, signal, session) : run(job, words, signal);
   };
+}
+/** How the harness keeps sessions, or nothing for a harness that keeps none. */
+export function harnessSessions(name: string): Harness['sessions'] {
+  return listed(name)?.sessions;
 }
 /** Remove what a harness leaves outside its body's scratch directory and can only remove itself when it ends
  * normally. The worker calls this with the scratch directory and the body's environment after the body's

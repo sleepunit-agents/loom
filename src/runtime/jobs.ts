@@ -3,11 +3,12 @@ import {keepJobText} from './job-text.js';
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
+import { named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
@@ -47,7 +48,8 @@ export interface Admission {
   behind?: boolean;
   /** Why mail that is waiting got no job, in loom's own words. Absent when there was nothing to admit. */
   declined?: string;
-  /** Whether this call told the agent's owners so for the first time. */
+  /** Whether this call told the agent's owners so for the first time, or told them of mail it dropped
+   * because the person on whose word it was sent is no longer known (wordUnknown). */
   noticed?: boolean;
 }
 export class Jobs {
@@ -101,6 +103,29 @@ export class Jobs {
     return { declined: why, noticed };
   }
 
+  /** Mail that runs on somebody's word without that person speaking now: a note from another body of this
+   * agent, and a trigger's firing in a named conversation. It gets what that person would get, so when that
+   * person is no longer known to the agent (shared-place-mail.ts, stillKnown: the one meaning, asked of a
+   * trigger's asker as it fires) it starts nothing. It is closed with that reason, and the people the
+   * agent's notices go to are told. Asked as a job is about to start, of everything then waiting: mail
+   * parked by a stop word is asked about when it is released, not when it is parked. The same is asked of a
+   * conversation that is one member's private one: mail on anybody else's word is not delivered into it. A brief from another
+   * agent is not this: its word is known to the agent that sent it, and counts for least reach (jobWord). */
+  private wordUnknown(agent: string, member: string | null, mail: readonly (typeof inbox.$inferSelect)[]): Set<string> {
+    const gone = new Set<string>();
+    for (const item of mail) {
+      if (!item.onWordKind || !item.onWord || !(item.source === 'trigger' || (item.source === 'handoff' && item.fromKind === 'agent' && item.fromId === agent))) continue;
+      const who = { kind: item.onWordKind, id: item.onWord };
+      // And into one member's private conversation only that member's word goes (the agent's own work has no word).
+      const why = stillKnown(this.db, agent, who) ? privateRefusal(member, who)?.replace('who asked for it', 'on whose word it was sent') : `${named(who)}, on whose word it was sent, is no longer known to ${agent}`;
+      if (!why) continue;
+      this.mail.resolveItem(item.id, why); gone.add(item.id);
+      for (const member of agentsPeople(agent, sharedSharing(this.db))) this.mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `word-unknown:${item.id}`, fromKind: 'unknown',
+        words: `${item.source === 'trigger' ? 'A firing of a schedule' : `A note between bodies of ${agent}`} in conversation ${item.conversation} was dropped and started no work: ${why}.`, refs: [agent] });
+    }
+    return gone;
+  }
+
   /** admit(), and when waiting mail got no job, why. That is recorded as a notice to the agent's owners
    * (see declined), and the notice is closed when the mail is admitted after all. */
   admission(conversationId: string): Admission {
@@ -108,12 +133,27 @@ export class Jobs {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
       if (!conversation) throw new Error('Conversation not found');
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
-      const mail = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
-      if (existing) return { job: existing, behind: mail.some(item => item.job !== existing.id) };
-      if (!mail.length) return {};
+      const waiting = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+      if (existing) return { job: existing, behind: waiting.some(item => item.job !== existing.id) };
+      if (!waiting.length) return {};
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
-      if (!mail.some(item => item.job === null)) return {};
+      if (!waiting.some(item => item.job === null)) return {};
+      // A person said stop in this place (stop, below). Until a person speaks there again nothing starts: the
+      // notes and firings that were waiting are parked with the stopped job, and one that arrives meanwhile
+      // waits with them. Only a bridge's place: a lane's own conversation goes on at its next time.
+      // A person speaking is mail from a member, or a delivered bridge message from an account that is no bot
+      // and no webhook: mail from a sender loom cannot name is otherwise nobody speaking.
+      const spoke = (item: typeof waiting[number]) => item.fromKind === 'person' || (item.fromKind === 'unknown' && !!this.db.select({ id: bridgeIncoming.id }).from(inboxRefs)
+        .innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref)).where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, conversationId), eq(bridgeIncoming.state, 'delivered'),
+          or(isNull(bridgeIncoming.bot), eq(bridgeIncoming.bot, false)), or(isNull(bridgeIncoming.webhook), eq(bridgeIncoming.webhook, false)))).get());
+      if ((conversation.venue === 'discord' || conversation.venue === 'slack') && !waiting.some(item => item.job === null && spoke(item))) {
+        const last = this.db.select({ state: jobs.state, endedReason: jobs.endedReason }).from(jobs).where(eq(jobs.conversation, conversationId)).orderBy(desc(jobs.queuedAt), desc(sql`${jobs}.rowid`)).get();
+        if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
+      }
+      // Work is about to start for what waits here. First, what was sent on the word of somebody no longer known is dropped.
+      const gone = this.wordUnknown(conversation.agent, conversation.member, waiting), mail = waiting.filter(item => !gone.has(item.id));
+      if (!mail.some(item => item.job === null)) return gone.size ? { noticed: true } : {};
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
       // A removed agent keeps its history and its mail, and does not run.
@@ -127,7 +167,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
@@ -281,11 +321,22 @@ export class Jobs {
     return retry;
   }
 
-  stop(id: string, member: string, reason: 'reset' | 'write-off'): Job {
+  /** `stop` is a person's Stop said where the work is: Comms' Stop, taken by the job (endIfStopAsked), or a
+   * bridge's stop word (pieces/bridges/incoming.ts). `reset` and `write-off` are an owner ending a job by hand. */
+  stop(id: string, member: string, reason: 'reset' | 'write-off' | 'stop'): Job {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!jobUnended(job.state)) throw new Error('Job has ended');
-      return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
+      const ended = this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
+      // A person said stop where the work is. Mail waiting there that no person sent (a note from another
+      // body, a trigger's firing) and that no job has taken would start the next job as if nobody had: it is
+      // given to the stopped job, which is what "waits for fresh mail" means for the mail that job took
+      // (end, above). It is not lost: the next thing a person says there brings it along.
+      // Only in a bridge's place, where admission waits for a person to speak; elsewhere mail is left as it was.
+      const venue = job.conversation ? this.db.select({ venue: conversations.venue }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.venue : undefined;
+      if (reason === 'stop' && job.conversation && (venue === 'discord' || venue === 'slack')) this.db.update(inbox).set({ job: job.id })
+        .where(and(eq(inbox.conversation, job.conversation), eq(inbox.toKind, 'agent'), eq(inbox.state, 'waiting'), isNull(inbox.job), inArray(inbox.fromKind, ['agent', 'schedule']))).run();
+      return ended;
     });
   }
 

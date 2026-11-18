@@ -1,3 +1,4 @@
+import type { Asker } from '../../policy.js';
 import { randomUUID } from 'node:crypto';
 import { laneFile } from './lane-file.js';
 import { and, eq, max } from 'drizzle-orm';
@@ -17,22 +18,35 @@ export const triggerInput = z.object({
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
   targetKind: z.enum(triggers.targetKind.enumValues), target: text.nullable().optional(),
   toKind: z.enum(triggers.toKind.enumValues).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
-  instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text,
+  instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX),
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
+  /** The Discord or Slack conversation a firing is mail in, instead of a wake of its own. */
+  conversation: text.nullable().optional(),
 });
 export type NewTrigger = z.input<typeof triggerInput>;
 /** The parts of a standing trigger that can change after it is set. Who it is for, what it
  * watches and what it does cannot: stop it and set another. */
 export const triggerEdit = z.object({
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(),
-  times: text.optional(), days: text.nullable().optional(), note: text.optional(), wantsModel: text.max(200).nullable().optional(),
+  times: text.optional(), days: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX).optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
+/** Whether an edit changes what a firing says. A trigger's words are its instructions, the file they are read
+ * from, and its note, which a firing into a conversation quotes to the body. The one statement: whoever
+ * changes any of them becomes the asker, and may not where the words would go into another member's private
+ * conversation. Times, days and the wanted model are not words. */
+export const editsWords = (change: { instructions?: string | null; file?: string | null; note?: string }): boolean =>
+  change.instructions !== undefined || change.file !== undefined || change.note !== undefined;
+/** What a rule about where a caller works is asked of a trigger: what the caller sent for a new one, or the
+ * stored row. The one shape for the door (operations.ts, wordRefusal) and the rule (src/shared-place-triggers.ts). */
+export type TriggerAsked = { id?: string; conversation?: string | null; times?: string | null; lifespan?: string; sourceKind?: string; file?: string | null; askedByKind?: string | null; askedBy?: string | null };
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
-  inbox(trigger: Trigger, deliveryId: string, words: string): void;
+  /** `stop`: the trigger can no longer fire and is stopped with this firing. `putOff`: nothing was delivered,
+   * and the firing is due again at that time. */
+  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop' | { putOff: string };
   operation(name: string, trigger: Trigger, deliveryId: string): void;
   /** Whether an operation target names something this program can run. Checked when a trigger is set. */
   knows?(name: string): boolean;
@@ -104,9 +118,10 @@ export class TriggerEngine {
     const agent = this.agent(t);
     return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
-  /** `member` is whom the trigger's work is for, when that is a member and not the agent itself. It is the
-   * door's to say (shared-tempo-access.ts, recordedTrigger) and never part of what a caller sends. */
-  set(value: NewTrigger, member?: string): Trigger {
+  /** `member` is whom the trigger's work is for, when that is a member and not the agent itself; `asked` is
+   * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
+   * shared-place-triggers.ts) and never part of what a caller sends. */
+  set(value: NewTrigger, member?: string, asked?: Asker): Trigger {
     this.open();
     const v = triggerInput.parse(value);
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
@@ -118,10 +133,12 @@ export class TriggerEngine {
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');
     if (v.file && !laneFile(v.file)) throw new Error('Instructions must be a relative repository file');
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
+    if (!!v.conversation !== !!asked) throw new Error('A trigger that names a conversation records who asked, and no other does');
+    if (v.conversation && (v.targetKind !== 'inbox' || v.toKind !== 'agent' || member !== undefined)) throw new Error('A trigger that names a conversation is mail for its agent');
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
-      this.db.insert(triggers).values({ ...v, id, member: member ?? null, enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
+      this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();
       this.log(id, 'set');
     });
@@ -145,12 +162,15 @@ export class TriggerEngine {
     });
     this.tick();
   }
-  /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and who changed them. */
-  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }): void {
+  /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and
+   * who changed them. `asked` re-stamps who asked, for a trigger that names a conversation whose words or
+   * file change: whether to is the door's to say (src/shared-tempo.ts, reasked). */
+  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: Asker): void {
     this.open();
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {
       const t = this.get(id);
+      if (asked && t.conversation) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;
@@ -341,7 +361,16 @@ export class TriggerEngine {
           const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
           if (words === undefined) throw new Error('No repository instructions reader');
           stage = 'inbox';
-          this.effects.inbox(t, delivery, words);
+          // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
+          const did = this.effects.inbox(t, delivery, words);
+          if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
+          // Put off: the trigger stays as it stood and is due at that time, whichever of its times or a firing by
+          // hand this was. Put off again before then, it is the one firing still, and is logged once.
+          else if (did) {
+            if (t.nextDueAt !== did.putOff) this.log(t.id, 'put off', did.putOff);
+            this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', nextDueAt: did.putOff, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+            return;
+          }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
         this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();

@@ -44,7 +44,7 @@ beforeAll(() => {
   db.insert(s.secrets).values({ name: 'token', description: '', changedAt: at, changedBy: 'owner' }).run();
   db.insert(s.secretRequests).values({ id: 'p-asked', secret: 'token', agent: 'art', why: 'test', state: 'pending', minutes: 5, always: false, askedAt: at }).run();
   db.insert(s.bridgeConnections).values({ id: 'p-mark', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'token', enabled: true, state: 'connected', stateAt: at }).run();
-  // A message in a room, in each direct conversation, and held with no conversation (a room message and a direct one).
+  // A message in a shared place, in each direct conversation, and held with no conversation (a room message and a direct one).
   for (const [id, conversation, isDm] of [['p-in-room', 'p-bare', false], ['p-in-dm-lee', 'p-dm-lee', true], ['p-in-dm-stranger', 'p-dm-stranger', true], ['p-held-room', null, false], ['p-held-dm', null, true]] as const)
     db.insert(s.bridgeIncoming).values({ id, connection: 'p-mark', channel: 'c', isDm, user: 'u', text: id, postedAt: at, receivedAt: at, state: conversation ? 'delivered' : 'held', conversation }).run();
   const trigger = client.prepare(`INSERT INTO triggers (id,owner_kind,owner,source_kind,lifespan,target_kind,target,to_kind,"to",project,note,enabled,state,created_at,changed_at)
@@ -106,7 +106,7 @@ function rows(rule: Rule): Row[] {
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
 const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['waitsOnReadable', rules.waitsOnReadable], ['answers', rules.answers],
-  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project], ['moveTask', rules.moveTask], ['asksToJoin', rules.asksToJoin]];
+  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project], ['moveTask', rules.moveTask], ['asksToJoin', rules.asksToJoin], ['reviewsReply', rules.reviewsReply]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();
@@ -431,5 +431,34 @@ describe('ending a job by hand', () => {
       expect(holds(tableRules.jobs, viewer, privateJob, sharing(), lookup), id).toBe(lists);
     }
     expect(holds(rules.stopJob, { kind: 'agent', id: 'mark' }, privateJob, sharing())).toBe(false);
+  });
+});
+
+describe('a post that answers no message', () => {
+  // The answer of a firing's or a note's job, and an agent's own post: `incoming` is null and the post names its conversation.
+  const both = (rule: Rule, viewer: Viewer, row: Row) => {
+    const answer = holds(rule, viewer, row, sharedSharing(db), lookup);
+    const fields = Object.fromEntries(Object.keys(row).map(field => [field, sql.raw(`json_extract(matrix.value, '$.${field}')`)])) as Record<string, SQL>;
+    expect(db.all<{ allowed: number }>(sql`select (${sqlRule(rule, viewer, fields)}) as allowed from json_each(${JSON.stringify([row])}) as matrix`)[0].allowed, JSON.stringify([viewer, row])).toBe(answer ? 1 : 0);
+    return answer;
+  };
+  const member = (id: string): Viewer => ({ kind: 'member', id }), post = (conversation: string | null): Row => ({ incoming: null, conversation });
+  it('is read by whoever reads its conversation, as a predicate and as a SQL filter', () => {
+    // lee's private direct conversation with mark: lee, and nobody else. The owner role does not read it.
+    expect(['lee', 'sam', 'owner'].map(id => both(tableRules.bridgeSends, member(id), post('p-dm-lee')))).toEqual([true, false, false]);
+    // A shared place of mark's: the household's owners and the members who have mark.
+    expect(['lee', 'sam', 'owner'].map(id => both(tableRules.bridgeSends, member(id), post('p-bare')))).toEqual([true, false, true]);
+    // One that names no conversation, or none that exists, is nobody's.
+    for (const conversation of [null, 'missing']) expect(both(tableRules.bridgeSends, member('full'), post(conversation))).toBe(false);
+  });
+  it('is reviewed in a direct conversation by the member who reads it, and elsewhere by a household owner', () => {
+    // The direct branch: lee is no household owner, and reviews the post held in lee's own direct conversation.
+    expect(['lee', 'sam', 'owner'].map(id => both(rules.reviewsReply, member(id), post('p-dm-lee')))).toEqual([true, false, false]);
+    // A stranger's direct conversation with mark is read by the members who have mark: they review it.
+    expect(both(rules.reviewsReply, member('lee'), post('p-dm-stranger'))).toBe(true);
+    // In a shared place reading is not enough: lee reads it and does not review it; the owner does.
+    expect(['lee', 'owner'].map(id => both(rules.reviewsReply, member(id), post('p-bare')))).toEqual([false, true]);
+    // Never an agent, in either kind of place.
+    for (const conversation of ['p-dm-lee', 'p-bare']) expect(both(rules.reviewsReply, { kind: 'agent', id: 'mark' }, post(conversation))).toBe(false);
   });
 });

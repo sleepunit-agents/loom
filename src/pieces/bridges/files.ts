@@ -5,8 +5,12 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeFileMessages, bridgeFiles, bridgeIncoming } from '../../core/data/schema.js';
 
 const RETENTION = 14 * DAY_MS;
+/** The largest kept file a body, or a member's page, is handed whole (bridges.file). A Discord attachment
+ * larger than this is not fetched at all: it stays a link in the message's words. */
+export const HANDED_FILE_BYTES = 8 * 1024 * 1024;
 
-/** Slack's attachment cache on the shared schema. The daemon calls store after
+/** The attachment cache on the shared schema, for both platforms: a Slack message's files, fetched with
+ * the connection's credential, and a Discord message's, fetched from Discord's signed links. The daemon calls store after
  * fetching through its credential-owning adapter. Reads use the data endpoint.
  * One owner schedules exact expiry, including for files present at startup.
  *
@@ -23,11 +27,11 @@ export class BridgeFiles {
     this.sweep();
   }
 
-  /** The message must be one of this Slack connection's. */
+  /** The message must be one of this connection's. */
   private belongs(tx: Pick<DataDatabase, 'select'>, input: { connection: string; incoming: string }): void {
     const connection = tx.select().from(bridgeConnections).where(eq(bridgeConnections.id, input.connection)).get();
     const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
-    if (connection?.platform !== 'slack' || incoming?.connection !== input.connection) throw new Error('Attachment does not belong to this Slack connection');
+    if (!connection || incoming?.connection !== input.connection) throw new Error('Attachment does not belong to this connection');
   }
 
   store(input: { connection: string; file: string; incoming: string; name: string; contents: Buffer }): void {

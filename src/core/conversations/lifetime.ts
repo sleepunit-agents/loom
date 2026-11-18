@@ -3,6 +3,7 @@ import { ageLimit } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries} from './private-inbox-words.js';
 import {oldestPrivateBridgeWords} from './private-bridge-words.js';
+import {oldestConversationSession} from './sessions.js';
 /** One owned timer for ciphertext retention and daily wordless-history rollup. */
 import { isNotNull } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
@@ -33,6 +34,7 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
     for(const item of handoffExpiries(db,days))next=Math.min(next,item.until);
     for(const item of privateInboxExpiries(db,days))next=Math.min(next,item.until);
     const bridgeWords=oldestPrivateBridgeWords(db);if(bridgeWords!==undefined)next=Math.min(next,ageLimit(bridgeWords,days));
+    const session=oldestConversationSession(db);if(session!==undefined)next=Math.min(next,ageLimit(session,days));
     cancel = clock.at(Math.max(now, next), () => {
       cancel = undefined; if (closed) return;
       try { sweep(); schedule(); }

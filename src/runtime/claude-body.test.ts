@@ -3,6 +3,7 @@ import {PassThrough,Writable} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { claudeBody } from './claude-body.js';
+import { HarnessResumeUnavailable } from './body-harness.js';
 import { bodyHarness } from './body-harnesses.js';
 import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
@@ -29,7 +30,7 @@ it('starts no harness for a denial whose later entry would be read as an option'
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.deniedTools = [{ pattern: 'Read,--dangerously-skip-permissions', guestsOnly: false }];
   await expect(f.run(configured, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
 });
-it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a room that is denied the generic tool under it: %s', async pattern => {
+it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a shared place that is denied the generic tool under it: %s', async pattern => {
   // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
   const f = fixture(), configured = structuredClone(job);
   configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];
@@ -125,4 +126,55 @@ it('gives a body the harness\'s own tools only when the machine says so, and sti
   const g = fixture(), plain = g.run(job, 'mail', g.abort.signal);
   expect(g.launch.mock.calls[0][1][g.launch.mock.calls[0][1].indexOf('--permission-mode') + 1]).toBe('dontAsk');
   g.finish(g.rows()); await plain.catch(() => {});
+});
+it('keeps a session only when asked to, and reports the id every event carried', async () => {
+  const f = fixture(), result = f.run(job, 'mail', f.abort.signal, {});
+  const args = f.launch.mock.calls[0][1];
+  expect(args).not.toContain('--no-session-persistence'); expect(args).not.toContain('--resume');
+  const id = args[args.indexOf('--session-id') + 1];
+  f.finish(f.rows());
+  expect(await result).toMatchObject({ text: 'Answer é', session: id });
+});
+it('continues a session by its id, with no new id of its own, and takes the id the harness reports', async () => {
+  const f = fixture(), result = f.run(job, 'only the new mail', f.abort.signal, { resume: 'earlier-session-1' });
+  const args = f.launch.mock.calls[0][1];
+  expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual(['--resume', 'earlier-session-1']);
+  expect(args).not.toContain('--session-id'); expect(args).not.toContain('--no-session-persistence');
+  const rows = (id: string) => [{ type: 'system', subtype: 'init', session_id: id }, { type: 'assistant', parent_tool_use_id: null, session_id: id, message: { model: 'observed-model', content: [{ type: 'text', text: 'Go on' }] } }, { type: 'result', subtype: 'success', is_error: false, session_id: id, result: 'Go on' }];
+  f.finish(rows('earlier-session-1'));
+  expect(await result).toEqual({ text: 'Go on', model: 'observed-model', actions: [], session: 'earlier-session-1' });
+  // A harness that gives the continued session another id is believed, so long as every event agrees.
+  const forked = fixture(), second = forked.run(job, 'mail', forked.abort.signal, { resume: 'earlier-session-1' });
+  forked.finish(rows('forked-session-2'));
+  expect(await second).toMatchObject({ session: 'forked-session-2' });
+  const mixed = fixture(), third = mixed.run(job, 'mail', mixed.abort.signal, { resume: 'earlier-session-1' });
+  const bad = rows('earlier-session-1'); bad[2].session_id = 'another-session';
+  mixed.finish(bad);
+  await expect(third).rejects.toThrow('Native execution unavailable');
+});
+it('says a session could not be continued only when the harness ended having said nothing', async () => {
+  const silent = fixture(), first = silent.run(job, 'mail', silent.abort.signal, { resume: 'earlier-session-1' });
+  (silent.child.stdout as PassThrough).write(JSON.stringify({ type: 'result', subtype: 'error', is_error: true, session_id: 'x' })); silent.child.emit('close', 1);
+  await expect(first).rejects.toBeInstanceOf(HarnessResumeUnavailable);
+  // Once the model has spoken, a failure is a failure: the work is not run a second time.
+  const spoke = fixture(), second = spoke.run(job, 'mail', spoke.abort.signal, { resume: 'earlier-session-1' });
+  (spoke.child.stdout as PassThrough).write(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, session_id: 'earlier-session-1', message: { model: 'm', content: [{ type: 'tool_use', name: 'Bash' }] } }) + '\n'); spoke.child.emit('close', 1);
+  const failure = await second.catch((error: unknown) => error);
+  expect(failure).not.toBeInstanceOf(HarnessResumeUnavailable); expect((failure as Error).message).toBe('Native execution unavailable');
+  // A fresh run that fails is a plain failure too, and an id that could be a path is never passed on.
+  const fresh = fixture(), third = fresh.run(job, 'mail', fresh.abort.signal, {});
+  fresh.child.emit('close', 1);
+  expect(await third.catch((error: unknown) => error)).not.toBeInstanceOf(HarnessResumeUnavailable);
+  const unsafe = fixture();
+  await expect(unsafe.run(job, 'mail', unsafe.abort.signal, { resume: '../../etc/passwd' })).rejects.toThrow('Native execution unavailable');
+  expect(unsafe.launch).not.toHaveBeenCalled();
+});
+it('knows the model spoke when the marker of its event is cut across two pieces of output', async () => {
+  const f = fixture(), result = f.run(job, 'mail', f.abort.signal, { resume: 'earlier-session-1' });
+  const line = JSON.stringify({ type: 'assistant', parent_tool_use_id: null, session_id: 'earlier-session-1', message: { model: 'm', content: [{ type: 'tool_use', name: 'Bash' }] } });
+  const cut = line.indexOf('"type":"assistant"') + 9;
+  (f.child.stdout as PassThrough).write(line.slice(0, cut)); await new Promise(resolve => setImmediate(resolve));
+  (f.child.stdout as PassThrough).write(line.slice(cut) + '\n'); await new Promise(resolve => setImmediate(resolve));
+  f.child.emit('close', 1);
+  expect(await result.catch((error: unknown) => error)).not.toBeInstanceOf(HarnessResumeUnavailable);
 });

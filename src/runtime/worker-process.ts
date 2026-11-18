@@ -5,7 +5,7 @@
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { BUILD_DEADLINE_DEFAULT_MS, BUILD_DEADLINE_MAX_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { bodyInput } from './body-bootstrap.js';
-import { BODY_SCRATCH } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH } from './body-harness.js';
 import { harnessLeftovers } from './body-harnesses.js';
 import { workerLeft } from './worker-left.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -258,7 +258,11 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
         forget();
       };
       let attempt: ReturnType<typeof launch>;
-      try { attempt = launch({ ...plan, env: { ...plan.env, [BODY_SCRATCH]: scratch } }, signal, runtime); }
+      // A body run as a process shares its harness's directory with every other body on the machine: it is
+      // never told that directory is its own, whatever the machine's configuration put in its environment,
+      // so it keeps no harness session (body-harness.ts, BODY_OWN_HARNESS).
+      const { [BODY_OWN_HARNESS]: _never, ...configured } = plan.env;
+      try { attempt = launch({ ...plan, env: { ...configured, [BODY_SCRATCH]: scratch } }, signal, runtime); }
       catch (error) { remove(); throw error; }
       // A body that could not be recorded could not be found again: it is not run.
       try { forget = noted(attempt, job, scratch); }

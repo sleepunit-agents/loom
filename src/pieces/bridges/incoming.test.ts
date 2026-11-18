@@ -5,9 +5,12 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
+import { agentPeople, agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { BridgeIncoming, type IncomingMessage } from './incoming.js';
+import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, STOP_WORD_FRESH_MS, STOP_WORD_LATE, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
+import { Jobs } from '../../runtime/jobs.js';
+import { jobs, memberAgents } from '../../core/data/schema.js';
+import { outsidePersonKey } from './keys.js';
 import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
 import { bridgeFileMessages, bridgeFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import {normalizeSlack} from './normalize.js';
@@ -26,7 +29,9 @@ function fixture(platform: 'discord' | 'slack' = 'discord') {
   db.insert(bridgeChannels).values({ platform, workspace: 'w', channel: 'room', answers: 'art', botsMayTalk: false }).run();
   const ingress = new BridgeIncoming(db, now);
   const message: IncomingMessage = { id: 'm', connection: 'c', channel: 'room', isDm: false, user: 'outside', text: 'Friday?', postedAt: now(), mentions: [] };
-  return { client, db, ingress, message, now };
+  /** The agent's owner places an outside account: the `bodyPolicy` card's effect. */
+  const tier = (user: string, value: 1 | 2 | 3 = 2, agent = 'art') => { db.insert(agentPeople).values({ agent, person: outsidePersonKey(platform, 'w', user), tier: value }).run(); };
+  return { client, db, ingress, message, now, tier };
 }
 describe('shared-schema bridge ingress', () => {
   it.each(['channel','group'] as const)('keeps independent Slack %s roots separate and children with their root',kind=>{
@@ -107,6 +112,7 @@ describe('shared-schema bridge ingress', () => {
       const cv = f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get()!;
       return { direct: cv.direct, member: cv.member };
     };
+    f.tier('stranger');
     expect(label({ id: 'room' })).toEqual({ direct: false, member: null });
     expect(label({ id: 'linked', channel: 'dm1', isDm: true })).toEqual({ direct: true, member: 'jonathan' });
     expect(label({ id: 'stranger', channel: 'dm2', isDm: true, user: 'stranger' })).toEqual({ direct: true, member: null });
@@ -132,22 +138,74 @@ describe('shared-schema bridge ingress', () => {
     f.db.update(bridgeConnections).set({ enabled: true }).run();
     expect(f.ingress.retry('bi:["c","old"]')?.state).toBe('held');
   });
-  it('does not infer a household identity for an unknown outside person', () => {
+  it('takes nothing from a stranger, in a shared place or a direct message, mentioned or not', () => {
     const f = fixture();
-    expect(f.ingress.receive({ ...f.message, user: 'stranger' })).toMatchObject({ state: 'delivered', member: null });
-    expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'unknown', fromId: null });
+    for (const [id, more] of [['room', {}], ['mention', { mentions: ['bot-art'] }], ['reply', { repliesTo: 'bot-art' }], ['dm', { channel: 'direct', isDm: true }], ['group', { channel: 'group', isDm: true, groupDm: true }]] as const)
+      expect(f.ingress.receive({ ...f.message, ...more, id, user: 'stranger', text: 'Let me in' }), id).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER, member: null, conversation: null, text: '' });
+    expect(f.db.select().from(inbox).all()).toEqual([]);
+    expect(f.db.select().from(turns).all()).toEqual([]);
+    expect(f.db.select().from(conversations).all()).toEqual([]);
   });
-  it('requires a known bot and an enabled bot channel rule', () => {
+  it('takes a message from an account the agent\'s owner gave a tier, as from nobody in the household', () => {
+    const f = fixture();
+    // Mark's owner placed the account for Mark. That says nothing about Art.
+    f.tier('stranger', 1, 'mark');
+    expect(f.ingress.receive({ ...f.message, id: 'other-agent', user: 'stranger' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+    f.tier('stranger', 1);
+    expect(f.ingress.receive({ ...f.message, id: 'room', user: 'stranger' })).toMatchObject({ state: 'delivered', member: null });
+    expect(f.ingress.receive({ ...f.message, id: 'dm', user: 'stranger', channel: 'direct', isDm: true })).toMatchObject({ state: 'delivered', member: null });
+    // A tier admits; it never says who somebody is.
+    expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId, member: inbox.member }).from(inbox).all()).toEqual([{ fromKind: 'unknown', fromId: null, member: null }, { fromKind: 'unknown', fromId: null, member: null }]);
+  });
+  it('tries a held message again against the tiers as they are then: one given since admits, one taken away does not', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    f.tier('leaving');
+    const unplaced = f.ingress.receive({ ...f.message, id: 'unplaced', user: 'arriving' }), placed = f.ingress.receive({ ...f.message, id: 'placed', user: 'leaving' });
+    expect([unplaced.state, placed.state]).toEqual(['held', 'held']);
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    f.tier('arriving'); f.db.delete(agentPeople).where(eq(agentPeople.person, outsidePersonKey('discord', 'w', 'leaving'))).run();
+    expect(f.ingress.retry(unplaced.id)).toMatchObject({ state: 'delivered', member: null });
+    expect(f.ingress.retry(placed.id)).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER, text: '' });
+  });
+  it('tries a held stranger again against the links as they are then', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const held = f.ingress.receive({ ...f.message, id: 'early', user: 'newcomer' });
+    expect(held).toMatchObject({ state: 'held', reason: 'Connection disabled' });
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'newcomer', member: 'jonathan' }).run();
+    expect(f.ingress.retry(held.id)).toMatchObject({ state: 'delivered', member: 'jonathan' });
+  });
+  it('takes a bot\'s message only where bots may talk, and only when it writes this agent\'s mention', () => {
     const f = fixture();
     expect(f.ingress.receive({ ...f.message, id: 'self', user: 'bot-art' }).reason).toBe('Own message');
-    expect(f.ingress.receive({ ...f.message, id: 'disabled', user: 'bot-mark', bot: true, mentions: ['bot-art'] }).state).toBe('dropped');
+    const mark = { ...f.message, user: 'bot-mark', bot: true };
+    expect(f.ingress.receive({ ...mark, id: 'disabled', mentions: ['bot-art'] })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
     f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
-    expect(f.ingress.receive({ ...f.message, id: 'unknown', user: 'alien-bot', bot: true, mentions: ['bot-art'] }).state).toBe('dropped');
-    expect(f.ingress.receive({ ...f.message, id: 'unaddressed', user: 'bot-mark', bot: true }).state).toBe('delivered');
-    f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
-    expect(f.ingress.receive({ ...f.message, id: 'other-default', user: 'bot-mark', bot: true }).state).toBe('dropped');
-    expect(f.ingress.receive({ ...f.message, id: 'known', user: 'bot-mark', mentions: ['bot-art'] }).state).toBe('delivered');
-    expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'agent', fromId: 'mark' });
+    // The room is Art's to answer, and still a bot's post with no mention wakes nobody: two agents cannot loop.
+    expect(f.ingress.receive({ ...mark, id: 'unaddressed' })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
+    // Nor does a bot's reply to Art's message, or its post in a thread under one: only a written mention.
+    expect(f.ingress.receive({ ...mark, id: 'reply', repliesTo: 'bot-art' })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
+    expect(f.ingress.receive({ ...mark, id: 'known', mentions: ['bot-art'] })).toMatchObject({ state: 'delivered', member: null });
+    // A household agent's bot is that agent whether or not the platform flagged the message as a bot's.
+    expect(f.ingress.receive({ ...mark, id: 'unflagged', bot: false })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
+    expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId }).from(inbox).all()).toEqual([{ fromKind: 'agent', fromId: 'mark' }]);
+    // A bot in a direct message is never delivered.
+    expect(f.ingress.receive({ ...mark, id: 'dm', channel: 'direct', isDm: true, mentions: ['bot-art'] })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
+  });
+  it('takes a bot or webhook that is no agent of the household by the platform\'s flag, as from nobody', () => {
+    const f = fixture();
+    f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'silent', user: 'fez', bot: true })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
+    expect(f.ingress.receive({ ...f.message, id: 'bot', user: 'fez', bot: true, mentions: ['bot-art'] })).toMatchObject({ state: 'delivered', member: null });
+    expect(f.ingress.receive({ ...f.message, id: 'hook', user: 'gabe-hook', webhook: true, mentions: ['bot-art'] })).toMatchObject({ state: 'delivered', member: null });
+    // It mentioned Mark, not Art: Mark's connection takes it and Art's does not.
+    expect(f.ingress.receive({ ...f.message, id: 'for-mark', user: 'fez', bot: true, mentions: ['bot-mark'] })).toMatchObject({ state: 'dropped' });
+    expect(f.ingress.receive({ ...f.message, id: 'for-mark', connection: 'peer', user: 'fez', bot: true, mentions: ['bot-mark'] })).toMatchObject({ state: 'delivered' });
+    expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId }).from(inbox).all()).toEqual(Array(3).fill({ fromKind: 'unknown', fromId: null }));
+    // A person's link is no use to a bot: a linked account flagged as a bot is still held to the bots' rule.
+    expect(f.ingress.receive({ ...f.message, id: 'linked-bot', bot: true })).toMatchObject({ state: 'dropped', reason: BOT_NOT_ADMITTED });
   });
   it('holds conflicting recipient assignments for the same bot', () => {
     const f = fixture();
@@ -201,6 +259,9 @@ describe('shared-schema bridge ingress', () => {
     f.ingress.receive({ ...f.message, id: 'thread', thread: 't' });
     f.ingress.receive({ ...f.message, id: 'other-channel', channel: 'elsewhere', mentions: ['bot-art'] });
     f.db.update(bridgeConnections).set({ workspace: 'w2' }).where(eq(bridgeConnections.id, 'c')).run();
+    // A person link is one workspace's: the same account id elsewhere is somebody else until it is linked there.
+    expect(f.ingress.receive({ ...f.message, id: 'unlinked-there', mentions: ['bot-art'] })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+    f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w2', user: 'outside', member: 'jonathan' }).run();
     f.ingress.receive({ ...f.message, id: 'workspace', mentions: ['bot-art'] });
     expect(f.db.select().from(conversations).all()).toHaveLength(4);
   });
@@ -284,7 +345,7 @@ it('a delayed duplicate on a second connection preserves the original DM actor a
  expect(f.db.select().from(conversations).all()).toHaveLength(1);expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
 it('a newly linked single-DM member gets a private conversation without adopting unknown-actor history', () => {
- const f=fixture();f.db.delete(bridgePeople).run();
+ const f=fixture();f.db.delete(bridgePeople).run();f.tier('outside');
  const first=f.ingress.receive({...f.message,id:'unknown-private',isDm:true,channel:'direct'});
  f.db.insert(members).values({id:'alice',role:'member',joinedAt:f.now()}).run();
  f.db.insert(bridgePeople).values({platform:'discord',workspace:'w',user:'outside',member:'alice'}).run();
@@ -296,6 +357,7 @@ it('a newly linked single-DM member gets a private conversation without adopting
 
 it('rejects a conflicting cross-connection copy without creating a second receipt or changing history', () => {
  const f=fixture(),connection=f.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,'c')).get()!;f.db.insert(bridgeConnections).values({...connection,id:'second'}).run();
+ f.tier('different-sender');
  const first=f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct'});
  expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',text:'Changed words'})).toThrow('identity changed');
  expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',user:'different-sender'})).toThrow('identity changed');
@@ -385,6 +447,7 @@ it('holds a Discord direct message while its bot is connected in two guilds, and
 });
 it('erases the words of every direct message at the keep time, whoever it is from', () => {
   const f = fixture();
+  f.tier('stranger');
   const stranger = f.ingress.receive({ ...f.message, id: 'stranger', channel: 'direct-1', isDm: true, user: 'stranger', text: 'Unlinked words' });
   const group = f.ingress.receive({ ...f.message, id: 'group', channel: 'direct-2', isDm: true, groupDm: true, text: 'Group words' });
   f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' });
@@ -420,11 +483,11 @@ it('takes a retired connection\'s bot for no agent: not a peer that was addresse
   f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
   // A mention of the retired bot is a mention of nobody here, so the room's own agent answers as it would anyone.
   expect(f.ingress.receive({ ...f.message, id: 'mention', mentions: ['bot-mark'] })).toMatchObject({ state: 'delivered' });
-  // The retired bot itself is an unknown bot, not the agent it once stood for.
-  expect(f.ingress.receive({ ...f.message, id: 'bot', user: 'bot-mark', bot: true, mentions: ['bot-art'] })).toMatchObject({ state: 'dropped', reason: 'Unknown bot or bots disabled' });
-  expect(f.db.select().from(inbox).all().map(row => row.fromKind)).toEqual(['person']);
+  // The retired bot itself is some bot, not the agent it once stood for: taken as from nobody when it writes a mention.
+  expect(f.ingress.receive({ ...f.message, id: 'bot', user: 'bot-mark', bot: true, mentions: ['bot-art'] })).toMatchObject({ state: 'delivered', member: null });
+  expect(f.db.select().from(inbox).all().map(row => row.fromKind)).toEqual(['person', 'unknown']);
 });
-it('records a removed member\'s linked account as nobody, in a room and in a direct message', () => {
+it('records a removed member\'s linked account as nobody, in a shared place and in a direct message', () => {
   const f = fixture();
   f.db.insert(members).values({ id: 'guest', role: 'member', joinedAt: f.now() }).run();
   f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'guest-account', member: 'guest' }).run();
@@ -432,6 +495,11 @@ it('records a removed member\'s linked account as nobody, in a room and in a dir
   expect(before).toMatchObject({ state: 'delivered', member: 'guest' });
   // Removing a member keeps their link (apps/household.ts); it must stop standing for them.
   f.db.update(members).set({ removedAt: f.now() }).where(eq(members.id, 'guest')).run();
+  // Their account is then a stranger's.
+  expect(f.ingress.receive({ ...f.message, id: 'gone', user: 'guest-account' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+  expect(f.ingress.receive({ ...f.message, id: 'gone-dm', channel: 'dm', isDm: true, user: 'guest-account' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+  // The agent's owner may still place the account; it is then an outside one, not the member it was.
+  f.tier('guest-account');
   const room = f.ingress.receive({ ...f.message, id: 'room', user: 'guest-account' });
   const direct = f.ingress.receive({ ...f.message, id: 'after', channel: 'dm', isDm: true, user: 'guest-account' });
   expect(room).toMatchObject({ state: 'delivered', member: null });
@@ -444,4 +512,146 @@ it('records a removed member\'s linked account as nobody, in a room and in a dir
   // Restored, the link stands for them again.
   f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'guest')).run();
   expect(f.ingress.receive({ ...f.message, id: 'restored', channel: 'dm', isDm: true, user: 'guest-account' })).toMatchObject({ member: 'guest', conversation: before.conversation });
+});
+
+describe('the stop word', () => {
+  /** Intake with the runtime's own Stop, and a job working in the room's conversation. */
+  function working() {
+    const f = fixture();
+    const ingress = new BridgeIncoming(f.db, f.now, (job, member) => { new Jobs(f.db, f.now).stop(job, member, 'stop'); });
+    const first = ingress.receive({ ...f.message, id: 'ask', text: 'Do the long thing' });
+    const start = (id: string, conversation = first.conversation!) => f.db.insert(jobs).values({ id, agent: 'art', conversation, title: 'Work', state: 'running', queuedAt: f.now(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+    start('job');
+    const state = (id = 'job') => f.db.select().from(jobs).where(eq(jobs.id, id)).get()!;
+    return { ...f, ingress, first, start, state };
+  }
+  it('is only "stop" or "cancel", whatever the case, with its mentions set aside', () => {
+    for (const text of ['stop', 'Stop', 'STOP!', 'cancel', 'Cancel.', 'stop!!!', '<@123> stop', 'stop <@!123>', '<@&456> cancel.', '  stop  ']) expect(isStopWord(text), text).toBe(true);
+    for (const text of ['', 'stop it', 'please stop', 'stopped', 'cancel that', "don't stop", 'stop?', 'halt', '<@123>']) expect(isStopWord(text), text).toBe(false);
+  });
+  it('ends the job working in that conversation, on that member\'s word, and is nobody\'s mail', () => {
+    const f = working();
+    const row = f.ingress.receive({ ...f.message, id: 'stop', text: 'Stop!' });
+    expect(row).toMatchObject({ state: 'dropped', reason: STOP_WORD, text: '', member: 'jonathan', conversation: null });
+    expect(f.state()).toMatchObject({ state: 'stopped', endedBy: 'jonathan', endedReason: 'stop' });
+    expect(f.ingress.takeStopped()).toEqual([{ job: 'job', incoming: row.id }]);
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // Nothing was delivered for it: one piece of mail and one turn, the first message's.
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    expect(f.db.select().from(turns).all()).toHaveLength(1);
+    // The same event again is the same dropped message, and stops nothing more.
+    f.start('later');
+    expect(f.ingress.receive({ ...f.message, id: 'stop', text: 'Stop!' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state('later').state).toBe('running');
+  });
+  it('is an ordinary message when no job is working there, so a stop read late stops nothing later', () => {
+    const f = working();
+    new Jobs(f.db, f.now).stop('job', 'jonathan', 'write-off');
+    expect(f.ingress.receive({ ...f.message, id: 'late', text: 'stop' })).toMatchObject({ state: 'delivered', text: 'stop' });
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // A job that starts afterwards is not the one anybody asked to stop.
+    f.start('next');
+    expect(f.state('next').state).toBe('running');
+  });
+  it('stops only the job of the place it is said in', () => {
+    const f = working();
+    const dm = f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Another thing' });
+    f.start('dm-job', dm.conversation!);
+    const thread = f.ingress.receive({ ...f.message, id: 'in-thread', channel: 't', parent: 'room', thread: 't', text: 'A third' });
+    f.start('thread-job', thread.conversation!);
+    expect(f.ingress.receive({ ...f.message, id: 'stop-dm', channel: 'direct', isDm: true, text: 'cancel' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect([f.state().state, f.state('dm-job').state, f.state('thread-job').state]).toEqual(['running', 'stopped', 'running']);
+    expect(f.ingress.receive({ ...f.message, id: 'stop-thread', channel: 't', parent: 'room', thread: 't', text: 'stop' })).toMatchObject({ reason: STOP_WORD });
+    expect([f.state().state, f.state('thread-job').state]).toEqual(['running', 'stopped']);
+  });
+  it('is not a stop when said to another agent, or by someone who may not end this agent\'s jobs', () => {
+    const f = working();
+    // Said to Mark: Art's job goes on, and the message is not Art's.
+    expect(f.ingress.receive({ ...f.message, id: 'to-mark', text: '<@bot-mark> stop', mentions: ['bot-mark'] })).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
+    expect(f.state().state).toBe('running');
+    // An outside account the owner placed has no member to end a job as: its "stop" is a message.
+    f.tier('guest');
+    expect(f.ingress.receive({ ...f.message, id: 'guest', user: 'guest', text: 'stop' })).toMatchObject({ state: 'delivered', text: 'stop' });
+    // A member who is not an owner and does not have this agent: likewise.
+    f.db.insert(members).values({ id: 'daniel', role: 'member', joinedAt: f.now() }).run();
+    f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'daniel-account', member: 'daniel' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'daniel', user: 'daniel-account', text: 'stop' })).toMatchObject({ state: 'delivered' });
+    expect(f.state().state).toBe('running');
+    // Given the agent, the same member may.
+    f.db.insert(memberAgents).values({ member: 'daniel', agent: 'art' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'daniel-2', user: 'daniel-account', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state()).toMatchObject({ state: 'stopped', endedBy: 'daniel' });
+    // A stranger's stop is a stranger's message.
+    f.start('again');
+    expect(f.ingress.receive({ ...f.message, id: 'stranger', user: 'stranger', text: 'stop' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+    expect(f.state('again').state).toBe('running');
+  });
+  it('stops the job where the agent was called by a mention, in a shared place it does not answer', () => {
+    const f = working();
+    f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'plain-stop', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state().state).toBe('stopped');
+  });
+  it('never acts on a stop word that was held: said about what was working then, it stops nothing later and is not delivered', () => {
+    const f = working();
+    // The connection was off when it was said, so it waited.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const held = f.ingress.receive({ ...f.message, id: 'late-stop', text: 'Stop' });
+    expect(held).toMatchObject({ state: 'held', reason: 'Connection disabled', text: 'Stop' });
+    expect(f.state().state).toBe('running');
+    // Hours later the connection is back, the job it was said about has ended, and another is working there.
+    new Jobs(f.db, f.now).stop('job', 'jonathan', 'write-off');
+    f.start('later');
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    for (const again of [() => f.ingress.retry(held.id), () => f.ingress.receive({ ...f.message, id: 'late-stop', text: 'Stop' }, true)]) {
+      expect(again()).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE, text: '', conversation: null });
+      expect(f.state('later').state).toBe('running');
+    }
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // Nor does it arrive as a message nobody meant: the one piece of mail is still the first.
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    // With no job working at all when its hold ends, the same.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const second = f.ingress.receive({ ...f.message, id: 'late-cancel', text: 'cancel.' });
+    new Jobs(f.db, f.now).stop('later', 'jonathan', 'write-off');
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(second.id)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    // An ordinary message that was held is delivered when its hold ends, as before.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const words = f.ingress.receive({ ...f.message, id: 'late-words', text: 'stop the pump at noon' });
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(words.id)).toMatchObject({ state: 'delivered', text: 'stop the pump at noon' });
+  });
+  it('never acts on a stop word first taken in more than two minutes after it was said, held or not, from a person or a bot', () => {
+    const f = working();
+    const said = (ago: number) => new Date(Date.parse(f.now()) - ago).toISOString();
+    // Its frame waited in the spool (loom was down, or the channel could not be read yet): there was no held row.
+    expect(f.ingress.receive({ ...f.message, id: 'spooled', text: 'stop', postedAt: said(STOP_WORD_FRESH_MS + 1) }, true)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE, text: '' });
+    expect(f.state().state).toBe('running'); expect(f.ingress.takeStopped()).toEqual([]);
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    // Within the two minutes it still stops.
+    expect(STOP_WORD_FRESH_MS).toBe(120_000);
+    expect(f.ingress.receive({ ...f.message, id: 'fresh', text: 'stop', postedAt: said(STOP_WORD_FRESH_MS) })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state().state).toBe('stopped');
+    // A bot that may talk here and wrote the agent's mention: its fresh "stop" is a message like any other
+    // of its messages, and a late or held one is spent like anybody's.
+    f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
+    const bot = { ...f.message, user: 'bot-mark', bot: true, mentions: ['bot-art'], text: '<@bot-art> stop' };
+    expect(f.ingress.receive({ ...bot, id: 'bot-fresh' })).toMatchObject({ state: 'delivered' });
+    expect(f.ingress.receive({ ...bot, id: 'bot-late', postedAt: said(STOP_WORD_FRESH_MS + 1) })).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const held = f.ingress.receive({ ...bot, id: 'bot-held' });
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(held.id)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    // Late words that are not the stop word are delivered, however late.
+    expect(f.ingress.receive({ ...f.message, id: 'late-words', text: 'stop the pump at noon', postedAt: said(3_600_000) })).toMatchObject({ state: 'delivered' });
+  });
+  it('without the runtime\'s Stop to call, takes the words as a message', () => {
+    const f = working();
+    expect(f.ingress.receive({ ...f.message, id: 'no-runtime', connection: 'c', text: 'stop' }).reason).toBe(STOP_WORD);
+    const plain = new BridgeIncoming(f.db, f.now);
+    f.start('other');
+    expect(plain.receive({ ...f.message, id: 'plain', text: 'stop' })).toMatchObject({ state: 'delivered' });
+    expect(f.state('other').state).toBe('running');
+  });
 });

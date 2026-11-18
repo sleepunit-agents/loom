@@ -2,8 +2,8 @@
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
 schema is `src/core/data/schema.ts`: all 81 tables in `model.py` with their named
-columns, `model_account_windows`, the eight internal bookkeeping tables listed there
-and three internal programme restriction/grant tables: 93 tables. The programme
+columns, `model_account_windows`, the ten internal bookkeeping tables listed there
+and three internal programme restriction/grant tables: 95 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
@@ -78,6 +78,8 @@ different order, and no statement may place a value by position
 (`src/stored-data.contract.test.ts` fails on an insert that does not name its columns).
 
 Step 10 is the plainest kind: it adds one empty column, `projects.retired_at`, and touches no row.
+Step 11 is the same kind: it adds one empty column, `bridge_channels.brief`, and two empty tables,
+`bridge_send_files` and `conversation_sessions`. Neither table is read by the query door.
 
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).

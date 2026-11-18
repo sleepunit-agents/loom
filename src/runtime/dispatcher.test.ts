@@ -187,10 +187,10 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
   f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
   f.db.insert(bridgeConnections).values({ id: 'c', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
-  const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
-  const job = f.runtime.jobs.admit(incoming.conversation!)!;
   const person = JSON.stringify(['discord', 'w', 'outside']);
   f.db.insert(agentPeople).values({ agent: 'art', person, tier: 2 }).run();
+  const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
+  const job = f.runtime.jobs.admit(incoming.conversation!)!;
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
   // The fixture's model runs on Codex, which cannot be told what a body is not given: the job stays queued
   // rather than go where it can only fail. On a harness that can, it is claimed with the rules.

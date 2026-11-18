@@ -9,6 +9,37 @@ import { BridgeChannels } from './channels.js';
 const slack = (kind: string) => ({ id: 'channel', is_im: kind === 'im', is_mpim: kind === 'mpim', is_channel: kind === 'channel', is_group: kind === 'group' });
 
 describe('authenticated bridge channel metadata', () => {
+  it('keeps who started a Discord thread, and which roles are a bot\'s own, for the lifetime that read them', () => {
+    const cache = new BridgeChannels(), writer = cache.bind('c', { platform: 'discord', workspace: 'guild' });
+    writer.put('thread', { id: 'thread', guild_id: 'guild', type: 11, parent_id: 'room' }, 'bot-art');
+    expect(cache.discord('c', 'thread')).toEqual({ id: 'thread', guild: 'guild', kind: 'thread', parent: 'room', starter: 'bot-art' });
+    // A channel is nobody's thread: a starter given for one is not kept.
+    writer.put('room', { id: 'room', guild_id: 'guild', type: 0 }, 'bot-art');
+    expect(cache.discord('c', 'room')).toEqual({ id: 'room', guild: 'guild', kind: 'channel' });
+    expect(cache.botRoles('c').size).toBe(0);
+    writer.roles([
+      { id: 'guild', name: '@everyone', managed: false },
+      { id: 'crew', name: 'crew', managed: false, tags: null },
+      { id: 'role-art', name: 'Art', managed: true, tags: { bot_id: 'bot-art' } },
+      { id: 'boost', name: 'Booster', managed: true, tags: { premium_subscriber: null } },
+      // Only a role Discord manages is a bot's own, whatever its tags claim.
+      { id: 'fake', name: 'Art', managed: false, tags: { bot_id: 'bot-art' } },
+    ]);
+    expect([...cache.botRoles('c')]).toEqual([['role-art', 'bot-art']]);
+    expect(() => writer.roles({ not: 'a list' })).toThrow();
+    expect(cache.botRoles('c').size).toBe(0);
+    expect(cache.botRoles('other').size).toBe(0);
+    // A new lifetime starts with none, and the old writer cannot fill it.
+    const next = cache.bind('c', { platform: 'discord', workspace: 'guild' });
+    writer.roles([{ id: 'role-art', managed: true, tags: { bot_id: 'bot-art' } }]);
+    expect(cache.botRoles('c').size).toBe(0);
+    next.roles([{ id: 'role-art', managed: true, tags: { bot_id: 'bot-art' } }]);
+    expect(cache.botRoles('c').get('role-art')).toBe('bot-art');
+    // Slack has no such roles.
+    const slackWriter = cache.bind('s', { platform: 'slack', workspace: 'team' });
+    slackWriter.roles([{ id: 'role-art', managed: true, tags: { bot_id: 'bot-art' } }]);
+    expect(cache.botRoles('s').size).toBe(0);
+  });
   it.each([0, 5])('classifies Discord text channel type %s', type => {
     const cache = new BridgeChannels(), writer = cache.bind('c', { platform: 'discord', workspace: 'guild' });
     expect(writer.put('channel', { id: 'channel', guild_id: 'guild', type })).toBe(true);

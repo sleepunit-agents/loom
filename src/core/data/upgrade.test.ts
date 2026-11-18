@@ -223,6 +223,64 @@ describe('upgrading a household database', () => {
     expect(recogniseDataSchema(old)).toBe(dataSchemaNumber);
   });
 
+  it('adds step 11\'s columns and tables, all empty, rebuilds bridge_sends with every row in every state carried across, and changes no row that was there', () => {
+    const old = household(10);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('bot', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'discord', 'art', 'guild', 'bot', 'bot', 1, 'connected', '${at}');
+      INSERT INTO bridge_channels (platform, workspace, channel, answers, bots_may_talk) VALUES ('discord', 'guild', 'pond', 'art', 0), ('discord', 'guild', 'general', 'art', 1);
+      INSERT INTO conversations (id, agent, venue, place, label, direct, started_at, last_at, turn_count) VALUES ('cv-1', 'art', 'discord', '["guild","pond",null]', 'pond', 0, '${at}', '${at}', 0);
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, delivered_at, state, conversation) VALUES ('bi:1', 'c', 'pond', 0, 'u', 'Hello', '${at}', '${at}', '${at}', 'delivered', 'cv-1');
+      INSERT INTO bridge_sends (id, incoming, connection, channel, thread, text, state, created_at) VALUES ('s-1', 'bi:1', 'c', 'pond', NULL, 'Hi', 'sent', '${at}'),
+        ('s-2', 'bi:1', 'c', 'pond', 'th', 'Two', 'pending', '${at}'), ('s-3', 'bi:1', 'c', 'pond', NULL, 'Three', 'held', '${at}'), ('s-4', 'bi:1', 'c', 'pond', NULL, 'Four', 'sending', '${at}'),
+        ('s-5', 'bi:1', 'c', 'pond', 'th', 'Five', 'uncertain', '${at}'), ('s-6', 'bi:1', 'c', 'pond', NULL, 'Six', 'dismissed', '${at}');
+      INSERT INTO bridge_send_parts (send, part, posted_id) VALUES ('s-1', 0, 'm-1'), ('s-5', 0, 'm-5')`);
+    // Every table there is, the changed one first, so a step that touched any other row is seen.
+    const names = (old.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bridge_channels', 'migrations') ORDER BY name").all() as { name: string }[]).map(row => row.name);
+    expect(names.length).toBeGreaterThan(80);
+    const rows = () => [old.prepare('SELECT * FROM bridge_channels ORDER BY channel').all(), ...names.map(table => old.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all())];
+    const before = rows();
+    expect(names).not.toContain('bridge_send_files'); expect(names).not.toContain('conversation_sessions');
+    upgradeDataSchema(old, () => '2026-11-18T00:00:00.000Z');
+    // The one new column, empty: no channel gains a brief by upgrading.
+    expect(old.prepare('SELECT channel, answers, bots_may_talk, brief FROM bridge_channels ORDER BY channel').all()).toEqual([
+      { channel: 'general', answers: 'art', bots_may_talk: 1, brief: null }, { channel: 'pond', answers: 'art', bots_may_talk: 0, brief: null }]);
+    const after = rows();
+    // Every row of every table says what it said, once the columns the step added, all empty, are set aside.
+    const added = ['brief', 'reports_to', 'conversation', 'asked_by_kind', 'asked_by', 'asked_at', 'on_word_kind', 'on_word', 'chain', 'chain_started_at'];
+    const was = before.map(table => new Set(table.flatMap(row => Object.keys(row as object))));
+    const without = after.map((table, index) => table.map(row => Object.fromEntries(Object.entries(row as Record<string, unknown>).filter(([name, value]) => was[index].has(name) || !(added.includes(name) && value === null)))));
+    expect(without).toEqual(before);
+    // The rebuilt table: six rows, one in each state, each as it was, none with a conversation, and what hangs off it still does.
+    expect(old.prepare('SELECT id, incoming, thread, text, state, conversation FROM bridge_sends ORDER BY id').all()).toEqual([
+      { id: 's-1', incoming: 'bi:1', thread: null, text: 'Hi', state: 'sent', conversation: null }, { id: 's-2', incoming: 'bi:1', thread: 'th', text: 'Two', state: 'pending', conversation: null },
+      { id: 's-3', incoming: 'bi:1', thread: null, text: 'Three', state: 'held', conversation: null }, { id: 's-4', incoming: 'bi:1', thread: null, text: 'Four', state: 'sending', conversation: null },
+      { id: 's-5', incoming: 'bi:1', thread: 'th', text: 'Five', state: 'uncertain', conversation: null }, { id: 's-6', incoming: 'bi:1', thread: null, text: 'Six', state: 'dismissed', conversation: null }]);
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+    // In the order they were queued: what was said is read back in that order (bridge-history.ts).
+    expect((old.prepare('SELECT id FROM bridge_sends ORDER BY rowid').all() as { id: string }[]).map(row => row.id)).toEqual(['s-1', 's-2', 's-3', 's-4', 's-5', 's-6']);
+    // A post that answers no message needs its conversation; one with neither is refused.
+    old.prepare("INSERT INTO bridge_sends (id, incoming, connection, channel, conversation, text, state, created_at) VALUES ('s-7', NULL, 'c', 'pond', 'cv-1', 'Seven', 'held', ?)").run(at);
+    expect(() => old.prepare("INSERT INTO bridge_sends (id, incoming, connection, channel, text, state, created_at) VALUES ('s-8', NULL, 'c', 'pond', 'Eight', 'held', ?)").run(at)).toThrow('CHECK');
+    old.prepare("DELETE FROM bridge_sends WHERE id = 's-7'").run();
+    expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('none', 0, 'a', x'00')").run()).toThrow('FOREIGN');
+    // The two new tables, empty, keyed as stated and tied to what they hang off.
+    expect(old.prepare('SELECT count(*) AS n FROM bridge_send_files').get()).toEqual({ n: 0 });
+    expect(old.prepare('SELECT count(*) AS n FROM conversation_sessions').get()).toEqual({ n: 0 });
+    old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('s-1', 0, 'plot.png', x'00ff')").run();
+    expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('s-1', 0, 'again.png', x'00')").run()).toThrow('UNIQUE');
+    expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('no-such-send', 0, 'x', x'00')").run()).toThrow('FOREIGN KEY');
+    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'claude', 'abc', x'00', 1, ?)").run(at);
+    // One session for a conversation and harness; another harness has its own.
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'claude', 'def', x'00', 1, ?)").run(at)).toThrow('UNIQUE');
+    old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'codex', 'def', x'00', 1, ?)").run(at);
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-1', 'agy', 'x', x'00', 1, 'yesterday')").run()).toThrow('CHECK');
+    expect(() => old.prepare("INSERT INTO conversation_sessions (conversation, harness, session, files, bytes, started_at) VALUES ('cv-none', 'claude', 'x', x'00', 1, ?)").run(at)).toThrow('FOREIGN KEY');
+    old.prepare("UPDATE bridge_channels SET brief = 'onterris' WHERE channel = 'pond'").run();
+    expect(recogniseDataSchema(old)).toBe(dataSchemaNumber);
+  });
+
   it('refuses a database from a newer program', () => {
     const made = fresh();
     made.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(dataSchemaNumber + 1, at);

@@ -4,8 +4,9 @@ import {conversations,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { HISTORY_BYTES } from './history-limit.js';
-export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string};
+import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
+/** `keepUntil` is when the words will be erased; null for words kept without limit (a bridge room's). */
+export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string|null};
 export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();
@@ -22,7 +23,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
    &&item.toKind==='agent'&&item.to===cv.agent&&item.fromKind==='person'&&item.fromId===row.sender
    &&item.state==='done'&&item.volume==='full'&&item.takenVolume==='full'?JSON.stringify(item):null;
  };
- const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(100).all();
+ const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(HISTORY_LINES).all();
  const prepared:{snapshot:typeof messages.$inferSelect;delivery:string;words:string}[]=[];let bytes=2;
  for(const row of rows){
   const acceptedFingerprint=deliveryFingerprint(row);

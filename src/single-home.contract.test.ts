@@ -177,7 +177,21 @@ it('states the shape of a body\'s token once, where it is made', () => {
 });
 
 it('states how much earlier talk a body is handed once', () => {
-  for (const file of ['src/core/conversations/history-context.ts', 'src/runtime/conversation-client.ts']) expect(text(file), file).toContain('HISTORY_BYTES');
+  for (const file of ['src/core/conversations/history-context.ts', 'src/core/conversations/bridge-history.ts', 'src/runtime/conversation-client.ts']) {
+    expect(text(file), file).toContain('HISTORY_BYTES');
+    // The count of lines too: built to it for a thread and for a bridge conversation, and taken to it.
+    expect(text(file), file).toContain('HISTORY_LINES');
+  }
+  expect(text('src/runtime/conversation-client.ts')).toContain('history:z.array(historyLine).max(HISTORY_LINES)');
+  expect(sources('src').filter(file => /HISTORY_LINES\s*=\s*\d/.test(text(file)))).toEqual(['src/core/conversations/history-limit.ts']);
+});
+
+it('says what a Discord file link is, and how a file\'s name is made plain, once each', () => {
+  // A link listed in a message's words is exactly one loom would fetch: both ask the one rule.
+  expect(sources('src').filter(file => /discordapp/.test(text(file)))).toEqual(['src/pieces/bridges/discord-link.ts']);
+  for (const file of ['src/pieces/bridges/normalize.ts', 'src/pieces/bridges/discord-files.ts']) expect(text(file), file).toContain('discordFileLink(');
+  // A kept attachment, a file written for a body and a file on a post are named by one rule.
+  expect(sources('src').filter(file => text(file).includes('[^A-Za-z0-9._-]+/g'))).toEqual(['src/pieces/bridges/file-name.ts']);
 });
 
 it('decides whether a card field is stale in one place', () => {

@@ -63,8 +63,9 @@ RUN npm_config_cache=/tmp/npm-cache npm install -g @openai/codex@${CODEX_VERSION
 
 # Each harness reaches its account's sign-in in place, never as a copy: Claude Code through the
 # variable above; Codex through a link, so that what it rewrites when it renews lands in the mounted
-# directory. The repository's place exists, empty, until a house copies its own in.
-RUN mkdir -p /home/agent/.codex /home/agent/repo /run/loom/login/claude /run/loom/login/codex \
+# directory. The repository's place exists, empty, until a house copies its own in. Claude Code's own
+# directory exists too: it is where a body keeps a conversation's session, and a body never makes it.
+RUN mkdir -p /home/agent/.codex /home/agent/repo /home/agent/.claude /run/loom/login/claude /run/loom/login/codex \
  && ln -s /run/loom/login/codex/auth.json /home/agent/.codex/auth.json
 
 # One body file for each harness, where the worker looks for it.
