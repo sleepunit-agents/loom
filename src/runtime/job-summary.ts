@@ -6,13 +6,18 @@ import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { jobs } from '../core/data/schema.js';
 import { unendedJobStates } from '../core/data/job-states.js';
+import { jobUsageFields } from './job-usage-queries.js';
 import { exitStage } from './job-exit.js';
 
 export class JobSummaries {
   constructor(readonly db: DataDatabase, readonly visibility: () => QueryVisibility) {}
-  current(agent: string) {
+  allowed() {
     const allowed = this.visibility().jobs?.(getTableColumns(jobs));
     if (!is(allowed, SQL)) throw new Error('SQL visibility required for jobs');
+    return allowed;
+  }
+  current(agent: string) {
+    const allowed = this.allowed();
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
       state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
       .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates)))
@@ -20,8 +25,7 @@ export class JobSummaries {
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */
   history(agent: string, first = 20) {
-    const allowed = this.visibility().jobs?.(getTableColumns(jobs));
-    if (!is(allowed, SQL)) throw new Error('SQL visibility required for jobs');
+    const allowed = this.allowed();
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
@@ -50,8 +54,8 @@ const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {
 } });
 /** Add to the existing generated query root. Root owns authentication, current
  * SQL policy and subscriptions; use the same field in subscription selections. */
-export function jobSummaryFields(summaries: JobSummaries) {
-  return { currentJobs: {
+export function jobSummaryFields(summaries: JobSummaries, canReadUsage = () => true) {
+  return { ...jobUsageFields(summaries, canReadUsage), currentJobs: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(currentJob))),
     args: { agent: { type: new GraphQLNonNull(GraphQLString) } },
     resolve: (_source: unknown, args: { agent: string }) => summaries.current(args.agent),

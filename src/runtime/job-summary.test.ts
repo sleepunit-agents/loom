@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
-import { agents, boxes, jobs, members } from '../core/data/schema.js';
+import { agents, boxes, jobs, members, jobUsage, conversations, inbox, inboxRefs } from '../core/data/schema.js';
 import { JobSummaries, jobSummaryFields } from './job-summary.js';
 
 const clients: Database.Database[] = [];
@@ -95,4 +95,56 @@ it('names the stage a failed job failed in only for a code one of loom\'s progra
     { id: 'h-runner-31', exitCode: 31, exitBy: 'runner', exitStage: null }, { id: 'g-runner-29', exitCode: 29, exitBy: 'runner', exitStage: null }, { id: 'f-runner-14', exitCode: 14, exitBy: 'runner', exitStage: null },
     { id: 'e-unplaced', exitCode: 31, exitBy: 'loom', exitStage: 'loom unplaced' }, { id: 'd-done', exitCode: 0, exitBy: 'body', exitStage: null }, { id: 'c-own', exitCode: 2, exitBy: 'runner', exitStage: null },
     { id: 'c-killed', exitCode: 29, exitBy: 'worker', exitStage: 'body killed' }, { id: 'b-harness', exitCode: 14, exitBy: 'body', exitStage: 'body harness' }, { id: 'a-build', exitCode: 22, exitBy: 'worker', exitStage: 'worker build' }]);
+});
+
+it('reads historical usage and counts only visible jobs over a half-open queue-time range', async () => {
+  const f = fixture();
+  f.add('old', 'done');
+  f.add('retry', 'failed', { retryOf: 'old' });
+  f.add('private', 'failed', { member: 'owner' });
+  f.add('later', 'failed', { queuedAt: '2026-11-15T00:00:00.000Z' });
+  f.policy({ jobs: fields => sql`${fields.member} is null` });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(f.summaries) }) });
+  const result = await graphql({schema, source: `{
+    jobUsage(id:"private"){id}
+    old:jobUsage(id:"old"){usage{source tokensIn tools{name}} observations}
+    retry:jobUsage(id:"retry"){observations}
+    jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"day"){key jobCount retryCount totalTokens}
+  }`});
+  expect(result).toEqual({data:{jobUsage:null,old:{usage:{source:'none',tokensIn:null,tools:null},observations:[]},
+    retry:{observations:['This job was a retry.']},jobUsageRollup:[{key:'2026-11-14',jobCount:2,retryCount:1,totalTokens:null}]}});
+});
+
+it('counts complete firings in a reused wake conversation, with all retries and earlier history outside the window',async()=>{
+  const f = fixture();
+  f.db.insert(conversations).values({id:'cv',agent:'art',venue:'wake',place:'lane',label:'Night shift',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+  function add(id:string,day:number,input:number,output:number|null,delivery?:string,retryOf?:string) {
+    const at = `2026-11-${day}T01:00:00Z`;
+    f.add(id,'done',{conversation:'cv',queuedAt:at,retryOf});
+    f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:input,tokensOut:output,model:'reported',cacheRead:2,
+      largestContext:32768,toolCalls:0,tools:{}}).run();
+    if (delivery) {
+      f.db.insert(inbox).values({id:delivery,job:id,conversation:'cv',toKind:'agent',to:'art',source:'trigger',sourceId:'lane:'+delivery,
+        fromKind:'schedule',state:'done',at,changedAt:at}).run();
+      f.db.insert(inboxRefs).values({item:delivery,ref:'lane'}).run();
+    }
+  }
+  add('one',10,5,5,'d1'); add('two',11,10,20,'d2'); add('partial',12,500,null,'d3');
+  add('latest',13,20,0); add('latest-retry',14,0,20,'d4','latest');
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
+  const query = `{
+    conversationJobUsage(conversation:"cv",from:"2026-11-14T01:00:00Z",to:"2026-11-15T00:00:00Z"){id observations usage{tools{name count} totalTokens}}
+    byTrigger:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"trigger"){key jobCount retryCount tokensIn tokensOut cacheRead totalTokens largestContext}
+    byModel:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"model"){key}
+    byConversation:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"conversation"){key title}
+  }`;
+  const large = 'This job used a large context and made no tool calls.';
+  expect(await graphql({schema,source:query})).toEqual({data:{
+    conversationJobUsage:[{id:'latest-retry',observations:[large,'This job was a retry.','This trigger’s latest run used at least twice its earlier median tokens.'],usage:{tools:[],totalTokens:20}}],
+    byTrigger:[{key:'lane',jobCount:5,retryCount:1,tokensIn:535,tokensOut:45,cacheRead:10,totalTokens:580,largestContext:32768}],
+    byModel:[{key:'reported'}],byConversation:[{key:'cv',title:'Night shift'}],
+  }});
+  add('unknown-latest',15,1000,null,'d5');
+  const jobs = (await graphql({schema,source:'{conversationJobUsage(conversation:"cv"){observations}}'})).data?.conversationJobUsage;
+  expect(JSON.stringify(jobs)).not.toContain('median');
 });

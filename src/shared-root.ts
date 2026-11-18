@@ -189,8 +189,9 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
+  const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
-    ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records);
+    ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);});
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -207,7 +208,6 @@ export function sharedRoot(options: {
   // What the body of a job on anybody else's word is refused, asked of the job its credential is bound to and never of
   // what the body says: on such a word a body changes nothing outside its own conversation, except by asking the owners
   // a question (shared-place-mail.ts, heldRefusal).
-  const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
   const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>heldRefusal(db,bodyJob(viewer),action);
   registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};

@@ -33,7 +33,7 @@ export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSet
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined) {
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
@@ -69,7 +69,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
-    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer))),
+    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer)), () => canReadUsage(viewer)),
   });};
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));
