@@ -33,8 +33,11 @@ export class Dispatcher {
       .where(and(eq(conversations.id,job.conversation),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
   }
   /** Polls also report machine health when idle or report-only. Placement and
-   * claim share one transaction, so a second poll cannot receive the same job. */
-  next(box: string, facts?: readonly string[]) {
+   * claim share one transaction, so a second poll cannot receive the same job.
+   * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
+   * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
+   * mail may be waiting behind such a job for a job of its own. */
+  next(box: string, facts?: readonly string[], ended?: string[]) {
     this.machines.heartbeat(box, facts);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
@@ -57,7 +60,7 @@ export class Dispatcher {
         // it is ended now and says why. Any other job that cannot be placed waits, as before.
         // The mail that made it anybody else's is closed with the same reason, so it is not jobbed again in vain: an
         // owner's message in that conversation gets a job on owners' word, which runs.
-        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job)); continue; }
+        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { if (this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job))) ended?.push(job.id); continue; }
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;

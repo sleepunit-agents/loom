@@ -27,6 +27,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun);
   const stopped=new WeakSet<object>();
+  /** The jobs a poll ended as ones no harness can hold, by the poll's input: told of once the write is committed. */
+  const unplaced=new WeakMap<object,string[]>();
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, options.runner(viewer));
   const assigned = (viewer: Viewer, id: string, states?: readonly string[]) => {
     if (!machine(viewer)) return false;
@@ -52,10 +54,14 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
     run(ctx, input) {
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts);
+      const ended: string[] = [];
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended);
       ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);
+      for (const id of ended) ctx.changed('job', id);
+      if (ended.length) unplaced.set(input, ended);
       return assignment ?? null;
     },
+    after(input) { const ended = unplaced.get(input); unplaced.delete(input); for (const id of ended ?? []) options.jobEnded(id); },
   });
   operations.register({ name: 'runtime.started', write: true, recheckPolicy: true, doors: ['http'],
     input: jobInput.extend({ build: z.string().trim().min(1) }).strict(), output: ack,

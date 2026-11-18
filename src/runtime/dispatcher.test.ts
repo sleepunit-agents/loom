@@ -342,3 +342,11 @@ it('tells the worker how many accounts of the placed provider are signed in on i
   f.db.insert(modelAccountBoxes).values([{ account: 'second-account', box: 'first' }, { account: 'elsewhere', box: 'first' }]).run();
   expect(f.runtime.next('first')).toMatchObject({ account: 'account', accountChoices: 2 });
 });
+it('names to its caller each job a poll ended as one no harness can hold', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  const room = f.comms.open({ agent: 'art', venue: 'slack', place: JSON.stringify(['T', 'C', null]), label: 'room' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: room.id, source: 'notice', fromKind: 'unknown', words: 'Work' });
+  const job = f.runtime.jobs.admit(room.id)!, ended: string[] = [];
+  expect(f.runtime.next('first', undefined, ended)).toBeUndefined();
+  expect(ended).toEqual([job.id]); expect(f.runtime.jobs.get(job.id).endedNote).toBe(UNHELD_NOTE);
+});
