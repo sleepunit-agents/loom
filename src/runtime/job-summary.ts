@@ -37,23 +37,30 @@ export class JobSummaries {
       .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */
-  history(agent: string, first = 20) {
+  history(agent: string, first = 20, id?: string) {
     const allowed = this.allowed();
     const visibleParents = this.db.select({id:jobs.id}).from(jobs).where(allowed);
     const visibleRuns = this.db.select({id:terminalRuns.job}).from(terminalRuns).where(inArray(terminalRuns.parent,visibleParents));
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
+      prefers: jobs.prefers, placementDecision: jobs.placementDecision,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), or(ne(jobs.startedByKind,'terminal'),inArray(jobs.id,visibleRuns)))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
+      .where(and(allowed, eq(jobs.agent, agent), id === undefined ? undefined : eq(jobs.id, id), or(ne(jobs.startedByKind,'terminal'),inArray(jobs.id,visibleRuns)))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
       // Where a failed job failed, read from its exit code and whose code it is: what a private conversation's job keeps.
       .map(row => ({ ...row, exitStage: exitStage(row.exitCode, row.exitBy) ?? null }));
   }
 }
 const text = { type: GraphQLString };
+const placementCandidate = new GraphQLObjectType({ name: 'JobPlacementCandidate', fields: {
+  box: { type: new GraphQLNonNull(GraphQLString) }, outcome: { type: new GraphQLNonNull(GraphQLString) },
+  reason: { type: new GraphQLNonNull(GraphQLString) },
+} });
 const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
   title: { type: new GraphQLNonNull(GraphQLString) }, state: { type: new GraphQLNonNull(GraphQLString) },
+  prefers: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+  placementDecision: { type: new GraphQLList(new GraphQLNonNull(placementCandidate)) },
   box: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
   exitCode: { type: GraphQLInt }, exitBy: text, exitStage: text, logTail: text, endedBy: text, endedReason: text, endedNote: text,
   queuedAt: { type: new GraphQLNonNull(GraphQLString) }, claimedAt: text, heardAt: text, endedAt: text,
@@ -77,7 +84,7 @@ export function jobSummaryFields(summaries: JobSummaries, canReadUsage = () => t
     resolve: (_source: unknown, args: { agent: string }) => summaries.current(args.agent),
   }, jobHistory: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(job))),
-    args: { agent: { type: new GraphQLNonNull(GraphQLString) }, first: { type: GraphQLInt } },
-    resolve: (_source: unknown, args: { agent: string; first?: number | null }) => summaries.history(args.agent, args.first ?? undefined),
+    args: { agent: { type: new GraphQLNonNull(GraphQLString) }, first: { type: GraphQLInt }, id: { type: GraphQLString } },
+    resolve: (_source: unknown, args: { agent: string; first?: number | null; id?: string | null }) => summaries.history(args.agent, args.first ?? undefined, args.id ?? undefined),
   } };
 }

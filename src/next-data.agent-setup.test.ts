@@ -26,7 +26,7 @@ function fixture() {
   db.insert(s.projectAgents).values([{ project: 'pond', agent: 'art' }, { project: 'pond', agent: 'mark' }]).run();
   db.insert(s.boxes).values({ id: 'box', name: 'box', owner: 'sam', hostsAny: true, sameMachineAsLoom: false, reportOnly: false, alwaysOn: false, enrolledAt: at, lastSeenAt: at }).run();
   db.insert(s.secrets).values({ name: 'deploy-key', description: '', changedAt: at, changedBy: 'owner' }).run();
-  db.insert(s.agentRunSettings).values({ agent: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
+  db.insert(s.agentRunSettings).values({ agent: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false, prefers: ['fast'] }).run();
   db.insert(s.agentBoxes).values({ agent: 'art', box: 'box', position: 0 }).run();
   db.insert(s.agentHousePorts).values({ agent: 'art', address: '127.0.0.1', port: 8080 }).run();
   db.insert(s.agentHouseSecrets).values({ agent: 'art', alias: 'DEPLOY_KEY', secret: 'deploy-key' }).run();
@@ -40,7 +40,7 @@ function fixture() {
   const data = nextData(db, clock, () => true);
   clean.push(async () => { await data.close(); client.close(); });
   const read = async (who: string) => {
-    const query = `{ agents { id } ${[...roster, ...setup].map(name => `${name} { agent }`).join(' ')} }`;
+    const query = `{ agents { id } ${[...roster, ...setup].map(name => `${name} { agent ${name === 'agentRunSettings' ? 'prefers' : ''} }`).join(' ')} }`;
     const response = await data.http.request('/graphql', { method: 'POST', headers: { authorization: `Bearer ${secretOf(who)}`, 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
     const body = await response.json() as { errors?: unknown; data: Record<string, { agent?: string; id?: string }[]> };
     expect(body.errors).toBeUndefined();
@@ -61,6 +61,6 @@ it('shows the setup to the agent\'s own member, a household owner and the agent 
   const f = fixture();
   for (const who of ['sam', 'owner', 'art']) {
     const seen = await f.read(who);
-    for (const name of setup) expect(seen[name], `${name} for ${who}`).toEqual([{ agent: 'art' }]);
+    for (const name of setup) expect(seen[name], `${name} for ${who}`).toEqual([name === 'agentRunSettings' ? {agent: 'art', prefers: ['fast']} : {agent: 'art'}]);
   }
 });

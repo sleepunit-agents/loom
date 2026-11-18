@@ -7,6 +7,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { agentBoxes, agentHousePorts, agentRunSettings, boxes, boxAgents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { hasControlCharacter } from './core/line-name.js';
+import { machineFacts } from './runtime/machine-facts.js';
 const text=(max:number)=>z.string().trim().min(1).max(max).refine(value=>!hasControlCharacter(value));
 const repository=text(2048).refine(value=>{
  if(/[?#]/.test(value)||/^[^/@\s]+:[^/@\s]+@/.test(value))return false;
@@ -17,7 +18,7 @@ const repository=text(2048).refine(value=>{
 // The same rule a worker holds a Housefile's path to (houseFile in runtime/house-source.ts): no part that is empty, `.` or `..`.
 const houseFile=z.string().trim().max(512).refine(value=>!hasControlCharacter(value)).refine(value=>value===''||!value.includes('\\')&&value.split('/').every(part=>part!==''&&part!=='.'&&part!=='..'));
 export const agentRunSettingsInput=z.object({agent:text(200),houseRepository:repository,houseFile:houseFile,
-   houseBranch:text(200).refine(value=>!value.startsWith('-')),nestedContainers:z.boolean(),gpu:z.boolean(),
+   houseBranch:text(200).refine(value=>!value.startsWith('-')),nestedContainers:z.boolean(),gpu:z.boolean(),prefers:machineFacts.optional(),
    boxes:z.array(text(200)).max(128).refine(values=>new Set(values).size===values.length),
    ports:z.array(z.object({address:z.ipv4().or(z.ipv6()).transform(value=>value.includes(':')?new URL('http://['+value+']/').hostname.slice(1,-1):value),port:z.number().int().min(1).max(65535)}).strict()).max(128).refine(values=>new Set(values.map(value=>JSON.stringify([value.address,value.port]))).size===values.length),
   }).strict();
@@ -40,7 +41,7 @@ export function applyAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infe
    validateAgentRunSettings(db,viewer,input);
    const {agent,houseRepository,houseFile,houseBranch,nestedContainers,gpu}=input;
    // Secret references are owned by Secrets; an ordinary house edit preserves them.
-   const settings={houseRepository,houseFile,houseBranch,nestedContainers,gpu};
+   const settings={houseRepository,houseFile,houseBranch,nestedContainers,gpu,...(input.prefers === undefined ? {} : {prefers:input.prefers})};
    db.insert(agentRunSettings).values({agent,...settings}).onConflictDoUpdate({target:agentRunSettings.agent,set:settings}).run();
    db.delete(agentBoxes).where(eq(agentBoxes.agent,agent)).run();
    if(input.boxes.length)db.insert(agentBoxes).values(input.boxes.map((box,position)=>({agent,box,position}))).run();

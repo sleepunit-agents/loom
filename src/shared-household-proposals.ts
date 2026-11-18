@@ -237,6 +237,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='runSettings'){
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,value.input.agent)).get();if(!row)return null;
    return sorted({agent:row.agent,houseRepository:row.houseRepository,houseFile:row.houseFile,houseBranch:row.houseBranch,nestedContainers:row.nestedContainers,gpu:row.gpu,
+    ...(value.input.prefers === undefined ? {} : {prefers:row.prefers ?? []}),
     boxes:db.select().from(agentBoxes).where(eq(agentBoxes.agent,row.agent)).orderBy(asc(agentBoxes.position)).all().map(entry=>entry.box),
     ports:db.select({address:agentHousePorts.address,port:agentHousePorts.port}).from(agentHousePorts).where(eq(agentHousePorts.agent,row.agent)).orderBy(asc(agentHousePorts.address),asc(agentHousePorts.port)).all()});
   }

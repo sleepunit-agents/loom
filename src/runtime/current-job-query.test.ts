@@ -69,6 +69,15 @@ for (const revoked of ['project', 'owned-agent', 'household-owner'] as const) it
   const fresh = (await (await f.post(who, f.query(agent))).json()).data.currentJobs.map((row: { id: string }) => row.id);
   expect(fresh).toEqual(revoked === 'project' ? [] : revoked === 'owned-agent' ? ['private-alice'] : ['owned', 'private-house']);
 });
+it('reads placement on a visible job and keeps private decisions with their jobs', async () => {
+  const f = fixture(), decision = [{box: 'worker', outcome: 'taken' as const, reason: 'Preferred facts matched'}];
+  f.db.update(jobs).set({prefers: ['fast'], placementDecision: decision}).where(eq(jobs.id, 'private-bob')).run();
+  const query = '{ jobHistory(agent:"art", id:"private-bob", first:1) { id prefers placementDecision { box outcome reason } } }';
+  expect(await (await f.post('bob', query)).json()).toEqual({data: {jobHistory: [{id: 'private-bob', prefers: ['fast'], placementDecision: decision}]}});
+  expect(await (await f.post('alice', query)).json()).toEqual({data: {jobHistory: []}});
+  const older = '{ jobHistory(agent:"art", id:"owned", first:1) { id prefers placementDecision { box } } }';
+  expect(await (await f.post('alice', older)).json()).toEqual({data: {jobHistory: [{id: 'owned', prefers: null, placementDecision: null}]}});
+});
 it('offers only Home summary columns and does not accept raw execution fields', async () => {
   const f = fixture(), body = await (await f.post('house', '{ __type(name:"CurrentJobSummary") { fields { name } } }')).json();
   expect(body.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['agent', 'box', 'id', 'kind', 'queuedAt', 'state', 'title']);

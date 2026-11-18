@@ -5,7 +5,7 @@ import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTab
 import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
 import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
 
 type TableName = keyof typeof tables;
@@ -145,6 +145,12 @@ export function dataQueries(client: Database.Database, options: {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
+    if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings') {
+      for (const key of name === 'triggers' ? ['needs', 'prefers'] : ['prefers']) {
+        fields[key].type = new GraphQLList(new GraphQLNonNull(GraphQLString));
+      }
+    }
     if (name === 'tasks') fields.isReady = {
       name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
       description: 'Open non-epic task with no unclosed blocker, computed in this SQL statement.',

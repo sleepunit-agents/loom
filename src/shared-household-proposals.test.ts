@@ -191,17 +191,25 @@ it('proposes a machine\'s settings, how an agent runs, and its outside accounts'
   expect(f.db.select().from(boxes).get()).toMatchObject({ reportOnly: false, alwaysOn: true });
   expect(f.db.select().from(boxAgents).all()).toEqual([{ box: 'box-1', agent: 'art', lent: false }]);
   const run = { agent: 'art', houseRepository: 'https://example.invalid/house.git', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true, boxes: ['box-1'], ports: [] };
-  const filed = await propose('runSettings', run);
+  for (const prefers of [[''], ['gpu', ' gpu '], ['broken\nname'], Array.from({ length: 129 }, (_, i) => String(i))]) {
+    expect((await propose('runSettings', { ...run, prefers })).body.ok).toBe(false);
+  }
+  const filed = await propose('runSettings', { ...run, prefers: [' fast ', 'local'] });
+  expect(filed.body.ok).toBe(true);
   expect(f.db.select().from(agentRunSettings).all()).toEqual([]);
   expect((await allow(filed.body.value!.id)).body.ok).toBe(true);
-  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseBranch: 'main', gpu: true });
+  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseBranch: 'main', gpu: true, prefers: ['fast', 'local'] });
   expect(f.db.select().from(agentBoxes).all()).toEqual([{ agent: 'art', box: 'box-1', position: 0 }]);
   await hopeless(f, await propose('runSettings', { ...run, boxes: ['no-such-box'] }));
   // No Housefile: the agent runs in the core house loom provides. The card says so in words, to everyone who reads it.
   const core = await propose('runSettings', { ...run, houseFile: '' });
   expect(f.db.select().from(approvals).all().find(row => row.id === core.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change how art runs, in the core house with no Housefile of its own?', target: 'household:runSettings:art' });
   expect((await allow(core.body.value!.id)).body.ok).toBe(true);
-  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseFile: '', houseRepository: 'https://example.invalid/house.git' });
+  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseFile: '', houseRepository: 'https://example.invalid/house.git', prefers: ['fast', 'local'] });
+  const clear = await propose('runSettings', { ...run, prefers: [] });
+  expect((await look(f, clear.body.value!.id)).summary).toContain('"prefers":["fast","local"]');
+  expect((await allow(clear.body.value!.id)).body.ok).toBe(true);
+  expect(f.db.select().from(agentRunSettings).get()?.prefers).toEqual([]);
   // A path is still a path: one that climbs or is absolute is no Housefile, empty or not.
   for (const houseFile of ['../Housefile', '/Housefile', 'a\\b', '.', './Housefile', 'a//b', 'house/']) expect((await propose('runSettings', { ...run, houseFile })).body.ok).toBe(false);
   const accounts = await propose('agentAccounts', { agent: 'art', github: ['Art-E-Fish', 'art-e-fish'] });
