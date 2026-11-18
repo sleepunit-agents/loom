@@ -418,7 +418,10 @@ describe('upgrading a household database', () => {
 });
 
 it('starts upgraded machines without inspection grants or diagnostic history',()=>{
- const db=household(14);upgradeDataSchema(db);
- expect(db.prepare('select readers from boxes').all()).toEqual([]);
+ const db=household(14);
+ db.prepare("insert into members(id,role,joined_at) values('sam','owner',?)").run(at);
+ db.prepare("insert into boxes(id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,enrolled_at) values('legacy','Legacy','sam',0,1,0,1,?)").run(at);
+ upgradeDataSchema(db);
+ expect(db.prepare('select id,readers,hosts_any from boxes').all()).toEqual([{id:'legacy',readers:null,hosts_any:1}]);
  expect(db.prepare('select * from machine_reads').all()).toEqual([]);
 });

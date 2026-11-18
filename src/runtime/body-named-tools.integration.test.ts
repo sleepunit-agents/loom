@@ -77,7 +77,7 @@ function asTheDoorAnswered(name:string,called:Called){
  expect(called.sent.length,name).toBeGreaterThan(0);
  for(const sent of called.sent){
   expect(sent.bearer,name).toBe('Bearer '+bodyCredentials.body);
-  expect(sent.path,name).toMatch(/^\/graphql$|^\/api\/(?:runtime\/commandCatalog|memory\/[A-Za-z]+|mind\/[A-Za-z]+|tasks\/command|household\/propose)$/);
+  expect(sent.path,name).toMatch(/^\/graphql$|^\/api\/(?:runtime\/commandCatalog|memory\/[A-Za-z]+|mind\/[A-Za-z]+|tasks\/command|machine\/read|household\/propose)$/);
  }
  // A command goes out only after the catalogue was asked about it, as the generic tool does.
  called.sent.forEach((sent,index)=>{if(sent.path.startsWith('/api/')&&sent.path!=='/api/runtime/commandCatalog')expect(called.sent[index-1]?.path,name).toBe('/api/runtime/commandCatalog');});
@@ -94,6 +94,7 @@ it('lets a body call every named tool it is offered, each answered as the door a
  const use=async(name:string,args:Record<string,unknown>={})=>{const result=await b.call(name,args);called.add(name);asTheDoorAnswered(name,result);if(result.error)refused.push(name);return result.text;};
  // The body in this fixture is handed no identity; the tool still answers for its own agent and no other.
  expect(await use('identity')).toContain('Agent: art');
+ expect(await use('machine_read',{machine:'fictional',read:'memory',args:{}})).toContain('Machine read refused');
  const memory=/\((art:[a-f0-9-]{36})\)/.exec(await use('remember',{category:'reference',title:'Fictional pump lesson',content:'FICTIONAL_PUMP_WORDS'}))![1];
  expect(await use('recall',{query:'pump'})).toContain('FICTIONAL_PUMP_WORDS');
  await use('update',{id:memory,content:'FICTIONAL_PUMP_REVISED'});
@@ -189,6 +190,7 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
   person_write:[{slug:'fictional-told',name:'Fictional told'}],project_write:[{slug:'fictional-told',name:'Fictional told'}],
   memory_propose:[{category:'reference',title:'Fictional draft',content:'words'}],memory_ratify:[{id:'mark:proposal:00000000-0000-4000-8000-000000000000'}],memory_archive:[{id}],memory_restore:[{id}],memory_history:[{id}],
   task_ready:[{}],task:[{id:'t-1'}],task_edit:[{id:'t-1',priority:1}],task_move_to_project:[{ids:['t-1'],project:null}],task_claim:[{id:'t-1'}],task_close:[{id:'t-1',reason:'done'}],task_comment:[{id:'t-1',text:'words'}],
+  machine_read:[{machine:'fictional',read:'memory',args:{}}],
   propose:[{change:'settings',input:{commsDays:7},why:'Fictional'}],approvals:[{}],inbox:[{}],
  };
  expect(Object.keys(every).sort()).toEqual([...bodyNamedToolNames()].sort());

@@ -142,6 +142,14 @@ export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observa
 export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
+export function workerMachineReads(input: WorkerHttpOptions) {
+  const call = operationCaller(input);
+  return {
+    next: (reads: readonly string[]) => call('machineReadNext', {reads}, z.object({id:z.uuid(),read:z.string(),args:z.record(z.string(),z.union([z.string(),z.number()]))}).strict().nullable()),
+    done: (result: {id:string;ok:boolean;output:string}) => call('machineReadDone',result,z.boolean()),
+  };
+}
+
 export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly string[]; slots?: number }) {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   return operationCaller(input)('health', { facts, slots: input.slots }, z.object({ ok: z.literal(true) }).strict());

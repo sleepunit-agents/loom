@@ -40,20 +40,22 @@ function seed(file: string, pendingMail: boolean) {
 }
 
 /** The first process exercises an actual claim and leaves the body running. Preserve that household
- * in the last shipped shape, as it would have been on disk at an upgrade. The replacement process
+ * in the pinned schema-13 shape, as it would have been on disk at an upgrade. The replacement process
  * must recognise it, migrate it and accept the surviving worker and body's existing credentials. */
 function leaveVersion13(file: string) {
   const sqlite = new Database(file);
   try {
     sqlite.transaction(() => {
       sqlite.exec(`
+        DROP TABLE machine_reads;
+        ALTER TABLE boxes DROP COLUMN readers;
         ALTER TABLE boxes DROP COLUMN slots;
         ALTER TABLE agent_run_settings DROP COLUMN prefers;
         ALTER TABLE jobs DROP COLUMN prefers;
         ALTER TABLE jobs DROP COLUMN placement_decision;
         ALTER TABLE triggers DROP COLUMN needs;
         ALTER TABLE triggers DROP COLUMN prefers;
-        DELETE FROM migrations WHERE number = 14;
+        DELETE FROM migrations WHERE number IN (14,15);
       `);
       expect(recogniseDataSchema(sqlite)).toBe(13);
     })();

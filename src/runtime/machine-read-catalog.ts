@@ -1,5 +1,5 @@
 import { execFile, type ExecFileOptionsWithStringEncoding } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { hasControlCharacter } from '../core/line-name.js';
 import { NESTED_SOCKET_TARGET } from './worker-mounts.js';
 import { promisify } from 'node:util';
@@ -8,6 +8,7 @@ import { saysNoSecret } from './body-secrets.js';
 
 const scope = z.enum(['system', 'user']);
 const unit = z.string().max(255).regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.(?:service|socket|timer|target|mount|automount|swap|slice|scope|path|device)(?![\s\S])/);
+export const journalUnit = z.strictObject({scope,unit});
 const window = {
   lines: z.number().int().min(1).max(100).default(30),
   since: z.number().int().min(1).max(1440).default(60),
@@ -32,7 +33,7 @@ export function parseMachineRead(input: unknown): MachineReadRequest {
   return parsed.data;
 }
 
-export function machineReadCommand(read: MachineReadRequest): [string, ...string[]] {
+export function machineReadCommand(read: MachineReadRequest, journalText = true): [string, ...string[]] {
   switch (read.kind) {
     case 'unit-state':
       return ['/usr/bin/systemctl', '--' + read.scope, '--no-pager', 'show',
@@ -45,7 +46,7 @@ export function machineReadCommand(read: MachineReadRequest): [string, ...string
     case 'unit-journal': {
       const user = read.kind === 'worker-log' || read.scope === 'user';
       const units = read.kind === 'worker-log' ? ['loom-new-worker.service', 'loom-worker.service'] : [read.unit];
-      return ['/usr/bin/journalctl', user ? '--user' : '--system', '--quiet', '--no-pager', '--output=short-iso',
+      return ['/usr/bin/journalctl', user ? '--user' : '--system', '--quiet', '--no-pager', ...(journalText ? ['--output=short-iso'] : ['--output=json','--output-fields=PRIORITY']),
          '--lines=' + read.lines, '--since=' + read.since + ' minutes ago',
         ...units.map(name => (user ? '--user-unit=' : '--unit=') + name)];
     }
@@ -64,14 +65,24 @@ export function machineReadCommand(read: MachineReadRequest): [string, ...string
 }
 
 const credential = /(?:\b(?:loom_|body_|gh[pousr]_|github_pat_|sk-|AKIA)[A-Za-z0-9_-]{8,}|\b(?:bearer|basic)\s+[A-Za-z0-9_+/=.:-]+|\b(?:authorization|cookie|set-cookie|password|passwd|secret|token|api[_-]?key)["']?\s*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|:\/\/[^\s/@]+:[^\s/@]+@)/i;
+export const looksLikeCredential = (value: string) => credential.test(value);
 const tooLarge = (): MachineReadResult => ({ ok: false, output: 'Machine read exceeds the output limit' });
 type Executor = (file: string, argv: string[], options: ExecFileOptionsWithStringEncoding) => Promise<{ stdout: string }>;
 
 const executeUnprivileged: Executor = (file, argv, options) =>
-  promisify(execFile)('/usr/bin/setpriv', ['--no-new-privs', '--', file, ...argv], options);
+  promisify(execFile)('/usr/bin/setpriv', ['--no-new-privs', '--inh-caps=-all', '--ambient-caps=-all', '--', file, ...argv], options);
+
+function unprivilegedWorker() {
+  if (process.platform !== 'linux' || !process.getuid?.() || !process.geteuid?.()) return false;
+  try {
+    const status = readFileSync('/proc/self/status','utf8');
+    return ['CapEff','CapPrm','CapAmb'].every(field =>
+      new RegExp('^'+field+':\\s*0+$','m').test(status));
+  } catch { return false; }
+}
 
 export function offeredMachineReads(configured: readonly MachineReadRequest['kind'][]) {
-  if (process.platform !== 'linux' || !process.getuid?.() || !process.geteuid?.()) return [];
+  if (!unprivilegedWorker()) return [];
   return configured.filter(kind => {
     const sample = {kind, scope: 'user', unit: 'loom-worker.service', lines: 1, since: 1} as const;
     try {
@@ -83,13 +94,16 @@ export function offeredMachineReads(configured: readonly MachineReadRequest['kin
   });
 }
 
-export async function runMachineRead(input: unknown, workerToken: string, execute: Executor = executeUnprivileged): Promise<MachineReadResult> {
+export async function runMachineRead(input: unknown, workerToken: string, execute: Executor = executeUnprivileged, journalUnits: readonly z.infer<typeof journalUnit>[] = []): Promise<MachineReadResult> {
   const read = parseMachineRead(input);
   const uid = process.geteuid?.();
-  if (process.platform !== 'linux' || uid === undefined || uid === 0 || process.getuid?.() === 0)
+  if (!unprivilegedWorker())
     return { ok: false, output: 'Machine reads require an unprivileged Linux worker' };
   if (!workerToken) return { ok: false, output: 'Worker credential unavailable' };
-  const [file, ...argv] = machineReadCommand(read);
+  const allowed=(scope:string,unit:string)=>journalUnits.some(entry=>entry.scope===scope && entry.unit===unit);
+  const journalText = read.kind==='unit-journal' ? allowed(read.scope,read.unit)
+    : read.kind==='worker-log' ? ['loom-new-worker.service','loom-worker.service'].every(unit=>allowed('user',unit)) : true;
+  const [file, ...argv] = machineReadCommand(read,journalText);
   try {
     const { stdout } = await execute(file, argv, {
       cwd: '/', shell: false, timeout: 4000, killSignal: 'SIGKILL', maxBuffer: machineReadOutputBytes, encoding: 'utf8',
@@ -97,6 +111,14 @@ export async function runMachineRead(input: unknown, workerToken: string, execut
         DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/' + uid + '/bus', SYSTEMD_COLORS: '0' },
     });
     let output = stdout.trim();
+    if (!journalText && output) {
+      output = output.split('\n').map(line => {
+        const record=JSON.parse(line);
+        if(typeof record.__REALTIME_TIMESTAMP!=='string' || !/^\d{1,16}$/.test(record.__REALTIME_TIMESTAMP)) throw Error();
+        const timestamp=new Date(Number(record.__REALTIME_TIMESTAMP)/1000).toISOString();
+        return timestamp+' priority '+(/^[0-7]$/.test(String(record.PRIORITY))?Number(record.PRIORITY):'unknown');
+      }).join('\n');
+    }
 
     if (read.kind === 'failed-units' || read.kind === 'restarting-units')
       output = output.split('\n').map(line => line.trim().split(/\s+/).slice(0, 4).join(' ')).join('\n');
