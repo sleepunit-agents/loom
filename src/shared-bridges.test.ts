@@ -278,7 +278,7 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
 });
-// What a body may schedule depends on where its job is (policy.ts, maySchedule). A shared place's body would be
+// What a body may schedule depends on whose word its job works on (policy.ts, maySchedule). A guest's body would be
 // setting words that later run as the agent's own wake, outside the conversation and its limits: every trigger
 // that does not name its own conversation is refused there.
 it('refuses every trigger a shared place\'s body sets, rewords, stops, starts or runs outside its own conversation, with a line that says what to do instead',async()=>{
