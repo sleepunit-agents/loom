@@ -1648,3 +1648,29 @@ Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separat
 Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. agy 1.5.11 reports input, output, and cache read tokens on its result. Its completed tool steps supply the tool names and counts. Its turn count does not establish a model-call count. A prompt run with an isolated, unsigned-in home returned an authentication error with explicit zero token counts.
 
 For the GraphQL queries, count definitions and observations, see [Reading job usage](job-usage.md).
+
+### Named house programs
+
+A container worker starts an executable supplied by the built house under
+`/home/agent/repo/.loom/programs/<name>`. The name is one path component.
+Arguments are separate argv entries. The worker supplies one JSON object on
+stdin with version 1, optional payload and state, and the values of exactly
+the declared secrets. It supplies no body token, account login, host mount,
+GPU, published port, or engine socket. The program runs under a wall-clock
+deadline. Its output is private. On successful exit the worker accepts one
+UTF-8 JSON object on stdout (up to 16 KiB), discards stderr, and reports the
+validated result. An invalid result or one containing a declared secret fails
+the run. The worker reaps the container before reporting any result.
+
+A program descriptor carries `name`, `args` (up to 32 arguments of 1024
+characters each), `timeoutMs` (1 ms through 24 hours), and `secrets` (up
+to 16 unique house startup aliases). Only a grant for the assigned agent and
+alias supplies the value. Programs use the container network for outbound
+requests. Their root filesystem is read-only.
+
+The result requires `version: 1` and a boolean `wake`. Optional members
+are `line` (one line of up to 1024 characters), `payload`, `state`, and
+`post` with `channel` and `text`. Each payload and state fits in 8 KiB of
+JSON, nested at most 32 levels. The worker rejects oversized stdout, invalid
+UTF-8, extra output, unknown result fields, recognized credential patterns,
+and declared secret values in the output.

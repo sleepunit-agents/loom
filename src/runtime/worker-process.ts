@@ -205,6 +205,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       return { unverified };
     },
     async build(job, signal, repositoryInput) {
+      if (job.program) throw new UnservedJobError('Program needs a container worker');
       runner(job);
       // One build command at a time. The command is the operator's, and nothing says it can run beside
       // itself; a worker with several slots runs the second job's build when the first has ended. A build
@@ -243,6 +244,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       })(); } finally { ended(); if (building === mine) building = undefined; }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
+      if (job.program) throw new UnservedJobError('Program needs a container worker');
       const plan = runner(job);
       // Each body gets a directory of its own (mode 0700, named to it in BODY_SCRATCH) for files a harness
       // can only be configured through. The worker removes it once the body's whole process group is gone,

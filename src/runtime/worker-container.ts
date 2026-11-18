@@ -1,3 +1,4 @@
+import { houseProgramSchema, parseProgramResult, PROGRAM_OUTPUT_BYTES, programExecutable, programInput } from './house-program.js';
 import { BUILD_DEADLINE_MAX_MS, HOUSE_BUILD_DEFAULT_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { logTail } from './log-tail.js';
 import { bodyInput } from './body-bootstrap.js';
@@ -108,7 +109,9 @@ function createSpec(job: WorkerAssignment, house: HouseStart, built: { repositor
 }
 
 /** Incremental non-TTY Docker frames; memory stays bounded even for giant frames. */
-function output(socket: Duplex, signal: AbortSignal) {
+function output(socket: Duplex, signal: AbortSignal, program = false) {
+  const stdout = program ? Buffer.alloc(PROGRAM_OUTPUT_BYTES) : undefined;
+  let length = 0;
   let privateOutput = false;
   let tail = '', header = Buffer.alloc(0), remaining = 0, stream = 0;
   const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8'), new StringDecoder('utf8')];
@@ -128,7 +131,13 @@ function output(socket: Duplex, signal: AbortSignal) {
           if (!remaining) continue;
         }
         const count = Math.min(remaining, chunk.length - offset);
-        append(decoders[stream].write(chunk.subarray(offset, offset + count)));
+        const bytes = chunk.subarray(offset, offset + count);
+        if (stdout) {
+          if (stream === 1) {
+            if (length + count > stdout.length) { fail(); return; }
+            bytes.copy(stdout, length); length += count;
+          }
+        } else append(decoders[stream].write(bytes));
         remaining -= count; offset += count;
       }
     };
@@ -145,7 +154,10 @@ function output(socket: Duplex, signal: AbortSignal) {
     socket.once('close', () => signal.removeEventListener('abort', fail));
   });
   void done.catch(() => {});
-  return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
+  return { done, result: (secrets: readonly string[]) => {
+    try { return parseProgramResult(new TextDecoder('utf-8', { fatal: true }).decode(stdout!.subarray(0, length)), secrets); }
+    finally { stdout!.fill(0); }
+  }, clear: () => stdout?.fill(0), tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
 }
 
 /** How long looking after the disk may take, each time: the longest one step may. */
@@ -234,6 +246,7 @@ export function containerWorkerExecutor(config: {
    * job cannot be held to the account loom placed it on, and is refused (WORKER_EXIT.runner). A nested
    * job on a machine with no nested socket still fails when its body is started, as before. */
   const serves = (job: WorkerAssignment) => {
+    if (job.program) { houseProgramSchema.parse(job.program); return; }
     if (fixed.accountLogins === undefined && (job.accountChoices ?? 1) > 1) throw new UnservedJobError('Several accounts need a sign-in directory each');
     mountsFor({ agent: job.agent, account: job.account, harness: job.harness });
   };
@@ -390,6 +403,7 @@ export function containerWorkerExecutor(config: {
     discard(_job, image) { hold(image, -1); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job);
+      const program = assignment.program;
       // The image is this job's until its body has ended, or was never made.
       let held = true;
       const letGo = () => { if (held) { held = false; hold(image, -1); } };
@@ -400,7 +414,7 @@ export function containerWorkerExecutor(config: {
         if (!houseImageName(image)) throw new Error('Invalid container image');
         // Told to the body as it is: only an address the worker fetches, which holds no credential.
         if (!(source.fetches ?? houseRepository)(assignment.house.repository)) throw new Error('Invalid house repository');
-        mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
+        mounts = program ? [] : engineMounts(mountsFor(assignment)); bindings = program ? {} : portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
       } catch (error) { letGo(); throw error; }
@@ -408,6 +422,10 @@ export function containerWorkerExecutor(config: {
       let socket: Duplex | undefined, id: string | undefined, released = false, createRejected = false, createAsked = false;
       let logs: ReturnType<typeof output> | undefined;
       let stopping: Promise<void> | undefined;
+      let startProgram!: () => void;
+      const programStarted = new Promise<void>(resolve => { startProgram = resolve; });
+      let programTimer: ReturnType<typeof setTimeout> | undefined;
+      let secretValues: string[] = [];
       // Abort must begin reaping even while loom's running acknowledgement is
       // pending; closing the attach socket alone does not stop a container.
       const cancel = () => { abort.abort(); void stop().catch(() => {}); };
@@ -418,7 +436,17 @@ export function containerWorkerExecutor(config: {
         try {
           // The image says that it is a house of this layout and serves the harness; one that does not fails
           // this job (UnmetHouseError). How a body starts is the layout's (house-layout.ts).
-          const spec = createSpec(assignment, await houseStart(engine, image, assignment.harness, abort.signal),
+          const house = await houseStart(engine, image, program ? undefined : assignment.harness, abort.signal);
+          const spec = program ? {
+            Image: house.id, Entrypoint: [programExecutable(program.name)], Cmd: program.args, WorkingDir: HOUSE_REPOSITORY,
+            Env: [`HOME=${HOUSE_HOME}`], Healthcheck: { Test: ['NONE'] },
+            Labels: { 'loom.job': assignment.id, 'loom.agent': assignment.agent, 'loom.box': assignment.box },
+            AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
+            HostConfig: { Runtime: fixed.container.runtime ?? 'runc', Mounts: [], CapDrop: ['ALL'],
+              SecurityOpt: ['no-new-privileges'], Privileged: false, PublishAllPorts: false,
+              PidsLimit: 128, ReadonlyRootfs: true, 
+              LogConfig: { Type: 'none', Config: {} } },
+          } : createSpec(assignment, house,
             { repository: assignment.house.repository, branch: assignment.house.branch, commit: houseCommit(image) }, fixed.container, mounts, bindings);
           if (abort.signal.aborted) throw new Error('Container cancelled');
           let created: unknown; createAsked = true;
@@ -437,15 +465,19 @@ export function containerWorkerExecutor(config: {
           const inspect = await engine.json('GET', `/containers/${id}/json`, undefined, abort.signal);
           if (!ownMounts(inspect, mounts)) throw new Error('Unexpected container storage');
           socket = await engine.attach(id, abort.signal);
-          logs = output(socket, abort.signal);
+          logs = output(socket, abort.signal, !!program);
           if (abort.signal.aborted) throw new Error('Container cancelled');
-          await engine.json('POST', `/containers/${id}/start`, undefined, abort.signal);
+          if (!program) await engine.json('POST', `/containers/${id}/start`, undefined, abort.signal);
           if (abort.signal.aborted) throw new Error('Container cancelled');
         } finally { clearTimeout(setupTimer); }
       })();
       void setup.catch(() => {});
       const exited = (async () => {
         await setup;
+        if (program) {
+          await programStarted;
+          if (abort.signal.aborted) throw new Error('Program stopped');
+        }
         const waited = engine.json('POST', `/containers/${id}/wait?condition=not-running`, undefined, abort.signal);
         // Either side ending starts a bounded drain/wait period for the other.
         const both = Promise.all([waited, logs!.done]);
@@ -457,15 +489,28 @@ export function containerWorkerExecutor(config: {
           if (abort.signal.aborted || !result || typeof result !== 'object' || !('StatusCode' in result)
             || !Number.isSafeInteger(result.StatusCode) || ('Error' in result && result.Error)) throw new Error('Invalid container exit');
           const status = result.StatusCode as number, exitCode = containerExit(status);
+          if (program && exitCode === 0) return { exitCode, logTail: '', programResult: logs!.result(secretValues) };
           return { exitCode, logTail: logs!.tail(), signalled: exitCode !== status };
-        } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
+        } finally { clearTimeout(programTimer); if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});
       // The program is loom's own body program, so it takes the body's private credential.
-      return { acceptsBootstrap: true, spawned: setup, exited,
+      return { acceptsBootstrap: !program, spawned: setup, exited,
+        releaseProgram: program ? async secrets => {
+          await setup;
+          if (released || abort.signal.aborted || stopping || !socket || socket.destroyed) throw new Error('Program input unavailable');
+          const payload = programInput(program, secrets);
+          released = true;
+          secretValues = Object.values(secrets);
+          programTimer = setTimeout(cancel, program.timeoutMs);
+          await engine.json('POST', `/containers/${id}/start`, undefined, abort.signal);
+          startProgram();
+          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify(payload) + '\n',
+            (error?: Error | null) => error ? reject(error) : resolve()));
+        } : undefined,
         async release(bootstrap) {
           await setup;
-          if (released || abort.signal.aborted || stopping || !socket || socket.destroyed) throw new Error('Container input unavailable');
+          if (program || released || abort.signal.aborted || stopping || !socket || socket.destroyed) throw new Error('Container input unavailable');
           released = true;
           if (bootstrap) logs!.discard();
           const payload = bodyInput(assignment, image, bootstrap, true);
@@ -477,7 +522,7 @@ export function containerWorkerExecutor(config: {
       function stop(): Promise<void> {
           // Publish shared cleanup before abort synchronously notifies listeners.
           if (!stopping) stopping = Promise.resolve().then(async () => {
-            abort.abort();
+            abort.abort(); startProgram(); clearTimeout(programTimer); secretValues = []; logs?.clear();
             await setup.catch(() => {});
             socket?.destroy();
             const cleanup = new AbortController();

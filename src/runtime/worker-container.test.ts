@@ -1200,3 +1200,72 @@ it('starts and ends a body without touching anything inside its account\'s sign-
   expect(seen()).toEqual(before);
 });
 
+
+const namedProgram = { name: 'observe', args: ['literal; argument'], timeoutMs: 5000, secrets: ['weather'], state: { last: 1 } };
+function programFixture() {
+  const f = fixture();
+  const original = f.engine.json.getMockImplementation()!;
+  f.engine.json.mockImplementation((method, path, data, signal) => inspecting(path)
+    ? Promise.resolve({ Mounts: [] }) : original(method, path, data, signal));
+  return f;
+}
+it('runs a named program only after acknowledgement, with declared input and no model or host access', async () => {
+  const f = programFixture(), ack = deferred<void>(), bytes = Buffer.from('private weather credential');
+  const assignment = { ...job, harness: 'program', program: namedProgram, accountChoices: 2,
+    run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 9000 }] } };
+  const control = { next: async () => assignment, started: vi.fn(() => ack.promise), heartbeat: async () => true,
+    finish: vi.fn(async () => {}), enrollBody: vi.fn(), programInputs: vi.fn(async () => new Map([['weather', bytes]])) };
+  const run = workOnce({ box: job.box, control, executor: f.executor, signal: f.abort.signal });
+  await flush();
+  expect(control.enrollBody).not.toHaveBeenCalled();
+  expect(control.programInputs).toHaveBeenCalledWith(job.id, ['weather'], expect.any(AbortSignal));
+  expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
+  expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Entrypoint: ['/home/agent/repo/.loom/programs/observe'],
+    Cmd: ['literal; argument'], HostConfig: { Mounts: [], Privileged: false, PublishAllPorts: false, ReadonlyRootfs: true } });
+  expect(JSON.stringify(f.engine.json.mock.calls[0][2])).not.toContain('private weather credential');
+  ack.resolve(); await flush();
+  expect(JSON.parse(f.writes[0])).toEqual({ version: 1, state: { last: 1 }, secrets: { weather: 'private weather credential' } });
+  expect(bytes.every(byte => byte === 0)).toBe(true);
+  const result = {version: 1, wake: false, state: {last: 2}};
+  f.socket.push(frame('private weather credential', 2)); f.socket.push(frame(JSON.stringify(result)));
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+  expect(await run).toBe('finished');
+  expect(control.finish).toHaveBeenCalledWith(job.id, 0, '', 'runner', result);
+});
+it('ends and removes a program at its deadline', async () => {
+  vi.useFakeTimers();
+  const f = programFixture(), body = f.start({ ...job, program: { ...namedProgram, timeoutMs: 20, secrets: [] } });
+  await body.spawned;
+  await body.releaseProgram!({});
+  await vi.advanceTimersByTimeAsync(20);
+  await expect(body.exited).rejects.toThrow();
+  await body.stop();
+  expect(f.engine.json.mock.calls.at(-1)?.[1]).toBe(`/containers/${id}?force=1&v=1`);
+});
+it('erases and rejects an incomplete or extra secret plan before starting the program', async () => {
+  const f = programFixture(), bytes = Buffer.from('something private');
+  const control = { next: async () => ({ ...job, program: namedProgram }), started: vi.fn(),
+    heartbeat: async () => true, finish: vi.fn(), programInputs: async () => new Map([['extra', bytes]]) };
+  expect(await workOnce({ box: job.box, control, executor: f.executor, signal: f.abort.signal })).toBe('finished');
+  expect(control.started).not.toHaveBeenCalled();
+  expect(f.writes).toEqual([]); expect(bytes.every(byte => byte === 0)).toBe(true);
+});
+
+it.each(['oversize', 'secret', 'invalid utf8', 'nonzero'])('keeps %s program stdout out of logs and finish reports', async reason => {
+  const f = programFixture();
+  const control = { next: async () => ({...job, program: namedProgram}), started: async () => {},
+    heartbeat: async () => true, finish: vi.fn(), programInputs: async () => new Map([['weather', Buffer.from('private weather credential')]]) };
+  const run = workOnce({ box: job.box, control, executor: f.executor, signal: f.abort.signal });
+  await flush();
+  let output: Buffer;
+  if (reason === 'oversize') output = frame('x'.repeat(16385));
+  else if (reason === 'invalid utf8') {
+    output = frame('{"version":1,"wake":true,"line":"x"}');
+    output[output.length - 3] = 0xff;
+  } else output = frame('{"version":1,"wake":false,"state":"private weather credential"}');
+  f.socket.push(output); f.socket.push(null); f.wait.resolve({StatusCode: reason === 'nonzero' ? 17 : 0});
+  expect(await run).toBe('finished');
+  const [id, code, words, by, result] = control.finish.mock.calls[0];
+  expect(id).toBe(job.id); expect(code).not.toBe(0); expect(words).not.toContain('private weather credential');
+  expect(by).toBe(reason === 'nonzero' ? 'runner' : 'worker'); expect(result).toBeUndefined();
+});
