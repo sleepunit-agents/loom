@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Claimed jobs and active bodies tolerate temporary Loom outages. Worker reports and replay-safe body calls retry for up to two minutes. Restarting the server gives claimed jobs a fresh reporting interval, including jobs still starting.
+
 - Machine-bound terminal hooks can record private conversations, show live sessions, report measured main and subagent usage, and supply retained source turns for owner-word approvals. Schema 13 adds the machine binding and observed-session records.
 
 - Job usage records show reported tokens, calls, tool names and peak context for each attempt. Open **Job usage** in the launcher to rank conversations by reported tokens and inspect their jobs over a date range. GraphQL also groups usage by trigger, day and model.
