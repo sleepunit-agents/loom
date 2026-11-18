@@ -168,7 +168,7 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
   // A worker may only discover the outage on its next pulse. Give it time to reap
   // the old attempt before allowing another worker to claim the replacement.
-  f.tick(30_998);
+  f.tick(150_998);
   expect(f.runtime.claim(retry.id, 'worker')).toBeUndefined();
   f.tick(1);
   expect(f.runtime.claim(retry.id, 'worker')?.state).toBe('starting');

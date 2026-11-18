@@ -4,12 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { privateOrigin } from '../core/private-origin.js';
+import { connectionRefused, privateOrigin } from '../core/private-origin.js';
 import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
-import { CONTACT_PROBE_MS, SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 export const workerAssignment = z.object({
@@ -38,18 +38,12 @@ class WorkerOperationFailure extends Error {
     super(`Worker ${name} failed; outcome may be uncertain`);
   }
 }
-function connectionRefused(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  if ('code' in error && error.code === 'ECONNREFUSED') return true;
-  if (error instanceof AggregateError) return error.errors.length > 0 && error.errors.every(connectionRefused);
-  return error instanceof Error && connectionRefused(error.cause);
-}
 function operationCaller(input: WorkerHttpOptions) {
   let base: URL;
   try { base = privateOrigin(input.url); } catch { throw new Error('Worker URL must be an HTTPS origin (HTTP allowed only on loopback)'); }
   if (!input.token.trim() || /[\r\n]/.test(input.token)) throw new Error('Worker token is invalid');
   const timeoutMs = input.timeoutMs ?? 30_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Invalid worker request timeout');
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > WORKER_REQUEST_MAX_MS) throw new Error('Invalid worker request timeout');
   async function call<T>(name: string, args: unknown, schema: z.ZodType<T>, onAbort?: () => void, id: string = randomUUID(), withinMs = timeoutMs): Promise<T> {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), Math.max(0, Math.min(timeoutMs, withinMs)));
@@ -115,17 +109,19 @@ function operationCaller(input: WorkerHttpOptions) {
 }
 /** Keep one operation id across the outage. Enrollment is retried only when no connection was made. */
 async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attempt: (id: string, withinMs: number) => Promise<T>): Promise<T> {
-  const start = performance.now(), id = randomUUID();
+  const id = randomUUID();
+  let firstFailure: number | undefined;
   const pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
-  const remaining = () => SILENCE_MS - (performance.now() - start);
+  const remaining = () => firstFailure === undefined ? Infinity : SILENCE_MS - (performance.now() - firstFailure);
   while (!input.signal.aborted) {
     const left = remaining(), final = left <= 0;
     const withinMs = final ? left + CONTACT_PROBE_MS : left;
     if (withinMs <= 0) break;
-    try { return await attempt(id, withinMs); }
+    try { return await attempt(id, Math.min(WORKER_REQUEST_MAX_MS, withinMs)); }
     catch (error) {
       if (!(error instanceof WorkerOperationFailure) || !error.temporary || input.signal.aborted ||
         (name === 'enrollBody' && !error.beforeDelivery)) throw error;
+      firstFailure ??= performance.now();
       if (final) break;
       const wait = Math.min(2_000, remaining());
       if (wait > 0) {
@@ -133,7 +129,7 @@ async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attemp
       }
     }
   }
-  if (!input.signal.aborted) input.silenceExpired?.(Math.floor(performance.now() - start));
+  if (!input.signal.aborted && firstFailure !== undefined) input.silenceExpired?.(Math.floor(performance.now() - firstFailure));
   throw new WorkerOperationFailure(name, true);
 }
 export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
@@ -184,26 +180,12 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
     },
     repositoryInput: async (job, signal) => {
-      const options = { ...input, signal: AbortSignal.any([input.signal, signal]) };
-      return reportWithRetry(options, 'repositoryInput', async (_id, remaining) => {
-        let requests = 0, refusedBeforeRead = false;
-        const client = privateSecretClient({
-          ...options,
-          timeoutMs: Math.max(1, Math.floor(Math.min(input.timeoutMs ?? PRIVATE_SECRET_TIMEOUT_MS, PRIVATE_SECRET_TIMEOUT_MS, remaining))),
-          fetch: async (url, init) => {
-            requests++;
-            try { return await (input.fetch ?? fetch)(url, init); }
-            catch (error) {
-              // A read or confirmation that might have delivered bytes must never be repeated.
-              refusedBeforeRead = requests === 1 && !init?.signal?.aborted && connectionRefused(error);
-              throw error;
-            }
-          },
-        });
-        try { return await client.repository(job); }
-        catch (error) { if (refusedBeforeRead) throw new WorkerOperationFailure('repositoryInput', true, true); throw error; }
-        finally { client.close(); }
+      const client = privateSecretClient({
+        ...input, signal: AbortSignal.any([input.signal, signal]),
+        timeoutMs: Math.min(input.timeoutMs ?? PRIVATE_SECRET_TIMEOUT_MS, PRIVATE_SECRET_TIMEOUT_MS),
       });
+      try { return await client.repository(job); }
+      finally { client.close(); }
     },
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build, signal) => {

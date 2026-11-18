@@ -145,13 +145,19 @@ describe('worker work plane', () => {
       f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
     } finally { vi.useRealTimers(); }
   });
-  it('caps a stalled first heartbeat from the last acknowledged dispatch', async () => {
+  it('survives a 119-second outage that begins during an in-flight heartbeat', async () => {
     const f = fixture(), run = f.run(); await flush();
-    const pending = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValue(pending.promise);
-    f.clock.ms = REPORT_MS; f.pulse(); await flush();
-    f.clock.ms = REPORT_MS + SILENCE_MS + 1000; f.pulse(); await flush();
-    const stopped = f.executor.build.mock.calls[0][1].aborted;
-    pending.resolve(true); f.abort.abort(); await run; expect(stopped).toBe(true);
+    const pending = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValueOnce(pending.promise);
+    f.clock.ms = 15_000; f.pulse(); await flush();
+    // Loom goes down at 20s. The outstanding request fails at 45s.
+    f.clock.ms = 45_000; pending.reject(Error('offline')); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValue(Error('offline'));
+    f.clock.ms = 136_000; f.pulse(); await flush();
+    vi.mocked(f.control.heartbeat).mockResolvedValue(true);
+    f.clock.ms = 139_000; f.pulse(); await flush();
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    f.built.resolve('image'); f.spawned.resolve(); await flush();
+    f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
   });
   it('gives the job up once no report has been answered for so long that loom has taken it for lost', async () => {
     for (const phase of ['building', 'running'] as const) {

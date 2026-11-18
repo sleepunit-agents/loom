@@ -14,7 +14,7 @@ import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
-import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS } from './silence.js';
 import { LOG_TAIL_MAX } from './log-tail.js';
 
 export type Job = typeof jobs.$inferSelect;
@@ -425,7 +425,7 @@ export class Jobs {
           // gets a full interval and a last probe. Avoid starting its successor while
           // the earlier slot can still be executing. A late sweep adds no extra wait.
           const lastReport = Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt);
-          this.retry(job, at, lastReport + silenceMs + 2 * REPORT_MS + CONTACT_PROBE_MS);
+          this.retry(job, at, lastReport + silenceMs + WORKER_FAILURE_OBSERVATION_MS + CONTACT_PROBE_MS + REPORT_MS);
           return ended;
         });
       const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()

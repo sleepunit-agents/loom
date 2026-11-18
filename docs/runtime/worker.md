@@ -77,9 +77,9 @@ attempts wait five seconds.
 The worker sends job heartbeats every 15 seconds during a build, while waiting for
 an account, and while a body runs. A heartbeat that says the job is inactive ends
 local work immediately. When the server cannot be reached, the worker keeps the
-slot for up to 120 seconds from the first unanswered heartbeat attempt. It makes
+slot for 120 seconds from the first observed heartbeat failure. It makes
 a final probe with a one-second deadline. A delayed response cannot extend the
-slot beyond 136 seconds from the dispatch of the last acknowledged heartbeat.
+slot beyond 256 seconds from the dispatch of the last acknowledged heartbeat.
 An answered heartbeat resets the window. Each heartbeat gets a fresh operation id
 so the worker always checks the job's current state. Started and finish reports
 use the same id across attempts so a lost response cannot start or finish a job twice.
@@ -88,14 +88,18 @@ On startup the server gives previously claimed jobs a full 120 seconds to report
 Each sweep measures silence from the later of server startup and the last job
 report. The first sweep strictly past 120 seconds of observed silence marks a job
 lost and records the elapsed seconds. A successor to a lost claim can start after
-the usual retry delay and at least 151 seconds from the previous claim’s last report.
-This gives the previous worker time to stop during a network partition. Queue
+the usual retry delay and at least 271 seconds from the previous claim’s last report.
+This allows 60 seconds for the last accepted reply to arrive, 15 seconds to the
+next pulse, 60 seconds to observe its timeout, 120 seconds of grace, a one-second
+probe and 15 seconds for the previous worker to stop during a network partition. Queue
 deadlines still use their original timestamps.
 
 With the updated worker and body already running, an active job on a healthy
-worker can survive a server-only restart that restores reporting within 90 seconds,
-including a compatible database upgrade. This leaves time for the next heartbeat
-or backed-off call. The operator must preserve the job database, credentials and
+worker can survive a server-only outage lasting less than 120 seconds, including
+a compatible database upgrade. The restored server must be ready to accept
+reports and answer the final probe within one second. Heartbeats, replayable
+body requests, and started and finish reports start their two-minute windows
+when the first bounded request fails, including a request already in flight. The operator must preserve the job database, credentials and
 origin. A worker restart ends its processes. An outage during an uncertain
 one-shot credential exchange can still fail that start.
 
@@ -170,8 +174,8 @@ said whose it was, and no stage is guessed.
 | 16 | body config | The machine's body file could not be read or is not valid. |
 | 17 | body envelope | What the worker handed over on stdin is not a body's input. |
 | 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. One exception: mail from a sender nobody looked up turned the job's word after the mail was taken, and the harness always has a shell ("What a body may use"). That mail was taken and not settled; it goes back to the job. |
-| 19 | body report | Loom refused the first report or its response was invalid. |
-| 20 | body contact | A required call exhausted its two-minute contact budget, including the first report, or Loom refused a later status report. The body ended its work. |
+| 19 | body report | The first report failed validation or Loom refused it for a reason other than the job ending. |
+| 20 | body contact | A required call exhausted its contact budget, Loom confirmed the credential or job ended, or a later status report failed. This includes loss of contact during the first report. |
 | 21 | worker input | Fetching the private repository input. |
 | 22 | worker build | The build command; or, with container bodies, fetching the house's repository or building its image. |
 | 23 | worker launch | Starting the body's process. |
@@ -1468,7 +1472,8 @@ failure, per-attempt timeout or temporary server outage. Mail confirmation and
 reports use that same receipt mechanism. Mail pickup returns the items still held
 by the same job. GraphQL reads can be repeated. Memory recall warms its results
 without a receipt, so an ambiguous recall is reported to the caller. Private secret
-value reads and confirmations likewise have no replay guarantee.
+value reads and confirmations likewise have no replay guarantee. A value read
+can retry a TCP connection refused before delivery. A lost confirmation is final.
 
 Body calls back off from one second to at most ten seconds between attempts,
 for 120 seconds. A final attempt gets at most one further second. An exhausted tool call returns an error to

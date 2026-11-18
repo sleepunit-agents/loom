@@ -12,5 +12,9 @@ export const SILENCE_MS = 120_000;
  * dropped does not end anything. */
 export const REPORT_MS = 15_000;
 
+/** Worker requests bound both delivery of the last good reply and observation of the first missing one. */
+export const WORKER_REQUEST_MAX_MS = 60_000;
+export const WORKER_FAILURE_OBSERVATION_MS = 2 * WORKER_REQUEST_MAX_MS + REPORT_MS;
+
 /** Maximum time for one last request when a contact window ends. */
 export const CONTACT_PROBE_MS = 1_000;

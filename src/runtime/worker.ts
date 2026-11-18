@@ -1,6 +1,6 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
-import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS } from './silence.js';
 import { logTail } from './log-tail.js';
 import { turnsOf, type WorkerTurns } from './worker-turns.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
@@ -116,7 +116,7 @@ const STAGE_SAID: Partial<Record<keyof typeof WORKER_EXIT, string>> = {
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. While loom is unreachable the worker
  * gives a heartbeat one final second at the silence deadline. A late first failure cannot move
- * that deadline past the last acknowledged dispatch plus SILENCE_MS and one reporting interval.
+ * that deadline past the bounds of the last good reply, next pulse and first failed request.
  * A fresh positive heartbeat clears the outage. An explicit loss of authority cancels at once.
  * Only a body that could not be reaped throws.
  * A failed start is reported with the WORKER_EXIT code of the stage that failed.
@@ -164,7 +164,7 @@ export async function workOnce(input: {
   const abandon = () => { abandoned = true; cancel(); };
   let probeTimer: ReturnType<typeof setTimeout>, expiryTimer: ReturnType<typeof setTimeout>;
   let beatAbort: AbortController | undefined;
-  const deadline = () => Math.min(lastDispatch + SILENCE_MS + REPORT_MS, (unreachableSince ?? Infinity) + SILENCE_MS);
+  const deadline = () => Math.min(lastDispatch + SILENCE_MS + WORKER_FAILURE_OBSERVATION_MS, (unreachableSince ?? Infinity) + SILENCE_MS);
   const expire = () => {
     if (abandoned) return;
     abandon();
@@ -201,7 +201,7 @@ export async function workOnce(input: {
       if (flight.signal.aborted || abort.signal.aborted) return;
       if (probe) { expire(); return; }
       if (unreachableSince === undefined) {
-        unreachableSince = sent;
+        unreachableSince = now();
         if (!expired()) arm();
       }
     }).finally(() => { if (beatAbort === flight) { heartbeat = undefined; beatAbort = undefined; } });

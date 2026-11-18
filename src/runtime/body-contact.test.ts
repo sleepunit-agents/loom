@@ -73,3 +73,17 @@ it('aborts an unanswered final status probe after one second',async()=>{
  await vi.advanceTimersByTimeAsync(1);await refused;expect(probe?.aborted).toBe(true);
  client.close();
 });
+
+it('keeps a full contact window when Loom disappears during the first status request',async()=>{
+ vi.useFakeTimers();
+ const start=Date.now();
+ const fetcher=vi.fn<typeof fetch>(async()=>{
+  if(Date.now()===start)return new Promise<Response>(()=>{});
+  if(Date.now()-start<124000)throw Error('offline');
+  return Response.json({ok:true,value:{saved:true,stopRequested:false}});
+ });
+ const client=bodyConversationClient({...options(),job:'job',conversation:'room',fetch:fetcher});
+ const pending=client.status({state:'working',work:'Reading'});void pending.catch(()=>{});
+ await vi.advanceTimersByTimeAsync(135000);
+ expect(await pending).toMatchObject({saved:true});client.close();
+});

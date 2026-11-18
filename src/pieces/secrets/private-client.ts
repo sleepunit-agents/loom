@@ -6,7 +6,7 @@ import {SECRET_USE_ID} from './use-id.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {houseSecretAlias,SECRET_VALUE_BYTES} from './input.js';
-import {privateOrigin} from '../../core/private-origin.js';
+import {connectionRefused,privateOrigin} from '../../core/private-origin.js';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
 const unavailable=()=>new Error('Private secret input unavailable');
@@ -23,22 +23,26 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
  let closed=false;const controllers=new Set<AbortController>(),owned=new Set<Uint8Array>(),batches=new Set<Map<string,Buffer>>();
  const cancelAll=()=>{for(const controller of controllers)controller.abort();for(const bytes of owned)bytes.fill(0);for(const batch of batches){for(const bytes of batch.values())bytes.fill(0);batch.clear();}};
  options.signal.addEventListener('abort',cancelAll,{once:true});
- async function attempt<T>(work:(current:()=>boolean,signal:AbortSignal)=>Promise<T>,remaining?:number):Promise<T>{
+ async function attempt<T>(work:(current:()=>boolean,signal:AbortSignal)=>Promise<T>,remaining:number,replayTimeout=false):Promise<T>{
   if(closed||options.signal.aborted)throw unavailable();
-  const abort=new AbortController(),end=clock.now()+Math.min(timeout,remaining??timeout);controllers.add(abort);
+  const abort=new AbortController(),end=clock.now()+Math.min(timeout,remaining);controllers.add(abort);
   const stop=()=>abort.abort();options.signal.addEventListener('abort',stop,{once:true});
   const cancel=clock.at(end,stop),current=()=>!closed&&!abort.signal.aborted&&!options.signal.aborted&&clock.now()<end;
   let stopped!:()=>void;
   const cancelled=new Promise<never>((_resolve,reject)=>{stopped=()=>reject(unavailable());abort.signal.addEventListener('abort',stopped,{once:true});});
   try{const value=await Promise.race([work(current,abort.signal),cancelled]);if(!current())throw unavailable();return value;}
-  catch(error){if(remaining!==undefined&&!lifetime.aborted&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof PendingRepository)throw error;throw unavailable();}
+  catch(error){if(!lifetime.aborted&&((replayTimeout&&clock.now()>=end)||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof PendingRepository)throw error;throw unavailable();}
   finally{cancel();abort.signal.removeEventListener('abort',stopped);options.signal.removeEventListener('abort',stop);controllers.delete(abort);abort.abort();}
  }
  async function post(path:string,input:object,current:()=>boolean,signal:AbortSignal,limit:number):Promise<{bytes:Buffer;response:Response}>{
   if(!current())throw unavailable();
   const pending=request(new URL('/api/secrets/private/'+path,origin),{method:'POST',redirect:'error',signal,headers:{authorization:'Bearer '+options.token,'content-type':'application/json'},body:JSON.stringify(input)});
   void pending.then(response=>{if(!current())void response.body?.cancel().catch(()=>{});},()=>{});
-  const response=await pending.catch(error=>{if(path==='startup')throw new BodyTransportFailure();throw error;});let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;const chunks:Buffer[]=[];
+  const response=await pending.catch(error=>{
+   // Only a refused connection proves that the value request never arrived.
+   if(path==='startup'||(path==='read'&&current()&&connectionRefused(error)))throw new BodyTransportFailure();
+   throw unavailable();
+  });let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;const chunks:Buffer[]=[];
   const cleanup=()=>{for(const chunk of chunks)chunk.fill(0);try{if(reader)void reader.cancel().catch(()=>{});else void response.body?.cancel().catch(()=>{});}catch{}};
   signal.addEventListener('abort',cleanup,{once:true});
   try{
@@ -50,7 +54,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    reader=response.body?.getReader();if(!reader)throw unavailable();
    const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)>limit))throw unavailable();
    let size=0;
-   for(;;){if(!current())throw unavailable();const part=await reader.read().catch(error=>{if(path==='startup')throw new BodyTransportFailure();throw error;});if(!current()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>limit){part.value.fill(0);throw unavailable();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
+   for(;;){if(!current())throw unavailable();const part=await reader.read().catch(()=>{if(path==='startup')throw new BodyTransportFailure();throw unavailable();});if(!current()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>limit){part.value.fill(0);throw unavailable();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
    if(!current())throw unavailable();
    const bytes=Buffer.concat(chunks);
    if(checkDenial){
@@ -63,7 +67,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
  }
  async function read(input:object,job?:string,optional=false):Promise<Buffer|undefined>{
   let value:Buffer|undefined;
-  try{return await attempt(async(current,signal)=>{
+  try{return await retryBodyContact(clock,lifetime,unavailable,remaining=>attempt(async(current,signal)=>{
    const received=await post('read',input,current,signal,SECRET_VALUE_BYTES);value=received.bytes;owned.add(value);
    if(optional&&received.response.status===204){value.fill(0);owned.delete(value);return undefined;}
    const use=received.response.headers.get('x-loom-secret-use');
@@ -71,7 +75,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    const ack=await post('confirm',{use,...(job?{job}:{})},current,signal,4096);
    try{if(!z.object({confirmed:z.literal(true)}).strict().safeParse(JSON.parse(ack.bytes.toString('utf8'))).success||!current())throw unavailable();}finally{ack.bytes.fill(0);}
    owned.delete(value);return value;
-  });}catch(error){value?.fill(0);if(value)owned.delete(value);if(error instanceof PendingRepository)throw error;throw unavailable();}
+  },remaining));}catch(error){value?.fill(0);if(value)owned.delete(value);if(error instanceof PendingRepository||error instanceof BodyContactExpired)throw error;throw unavailable();}
  }
  async function waitForConsent(){
     if(closed||options.signal.aborted)throw unavailable();
@@ -90,8 +94,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
   async repository(job:string):Promise<Buffer|undefined>{
    for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
     if(!(error instanceof PendingRepository))throw error;
-    // Only an authenticated metadata-pending response is retryable. No value
-    // attempt has started; a lost read or confirmation is never retried.
+    // Authenticated consent polling has its own lifetime.
     await waitForConsent();
    }}
   },
@@ -100,12 +103,12 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    try{
     let plan:z.infer<typeof aliases>;
     // This metadata call keys its consent requests by job and secret. A value read or acknowledgement
-    // below is a one-attempt handoff and must never enter the retry loop.
+    // below has stricter retry rules once delivery is possible.
     for(;;){
      plan=await retryBodyContact(clock,lifetime,unavailable,remaining=>attempt(async(current,signal)=>{
       const response=await post('startup',{},current,signal,131072);
       try{return aliases.parse(JSON.parse(response.bytes.toString('utf8')));}finally{response.bytes.fill(0);}
-     },remaining));
+     },remaining,true));
      if(!plan.pending)break;
      await waitForConsent();
     }

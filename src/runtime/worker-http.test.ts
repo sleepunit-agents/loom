@@ -89,20 +89,21 @@ describe('worker operation client', () => {
       const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
       await vi.advanceTimersByTimeAsync(300_000); await refused;
       expect(gaveUp.length).toBeGreaterThan(0);
-      expect(Math.max(...gaveUp)).toBe(SILENCE_MS + 1000);
+      expect(Math.max(...gaveUp)).toBe(60_000 + SILENCE_MS + 1000);
     } finally { vi.useRealTimers(); }
   });
-  it('delivers a finish with one receipt when Loom returns in the last second', async () => {
+  it.each(['started', 'finish'] as const)('delivers %s when a 119-second outage begins during its first request', async name => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     try {
       const fetcher = vi.fn<typeof fetch>(async () => {
-        if (performance.now() < SILENCE_MS - 1) throw Error('offline');
+        if (performance.now() === 0) await new Promise(resolve => setTimeout(resolve, 15_000));
+        if (performance.now() < 124_000) throw Error('offline');
         return response({ ok: true });
       });
       const control = httpWorkerControl({ url: 'https://loom.example', token: 'synthetic', signal: new AbortController().signal,
         fetch: fetcher, pause: ms => new Promise(resolve => setTimeout(resolve, ms)) });
-      const pending = control.finish('j1', 0, 'done', 'body'); void pending.catch(() => {});
-      await vi.advanceTimersByTimeAsync(SILENCE_MS); await pending;
+      const pending = name === 'finish' ? control.finish('j1', 0, 'done', 'body') : control.started('j1', 'build'); void pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(135_000); await pending;
       expect(new Set(fetcher.mock.calls.map(([, init]) => init?.body)).size).toBe(1);
     } finally { vi.useRealTimers(); }
   });

@@ -13,19 +13,21 @@ export const temporaryStatus = (status: number) => status === 408 || status === 
 // Each attempt keeps its own tighter deadline, including time spent reading bytes.
 export async function retryBodyContact<T>(clock: Clock, signal: AbortSignal, refused: () => Error,
   attempt: (remaining: number) => Promise<T>, budget = BODY_CONTACT_MS): Promise<T> {
-  const end = clock.now() + budget;
-  const hardEnd = budget === BODY_CONTACT_MS ? end + CONTACT_PROBE_MS : end;
+  // Short caller deadlines include the first attempt. A full outage window starts
+  // when a bounded request first observes a missing reply.
+  let end = budget === BODY_CONTACT_MS ? Infinity : clock.now() + budget;
   let delay = 1_000;
   for (;;) {
     if (signal.aborted) throw refused();
     const now = clock.now(), final = now >= end;
-    const remaining = (final ? hardEnd : end) - now;
+    const remaining = end - now + (final && budget === BODY_CONTACT_MS ? CONTACT_PROBE_MS : 0);
     if (remaining <= 0) throw budget === BODY_CONTACT_MS ? new BodyContactExpired() : refused();
-    try { return await attempt(remaining); }
+    try { return await attempt(Math.min(budget, remaining)); }
     catch (error) {
       if (signal.aborted) throw refused();
       if (!(error instanceof BodyTransportFailure)) throw error;
       if (final) throw new BodyContactExpired();
+      if (end === Infinity) end = clock.now() + budget;
     }
     const wake = Math.min(end, clock.now() + delay);
     if (clock.now() < wake) await new Promise<void>((resolve, reject) => {
