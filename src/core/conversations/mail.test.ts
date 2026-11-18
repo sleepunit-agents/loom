@@ -7,6 +7,7 @@ import { agents, household, inbox, inboxRefs, jobs, members, messages } from '..
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
+import { Conversations, lateMailWaits } from './index.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -194,4 +195,19 @@ it.each(['\n','\r','\v','\f','\u0085','\u2028','\u2029'])('delivers one line for
  const {db,thread,plain,send,mail}=await fixture();const ordinary=plain(separator+'  First line  '+separator+'Hidden line'),secret=await send(separator+'  Private line  '+separator+'Private hidden');
  for(const id of [ordinary.id,secret.inboxItem!])db.update(inbox).set({volume:'dim'}).where(eq(inbox.id,id)).run();
  expect((await mail.prepareTake(thread.conversation,'job-1'))().map(row=>row.words)).toEqual(['First line','Private line']);
+});
+
+it('leaves mail a person wrote after admission for the next job unless the composition says it joins: the default is closed', async () => {
+  const { db, thread } = await fixture(), now = () => '2026-11-14T18:00:00.000Z';
+  const write = (service: Conversations, sourceId: string) => service.send({ conversation: thread.conversation, toKind: 'agent', to: 'art', source: 'notice', sourceId, fromKind: 'person', fromId: 'jonathan', words: sourceId });
+  const closed = new Conversations(db, now), first = write(closed, 'first');
+  // Admission marked the first piece for the job; the second came after.
+  db.update(inbox).set({ job: 'job-1' }).where(eq(inbox.id, first.id)).run();
+  const late = write(closed, 'late');
+  // With nothing said, and with the named default, what came later is not offered and not taken.
+  for (const service of [closed, new Conversations(db, now, lateMailWaits)]) expect(service.pending(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id]);
+  expect(closed.take(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id]);
+  expect(closed.item(late.id)).toMatchObject({ state: 'waiting', job: null });
+  // Only a composition that answers for the job's word lets it join.
+  expect(new Conversations(db, now, () => () => true).pending(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id, late.id]);
 });

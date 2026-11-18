@@ -19,7 +19,7 @@ import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL
 import {triggerLog,triggerEdits} from './core/data/schema.js';
 import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
+import {jobWord,jobRoom,othersMail,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 import {bridgeChannelFilters} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -1365,4 +1365,19 @@ it('lets no body on anybody else\'s word change the volume of mail, its own job\
  expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('others');
  // The agent's own work, with nobody behind it, sets the volume of its agent's mail as before.
  expect((await f.call('inbox','volume',{item,volume:'dim'},token.other)).status).toBe(200);expect(volume(item)).toBe('dim');
+});
+it('settles only the mail that makes a job unplaceable: the rest of what it held waits for the next job',async()=>{
+ const {f,cv}=await sharedPlace(),all=runnable(f);
+ // A queued job holding two pieces: the guest's message, which makes its word anybody else's, and an owner's.
+ let owners='';f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'queued'}).where(eq(jobs.id,'body')).run();
+  owners=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'notice',sourceId:'owners-word',fromKind:'person',fromId:'owner',words:'And this, please'}).id;
+  f.db.update(inbox).set({job:'body',state:'waiting'}).where(eq(inbox.conversation,cv)).run();});
+ const guests=f.db.select().from(inbox).where(eq(inbox.source,'slack')).get()!.id;
+ expect(othersMail(f.db,{id:'body',agent:'art',conversation:cv})).toEqual([guests]);
+ f.root.writes.run(()=>{expect(all.unplaceable('body','No harness here can be held to loom\'s tools',[guests])).toMatchObject({state:'failed',exitBy:'loom'});});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,guests)).get()).toMatchObject({state:'resolved',resolution:'No harness here can be held to loom\'s tools'});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,owners)).get()).toMatchObject({state:'waiting',resolution:null});
+ // A job that is not queued is left alone.
+ expect(all.unplaceable('other','Too late')).toBeUndefined();
 });
