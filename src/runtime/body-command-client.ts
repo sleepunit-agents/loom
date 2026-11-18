@@ -1,3 +1,4 @@
+import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
 import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus} from './body-contact.js';
 /** Current-body consumer of ordinary Root HTTP commands and generated reads.
  * No transport/issuer, unreceipted writes, or caller-selected authority. */
@@ -27,7 +28,7 @@ function echoesCredential(text:string,token:string):boolean{
  }
  return false;
 }
-export function bodyCommandClient(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
+export function bodyCommandClient(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number;onJobEnded?:()=>void}){
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
  const token=options.token,clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??BODY_REQUEST_MS;
  if(!token||/[\s\u0000-\u001f\u007f]/u.test(token)||!validBodyRequestMs(timeout))throw unavailable();
@@ -79,15 +80,17 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
     // Recall warms the memories it finds. It is registered as a read and keeps no receipt.
     const [piece,...rest]=operation.split('.'),reply=await post('/api/'+encodeURIComponent(piece)+'/'+encodeURIComponent(rest.join('.')),{input,id},operation!=='memory.recall');
     if(!current())throw unavailable();
+    if(bodyJobEnded(reply.status,reply.value))throw new BodyJobEnded();
     const answer=result.parse(reply.value),status=answer.ok?200:({'denied':403,'not-found':404,'invalid':400,'conflict':409,'unavailable':503}as const)[answer.code];
     if(reply.status!==status&&!(answer.ok===false&&answer.code==='denied'&&reply.status===401))throw unavailable();return answer;
-   }catch(error){if(error instanceof BodyContactExpired)throw error;throw unavailable();}
+   }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(error instanceof BodyContactExpired)throw error;throw unavailable();}
   },
   async query(input:z.infer<typeof query>){
    try{
     if(!query.safeParse(input).success)throw unavailable();const reply=await post('/graphql',input);
+    if(current()&&bodyJobEnded(reply.status,reply.value,'query'))throw new BodyJobEnded();
     if(!current()||![200,400].includes(reply.status))throw unavailable();const answer=queryResult.parse(reply.value);if(reply.status===400&&(answer.data!==undefined||!answer.errors?.length))throw unavailable();return answer;
-   }catch(error){if(error instanceof BodyContactExpired)throw error;throw unavailable();}
+   }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(error instanceof BodyContactExpired)throw error;throw unavailable();}
   },
   close(){closed=true;lifetimeAbort.abort();for(const abort of active)abort.abort();},
  };

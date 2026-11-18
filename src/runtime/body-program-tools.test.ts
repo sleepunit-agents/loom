@@ -110,3 +110,14 @@ it('reads a post\'s files from the body\'s own area by the path the model gives,
  expect((await make().call('loom_command',{operation:'bridges.say',input:{id:'five',text:'x',files:[{path:'out/plot.png'}]},id:'five'})).isError).toBe(true);
  expect(seen).toHaveLength(2);
 });
+
+it.each([401,403])('cancels only a credential refusal at the tool door (%i)',async status=>{
+ const ended=vi.fn(),denied={ok:false,code:'denied',message:'Permission denied'};
+ const tools=bodyProgramTools({url:'https://loom.example',token:'body-token',signal:new AbortController().signal,
+  fetch:async()=>Response.json(denied,{status}),onStop:vi.fn(),onStatus:vi.fn(),onJobEnded:ended});
+ try{
+  const reply=await tools.call('loom_commands',{});
+  expect(reply.isError).toBe(true);expect(ended).toHaveBeenCalledTimes(status===401?1:0);
+  if(status===403)expect(JSON.parse(reply.content[0].text)).toEqual(denied);
+ }finally{tools.close();}
+});

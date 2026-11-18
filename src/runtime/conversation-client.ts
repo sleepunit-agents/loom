@@ -1,3 +1,4 @@
+import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
 import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,BODY_CONTACT_MS} from './body-contact.js';
 /** Current-body client. The parent supplies its existing enrolled body bearer.
  * Words travel only through a bounded response and the body's acceptance sink.
@@ -36,7 +37,7 @@ type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'n
 type Reply=Turn&{clientId:string;words:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
-export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
+export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number;onJobEnded?:()=>void}){
  const {token,job,conversation}=options;
  const clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??BODY_REQUEST_MS;
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
@@ -64,13 +65,18 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
     response=await flight.catch(()=>{throw new BodyTransportFailure();});
     if(!response.redirected&&temporaryStatus(response.status))throw new BodyTransportFailure();
-    if(!valid()||response.redirected||!response.ok||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
+    if(!valid()||response.redirected||(!response.ok&&response.status!==401&&response.status!==403)||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
     for(;;){const part=await reader.read().catch(()=>{throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
-    joined=Buffer.concat(chunks);const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(JSON.parse(joined.toString('utf8')));if(!valid())throw unavailable();return parsed.value;
+    if(length!==null&&size!==Number(length))throw unavailable();
+    joined=Buffer.concat(chunks);const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(joined));
+    if(!valid())throw unavailable();
+    if(bodyJobEnded(response.status,value,name==='take'?'take':'command'))throw new BodyJobEnded();
+    if(!response.ok)throw unavailable();
+    const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(value);if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch(error){if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
+  }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}
@@ -117,7 +123,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
      received??={id:randomUUID(),items:[]};received.items.push(row.id);unsettled.push(row.id);accepted++;
     }
     await reportReceived();return {accepted,stopRequested:input.stopRequested};
-   }catch(error){if(error instanceof BodyContactExpired)throw error;throw unavailable();}finally{taking=false;}
+   }catch(error){if(error instanceof BodyContactExpired||error instanceof BodyJobEnded)throw error;throw unavailable();}finally{taking=false;}
   },
   /** Settle every item accepted so far. Call once its answer is recorded, or when it needs none. */
   async settle():Promise<void>{

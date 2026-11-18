@@ -422,5 +422,22 @@ it('reports contact loss when the first status cannot reach Loom for two minutes
  const result=bodyProgram({...f.options,clock,fetch:fetcher});
  await vi.waitFor(()=>expect(fetcher).toHaveBeenCalled());
  clock.advance(120000);
- expect(await result).toBe(BODY_EXIT.contact);expect(f.native).not.toHaveBeenCalled();
+ expect(await result).toBe(BODY_EXIT.contact);expect(f.error).toHaveBeenCalledWith(expect.stringContaining("120 seconds"));expect(f.native).not.toHaveBeenCalled();
+});
+
+it.each(['status','startup','take','accept','confirm'])('leaves immediately when Loom rejects the credential during %s',async stage=>{
+ const f=fixture(),denied=vi.fn(()=>Response.json({ok:false,code:'denied',message:'PRIVATE DETAILS'},{status:401}));
+ const code=await bodyProgram({...f.options,fetch:(url,init)=>String(url).endsWith('/'+stage)?Promise.resolve(denied()):f.options.fetch(url,init)});
+ expect(code).toBe(BODY_EXIT.contact);expect(denied).toHaveBeenCalledTimes(1);
+ expect(JSON.stringify(f.error.mock.calls)).not.toContain('PRIVATE');
+});
+
+it.each([
+ [403,{ok:false,code:'denied',message:'Job has ended'},BODY_EXIT.contact],
+ [403,{ok:false,code:'denied',message:'Permission denied'},BODY_EXIT.report],
+ [401,{ok:false,code:'denied',message:11},BODY_EXIT.report],
+] as const)('uses the validated denial on the first status (%i, %j)',async(status,body,expected)=>{
+ const f=fixture(),fetcher=vi.fn(async()=>Response.json(body,{status}));
+ expect(await bodyProgram({...f.options,fetch:fetcher})).toBe(expected);
+ expect(fetcher).toHaveBeenCalledTimes(1);expect(f.native).not.toHaveBeenCalled();
 });

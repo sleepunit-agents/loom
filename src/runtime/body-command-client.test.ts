@@ -24,7 +24,7 @@ it('uses actual Root commands, stable receipts and current policy without forwar
 });
 it('uses the existing generated GraphQL viewer without gaining another member read',async()=>{
  const f=await fixture();expect(await f.value.query({query:'{agents{id} members{id}}'})).toMatchObject({data:{agents:[{id:'art'}],members:[]}});
- f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).run());expect(await f.value.command('fixture.record',{},'ended')).toMatchObject({ok:false,code:'denied'});await expect(f.value.query({query:'{agents{id}}'})).rejects.toThrow(error);
+ f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).run());await expect(f.value.command('fixture.record',{},'ended')).rejects.toThrow('Body credential ended');await expect(f.value.query({query:'{agents{id}}'})).rejects.toThrow('Body credential ended');
 });
 it.each(['https://user:pass@loom.example','https://loom.example/private','https://loom.example?token=x','https://loom.example#fragment','https:\\loom.example',' https://loom.example','http://remote.example'])('rejects unsafe Root origin %s before fetch',url=>{
  const fetcher=vi.fn<typeof fetch>();expect(()=>bodyCommandClient({url,token:raw.body,signal:new AbortController().signal,fetch:fetcher})).toThrow(error);expect(fetcher).not.toHaveBeenCalled();

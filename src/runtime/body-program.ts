@@ -15,7 +15,8 @@ import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
-import {BodyContactExpired} from './body-contact.js';
+import {BodyJobEnded} from './body-job-ended.js';
+import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
@@ -67,14 +68,16 @@ export async function bodyProgram(input: {
   let memoryClient:ReturnType<typeof bodyCommandClient>|undefined,sessionClient:ReturnType<typeof bodyCommandClient>|undefined;
   let keeper:BodySessions|undefined,saved=false;
   const context: string[] = [], incoming:string[]=[];
-  const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
   // Every report to loom goes through here. One that fails after the first exchange is the stage that failed
   // (BODY_EXIT.contact), whatever the body was doing when it reported; the first is BODY_EXIT.report.
-  let first=true;
-  const tell=(value:Parameters<NonNullable<typeof client>['status']>[0])=>client!.status(value).catch((error:unknown)=>{if(!first)unavailable=true;throw error;});
+  let first=true,contactExpired=false;
+  const jobEnded=new AbortController(),jobSignal=AbortSignal.any([input.signal,jobEnded.signal]);
+  const onJobEnded=()=>{unavailable=true;jobEnded.abort();erase();};
+  const tell=(value:Parameters<NonNullable<typeof client>['status']>[0])=>client!.status(value).catch((error:unknown)=>{if(error instanceof BodyContactExpired)contactExpired=true;if(!first)unavailable=true;throw error;});
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
-  const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
+  const nativeAbort = new AbortController(), signal = AbortSignal.any([jobSignal,nativeAbort.signal]);
+  const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock,onJobEnded});
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   let retirement:Promise<void>|undefined;
   let measuredDelivery: Promise<unknown> | undefined;
@@ -100,7 +103,7 @@ export async function bodyProgram(input: {
     if (!input.native && harnessCannotRun(job.harness, job.run?.policy, plan.reach)) throw new Error();
     exit=BODY_EXIT.report;
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
-      job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
+      job: job.id, conversation: job.conversation, signal: jobSignal, onJobEnded, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
     let reporting:ReturnType<typeof tell>|undefined;
     const report=()=>reporting??(reporting=tell(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
@@ -128,7 +131,7 @@ export async function bodyProgram(input: {
     // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
     // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
     if(bridge&&!hasGuest(job.run?.policy)){
-      sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:input.signal,fetch:input.fetch,clock:input.clock});
+      sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
     let resume=await keeper?.take();
@@ -161,7 +164,7 @@ export async function bodyProgram(input: {
     // this body cannot answer, so it fails here, as mail, before anything else is loaded for it.
     if(bridge&&!incoming.length&&!placed)throw new Error();
     exit=BODY_EXIT.identity;
-    memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
+    memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();
     // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.
@@ -204,7 +207,7 @@ export async function bodyProgram(input: {
       exit=BODY_EXIT.tools;
       // The last two are read by the tools server and by nothing else this is spread into: with the agent's name the
       // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
-      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
@@ -244,7 +247,7 @@ export async function bodyProgram(input: {
       if (measured) measuredDelivery = delivery;
       await retire();
     }
-    if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
+    if(stopped && !jobSignal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
@@ -263,17 +266,19 @@ export async function bodyProgram(input: {
     try{await keeper?.save(answer.session,fresh?oldestErased:undefined);saved=true;}catch{/* loom sees the kept session is behind the answer */}
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
+    if(jobSignal.aborted)throw new Error();
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
     await tell({ state: 'idle', work: '' });
     return 0;
   } catch (error) {
-    if(error instanceof BodyContactExpired)unavailable=true;
+    if(error instanceof BodyContactExpired){unavailable=true;contactExpired=true;}
+    if(error instanceof BodyJobEnded)unavailable=true;
     await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await tell(left);return BODY_EXIT.stopped;}catch{}
     }
     // A report that failed is why the work was dropped, whichever stage was dropped.
-    input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
+    input.error(contactExpired?BODY_CONTACT_MESSAGE+'\n':'Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
   finally { await retire(); await measuredDelivery; if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

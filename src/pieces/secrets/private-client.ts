@@ -1,3 +1,4 @@
+import {bodyJobEnded} from '../../runtime/body-job-ended.js';
 import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus} from '../../runtime/body-contact.js';
 /** Worker/body recipient. Binary values bypass common operation envelopes.
  * One read and one metadata ACK; uncertainty erases bytes instead of replaying. */
@@ -13,7 +14,7 @@ const unavailable=()=>new Error('Private secret input unavailable');
  * deadline of its own (the worker) is cut down to this. */
 export const PRIVATE_SECRET_TIMEOUT_MS=15_000;
 const aliases=z.object({aliases:z.array(z.object({alias:houseSecretAlias}).strict()).max(128),pending:z.literal(true).optional()}).strict();
-export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
+export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number;onJobEnded?:()=>void}){
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
  const clock=options.clock??systemClock,request=options.fetch??fetch;
  if(!options.token||/[\0\r\n]/.test(options.token))throw unavailable();
@@ -43,13 +44,21 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
   try{
    if(path==='startup'&&current()&&!response.redirected&&temporaryStatus(response.status))throw new BodyTransportFailure();
    if(current()&&!response.redirected&&response.status===423&&path==='read'&&(input as {kind?:string}).kind==='repository')throw new PendingRepository();
-   if(!current()||response.redirected||!response.ok)throw unavailable();
+   const checkDenial=!!options.onJobEnded&&(response.status===401||response.status===403)&&/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'');
+   if(!current()||response.redirected||(!response.ok&&!checkDenial))throw unavailable();
    if(response.status===204)return {bytes:Buffer.alloc(0),response};
    reader=response.body?.getReader();if(!reader)throw unavailable();
    const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)>limit))throw unavailable();
    let size=0;
    for(;;){if(!current())throw unavailable();const part=await reader.read().catch(error=>{if(path==='startup')throw new BodyTransportFailure();throw error;});if(!current()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>limit){part.value.fill(0);throw unavailable();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
-   if(!current())throw unavailable();return {bytes:Buffer.concat(chunks),response};
+   if(!current())throw unavailable();
+   const bytes=Buffer.concat(chunks);
+   if(checkDenial){
+    try{if((length===null||size===Number(length))&&bodyJobEnded(response.status,JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))))options.onJobEnded?.();}
+    finally{bytes.fill(0);}
+    throw unavailable();
+   }
+   return {bytes,response};
   }finally{signal.removeEventListener('abort',cleanup);cleanup();}
  }
  async function read(input:object,job?:string,optional=false):Promise<Buffer|undefined>{
