@@ -38,3 +38,9 @@ it('keeps result-only context measurements without inventing a zero tool count',
  const [,result]=rows('claude');
  expect(claudeUsage([result])).toMatchObject({source:'report',modelCalls:1,largestContext:4288,toolCalls:null,tools:null});
 });
+
+it('counts repeated Codex tool events once per id and includes an interrupted call', () => {
+ const event = (type:string,id:string) => ({type,item:{type:'mcp_tool_call',id,tool:'recall'}});
+ expect(codexUsage([event('item.started','a'),event('item.completed','a'),event('item.completed','a'),event('item.started','b')]))
+  .toMatchObject({source:'transcript',tools:{recall:2},toolCalls:2});
+});

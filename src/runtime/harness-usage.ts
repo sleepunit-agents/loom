@@ -72,16 +72,19 @@ export function codexUsage(rows:unknown[]):UsageReport{
  const fields=['input_tokens','output_tokens','cached_input_tokens','cache_write_input_tokens'];
  if(malformedUsage(rawUsage,fields))return {source:'none'};
  const usage=object(rawUsage);
- const names:unknown[]=[];
+ const toolsById=new Map<string,unknown>();
  let complete=true, seenItem=false;
  for(const row of events){
-  if(row.type!=='item.completed')continue;
+  if(row.type!=='item.started'&&row.type!=='item.completed')continue;
   seenItem=true;
   const item=object(row.item);
   switch(item.type){
    case 'agent_message':case 'reasoning':case 'todo_list':case 'plan':break;
-   case 'mcp_tool_call':names.push(item.tool);break;
-   case 'command_execution':case 'file_change':case 'web_search':case 'collab_tool_call':names.push(item.type);break;
+   case 'mcp_tool_call':
+   case 'command_execution':case 'file_change':case 'web_search':case 'collab_tool_call':
+    if(typeof item.id!=='string'||!item.id){complete=false;break;}
+    toolsById.set(item.id,item.type==='mcp_tool_call'?item.tool:item.type);
+    break;
    default:complete=false;
   }
  }
@@ -89,7 +92,7 @@ export function codexUsage(rows:unknown[]):UsageReport{
  if(!reported&&!seenItem)return {source:'none'};
  return {source:reported?'report':'transcript',tokensIn:count(usage.input_tokens),
   tokensOut:count(usage.output_tokens),cacheRead:count(usage.cached_input_tokens),cacheWritten:count(usage.cache_write_input_tokens),
-  modelCalls:null,largestContext:null,...(complete&&seenItem?toolCounts(names):{tools:null,toolCalls:null})};
+  modelCalls:null,largestContext:null,...(complete&&seenItem?toolCounts([...toolsById.values()]):{tools:null,toolCalls:null})};
 }
 
 export function agyUsage(rows:unknown[]):UsageReport{
@@ -113,7 +116,13 @@ export function failedReport(read:(rows:unknown[])=>UsageReport,sink?: (usage:Us
  if(!sink)return undefined;
  return (output:Buffer)=>{
   try{
-   const rows=new TextDecoder('utf-8',{fatal:true}).decode(output).split(/\r?\n/).filter(line=>line.trim()).map(line=>JSON.parse(line));
+   const decoder=new TextDecoder('utf-8',{fatal:true});
+   const lastNewline=output.lastIndexOf(10);
+   const rows=decoder.decode(output.subarray(0,lastNewline+1)).split(/\r?\n/).filter(line=>line.trim()).map(line=>JSON.parse(line));
+   // A signal can interrupt the final record, including in the middle of a UTF-8 character.
+   if(lastNewline+1<output.length){
+    try{rows.push(JSON.parse(decoder.decode(output.subarray(lastNewline+1))));}catch{/* incomplete final record */}
+   }
    const {source,...measures}=read(rows);
    // A partial stream can establish a tool ran, but silence does not establish
    // that none ran. Keep explicit token zeros from the harness untouched.

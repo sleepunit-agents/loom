@@ -113,3 +113,18 @@ it('leaves tool counts unknown when a failed stream contains only an assistant m
  await expect(answer).rejects.toThrow('Native execution unavailable');
  expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'report',tokensOut:1,toolCalls:null,tools:null}));
 });
+
+it.each(['abort', 'signal'])('keeps observed usage once on %s even with an interrupted final record', async mode => {
+  const failedUsage = vi.fn(), f = fixture({ failedUsage });
+  const answer = f.run(job, 'mail', f.abort.signal);
+  const chunk = Buffer.from(JSON.stringify({ type: 'item.started', item: { type: 'command_execution', id: 'c', command: 'private' } }) + '\n{"partial":"');
+  f.child.stdout.write(chunk);
+  f.child.stdout.write(Buffer.from([0xc3]));
+  if (mode === 'abort') f.abort.abort();
+  f.child.emit('close', null, 'SIGTERM');
+  await expect(answer).rejects.toThrow('Native execution unavailable');
+  expect(chunk.every(byte => byte === 0)).toBe(true);
+  expect(failedUsage).toHaveBeenCalledTimes(1);
+  expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'transcript', toolCalls: 1, tools: { command_execution: 1 } }));
+  expect(JSON.stringify(failedUsage.mock.calls)).not.toContain('private');
+});

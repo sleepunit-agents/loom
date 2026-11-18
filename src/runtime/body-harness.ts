@@ -131,7 +131,25 @@ export async function runHarnessChild(input: {
   const pipe = control ? child.stdio?.[3] as Writable | undefined : undefined;
   const chunks: Buffer[] = [];
   let bytes = 0, failed = false, drain: ReturnType<typeof setTimeout> | undefined;
-  const stop = () => { failed = true; control?.fill(0); pipe?.destroy(); for (const chunk of chunks) chunk.fill(0); chunks.length = 0; child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); child.kill('SIGKILL'); };
+  const reportFailure = () => {
+    if (!input.onFailedOutput || !chunks.length || bytes > outputLimit) return;
+    const output = Buffer.concat(chunks);
+    try { input.onFailedOutput(output); } catch { /* Measurement is best effort. */ }
+    finally { output.fill(0); }
+  };
+  const stop = () => {
+    if (failed) return;
+    failed = true;
+    control?.fill(0);
+    pipe?.destroy();
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.kill('SIGKILL');
+    reportFailure();
+    for (const chunk of chunks) chunk.fill(0);
+    chunks.length = 0;
+  };
   input.signal.addEventListener('abort', stop, { once: true });
   if (input.signal.aborted) stop();
   try {
@@ -140,13 +158,8 @@ export async function runHarnessChild(input: {
       // A leader may leave a descendant holding the pipes; end it so the worker can reap the group.
       child.once('exit', () => { drain = setTimeout(stop, 1_000); });
       child.once('close', code => {
-        if(failed||input.signal.aborted||code===null){reject(harnessUnavailable());return;}
-        if(code===0){resolve();return;}
-        if(input.onFailedOutput){
-          const output=Buffer.concat(chunks);
-          try{input.onFailedOutput(output);}catch{/* best effort */}finally{output.fill(0);}
-        }
-        reject(harnessUnavailable());
+        if (code === 0 && !failed && !input.signal.aborted) resolve();
+        else reject(harnessUnavailable());
       });
       for (const stream of [child.stdin, child.stdout, child.stderr, ...(pipe ? [pipe] : [])]) stream.on('error', stop);
       child.stdout.on('data', (data: Buffer | string) => {
@@ -163,6 +176,6 @@ export async function runHarnessChild(input: {
     });
     if (input.signal.aborted || failed) throw harnessUnavailable();
     return Buffer.concat(chunks);
-  } catch { throw harnessUnavailable(); }
+  } catch { if (!failed) reportFailure(); throw harnessUnavailable(); }
   finally { control?.fill(0); pipe?.destroy(); if (drain) clearTimeout(drain); input.signal.removeEventListener('abort', stop); for (const chunk of chunks) chunk.fill(0); }
 }
