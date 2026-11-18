@@ -74,6 +74,14 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   person behind its mail, and of several the one of least reach. The agent is
   the asker only when the work is its own, with nobody behind it. Nobody loom
   cannot name is ever the asker.
+  A firing never carries one person's text on another's word. Changing a
+  trigger's words (its note, its instructions or its file) makes the editor
+  its asker, so an editor with more reach than the asker replaces all of them
+  together, the note and the instructions or a file; changing only part is
+  refused with a line saying to give both or leave the words alone. The rule
+  bites only when the old asker's reach is lower than the editor's: the asker
+  changes their own trigger freely, and an owner or the agent's own work
+  changes freely what the agent or an owner asked for.
 - **A firing runs on the asker's word.** The mail carries the asker
   (`inbox.on_word_kind`, `on_word`), and the job counts them as in the room at
   the tier they have when it is claimed (`src/runtime/body-policy.ts`): a guest
