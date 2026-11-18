@@ -24,3 +24,11 @@ it('orders conversations by reported tokens and opens the selected jobs in the s
     expect(JSON.stringify(tree.toJSON())).not.toContain('test-model');
   } finally { await act(async()=>tree.unmount()); }
 });
+
+it('uses selections and argument types served by the runtime',async()=>{
+  const {parse,validate,GraphQLSchema,GraphQLObjectType}=await import('graphql/index.js');
+  const {jobSummaryFields}=await import('../../../../src/runtime/job-summary');
+  const {conversationsQuery,jobsQuery}=await import('./index');
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields({} as never)})});
+  for(const selection of [conversationsQuery,jobsQuery])expect(validate(schema,parse(selection))).toEqual([]);
+});
