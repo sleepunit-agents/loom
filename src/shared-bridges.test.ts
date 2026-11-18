@@ -446,6 +446,15 @@ it('stops such a trigger, with one notice, when its asker is no longer known or 
  expect((await f.call('tempo','start',{id:closed.id},token.other)).status).toBe(200);expect((await f.call('tempo','runNow',{id:closed.id},token.other)).status).toBe(200);
  expect(notices()).toHaveLength(before+1);
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
+ // A trigger whose conversation is no longer a bridge conversation of its agent is stopped the same way: here the
+ // conversation was the agent's when the trigger was set, and is another agent's when it fires.
+ const elsewhere=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','COTHER',null]),label:'other'}).id,lost=once({conversation:elsewhere});
+ expect((await f.call('tempo','set',lost,token.other)).status).toBe(200);
+ f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(conversations).set({agent:'mark'}).where(eq(conversations.id,elsewhere)).run();});
+ expect((await f.call('tempo','runNow',{id:lost.id},token.other)).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,lost.id)).get()).toMatchObject({enabled:false,state:'stopped'});
+ expect(notices().at(-1)!.words).toContain('did not fire: its conversation is gone.');
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
 });
 it('hands a note to the agent\'s own body in another conversation, by who the sending body works for',async()=>{
  const {f,cv,work}=await sharedPlace(()=>false);
@@ -627,9 +636,21 @@ it('keys what a body may do with a trigger or a note on whose word it works, not
  f.root.writes.run(()=>f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run());
  // The agent, outside the place, sets a half-hourly trigger and one that watches an event for this conversation.
  const half=once({lifespan:'until-stopped',times:'09:00,09:30'});expect((await f.call('tempo','set',half,token.other)).status).toBe(200);
+ // A trigger that watches an event has no listed times: through the door, a shared place's body sets none, even for its own conversation.
+ let question='';f.root.writes.run(()=>{question=f.root.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',sourceId:'a-question',fromKind:'unknown',words:'Shall I?'}).id;});
+ const mail=f.db.select().from(inbox).all().find(item=>item.job==='body')!.id;
+ const watching=(watches:string,more:Record<string,unknown>={})=>once({sourceKind:'answer',watches,times:undefined,lifespan:'until-stopped',...more});
+ expect(await f.call('tempo','set',watching(`question:${mail}`))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ // The owner sets one for this conversation, from outside it.
+ const watch=watching(`question:${question}`);expect(await f.call('tempo','set',watch,token.owner)).toMatchObject({status:200});
+ expect(f.db.select().from(triggers).where(eq(triggers.id,watch.id)).get()).toMatchObject({sourceKind:'answer',conversation:cv,askedByKind:'member',askedBy:'owner'});
  // The owner speaks in the place: the body there now works on the owner's word, and may stop and reword what
  // stands for its conversation however often it repeats. Only setting, and changing times, ask about that.
  f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
+ // The one that watches an event too: the owner-woken body there stops it, starts it and rewords it.
+ expect(await f.call('tempo','stop',{id:watch.id})).toMatchObject({status:200});expect(await f.call('tempo','start',{id:watch.id})).toMatchObject({status:200});
+ expect(await f.call('tempo','edit',{id:watch.id,instructions:'Reworded where it fires'})).toMatchObject({status:200});
+ expect(f.db.select().from(triggers).where(eq(triggers.id,watch.id)).get()).toMatchObject({instructions:'Reworded where it fires',state:'standing',askedByKind:'member',askedBy:'owner'});
  expect((await f.call('tempo','edit',{id:half.id,instructions:'Reworded by the owner\'s body'})).status).toBe(200);
  expect(await f.call('tempo','edit',{id:half.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
  expect((await f.call('tempo','stop',{id:half.id})).status).toBe(200);expect((await f.call('tempo','start',{id:half.id})).status).toBe(200);
@@ -762,4 +783,38 @@ it('tells the body a note reaches how to answer only when a note back would be t
  // The agent's own work in a wake: a wake is never a note's target, and a note on nobody's word hands nowhere.
  const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[]);
  expect(told('other',lane,pond)).toContain(none);expect(told('other',lane,pond)).not.toContain('To answer that body');
+});
+
+it('carries the sending job\'s word on a brief to another agent, through the door, so the job it starts is never that agent\'s own work',async()=>{
+ const {f,work}=await sharedPlace(()=>false),stamp=new Date(f.clock.now()).toISOString(),marks='d'.repeat(64);
+ f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'owner',agent:'mark'}]).run();
+  f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CMARK',answers:'mark',botsMayTalk:false}).run();});
+ const brief=(credential:string)=>f.call('conversation','handoff',{agent:'mark',clientId:randomUUID(),label:'For mark',words:'Look into X'},credential);
+ /** The latest brief in a conversation: every brief from one job goes to the one conversation that job opened. */
+ const item=(conversation:string)=>f.db.select().from(inbox).all().filter(row=>row.conversation===conversation).sort((a,b)=>b.seq!-a.seq!)[0];
+ /** Mark's job, working in the conversation a brief opened, holding that brief. */
+ const taken=(conversation:string,job:string)=>{f.root.writes.run(()=>{f.db.insert(jobs).values({id:job,agent:'mark',box:'box',conversation,title:'',brief:'',model:'test',state:'running',startedByKind:'agent',startedBy:'mark',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:stamp}).run();
+  f.db.update(inbox).set({job,state:'taken'}).where(eq(inbox.id,item(conversation).id)).run();});return {id:job,agent:'mark',conversation};};
+ // The guest's body in the shared place briefs mark: two agents one member has are peers, and the place is no member's.
+ const first=await brief(token.body);expect(first.status).toBe(200);
+ const guests=made(first.body);
+ expect(f.db.select().from(conversations).where(eq(conversations.id,guests)).get()).toMatchObject({agent:'mark',venue:'handoff',member:null});
+ expect(item(guests)).toMatchObject({toKind:'agent',to:'mark',source:'handoff',fromKind:'agent',fromId:'art',onWordKind:'outside',onWord:GUEST});
+ // Mark's job counts the guest as in the room: an account mark's owner gave no tier, so nothing is done on its word.
+ const job=taken(guests,'marks');
+ expect(workerPolicy(f.db,job).people).toEqual([{kind:'outside',person:GUEST,tier:null}]);expect(jobWord(f.db,job)).toEqual({woke:'others'});
+ // Through the doors: it posts nothing as mark's own work, and sets no trigger of mark's own.
+ f.root.writes.run(()=>f.db.insert(tokens).values({fingerprint:createHash('sha256').update(marks).digest('hex'),label:'marks',kind:'agent',agent:'mark',job:'marks',createdAt:stamp}).run());
+ expect((await f.call('bridges','post',{id:randomUUID(),to:{platform:'slack',workspace:'TWORK',channel:'CMARK'},text:'Words',model:'observed'},marks)).status).toBe(403);
+ expect(await f.call('tempo','set',{id:randomUUID(),ownerKind:'agent',owner:'mark',sourceKind:'time',times:new Date(f.clock.now()+86_400_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'mark',instructions:'The guest\'s words',note:'Later'},marks)).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
+ // On an owner's word the brief carries the owner, and mark's job works for owners.
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[{kind:'person',id:'owner'}]);
+ const second=await brief(token.other);expect(second.status).toBe(200);
+ expect(item(made(second.body))).toMatchObject({onWordKind:'member',onWord:'owner'});
+ expect(jobWord(f.db,taken(made(second.body),'marks-2'))).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
+ // The agent's own work carries nobody's word. Mail from an agent on nobody's word is anybody else's: still not mark's own work.
+ f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'marks-2')).run());
+ work(lane,[]);const third=await brief(token.other);expect(third.status).toBe(200);
+ expect(item(made(third.body))).toMatchObject({onWordKind:null,onWord:null});
+ expect(jobWord(f.db,taken(made(third.body),'marks-3'))).toEqual({woke:'others'});
 });
