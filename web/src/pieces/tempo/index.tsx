@@ -64,7 +64,7 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household' : trigger.owner}</dd></div>
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       {!!trigger.needs?.length && <div><dt>Machine needs</dt><dd>{trigger.needs.join(', ')}</dd></div>}
-      {!!trigger.prefers?.length && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ')}</dd></div>}
+      {trigger.prefers != null && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ') || 'None'}</dd></div>}
       <div><dt>Target</dt><dd>{target(trigger)}</dd></div>
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}

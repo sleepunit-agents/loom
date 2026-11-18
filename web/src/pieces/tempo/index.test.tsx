@@ -39,9 +39,10 @@ it('renders current trigger details inline and reflects changed words and pause 
   await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1' })); });
   expect(JSON.stringify(tree.toJSON())).toContain('Review private delivery');
   const changed = { ...snapshot, pauses: [{ agent: 'art', since: '2026-11-14T00:00:00.000Z' }],
-    triggers: snapshot.triggers.map(t => ({ ...t, instructions: 'New instructions' })) };
+    triggers: snapshot.triggers.map(t => ({ ...t, needs: ['gpu'], prefers: [], instructions: 'New instructions' })) };
   await act(async () => tree.update(h(TempoCard, { snapshot: changed, triggerId: 'tr-1' })));
   expect(JSON.stringify(tree.toJSON())).toContain('New instructions');
+  expect(tree.root.findAllByType('dd').map((node: { children: string[] }) => node.children.join(''))).toEqual(expect.arrayContaining(['gpu', 'None']));
   expect(JSON.stringify(tree.toJSON())).not.toContain('Review private delivery');
   expect(JSON.stringify(tree.toJSON())).toContain('Held · agent paused');
 });

@@ -13,7 +13,7 @@ import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
-const placement = { needs: machineFacts.optional(), prefers: machineFacts.optional() };
+const placement = { needs: machineFacts.nullish(), prefers: machineFacts.nullish() };
 export const triggerInput = z.object({
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),

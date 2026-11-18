@@ -148,5 +148,11 @@ it('sets and edits machine facts, keeping each previous list in the trigger hist
   expect(f.call('tempo.edit', { id: 'tr', needs: ['gpu'] }, 'unchanged').ok).toBe(true);
   expect(f.call('tempo.edit', { id: 'tr', prefers: [] }, 'clear').ok).toBe(true);
   expect(row()).toMatchObject({ needs: ['gpu'], prefers: [] });
-  expect(f.db.select().from(triggerEdits).all().map(edit => JSON.parse(edit.before))).toEqual([{ prefers: ['local'] }]);
+  expect(f.call('tempo.edit', { id: 'tr', needs: null, prefers: null }, 'inherit').ok).toBe(true);
+  expect(row()).toMatchObject({ needs: null, prefers: null });
+  expect(f.call('tempo.edit', { id: 'tr', prefers: null }, 'still-inherited').ok).toBe(true);
+  expect(f.call('tempo.edit', { id: 'tr', prefers: [] }, 'opt-out').ok).toBe(true);
+  expect(f.db.select().from(triggerEdits).all().map(edit => JSON.parse(edit.before))).toEqual([
+    { prefers: ['local'] }, { needs: ['gpu'], prefers: [] }, { prefers: null },
+  ]);
 });
