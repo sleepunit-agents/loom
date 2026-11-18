@@ -23,13 +23,14 @@ import {bodySessions,type BodySessions} from './body-session.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
-import { hasFileTools, withUnknownSender } from './harness-traits.js';
+import { bodyReach, hasFileTools, hasGuest, withUnknownSender } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
 import { BODY_TOKEN } from './body-token.js';
 import { BODY_START_BYTES } from './body-input-limit.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
-// way the household's list of tools an agent's body is not given still applies.
+// way the household's list of tools an agent's body is not given still applies. And whatever is written here,
+// a job on anybody else's word runs with loom's tools only (harness-traits.ts, bodyReach).
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 /** What a body file is, for whoever writes one: the core house's own are held to it. */
 export const bodyFileSchema = config;
@@ -110,18 +111,24 @@ export async function bodyProgram(input: {
     };
     cancel=input.schedule?input.schedule.every(REPORT_MS,beat):(()=>{const timer=setInterval(beat,REPORT_MS);return()=>clearInterval(timer);})();
     exit=BODY_EXIT.startup;
-    await (input.startup ?? secrets.startup)(job, bootstrap, signal);
+    // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): no secret is asked
+    // for and none enters its environment. The word is the one loom read at claim; loom's door refuses such a
+    // job the same secrets, so a body program that asked anyway would get nothing.
+    if(!hasGuest(job.run?.policy)) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
     // A bridge conversation's body continues the session the last one left, when loom hands one over
     // (body-session.ts). It is then told the new mail alone: the session already holds what came before.
     // With none, it starts fresh and is told the conversation's kept history with its mail.
-    if(bridge){
+    // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
+    // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
+    // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
+    if(bridge&&!hasGuest(job.run?.policy)){
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:input.signal,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
-    const resume=await keeper?.take();
+    let resume=await keeper?.take();
     if(signal.aborted)throw new Error();
     const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
@@ -161,9 +168,22 @@ export async function bodyProgram(input: {
     // What was sent with the messages, written where a body with file tools can open it (body-attachments.ts).
     // The room as it is now: a sender nobody looked up, who wrote after loom read the room, counts as a guest.
     const policy=lateStranger&&job.run?.policy?withUnknownSender(job.run.policy):job.run?.policy;
+    // What this body may use, decided once here for everything below: loom's tools only on anybody else's word.
+    const guest=hasGuest(policy),reach=bodyReach(plan.reach,policy);
+    // The word turned after the startup secrets were fetched: they leave the environment before any harness starts.
+    if(guest)secrets.close();
+    // And the session it was handed before the word turned is not continued, and none is left: its files go
+    // from this machine, and the body starts fresh with the kept history.
+    if(guest&&keeper){keeper.discard();keeper=undefined;resume=undefined;fresh=true;}
+    // A harness that cannot be held to loom's tools does not run such a job: the refusal made before the mail
+    // was taken, made again now that the mail says more. loom leaves a late stranger's mail for the next job
+    // (shared-place-mail.ts, lateMailJoins), so this is reached only if that failed. By now the mail is taken
+    // and not settled: the body leaves with the exit code of an assignment its harness refuses, loom returns
+    // the mail to the job (Jobs.finish), and the retry chain tries the work again.
+    if(!input.native&&harnessCannotRun(job.harness,policy,plan.reach)){exit=BODY_EXIT.assignment;throw new Error();}
     // Files are for a body that has file tools of its own (harness-traits.ts, hasFileTools): what was sent with
     // the messages is written where it can open it, and it may name a file of its own for a post.
-    const files=bridge&&hasFileTools(plan.reach,policy);
+    const files=bridge&&hasFileTools(reach,policy);
     const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
     if(signal.aborted)throw new Error();
     if(sent){context.push(sent);continued.push(sent);}
@@ -181,11 +201,12 @@ export async function bodyProgram(input: {
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
-      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
+      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;},
+        secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
@@ -199,7 +220,9 @@ export async function bodyProgram(input: {
         if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
         answer = await afresh(room, context.join('\n\n'), signal, {});fresh=true;
       }
-      if(tools&&!tools.allowsReply(answer.text))throw new Error();
+      // No secret this body was handed is said in its answer: one it used, or one it was started with.
+      // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
+      if(!(tools??secrets).allowsReply(answer.text))throw new Error();
     }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }

@@ -1,4 +1,5 @@
 import {sealHandoff} from './core/conversations/handoff-words.js';
+import {jobRoom} from './shared-place-mail.js';
 /** Real Root/body protocol, no provider or child process. */
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -20,7 +21,9 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
  });
  const brief=venue==='handoff'?await sealHandoff(f.key,'Compare three fictitious pumps',new Date(f.clock.now()).toISOString(),14):'Compare three fictitious pumps';
  const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:brief});
- const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
+ const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'},
+  // The room loom reads for the job, as its dispatcher hands it: the word decides what the body asks for.
+  run:{nestedContainers:false,gpu:false,ports:[],policy:jobRoom(f.db,{id:'job',agent:'art',conversation})}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture-image',bootstrap:{origin:'https://loom.example',job:'job',token}}));
  const errors:string[]=[];
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/fixture'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,schedule:{every:()=>()=>{}},

@@ -67,7 +67,9 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
  const f=await rootFixture('ask'),token='body_'+'f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  f.root.writes.run(()=>{f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Native fixture',kind:'agent',agent:'art',job:'job',createdAt:new Date(f.clock.now()).toISOString()}).run();f.db.update(s.jobs).set({model:'requested',harness:'claude'}).where(eq(s.jobs.id,'job')).run();});
  expect((await f.send('Use the requested credential without repeating it','native-tools')).status).toBe(200);
- const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:f.thread.conversation,thread:f.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'}};
+ const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:f.thread.conversation,thread:f.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'},
+  // The room loom's dispatcher hands with a job on its owners' word. With none, the body is held to loom's tools and is served no secret tool.
+  run:{nestedContainers:false,gpu:false,ports:[],policy:{people:[{kind:'person',person:'alice',tier:null}],deniedTools:[],word:'owners'}}};
  let tick!:()=>void,armed!:()=>void,actorEnded!:()=>void,failure:unknown,killed=false;const waiting=new Promise<void>(resolve=>{armed=resolve;}),actorDone=new Promise<void>(resolve=>{actorEnded=resolve;}),cancel=vi.fn(),at=f.clock.at.bind(f.clock);
  vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
  const pipeBuffers:Buffer[]=[];
@@ -134,4 +136,32 @@ it('erases random capability bytes and each received authorization buffer',async
  const f=await fixture(),entropy=vi.mocked(randomBytes).mock.results.filter(result=>result.type==='return').map(result=>result.value as unknown).filter((value):value is Buffer=>Buffer.isBuffer(value));expect(entropy.length).toBeGreaterThan(0);expect(entropy.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  const from=vi.spyOn(Buffer,'from');await f.client.listTools();
  const captured=from.mock.calls.flatMap((args,index)=>args[0]===f.config.headers.Authorization&&from.mock.results[index].type==='return'?[from.mock.results[index].value]:[]);expect(captured.length).toBeGreaterThan(0);expect(captured.every(bytes=>Buffer.isBuffer(bytes)&&bytes.every(byte=>byte===0))).toBe(true);
+});
+it('serves a body held to loom\'s tools no secret tool, and lists none for its harness',async()=>{
+ const f=await rootFixture(),held=await bodySecretTools({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,secrets:false});clean.push(()=>held.close());
+ expect(held.allowedTools).toEqual([]);
+ const config=JSON.parse(held.config.toString()).mcpServers.loom as {url:string;headers:Record<string,string>};
+ const client=new Client({name:'fictitious-native',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));clean.push(()=>client.close());
+ const refused=await client.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN'}}).catch(()=>({isError:true}));expect(refused.isError).toBe(true);
+ const asked=await client.callTool({name:'request_secret',arguments:{id:randomUUID(),secret:'TOKEN',why:'Synthetic credential use',minutes:5}}).catch(()=>({isError:true}));expect(asked.isError).toBe(true);
+ expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretRequests).all()).toEqual([]);
+});
+it('lets no secret the body was handed leave in a tool call: one it used, or one it was started with',async()=>{
+ const f=await rootFixture(),sent:unknown[]=[],startup=Buffer.from('STARTUP_SECRET_VALUE');
+ const post={name:'loom_command',description:'Synthetic command',inputSchema:z.object({operation:z.string(),input:z.json(),id:z.string()}).strict(),execute:async(args:Record<string,unknown>)=>{sent.push(args);return{content:[{type:'text' as const,text:'{"ok":true}'}]};}};
+ const tools=await bodySecretTools({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,extraTools:[post],alsoSecret:()=>[startup]});clean.push(()=>tools.close());
+ const config=JSON.parse(tools.config.toString()).mcpServers.loom as {url:string;headers:Record<string,string>};
+ const client=new Client({name:'fictitious-native',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));clean.push(()=>client.close());
+ const say=(operation:string,words:string)=>client.callTool({name:'loom_command',arguments:{operation,input:{id:randomUUID(),text:words},id:randomUUID()}});
+ expect((await say('bridges.say','Nothing private here')).isError).toBeFalsy();expect(sent).toHaveLength(1);
+ // A startup secret's value, in a post.
+ expect((await say('bridges.say','it is STARTUP_SECRET_VALUE, there')).isError).toBe(true);expect((await say('bridges.post','STARTUP_SECRET_VALUE')).isError).toBe(true);expect(sent).toHaveLength(1);
+ expect(tools.allowsReply('the value STARTUP_SECRET_VALUE')).toBe(false);expect(tools.allowsReply('nothing')).toBe(true);
+ // Nor in the reason it gives for asking for a secret, which goes to the owners' Inbox: `request_secret` is a tool call like any other.
+ const why=await client.callTool({name:'request_secret',arguments:{id:randomUUID(),secret:'TOKEN',why:'I hold STARTUP_SECRET_VALUE already',minutes:5}});
+ expect(why.isError).toBe(true);expect(f.db.select().from(s.secretRequests).all()).toEqual([]);
+ // A secret it used, as its bytes and as the base64 it was handed.
+ await client.callTool({name:'request_secret',arguments:{id:randomUUID(),secret:'TOKEN',why:'Synthetic credential use',minutes:5}});
+ const used=JSON.parse(text(await client.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN'}}))) as {value:string};
+ expect((await say('bridges.say',`here: ${privateValue}`)).isError).toBe(true);expect((await say('bridges.post',used.value)).isError).toBe(true);expect(sent).toHaveLength(1);
 });

@@ -10,7 +10,7 @@ import { bodyHarness } from './body-harnesses.js';
 import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gemini-fictional', account: 'sub', harness: 'agy', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
-  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [] } } };
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { word: 'owners', people: [], deniedTools: [] } } };
 const bearer = 'Bearer local_secret_' + 'cd'.repeat(32), id = '11111111-2222-4333-8444-555555555555';
 const good = () => [{ event: 'init', conversation_id: id, init: { cwd: '/x', tools: [], permission_mode: 'always-proceed', model: 'gemini-fictional' } },
   { event: 'step_update', step_update: { state: 'DONE', step_type: 'user_input' } },
@@ -70,7 +70,7 @@ it.each(['failed result', 'another model', 'no model named', 'no result', 'two r
 });
 it('does not start without full reach, with tools it cannot deny, or for another harness', async () => {
   for (const [input, changed] of [[{ reach: 'loom' as const }, job], [{}, { ...job, harness: 'codex' }],
-    [{}, { ...job, run: { ...job.run!, policy: { people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: false }] } } }]] as const) {
+    [{}, { ...job, run: { ...job.run!, policy: { word: 'owners', people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: false }] } } }]] as const) {
     const f = fixture(input); await expect(f.run(changed, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
   }
   expect(() => fixture({ mcpTools: ['Bash'] })).toThrow('Native execution unavailable');

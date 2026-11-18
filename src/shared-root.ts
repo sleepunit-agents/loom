@@ -85,7 +85,7 @@ import { registerConversationBodyOperations } from './core/conversations/body-op
 import { selfHandoff } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
-import { Conversations } from './core/conversations/index.js';
+import { Conversations, lateMailWaits } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
@@ -324,7 +324,7 @@ export function sharedRoot(options: {
     notifications: pushes,
     approvalRules: ruleSettings,
     approvals: approvalService(db, approvedOperations, now),
-    conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
+    conversations: comms?.service.threads.conversations ?? new Conversations(db, now, lateMailWaits),
     comms: comms?.service,
     runtime,
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},

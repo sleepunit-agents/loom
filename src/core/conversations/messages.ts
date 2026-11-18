@@ -14,7 +14,7 @@ import { Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
 import { expireConversationSessions } from './sessions.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
-import type { DigestInput } from './index.js';
+import { lateMailWaits, type DigestInput, type LateJoins } from './index.js';
 import { commsKeepDays } from '../data/comms-days.js';
 
 type Message = typeof messages.$inferSelect;
@@ -29,8 +29,10 @@ export type MessageInput = {
 
 export class CommsMessages {
   readonly threads: Threads;
-  constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly now: () => string = () => new Date().toISOString()) {
-    this.threads = new Threads(db, now);
+  /** `lateJoins` is the conversations service's (index.ts): bodies take their mail through this one's, so the
+   * composition gives it the rule; closed otherwise. */
+  constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly now: () => string = () => new Date().toISOString(), lateJoins: LateJoins = lateMailWaits) {
+    this.threads = new Threads(db, now, lateJoins);
   }
 
   private context(id: string) {

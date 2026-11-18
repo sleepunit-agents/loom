@@ -78,3 +78,14 @@ it('takes exactly the aliases the door that stores them takes, when its own mach
   expect([alias,await f.start().then(()=>true,()=>false)]).toEqual([alias,isHouseSecretAlias(alias)]);
  }
 });
+it('knows the values a body was started with, so they can be looked for in what it says, and forgets them on close',async()=>{
+ const f=fixture(new Map([['GITHUB_TOKEN',Buffer.from('PRIVATE_STARTUP')],['AWS_REGION_NAME',Buffer.from('eu-1')]]));
+ expect(f.hook.allowsReply('PRIVATE_STARTUP')).toBe(true);await f.start();
+ expect(f.hook.allowsReply('the token is PRIVATE_STARTUP.')).toBe(false);
+ // As its bytes and as their base64, like a secret it used: a model that encodes it has still said it.
+ const encoded=Buffer.from('PRIVATE_STARTUP').toString('base64');
+ expect(f.hook.allowsReply(`decode this: ${encoded}`)).toBe(false);expect(f.hook.values().map(value=>value.toString())).toEqual(['PRIVATE_STARTUP',encoded]);
+ // A value too short to tell from ordinary words is not looked for: it would fail ordinary answers.
+ expect(f.hook.allowsReply('it runs in eu-1')).toBe(true);
+ const held=[...f.hook.values()];f.hook.close();expect(f.hook.values()).toEqual([]);expect(held.every(value=>value.every(byte=>byte===0))).toBe(true);
+});

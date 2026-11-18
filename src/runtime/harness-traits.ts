@@ -4,11 +4,12 @@
  * states its own traits as part of the one Harness it exports, and body-harnesses.ts lists the adapters;
  * the questions asked by name (would this harness refuse the job, may a secret take this name) are
  * answered there. */
+import { loomToolsOnly } from '../policy.js';
 import type { WorkerRunPolicy } from './worker.js';
 
 export interface HarnessTraits {
   /** The harness always has its own shell and files. It runs only on a machine whose body file gives bodies
-   * full reach (`reach: 'all'`). */
+   * full reach (`reach: 'all'`), and never a job on anybody else's word (bodyReach). */
   needsFullReach: boolean;
   /** Whether the harness can be told which tools a body is not given. One that cannot never runs a job any denied tool applies to. */
   honoursDeniedTools: boolean;
@@ -18,10 +19,19 @@ export interface HarnessTraits {
   reservesEnv(name: string, env: NodeJS.ProcessEnv): boolean;
 }
 
-/** A guest is a sender from outside the household whom the agent's owner has not placed in the top tier.
- * One guest in a job's room makes the guests-only rules apply to the whole job. */
+/** Whether the job works on anybody else's word: not the agent's own work, not its owners'. The word is
+ * loom's (shared-place-mail.ts, jobWord), handed over with the job; nothing here ranks anybody. A room
+ * that names no word comes from a loom older than the field and counts as anybody else's. So does a job
+ * with no room at all: loom's dispatcher always hands one, and an assignment without it says nothing about
+ * whose word it works on. Closed, not open. */
 export function hasGuest(policy: WorkerRunPolicy | undefined): boolean {
-  return policy?.people.some(person => person.kind !== 'person' && person.tier !== 3) ?? false;
+  return loomToolsOnly(policy?.word ?? 'others');
+}
+/** What the body of this job may use: loom's tools only on anybody else's word, whatever the machine gives
+ * its bodies; otherwise what the machine's body file says. The one answer for the harness's command line,
+ * for whether a harness can run the job at all, and for the body's files. */
+export function bodyReach(reach: 'loom' | 'all', policy: WorkerRunPolicy | undefined): 'loom' | 'all' {
+  return hasGuest(policy) ? 'loom' : reach;
 }
 /** A stored denial as the entries it holds. This is the one place that says what a stored denial means.
  *
@@ -57,18 +67,21 @@ export function deniedTools(policy: WorkerRunPolicy | undefined): string[] {
  * harness's own tools (`reach: 'all'`), and reading files is not among the tools this job's body is not
  * given. The one rule for everything loom does with a body's files: writing what was sent to it where it
  * can open it (body-attachments.ts) and reading a file it names for a post (body-files.ts). A body held to
- * loom's tools, or one whose file tools a guest in the room takes away, gets neither: loom's own doors are
- * not a way around a denial. */
+ * loom's tools gets neither, by the machine's choice or because its job works on anybody else's word: the
+ * caller passes the reach the body really has (bodyReach). Nor does one whose file tools are denied it:
+ * loom's own doors are not a way around a denial. */
 export function hasFileTools(reach: 'loom' | 'all', policy: WorkerRunPolicy | undefined): boolean {
   return reach === 'all' && !deniedTools(policy).some(pattern => /^Read(\(|$)/.test(pattern.trim()));
 }
 /** The policy with one more sender nobody vouched for. The body uses it for outside mail that arrived
- * after loom read the room at claim: such a sender's tier was never looked up, so they count as a guest. */
+ * after loom read the room at claim: such a sender was never looked up, so the job's word is anybody else's.
+ * loom leaves such mail for the next job (shared-place-mail.ts, lateMailJoins); this is the body's own check. */
 export function withUnknownSender(policy: WorkerRunPolicy): WorkerRunPolicy {
-  return { ...policy, people: [...policy.people, { kind: 'unknown', person: null, tier: null }] };
+  return { ...policy, people: [...policy.people, { kind: 'unknown', person: null, tier: null }], word: 'others' };
 }
 /** Whether a harness with these traits would refuse the job. `reach` is the machine's, when the caller
- * knows it (the body does, placement does not). */
+ * knows it (the body does, placement does not). A harness that always has its shell cannot be held to
+ * loom's tools, so it refuses a job on anybody else's word on any machine: refused, not run open. */
 export function refusesJob(traits: HarnessTraits, policy: WorkerRunPolicy | undefined, reach?: 'loom' | 'all'): boolean {
-  return traits.needsFullReach && reach !== undefined && reach !== 'all' || !traits.honoursDeniedTools && deniedTools(policy).length > 0;
+  return traits.needsFullReach && (hasGuest(policy) || reach !== undefined && reach !== 'all') || !traits.honoursDeniedTools && deniedTools(policy).length > 0;
 }

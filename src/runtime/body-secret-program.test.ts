@@ -8,7 +8,8 @@ import type {WorkerAssignment} from './worker.js';
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 afterEach(()=>{vi.restoreAllMocks();vi.clearAllMocks();});
 const raw='body_'+'a'.repeat(64),privateValue='PRIVATE_STARTUP_VALUE';
-const job:WorkerAssignment={id:'job',box:'box',agent:'art',conversation:'cv',thread:'thread',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
+// With the room loom's dispatcher hands a job on its owners' word: an assignment with none is held to loom's tools.
+const job:WorkerAssignment={id:'job',box:'box',agent:'art',conversation:'cv',thread:'thread',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},run:{nestedContainers:false,gpu:false,ports:[],policy:{people:[{kind:'person',person:'owner',tier:null}],deniedTools:[],word:'owners'}}};
 function fixture(){
  const env:NodeJS.ProcessEnv={PATH:'/bin',ACCOUNT_PROFILE:'/account'},abort=new AbortController(),clock=new FakeClock(),calls:string[]=[],errors=vi.fn();
  let words='',stop=false,pending=false,tick=()=>{},cancel=vi.fn(),notifyPlan=()=>{};

@@ -17,6 +17,8 @@ import type {WorkerAssignment} from './runtime/worker.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
 
+/** The room of a job on its owners' word, as loom's dispatcher hands it: what these bodies run in unless a test says otherwise. */
+const OWNERS={people:[{kind:'person' as const,person:'owner',tier:null}],deniedTools:[],word:'owners' as const};
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 async function fixture(){
@@ -51,7 +53,7 @@ async function fixture(){
  /** One body's whole run for the conversation's waiting mail. */
  const run=async(id:string,conversation:string,native:HarnessRun,sessions:BodySessions,more:{reach?:'loom'|'all';saveAttachments?:Parameters<typeof bodyProgram>[0]['saveAttachments'];policy?:NonNullable<WorkerAssignment['run']>['policy']}={})=>{
   const token='body_'+createHash('sha256').update(id).digest('hex');
-  const job:WorkerAssignment={id,agent:'art',box:'box',conversation,venue:'slack',thread:null,model:'claude-opus-5-5',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},...(more.policy?{run:{nestedContainers:false,gpu:false,ports:[],policy:more.policy}}:{})};
+  const job:WorkerAssignment={id,agent:'art',box:'box',conversation,venue:'slack',thread:null,model:'claude-opus-5-5',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},run:{nestedContainers:false,gpu:false,ports:[],policy:more.policy??OWNERS}};
   root.writes.run(()=>{
    db.insert(s.jobs).values({id,agent:'art',box:'box',conversation,title:'',brief:'',model:job.model,harness:'claude',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:now()}).run();
    db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Synthetic body '+id,kind:'agent',agent:'art',job:id,createdAt:now()}).run();
@@ -87,6 +89,26 @@ it('starts a first body fresh, keeping a session, and tells the next one only th
  expect(seen[1]).toEqual({words:'Do the second one',session:{resume:'session-one-1'}});
  expect(two.calls).toEqual(['take','save:session-one-1']);
  expect(f.db.select().from(s.bridgeSends).all().map(send=>[send.text,send.state])).toEqual([['Three steps.','sent'],['Three steps.','sent']]);
+});
+
+it('asks for no kept session on anybody else\'s word and leaves none, so the owners\' next body continues the one the owners\' body left',async()=>{
+ const f=await fixture(),first=await f.hear('What is the plan?'),cv=first.conversation!;
+ const seen:{words:string;session?:HarnessSession}[]=[];
+ const native:HarnessRun=async(_job,words,_signal,session)=>{seen.push({words,session});return{text:'Three steps.',model:'claude-opus-5-5',actions:[],session:'session-of-run-'+seen.length};};
+ const one=keeper();expect(await f.run('one',cv,native,one.sessions)).toBe(0);
+ expect(one.calls).toEqual(['take','save:session-of-run-1']);
+ // A job on anybody else's word: the body program asks loom for no session, though one waits there.
+ const two=keeper('session-of-run-1');await f.hear('What did you just do?');
+ expect(await f.run('two',cv,native,two.sessions,{policy:{people:[{kind:'outside',person:'someone',tier:2}],deniedTools:[],mail:[],word:'others'}})).toBe(0);
+ expect(two.calls).toEqual([]);
+ // It continues nothing and is asked to keep nothing. It is told what was said before, like any body that starts fresh.
+ expect(seen[1].session).toBeUndefined();
+ expect(JSON.parse(seen[1].words.slice('IDENTITY\n\n'.length))).toMatchObject({input:'What did you just do?',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
+ // The owners' next body is handed the session the first one left, and continues it.
+ const three=keeper('session-of-run-1');await f.hear('Go on');
+ expect(await f.run('three',cv,native,three.sessions)).toBe(0);
+ expect(seen[2]).toEqual({words:'Go on',session:{resume:'session-of-run-1'}});
+ expect(three.calls).toEqual(['take','save:session-of-run-3']);
 });
 
 it('runs the same work afresh, with the kept history, when the harness cannot continue the session it was handed',async()=>{
@@ -128,9 +150,9 @@ it('writes what was sent with a message only for a body that has file tools to o
  expect(asked).toEqual([]);expect(seen[0]).toBe('IDENTITY\n\nLook at this');
  expect(await f.run('two',(await f.hear('And this')).conversation!,native,keeper().sessions,{reach:'loom',saveAttachments})).toBe(0);
  expect(asked).toEqual([]);
- // A body with the harness's own tools is: for the messages it took, into its own scratch directory.
+ // A body with the harness's own tools, working for its owners, is: for the messages it took, into its own scratch directory.
  const third=await f.hear('And this one');
- expect(await f.run('three',third.conversation!,native,keeper().sessions,{reach:'all',saveAttachments})).toBe(0);
+ expect(await f.run('three',third.conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{people:[],deniedTools:[],word:'owners'}})).toBe(0);
  expect(asked).toHaveLength(1);expect(asked[0].scratch).toBe('/scratch-of-this-body');
  // The one message this job took, by the id loom keeps its files under.
  expect(asked[0].incoming).toEqual([f.db.select().from(s.bridgeIncoming).all().find(row=>row.text==='And this one')!.id]);
@@ -138,11 +160,11 @@ it('writes what was sent with a message only for a body that has file tools to o
  // A body on such a machine whose file tools are among those it is not given (a guest is in the room, and
  // the owner denies guests' bodies Read) is given none either: loom's doors are no way around a denial.
  asked.length=0;
- const denied={people:[{kind:'outside' as const,person:'someone',tier:2 as const}],deniedTools:[{pattern:'Read',guestsOnly:true}],mail:[]};
+ const denied={people:[{kind:'outside' as const,person:'someone',tier:2 as const}],deniedTools:[{pattern:'Read',guestsOnly:true}],mail:[],word:'others' as const};
  expect(await f.run('four',(await f.hear('With a guest')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:denied})).toBe(0);
  expect(asked).toEqual([]);
  // The same denial for guests only, with no guest in the room, takes nothing away.
- expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{...denied,people:[{kind:'person',person:'owner',tier:null}]}})).toBe(0);
+ expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{deniedTools:denied.deniedTools,people:[{kind:'person',person:'owner',tier:null}],word:'owners'}})).toBe(0);
  expect(asked).toHaveLength(1);
 });
 

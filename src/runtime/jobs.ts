@@ -10,7 +10,7 @@ import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
-import { Conversations } from '../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
@@ -54,7 +54,7 @@ export interface Admission {
 }
 export class Jobs {
   private readonly mail: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now); }
+  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now, lateMailWaits); }
 
   get(id: string): Job {
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
@@ -253,7 +253,7 @@ export class Jobs {
   private endIfStopAsked(job: Job, values: Partial<Job> = {}): Job | undefined {
     const asked = this.stopAsked(job);
     if (!asked) return undefined;
-    new Threads(this.db, this.now).takeStop(asked.thread);
+    new Threads(this.db, this.now, lateMailWaits).takeStop(asked.thread);
     return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'stop', endedAt: this.now() });
   }
 
@@ -371,6 +371,22 @@ export class Jobs {
           endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
       return [...lost, ...unplaced];
     }, { behavior: 'immediate' });
+  }
+
+  /** Ends a queued job that can never be placed, at once and with the reason, instead of leaving it to the
+   * queue deadline. Like a job the deadline ends, it is failed by loom and not tried again. `settle` is the
+   * mail that makes it unplaceable (for a job on anybody else's word, the mail that makes it so): that mail
+   * is closed with the same reason, in the same write. Left waiting it would go to the job the next fresh
+   * mail starts (admission marks everything that waits), make that job unplaceable too, and so on for every
+   * later message in the conversation. The rest of its mail waits as before, for that next job. Whether a
+   * job is such a one, and which mail makes it so, is the dispatcher's to say (Dispatcher.next). */
+  unplaceable(id: string, note: string, settle: readonly string[] = []): Job | undefined {
+    const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!job || job.state !== 'queued') return undefined;
+    const ended = this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
+    for (const item of this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).all())
+      if (settle.includes(item.id)) this.mail.resolveItem(item.id, note);
+    return ended;
   }
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {

@@ -36,7 +36,7 @@ async function prepare(){
   fixture.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'on_request'}]});
  });
  expect((await fixture.send('Use canonical tools privately','canonical')).status).toBe(200);
- const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:fixture.thread.conversation,thread:fixture.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'}};
+ const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:fixture.thread.conversation,thread:fixture.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'},run:{nestedContainers:false,gpu:false,ports:[],policy:{people:[{kind:'person',person:'owner',tier:null}],deniedTools:[],word:'owners'}}};
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}}));
  return{...fixture,token,bytes,source,sourceBuffers,value};
 }

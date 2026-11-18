@@ -13,6 +13,7 @@ import * as s from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {WorkerAssignment} from './runtime/worker.js';
+import {jobRoom} from './shared-place-mail.js';
 import type {DiscordGatewayOptions} from './pieces/bridges/discord-gateway.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -49,6 +50,8 @@ it.each([{platform:'discord',revoke:false},{platform:'slack',revoke:false},{plat
  }else await slack.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'event',team_id:workspace,event:{type:'message',channel,user:'UUSER',text:'Accepted bridge words',ts:'1794432000.000001'}}})));
  clock.advance(0);await daemon.idle();const incoming=db.select().from(s.bridgeIncoming).get()!;expect(incoming).toMatchObject({state:'delivered',text:'Accepted bridge words'});
  const token='body_'+'a'.repeat(64),job:WorkerAssignment={id:'native',agent:'art',box:'box',conversation:incoming.conversation,venue:platform,thread:null,model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
+ // The room loom reads for the job, as its dispatcher hands it: a guest wrote, so the body is held to loom's tools.
+ job.run={nestedContainers:false,gpu:false,ports:[],policy:jobRoom(db,job)};
  root.writes.run(()=>{db.insert(s.jobs).values({id:job.id,agent:'art',box:'box',conversation:job.conversation,title:'',brief:'',model:'requested',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:now()}).run();db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Synthetic native body',kind:'agent',agent:'art',job:job.id,createdAt:now()}).run();});
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   expect(JSON.stringify({args,options})).not.toContain(token);expect(db.select().from(s.inbox).get()?.state).toBe('taken');let words='';

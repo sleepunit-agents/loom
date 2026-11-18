@@ -13,6 +13,7 @@ import {tempoWatch} from './core/tempo/sources.js';
 import {FakeClock} from './core/clock.js';
 import {exampleRuntime,exampleModelRoles,exampleBackdateMs} from './example-runtime.js';
 import {CommsMessages} from './core/conversations/messages.js';
+import {lateMailWaits} from './core/conversations/index.js';
 import {loadKey} from './pieces/comms/crypto.js';
 import { commsKeepDays } from './core/data/comms-days.js';
 
@@ -69,7 +70,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   // One old, still-retained reply lets the walkthrough cross a real deadline
   // on its fake clock without advancing every runtime timer for a fortnight.
   const keepDays=commsKeepDays(db);
-  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*DAY_MS+1000).toISOString());
+  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*DAY_MS+1000).toISOString(),lateMailWaits);
   const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
   const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');

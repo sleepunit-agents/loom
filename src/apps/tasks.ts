@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Conversations } from '../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
@@ -77,7 +77,7 @@ export type ReadsConversation = (person: string, conversation: string) => boolea
 export function taskService(db: DataDatabase, now: () => string = () => new Date().toISOString(), reads?: ReadsConversation): TaskService {
   const filedFor = (task: TaskRow, conversation: { id: string; member: string | null } | null, person: string) =>
     conversation && (reads ? reads(person, conversation.id) : conversation.member === person) ? { conversation: conversation.id } : { conversation: null, ...labels(task) };
-  const mail = new Conversations(db, now);
+  const mail = new Conversations(db, now, lateMailWaits);
   /** The labels a stored item about a task took from the task when it was sent, read again from the task as
    * it is now; nothing for an item that carries its conversation's labels instead. This is the other half
    * of `filedFor` and of how `answer` files what it sends: what they copy from the task, this gives again

@@ -4,7 +4,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { approvals, approvalRecord, approvalNotices } from '../core/data/schema.js';
-import { Conversations } from '../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { householdOwners } from '../shared-sharing.js';
 
 export type Approval = typeof approvals.$inferSelect;
@@ -31,7 +31,7 @@ export type ApprovedOperations = ReadonlyMap<string, (approval: Approval) => voi
  * the external door; this service still binds a spend to agent, kind and target.
  */
 export function approvalService(db: DataDatabase, operations: ApprovedOperations = new Map(), now: () => string = () => new Date().toISOString()) {
-  const mail = new Conversations(db, now);
+  const mail = new Conversations(db, now, lateMailWaits);
   const answer = (row: Approval, member: string, allowed: boolean) => {
     const scope=mail.answerScope(row.conversation,row.agent,{project:row.project,member:row.member})??{project:row.project,member:row.member};
     const questions = mail.resolve('approval', row.id, allowed ? 'Allowed' : 'Denied');

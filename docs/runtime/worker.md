@@ -149,7 +149,7 @@ said whose it was, and no stage is guessed.
 | 15 | body record | Recording the answer in loom. |
 | 16 | body config | The machine's body file could not be read or is not valid. |
 | 17 | body envelope | What the worker handed over on stdin is not a body's input. |
-| 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. |
+| 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. One exception: mail from a sender nobody looked up turned the job's word after the mail was taken, and the harness always has a shell ("What a body may use"). That mail was taken and not settled; it goes back to the job. |
 | 19 | body report | The first report to loom failed: loom unreachable, or the job no longer this body's. |
 | 20 | body contact | A later report failed while the body was at work: it lost loom, or loom had ended the job. The body dropped what it was doing, whatever stage that was. |
 | 21 | worker input | Fetching the private repository input. |
@@ -162,7 +162,7 @@ said whose it was, and no stage is guessed.
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 30 | worker house | The house's image does not meet the image contract: it does not say it is a house of this layout (`loom.house="2"`), it does not list the job's harness, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
-| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
+| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Or, at once: the job works on anybody else's word and every model the agent has runs on a harness that always has a shell ("What a body may use"). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 | 32 | worker build time | The house was not fetched and built within the build limit (`buildTimeoutMs`). The worker reported on the job all the while. |
 
 Any other code is the runner's own (a builder or a custom runner). A job swept
@@ -618,8 +618,9 @@ container. With an engine that runs as root, a house that keeps the core's
 root runs as the machine's root inside its container; a house for such a
 machine sets a `USER` that can write the sign-in directory.
 
-**Sessions.** A body of a Discord or Slack conversation continues the session
-the last body of that conversation left: loom hands it the session, it puts the
+**Sessions.** A body of a Discord or Slack conversation whose job works on its
+owners' word, or is the agent's own work, continues the session
+the last such body of that conversation left: loom hands it the session, it puts the
 files back in the harness's own directory, and hands them back to loom when it
 has answered ([accepted-tradeoffs.md](../accepted-tradeoffs.md), "A harness
 session is kept between bodies"). It does so only where that directory is the
@@ -634,7 +635,8 @@ bodies:** each then starts fresh with what was said before. A house that sets
 `CLAUDE_CONFIG_DIR` to anywhere but `/home/agent/.claude` turns it off too, and
 so does a house whose image has no such directory: a body never makes it. A
 body run as a plain process (no `container` in the configuration) is never told
-its harness's directory is its own and keeps no session.
+its harness's directory is its own and keeps no session. A body whose job works
+on anybody else's word keeps and continues none anywhere ("What a body may use").
 
 A repository must not assume its own name in a path, a home other than `$HOME`,
 that its checkout is anywhere but `$HOME/repo` (the directory a body starts in),
@@ -1113,11 +1115,114 @@ The child takes mail through the canonical body client into its own context,
 reports it received, then invokes Claude with the assignment's exact model. It
 settles the mail only after the answer is recorded (see "Attempts, retries and
 exit codes").
-Always-denied tool patterns and applicable outside/unknown guest-only patterns
-go into native --disallowedTools. A household person's missing outside tier
-does not make that person a guest. The CLI uses dontAsk permission mode,
-an empty settings-source list, no unrelated MCP servers, and no persisted native
-session. Calls needing interactive native approval are refused.
+Always-denied tool patterns, and the guests-only patterns when the job works on
+anybody else's word, go into native --disallowedTools. Held to loom's tools the
+CLI is given no built-in tool at all (`--tools ""`), every built-in tool is
+also denied by name, and it uses dontAsk permission mode with loom's tools as
+its allow list; with full reach it uses bypassPermissions and none of those. Either way it has an empty settings-source
+list and no unrelated MCP servers. Calls needing interactive native approval are refused.
+
+### What a body may use
+
+Two things decide it, and the lesser wins.
+
+- The machine's body file: `"reach":"loom"` (the default) gives a body loom's
+  tools and nothing else; `"reach":"all"` gives it the harness's own as well.
+- The job's word. loom reads on whose word a job works when it is claimed
+  (`jobWord`, `src/shared-place-mail.ts`) and hands it to the worker as
+  `run.policy.word`: `own`, `owners` or `others`. On `others`, anybody else's
+  word, the body runs with loom's tools only, whatever the body file says
+  (`loomToolsOnly` in `src/policy.ts`, `bodyReach` in
+  `src/runtime/harness-traits.ts`). A room with no `word` comes from an older
+  loom and is read as `others`. So is an assignment with no room at all.
+
+For a job on anybody else's word:
+
+| Harness | Can it run loom-only? | What happens |
+|---|---|---|
+| claude | yes | `--tools "" --permission-mode dontAsk --allowedTools <loom's tools> --disallowedTools <every built-in tool>`: no shell, no files, no web, no subagents. |
+| codex | no, it always has a shell | Refused. Placement passes it over; a body handed one anyway leaves before taking mail. |
+| agy | no, it always has a shell | The same. |
+
+When every model the agent has runs on a harness that cannot, the job is ended
+as soon as a machine asks for work: failed by loom (exit 31), with the note
+"Never started: this job is not working for the agent's owners, so it runs with
+loom's tools only, and every model the agent has runs on a harness that always
+has a shell. Give the agent a model that runs on Claude Code." The mail that
+made the job anybody else's is closed with the same note, so it is carried into
+no later job: an owner's next message in that conversation starts a job on
+owners' word, which runs. Nothing tells the guest; the owners see the note on
+the job.
+
+#### What `loom` reach is on Claude Code, and how it was checked
+
+This holds wherever a body's reach is `loom`: by the machine's body file, for
+any job, and for a job on anybody else's word on any machine.
+
+`--permission-mode dontAsk` with an allow list does not hold a body to that
+list. Run on Claude Code 2.1.326 with only those two, the model ran read-only
+shell commands (`echo`, `cat`: the program allows them without asking), read a
+file with Read, and started a subagent that ran a shell command; only Write and
+WebFetch were denied. That is enough to read the environment and a token file.
+
+So the adapter passes three things (`src/runtime/claude-body.ts`):
+
+- `--tools ""`: no built-in tool is made available. This is what holds.
+- `--disallowedTools` with every built-in tool by name (`claudeBuiltInTools`,
+  read from what 2.1.326 lists at start plus the names its documents use), after
+  the agent's own denials. A second layer, in case a later version changes what
+  `--tools` means.
+- `--permission-mode dontAsk --allowedTools <loom's tools>`, as before.
+
+`scripts/check-claude-floor.mjs` checks this against the real program. It is
+run by a person, on purpose: it needs a signed-in `claude` and spends a few
+tokens, so it is not in the suite. It starts `claude` through the adapter, so
+the argv is the adapter's own, with a small local tools server in place of
+loom's (one harmless tool and sixty filler tools) in a scratch directory that
+holds a canary file. It asks the model to call the tool, run two shell
+commands, read the canary, write a file, fetch a local page and start a
+subagent, and judges by effects and tool events, never by what the model says:
+the tools server saw its call, no other tool gave a result, the canary's
+contents are nowhere in the output, no file was made, the page was not fetched.
+
+Run on 2026-11-18 against 2.1.326 with `claude-haiku-4-5`: all nine checks
+held, and loom's tool was callable with `--tools ""`. The same run with
+`--without-floor` (the two flags taken out) fails three of them: built-in tools
+are listed, Bash, Read and Agent give results, and the canary is read. Run it
+again when the Claude Code a machine uses changes:
+
+    npm run build
+    nice -n 19 node scripts/check-claude-floor.mjs --claude <path> --model claude-haiku-4-5
+
+Such a body asks for no startup secret, is served neither `request_secret` nor
+`use_secret`, is handed no attachment files and may name no file for a post.
+It asks for no kept harness session and leaves none: it starts fresh, with what
+was said before in the conversation, like any body with no session.
+loom's doors refuse it the same things (`/api/secrets/private/*`,
+`secrets.request`, files on `bridges.say`, `conversation.session` and
+`conversation.sessionSave`), each on loom's own reading of the job's word, so
+the body program is not what holds the line. A job on its owners' word, or the agent's own work, is as it was.
+
+The word is settled by the mail a job was admitted for. A message from anybody
+else that arrives later waits for the next job, so a running job's word never
+falls. The body keeps one check of its own: if it is handed mail from a sender
+nobody looked up, it takes its startup secrets back out of the environment,
+puts away the session it was handed without continuing or saving one, and runs
+with loom's tools only. If its harness always has a shell it leaves instead
+(exit 18), before any tools server or harness is started.
+
+No secret a body was handed is said by it. The body program looks for the value
+of each secret it used and of each startup secret of eight bytes or more, each
+as its bytes and as their base64, in its final answer and in every text of
+every tool call: the commands it sends to loom, which is how `bridges.say`,
+`bridges.post` and `bridges.reply` leave, and the reason it gives
+`request_secret`. A call or an answer that holds one is not sent. A shorter
+startup value is not looked for: it could not be told from ordinary words. Only
+texts are looked at, and only these two forms: a value split up, or encoded
+another way, is not found.
+
+A job has one body. `runtime.enrollBody` binds a body token to a starting job
+only while the job has no live one; the same fingerprint again is a repeat.
 
 The child publishes a reply only with the observed main assistant response model,
 and records observed tool-action models separately. Requested, initialization,
@@ -1160,7 +1265,9 @@ as a list: its entries are parted by commas and white space outside brackets, so
 `src/runtime/harness-traits.ts` is the one place that reads it; loom's own rules
 ask it, and a harness is handed one entry to an argument, so the two cannot read
 a line differently. That is Claude Code's documented reading of
-`--disallowedTools`; it was not checked against a running Claude Code. The store
+`--disallowedTools`. What was checked against a running Claude Code is the floor
+under it, not this parting of a stored line: see "What a body may use" for what
+was run, on which version, and what it showed. The store
 also accepts lines no harness is known to honour (an unclosed bracket, which is
 read as one entry to the end of the line; a tab between entries, read as white
 space). An entry that would begin with an option dash once the line is parted

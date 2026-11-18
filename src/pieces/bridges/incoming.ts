@@ -13,7 +13,7 @@
  * nor a second claim on a bot that another connection now holds. */
 import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { Conversations } from '../../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
@@ -77,7 +77,7 @@ export class BridgeIncoming {
   private stopped: { job: string; incoming: string }[] = [];
   /** `stop` ends a job the way an owner's Stop does. Without it the stop word is an ordinary message. */
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), private readonly stop?: StopJob) {
-    this.conversations = new Conversations(db, now);
+    this.conversations = new Conversations(db, now, lateMailWaits);
   }
 
   /** The jobs stop words have ended since this was last asked, each with the message that said it, for

@@ -2,28 +2,36 @@ import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
-import { claudeBody } from './claude-body.js';
+import { claudeBody, claudeBuiltInTools } from './claude-body.js';
 import { HarnessResumeUnavailable } from './body-harness.js';
 import { bodyHarness } from './body-harnesses.js';
 import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
 import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
-  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { word: 'owners', people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
 
+/** The agent's own denials among what a harness was told to withhold. A body held to loom's tools is also
+ * denied every built-in tool by name (claudeBuiltInTools), after the agent's own entries: those are taken off here. */
+const ownDenials = (args: readonly string[]): string[] => {
+  if (!args.includes('--disallowedTools')) return [];
+  const all = args.slice(args.indexOf('--disallowedTools') + 1);
+  for (let own = 0; own <= all.length; own++) if (JSON.stringify(all.slice(own)) === JSON.stringify(claudeBuiltInTools.filter(tool => !all.slice(0, own).includes(tool)))) return all.slice(0, own);
+  return all;
+};
 it('selects the requested model, denies native tools, and reports response models instead of init/request/usage guesses', async () => {
   const f = fixture(), result = f.run(job, 'PRIVATE ACCEPTED MAIL', f.abort.signal); f.env.ACCOUNT_PROFILE = '/changed';
   const args = f.launch.mock.calls[0][1];
   expect(args).toContain('--no-session-persistence'); expect(args).toContain('--strict-mcp-config'); expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2)).toEqual(['--model', 'requested-model']);
-  expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools', 'Read']);
+  expect(ownDenials(args)).toEqual(['Read']);
   expect(f.launch.mock.calls[0][2]).toEqual({ cwd: '/house', env: { PATH: '/usr/bin', ACCOUNT_PROFILE: '/private/account' }, shell: false, detached: false, stdio: 'pipe' });
   expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL'); expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');
   f.finish(f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Edit' }] } }]));
   expect(await result).toEqual({ text: 'Answer é', model: 'observed-model', actions: [{ model: 'tool-model' }] });
 });
 it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', async tier => {
-  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }];
-  const result = f.run(configured, 'mail', f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-3)).toEqual(['--disallowedTools', 'Read', 'Bash(*)']); f.finish(f.rows()); await result;
+  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }]; configured.run!.policy!.word = 'others';
+  const result = f.run(configured, 'mail', f.abort.signal); expect(ownDenials(f.launch.mock.calls[0][1])).toEqual(['Read', 'Bash(*)']); f.finish(f.rows()); await result;
 });
 it('starts no harness for a denial whose later entry would be read as an option', async () => {
   // The store refuses a pattern that begins with a dash. One that hides the dash behind a comma is refused here.
@@ -33,9 +41,9 @@ it('starts no harness for a denial whose later entry would be read as an option'
 it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a shared place that is denied the generic tool under it: %s', async pattern => {
   // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
   const f = fixture(), configured = structuredClone(job);
-  configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];
+  configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }]; configured.run!.policy!.word = 'others';
   configured.run!.policy!.deniedTools = [{ pattern, guestsOnly: true }];
-  const result = f.run(configured, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1], denied = args.slice(args.indexOf('--disallowedTools') + 1);
+  const result = f.run(configured, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1], denied = ownDenials(args);
   // Each entry is its own argument, so the harness has nothing left to split; the generic tool is named as it is called now.
   const generic = 'mcp__loom__' + /loom_(?:command|query)$/.exec(pattern)![0];
   expect(denied).toEqual([...new Set([...pattern.split(/[ ,]/), generic, ...bodyNamedToolNames().map(name => 'mcp__loom__' + name)])]);
@@ -43,8 +51,8 @@ it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__
   expect(denied).toEqual(expect.arrayContaining(['mcp__loom__remember', 'mcp__loom__forget', 'mcp__loom__task_close', 'mcp__loom__recall']));
   f.finish(f.rows()); await result;
   // The same rule with no guest in the room denies nothing.
-  const g = fixture(), household = structuredClone(configured); household.run!.policy!.people = [];
-  const quiet = g.run(household, 'mail', g.abort.signal); expect(g.launch.mock.calls[0][1]).not.toContain('--disallowedTools'); g.finish(g.rows()); await quiet;
+  const g = fixture(), household = structuredClone(configured); household.run!.policy!.people = []; household.run!.policy!.word = 'owners';
+  const quiet = g.run(household, 'mail', g.abort.signal); expect(ownDenials(g.launch.mock.calls[0][1])).toEqual([]); g.finish(g.rows()); await quiet;
 });
 it.each(['requested-only', 'mismatch', 'foreign-session', 'error', 'synthetic', 'subagent', 'aborted', 'invalid-json', 'invalid-utf8', 'overflow'] as const)('refuses %s native output without a guessed response', async mode => {
   const f = fixture(), result = f.run(job, 'mail', f.abort.signal), rows = f.rows();
@@ -75,12 +83,12 @@ it.each(['model-option', 'tool-option', 'harness', 'pre-abort'] as const)('rejec
 
 it('does not classify authenticated household people as guests from a missing outside tier', async () => {
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{kind:'person',person:'household-member',tier:null}];
-  const result = f.run(configured,'mail',f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']); f.finish(f.rows()); await result;
+  const result = f.run(configured,'mail',f.abort.signal); expect(ownDenials(f.launch.mock.calls[0][1])).toEqual(['Read']); f.finish(f.rows()); await result;
 });
 
-it('keeps guest-only tools available for an outside sender with configured tier three',async()=>{
- const f=fixture(),configured=structuredClone(job);configured.run!.policy!.people=[{kind:'outside',person:'outside-key',tier:3}];
- const result=f.run(configured,'mail',f.abort.signal);expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await result;
+it('goes by the job\'s word and not by a tier: an outside sender of tier three is anybody else, and guest-only denials apply',async()=>{
+ const f=fixture(),configured=structuredClone(job);configured.run!.policy!.people=[{kind:'outside',person:'outside-key',tier:3}];configured.run!.policy!.word='others';
+ const result=f.run(configured,'mail',f.abort.signal);expect(ownDenials(f.launch.mock.calls[0][1])).toEqual(['Read','Bash(*)']);f.finish(f.rows());await result;
 });
 
 it('erases original native stdout/stderr buffers and late output after cancellation',async()=>{
@@ -107,7 +115,7 @@ it('erases an unsettled private MCP pipe at cancellation before its write callba
 it('snapshots composed private tool names without broadening denied native tools',async()=>{
  const f=fixture(),names=['mcp__loom__command'],pipe=new Writable({write(_chunk,_encoding,done){done();}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names});names.push('Bash');const pending=run(job,'mail',f.abort.signal),args=f.launch.mock.calls[0][1];
- expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
+ expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom__command']);expect(ownDenials(args)).toEqual(['Read']);f.finish(f.rows());await pending;
 });
 it.each([{names:[{toString:()=> 'mcp__loom__command'} as unknown as string]},{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom__command','mcp__loom__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
  const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();
@@ -121,7 +129,7 @@ it('gives a body the harness\'s own tools only when the machine says so, and sti
   const result = full(job, 'mail', f.abort.signal); const args = f.launch.mock.calls[0][1];
   expect(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
   expect(args).not.toContain('--allowedTools');
-  expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools', 'Read']);
+  expect(ownDenials(args)).toEqual(['Read']);
   f.finish(f.rows()); await result.catch(() => {});
   const g = fixture(), plain = g.run(job, 'mail', g.abort.signal);
   expect(g.launch.mock.calls[0][1][g.launch.mock.calls[0][1].indexOf('--permission-mode') + 1]).toBe('dontAsk');

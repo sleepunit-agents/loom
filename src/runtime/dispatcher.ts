@@ -2,16 +2,20 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
-import { workerPolicy } from './body-policy.js';
+import { lateMailWaits } from '../core/conversations/index.js';
+import { jobRoom, othersMail } from '../shared-place-mail.js';
+import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
+/** What loom records on a job on anybody else's word that no harness the agent has can run. */
+export const UNHELD_NOTE = 'Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
@@ -44,9 +48,16 @@ export class Dispatcher {
         // Settings may gain GPU after admission; never claim an incapable box.
         if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
-        const policy = workerPolicy(this.db, job);
+        // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
+        const policy = jobRoom(this.db, job);
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
+        // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
+        // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
+        // it is ended now and says why. Any other job that cannot be placed waits, as before.
+        // The mail that made it anybody else's is closed with the same reason, so it lowers no later job: an
+        // owner's next message in that conversation starts a job on owners' word, which runs.
+        if (!placement && loomToolsOnly(policy.word) && this.unheld(job.agent, roles, policy)) { this.jobs.unplaceable(job.id, UNHELD_NOTE, othersMail(this.db, job)); continue; }
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
@@ -58,7 +69,7 @@ export class Dispatcher {
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
         const thread = this.currentThread(claimed);
-        if(thread)new Threads(this.db,this.now).working(thread.id,true);
+        if(thread)new Threads(this.db,this.now,lateMailWaits).working(thread.id,true);
         const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
         return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
@@ -66,6 +77,12 @@ export class Dispatcher {
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
     }, { behavior: 'immediate' });
+  }
+  /** Whether the agent has models, and every one of them runs on a harness that would refuse this job. */
+  private unheld(agent: string, roles: readonly ModelRole[], policy: WorkerRunPolicy): boolean {
+    const harnesses = this.db.select({ model: agentModels.model }).from(agentModels).where(eq(agentModels.agent, agent)).all()
+      .flatMap(row => roles.filter(role => role.model === row.model).map(role => role.harness));
+    return harnesses.length > 0 && harnesses.every(harness => this.cannotRun(harness, policy));
   }
   /** A lane's work runs in the conversation its trigger opened, whose place names the trigger (wakePlace). What that trigger
    * wants to run on is read when the job is placed, so an edit to the lane takes effect at once. */
@@ -110,7 +127,7 @@ export class Dispatcher {
         // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.
         if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
         const thread = this.currentThread(job);
-        if (thread) new Threads(this.db, this.now).working(thread.id, true);
+        if (thread) new Threads(this.db, this.now, lateMailWaits).working(thread.id, true);
       }
       // The worker reports a live process in the state the job is already in; its report moves no job.
       this.jobs.heartbeat(id, box, state);

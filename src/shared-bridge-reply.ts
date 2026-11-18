@@ -4,7 +4,7 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
-import { channelPlace,isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
+import { channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
 import { channelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
@@ -22,6 +22,8 @@ import { OperationError,type Operations } from './core/operations/index.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 /** The most posts loom makes for the mail one job took: what the body says during its run and its reply. */
 export const BRIDGE_POSTS_PER_JOB=20;
+/** Why a post from a job on anybody else's word carries no file. */
+export const NO_FILES_REFUSAL='This job is not working for the agent\'s owners: it runs with loom\'s tools only, and its posts carry no files.';
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,sends:BridgeSends,
  conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
@@ -131,6 +133,9 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   run(ctx,input){
    const bound=speaking(ctx.viewer);if(!bound)throw new OperationError('denied','Current bridge body required');
    if(!bound.incoming&&bound.place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${bound.place.closed}`);
+   // A job on anybody else's word has no file tools (policy.ts, loomToolsOnly; runtime/harness-traits.ts, hasFileTools),
+   // so its body program reads no file for a post. The door says the same, for a body program that sent bytes anyway.
+   if(input.files){const found=current(ctx.viewer);if(!found||jobHeld(db,found.job))throw new OperationError('denied',NO_FILES_REFUSAL);}
    // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
    const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
