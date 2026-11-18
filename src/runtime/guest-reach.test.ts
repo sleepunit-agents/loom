@@ -91,3 +91,31 @@ it('asks for no startup secret for such a job, and still does for the owners\'',
   const owners = await run('owners'); expect(owners.code).toBe(0); expect(owners.paths).toContain('startup');
   const guest = await run('others'); expect(guest.code).toBe(0); expect(guest.paths).not.toContain('startup');
 });
+
+it('takes the startup secrets back out before the harness starts when a stranger\'s mail turns the word late', async () => {
+  const { bodyProgram } = await import('./body-program.js');
+  const raw = 'body_' + 'a'.repeat(64), env: NodeJS.ProcessEnv = {};
+  const job = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
+    run: { nestedContainers: false, gpu: false, ports: [], policy: { ...room('owners'), mail: ['claimed'] } } };
+  const input = Buffer.from(JSON.stringify({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } }));
+  const item = (id: string, fromKind: string, seq = 1) => ({ id, seq, source: 'thread', sourceId: null, fromKind, fromId: null, at: '2026-11-15T00:00:00.000Z', words: 'MAIL', keepUntil: null, verdict: null, refs: [] });
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url).split('/').at(-1)!;
+    if (path === 'startup') return Response.json({ aliases: [{ alias: 'GITHUB_TOKEN' }] });
+    if (path === 'read') return new Response(new Blob([Buffer.from('PRIVATE_STARTUP')]), { headers: { 'content-type': 'application/octet-stream', 'x-loom-secret-use': 'use-input-' + 'a'.repeat(64) } });
+    if (path === 'confirm' && String(url).includes('/secrets/')) return Response.json({ confirmed: true });
+    void init;
+    const values = { take: { job: 'job', conversation: 'cv', stopRequested: false, items: [item('claimed', 'person'), item('late', 'unknown', 2)] },
+      digest: { saved: true, digest: 'digest', revision: 1, item: null }, accept: { saved: true }, confirm: { saved: true }, status: { saved: true, stopRequested: false }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 } };
+    return Response.json({ ok: true, value: values[path as keyof typeof values] });
+  };
+  let seen: { token: string | undefined; word: string | undefined } | undefined;
+  const code = await bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house', reach: 'all' }), stdin: async () => input, env, signal: new AbortController().signal, fetch: fetcher as typeof fetch,
+    native: async assigned => { seen = { token: env.GITHUB_TOKEN, word: assigned.run?.policy?.word }; return { text: 'Answer', model: 'observed', actions: [] }; }, loadMemory: async () => null, error: () => {} });
+  expect(code).toBe(0); expect(seen).toEqual({ token: undefined, word: 'others' });
+  // An owners' job keeps its startup secrets, and an answer that says one of their values is not recorded.
+  const again = (text: string) => { const bytes = Buffer.from(JSON.stringify({ job: { ...job, run: { ...job.run, policy: { ...room('owners'), mail: ['claimed', 'late'] } } }, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } }));
+    return bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house', reach: 'all' }), stdin: async () => bytes, env: {}, signal: new AbortController().signal, fetch: fetcher as typeof fetch,
+      native: async () => ({ text, model: 'observed', actions: [] }), loadMemory: async () => null, error: () => {} }); };
+  expect(await again('All done')).toBe(0); expect(await again('The token is PRIVATE_STARTUP')).toBe(14);
+});
