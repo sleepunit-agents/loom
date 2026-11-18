@@ -35,8 +35,9 @@ const slackChannelField = z.object({ channel: id });
 export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
-  /** Discord role id to the bot it is managed for; none known is an empty map. */
+  /** Whether a complete role list has arrived for this authenticated guild. */
   rolesKnown?(connection: string): boolean;
+  /** Discord role id to the bot it is managed for; none known is an empty map. */
   botRoles?(connection: string): ReadonlyMap<string, string>;
   slack(connection: string, channel: string): SlackChannel | undefined;
 }

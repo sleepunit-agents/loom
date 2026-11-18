@@ -850,36 +850,38 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: a household wanting an agent to ping a role. Then the roles it may ping are named on the
   connection, and only those are allowed.
 
-### A Discord attachment is a link in the words and a file in the body's scratch directory
-- What: a Discord message's attachments, ten at most, are listed after its words, one line each, with name,
-  type, size and Discord's own signed link (which stops working after about a day). The first five of a
-  delivered message, each up to 8 MB, are also fetched and kept as a Slack message's files are
-  (`bridge_files`, fourteen days, or the keep time for a direct conversation). A link is used only when it
-  is on `cdn.discordapp.com` or `media.discordapp.net`; an HTML page is never kept. Before its harness
-  starts, a body with file tools of its own (`hasFileTools`: never one whose job works on anybody else's word) writes the kept files of the messages it took into its own scratch
-  directory (at most ten files and 32 MB a run, any type that was kept) and its input names each path.
-  A file that could not be fetched, or was not fetched yet when the body started, is only its link.
-- Where: `discordWords` in `src/pieces/bridges/normalize.ts`; `discord-files.ts` and the pump in
-  `shared-daemon.ts`; `files.ts` (`HANDED_FILE_BYTES`); the body's side is `src/runtime/body-attachments.ts`.
-- Why: a message that is only a picture has words and is answered, and a model can open the picture as a
-  file, which it cannot do with bytes in a tool result. The scratch directory is the body's alone and is
-  removed with it, so nothing sent to one conversation is left for another. The fetch is separate from
-  delivery so that a slow or failed download never holds a message back.
-- Would change it: bodies starting before a file has arrived often enough to matter. Then admission waits
-  for a message's files, or the body waits for them.
+### A Discord attachment can be opened by a body with file tools
+
+Loom includes the attachment name, type and size in the words it delivers. A picture alone therefore
+counts as mail. When a body with file tools prepares that mail, the adapter reads the message again
+from Discord to obtain current signed links. Each file gets one message lookup and, on a cache miss,
+one CDN GET. The pair has a twelve-second deadline so preparation fits within the body's normal
+command timeout. An edited message can still use an original cached file. The adapter checks the
+message, channel, author and byte count.
+It accepts files only on Discord's file hosts, follows no redirects and sends no bot token to the CDN.
+A restricted job receives the descriptions and an explanation that it cannot open files. When old mail is handed to a body, Loom strips the signed
+URLs that older versions appended to the attachment descriptions.
+
+The first ten files per message are eligible. An 8 MiB limit per file bounds a single download and
+the size handed through the body command. Ten files and 32 MiB per run bound the scratch directory
+and the work done before the harness starts. A deleted message, a refused download or a limit can
+leave the body without a file. The body can still answer the mail. Existing cached files have their
+usual retention of fourteen days or the shorter private-conversation keep time.
+
+See `discord-files.ts`, `shared-daemon.ts` and `src/runtime/body-attachments.ts`.
+[Discord signed attachment links](https://docs.discord.com/developers/reference#signed-attachment-cdn-urls)
 
 ### Who a Discord thread hangs under is read once, from its starter message
 - What: a message in a thread, that is not itself a reply, answers whoever wrote the message the thread was
   started from, so a thread under a bot's message addresses that bot whoever posted the message (loom, the
   old bridge, a script with the same token). The author is read when loom first meets the thread and kept
   for the connection's lifetime. A thread made on its own, or whose starter was deleted or cannot be read,
-  hangs under nobody's message. Which roles are a bot's own is read the same way, once when the connection
-  starts: a role made afterwards counts from the next reconnect.
+  hangs under nobody's message. The bridge reads the guild's managed bot roles at startup, retries a failed read,
+  and follows that guild's snapshots and role create, update and delete events while connected. If the read fails,
+  messages with unresolved written role pings wait in the receipt spool while other messages proceed.
 - Where: `starter` and `roles` in `src/pieces/bridges/channel-api.ts`, kept by `channels.ts`, used by
   `normalizeDiscord`; the reads are made in `shared-daemon.ts`.
-- Why: Discord's message event carries neither. One read for a thread and one for a guild's roles is the
-  least that tells them, and both are stable.
-- Would change it: role pings that fail after a bot is re-invited. Then `GUILD_ROLE_UPDATE` is listened for.
+- Why: Discord's message event carries neither. The starter is stable. A bot's managed role can change while the bridge is connected.
 
 ### The stop word ends the job, and only a member who may end it can say it
 - What: a bridge message that is only "stop" or "cancel" (any case, trailing `.` or `!`, mentions aside),
@@ -935,21 +937,22 @@ Entries are grouped by the part of the program they belong to.
   or the door's limit is raised for this one route.
 
 ### Taken and working are shown on Discord, best effort
-- What: when a running job has taken a Discord message the bot reacts 👀 to it, and while that mail is
-  unanswered it keeps the typing indicator showing in the channel. The reaction is taken off when the mail
-  is settled, by the reply or by the job ending. A call Discord refuses is tried again on a later pass
-  while it is still wanted and is otherwise dropped: it changes no job, mail, send or connection, and is
-  not reported. Which messages carry the reaction is kept in memory only, so a restart of loom between a
-  job taking a message and answering it leaves that 👀 on. Slack shows neither.
-- Where: `src/pieces/bridges/presence.ts` (`workingOn` reads what to show; `BridgePresence` shows it),
-  called by `shared-daemon.ts` after committed writes and on its five-second pass.
-- Why: a job can take minutes, or wait behind another, and a person who sees nothing asks again. The
-  reaction is removed because the reply is the acknowledgment; left on, every answered message would keep
-  one. It is read from the mail and the job and not sent by the body, so a body that dies still has its
-  reaction taken off, and nothing about showing it can fail the work. Slack's app has no reactions scope
-  and Slack has no typing call for bots; adding a scope is a change to the client's workspace.
-- Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
-  and cleared at start.
+
+The daemon adds 👀 to each human message a running job took, and tries to remove it on settlement.
+It groups outstanding work by connection and destination. Two jobs owing the same channel a reply
+share one typing request every five seconds, at most twelve steady-state requests per minute there.
+A normally acknowledged human message costs two additional requests, one to add and one to remove
+the reaction. When work ends without a post, the last typing indication can remain visible for the
+rest of Discord's ten-second expiry.
+
+Each connection allows up to eight presence requests per one-second window. When that window reopens,
+the daemon checks which jobs still need a signal. An exhausted bucket
+or a 429 pauses presence on that connection for the advertised interval. Other bot traffic shares
+Discord's global allowance. Under load
+an indication can be late or absent. Presence has no durable ledger. A crash or a refused removal can
+leave an eye reaction behind. A later PUT for the bot's own reaction is idempotent. Slack has no
+presence implementation here. See `src/pieces/bridges/presence.ts`.
+[Discord rate limits](https://docs.discord.com/developers/topics/rate-limits)
 
 ### One job holds one asker's mail
 - What: reach follows who asked, never who else is in the room (the owner's ruling, 2026-11-18: "If he
