@@ -69,15 +69,16 @@ it.each([
 });
 
 it('filters before root pagination and correlated generated relations', async () => {
+  client.prepare('UPDATE triggers SET needs=?, prefers=? WHERE id=?').run('["linux"]', '["fast"]', 'b-project');
   statements.length = 0;
   const result = await graphql({schema:schemaFor({kind:'member',id:'sam'}),source:`{
     triggers(orderBy:{id:{direction:asc,priority:0}},limit:1) { id triggerLogByTrigger { trigger note triggerRow { id } } }
-    triggerLog(orderBy:{seq:{direction:asc,priority:0}},limit:1) { trigger triggerRow { id instructions } }
+    triggerLog(orderBy:{seq:{direction:asc,priority:0}},limit:1) { trigger triggerRow { id instructions needs prefers } }
   }`});
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({
     triggers:[{id:'b-project',triggerLogByTrigger:[{trigger:'b-project',note:'log b-project',triggerRow:{id:'b-project'}}]}],
-    triggerLog:[{trigger:'b-project',triggerRow:{id:'b-project',instructions:'words b-project'}}],
+    triggerLog:[{trigger:'b-project',triggerRow:{id:'b-project',instructions:'words b-project',needs:['linux'],prefers:['fast']}}],
   });
   const reads=statements.filter(s=>/^select /i.test(s));
   expect(reads).toHaveLength(2);

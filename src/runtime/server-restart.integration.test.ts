@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {afterEach, expect, it} from 'vitest';
-import {createDataSchema, dataDatabase, dataSchemaNumber} from '../core/data/database.js';
+import {createDataSchema, dataSchemaNumber, recogniseDataSchema} from '../core/data/database.js';
 import * as s from '../core/data/schema.js';
 import {httpWorkerControl} from './worker-http.js';
 import {workOnce, type WorkerExecutor} from './worker.js';
@@ -16,19 +16,11 @@ const start = Date.UTC(2026, 10, 18), token = 'r'.repeat(64);
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const stop of cleanup.splice(0).reverse()) await stop(); });
 
-function seed(file: string, old: boolean, pendingMail: boolean) {
+function seed(file: string, pendingMail: boolean) {
   const sqlite = new Database(file);
   const at = new Date(start).toISOString();
   try {
-    if (old) {
-      // Match createDataSchema: one durable fixture commit, not a disk sync for every index.
-      sqlite.transaction(() => {
-        sqlite.exec(readFileSync(new URL('../core/data/shipped-shapes/12.sql', import.meta.url), 'utf8'));
-        const mark = sqlite.prepare('INSERT INTO migrations VALUES (?, ?)');
-        for (let n = 1; n <= 12; n++) mark.run(n, at);
-      })();
-    } else createDataSchema(sqlite);
-    const db = dataDatabase(sqlite, () => at);
+    const db = createDataSchema(sqlite, () => at);
     db.insert(s.members).values({id:'alice', role:'member', joinedAt:at}).run();
     db.insert(s.agents).values({id:'art', about:'', markBg:'#000', markFg:'#fff', faceShape:'pebble', faceEyes:'dot'}).run();
     db.insert(s.memberAgents).values({member:'alice', agent:'art'}).run();
@@ -44,6 +36,27 @@ function seed(file: string, old: boolean, pendingMail: boolean) {
     db.insert(s.threads).values({id:'thread',conversation:'cv',title:'Fixture',titledBy:'member',pinned:false,openedAt:at,lastAt:at,readSeq:0,working:false,stopRequested:false}).run();
     db.insert(s.jobs).values({id:'job',agent:'art',member:'alice',conversation:'cv',title:'Fixture',state:'queued',brief:'',model:'fixture',startedByKind:'member',startedBy:'alice',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:at}).run();
     if (pendingMail) db.insert(s.inbox).values({id:'mail',toKind:'agent',to:'art',conversation:'cv',source:'thread',sourceId:'thread',fromKind:'person',fromId:'alice',at,state:'waiting',job:'job',changedAt:at}).run();
+  } finally { sqlite.close(); }
+}
+
+/** The first process exercises an actual claim and leaves the body running. Preserve that household
+ * in the last shipped shape, as it would have been on disk at an upgrade. The replacement process
+ * must recognise it, migrate it and accept the surviving worker and body's existing credentials. */
+function leaveVersion13(file: string) {
+  const sqlite = new Database(file);
+  try {
+    sqlite.transaction(() => {
+      sqlite.exec(`
+        ALTER TABLE boxes DROP COLUMN slots;
+        ALTER TABLE agent_run_settings DROP COLUMN prefers;
+        ALTER TABLE jobs DROP COLUMN prefers;
+        ALTER TABLE jobs DROP COLUMN placement_decision;
+        ALTER TABLE triggers DROP COLUMN needs;
+        ALTER TABLE triggers DROP COLUMN prefers;
+        DELETE FROM migrations WHERE number = 14;
+      `);
+      expect(recogniseDataSchema(sqlite)).toBe(13);
+    })();
   } finally { sqlite.close(); }
 }
 
@@ -77,7 +90,7 @@ it.each([
   const directory = mkdtempSync(join(tmpdir(),'loom-restart-'));
   cleanup.push(() => rmSync(directory,{recursive:true,force:true}));
   const file = join(directory,'household.sqlite'), overdue = seconds > 120;
-  seed(file,schema,overdue);
+  seed(file,overdue);
   let time = start;
   const serve = async (port: number, upgrade: boolean, hold = false) => {
     const server = fixtureProcess('server',directory,[file,String(port),String(time),upgrade?'upgrade':'existing',hold?'tool':'']);
@@ -125,6 +138,7 @@ it.each([
     await reach(committed.then(reply => {expect(reply).toBe('committed');}));
   }
   await first.stop();
+  if (schema) leaveVersion13(file);
   for (let elapsed = 0; elapsed < seconds*1000; elapsed += REPORT_MS) {
     time = start + elapsed; report = undefined; tick();
     if (report) await Promise.resolve(report).catch(() => {});

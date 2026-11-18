@@ -36,6 +36,29 @@ Two other ways a time passes are not misses:
 Events (an answer, a job, a pull request) are not times. One seen while the
 agent is paused fires when the agent resumes.
 
+## Choosing a machine for a firing
+
+The same caller who may set or edit a trigger may give it `needs` and
+`prefers`. Both take arrays of machine facts. Every need must match.
+A machine that meets every preference goes ahead of other eligible machines.
+A missing preference never holds up work.
+
+For a lane that reads journals on loom, first give only that machine the
+owner fact `site:loom`. The machine ID by itself is not a fact. Example
+input to `tempo.set`:
+
+```json
+{"ownerKind":"agent","owner":"art","sourceKind":"time","times":"07:13","lifespan":"until-stopped","targetKind":"inbox","toKind":"agent","to":"art","note":"Journal triage","instructions":"Read the local journals.","needs":["site:loom"]}
+```
+
+For a standing lane that should prefer a house but can run elsewhere, send
+`{"id":"<trigger id>","prefers":["house"]}` to `tempo.edit`. The same fields
+apply when the firing is started by hand. An omitted preference inherits
+the agent's defaults. An explicit empty list uses only the agent's machine
+order. Editing the preference to `null` restores inheritance. Admission snapshots these choices. Edits affect subsequent jobs.
+When multiple firings share one admitted batch, loom combines their distinct
+requirements and their explicit preferences. Retries keep the original lists.
+
 ## Who may schedule, and from where
 
 Who may set a trigger is `maySetTrigger` in `src/policy.ts`. On whose word the

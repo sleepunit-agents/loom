@@ -107,9 +107,10 @@ export function placeScheduleWords(ask: PlaceScheduleAsk): string {
   const who = `asked for there by ${named(ask.asker)}, who is not one of ${ask.agent}'s owners`, where = `conversation ${ask.conversation} (${ask.place})`;
   if (ask.action === 'set') { const t = ask.trigger;
     return `Set a repeating schedule for ${ask.agent} in ${where}, ${who}. Times: ${t.times}${t.days ? `, on ${t.days}` : ', every day'}, ${t.lifespan === 'today' ? 'today only' : 'until it is stopped'}. `
-      + `Its note, in the words of the body that asked and not loom's: ${quoted(t.note)}. What each firing tells the body, in the same body's words: ${quoted(t.instructions)}.${t.wantsModel ? ` Model wanted: ${quoted(t.wantsModel)}.` : ''}`; }
+      + `Its note, in the words of the body that asked and not loom's: ${quoted(t.note)}. What each firing tells the body, in the same body's words: ${quoted(t.instructions)}.${t.wantsModel ? ` Model wanted: ${quoted(t.wantsModel)}.` : ''}${t.needs ? ` Machine needs: ${JSON.stringify(t.needs)}.` : ''}${t.prefers ? ` Machine preferences: ${JSON.stringify(t.prefers)}.` : ''}`; }
   const c = ask.change, parts = [c.times !== undefined ? `times ${c.times}` : '', c.days !== undefined ? `days ${c.days ?? 'every day'}` : '', c.note !== undefined ? `its note ${quoted(c.note)}` : '',
-    c.instructions !== undefined ? `what each firing tells the body ${quoted(c.instructions)}` : '', c.wantsModel !== undefined ? `model wanted ${quoted(c.wantsModel)}` : ''].filter(Boolean);
+    c.instructions !== undefined ? `what each firing tells the body ${quoted(c.instructions)}` : '', c.wantsModel !== undefined ? `model wanted ${quoted(c.wantsModel)}` : '',
+    c.needs !== undefined ? `machine needs ${c.needs === null ? 'cleared' : JSON.stringify(c.needs)}` : '', c.prefers !== undefined ? `machine preferences ${c.prefers === null ? 'inherited from the agent' : JSON.stringify(c.prefers)}` : ''].filter(Boolean);
   // What stands is shown with what changes: an owner who allows a change of times allows the words that will then repeat.
   const s = ask.standing, stands = s ? ` As it stands: times ${s.times ?? 'none'}${s.days ? `, on ${s.days}` : ''}; its note ${quoted(s.note)}; what each firing tells the body ${quoted(s.instructions)}.` : '';
   return `Change schedule ${shownId(ask.id)} of ${ask.agent} in ${where}, ${who}. It repeats once changed. Changed, with the note and words in the words of the body that asked and not loom's: ${parts.join('; ')}.${stands}`;

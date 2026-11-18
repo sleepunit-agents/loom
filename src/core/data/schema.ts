@@ -754,6 +754,8 @@ export const triggers = sqliteTable('triggers', {
   askedByKind: text('asked_by_kind', { enum: ["member", "outside", "agent"] }),
   askedBy: text('asked_by'),
   askedAt: text('asked_at'),
+  needs: text('needs', { mode: 'json' }).$type<string[]>(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('triggers_asked_at_utc', utc(t.askedAt)),
   check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
@@ -907,6 +909,7 @@ export const boxes = sqliteTable('boxes', {
   enrolledAt: text('enrolled_at').notNull(),
   lastSeenAt: text('last_seen_at'),
   revokedAt: text('revoked_at'),
+  slots: integer('slots'),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -975,6 +978,8 @@ export const jobs = sqliteTable('jobs', {
   claimedAt: text('claimed_at'),
   heardAt: text('heard_at'),
   endedAt: text('ended_at'),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
 }, t => [
   check('jobs_retry_at_utc', utc(t.retryAt)),
   check('jobs_queued_at_utc', utc(t.queuedAt)),
@@ -1023,6 +1028,7 @@ export const agentRunSettings = sqliteTable('agent_run_settings', {
   repositorySecret: text('repository_secret').references((): AnySQLiteColumn => secrets.name),
   nestedContainers: integer('nested_containers', { mode: 'boolean' }).notNull(),
   gpu: integer('gpu', { mode: 'boolean' }).notNull(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('agent_run_settings_nested_containers_boolean', sql`${t.nestedContainers} in (0, 1)`),
   check('agent_run_settings_gpu_boolean', sql`${t.gpu} in (0, 1)`),

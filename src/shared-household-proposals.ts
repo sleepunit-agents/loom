@@ -237,6 +237,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='runSettings'){
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,value.input.agent)).get();if(!row)return null;
    return sorted({agent:row.agent,houseRepository:row.houseRepository,houseFile:row.houseFile,houseBranch:row.houseBranch,nestedContainers:row.nestedContainers,gpu:row.gpu,
+    ...(value.input.prefers === undefined ? {} : {prefers:row.prefers ?? []}),
     boxes:db.select().from(agentBoxes).where(eq(agentBoxes.agent,row.agent)).orderBy(asc(agentBoxes.position)).all().map(entry=>entry.box),
     ports:db.select({address:agentHousePorts.address,port:agentHousePorts.port}).from(agentHousePorts).where(eq(agentHousePorts.agent,row.agent)).orderBy(asc(agentHousePorts.address),asc(agentHousePorts.port)).all()});
   }
@@ -247,7 +248,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='browserSignOut'){const rows=browsers(value.input);return rows.length?sorted({member:value.input.member,device:value.input.device,browsers:rows.length}):null;}
   // A new schedule replaces nothing. A change is sealed on what the schedule says now and whose it is.
   if(value.change==='placeSchedule'){const id=value.input.action==='set'?value.input.trigger.id:value.input.id,row=db.select().from(triggerRows).where(eq(triggerRows.id,id)).get();
-   return row?sorted({id:row.id,times:row.times,days:row.days,lifespan:row.lifespan,note:row.note,instructions:row.instructions,wantsModel:row.wantsModel,on:row.enabled,askedByKind:row.askedByKind,askedBy:row.askedBy}):null;}
+   return row?sorted({id:row.id,times:row.times,days:row.days,lifespan:row.lifespan,note:row.note,instructions:row.instructions,wantsModel:row.wantsModel,
+    ...(row.needs == null ? {} : {needs:row.needs}),...(row.prefers == null ? {} : {prefers:row.prefers}),
+    on:row.enabled,askedByKind:row.askedByKind,askedBy:row.askedBy}):null;}
   const current=household.settings() as Record<string,unknown>;
   return sorted(Object.fromEntries(Object.keys(value.input).map(key=>[key,current[key]])));
  };

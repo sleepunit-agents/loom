@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes } from '../core/data/schema.js';
-import { selectPlacement } from './placement.js';
+import { decidePlacement, selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
 function fixture() {
@@ -153,4 +153,30 @@ it('hands nothing to the machine of a removed member, whatever lists it was left
   // A removed agent is placed nowhere.
   db.update(agents).set({ removedAt: input.now }).where(eq(agents.id, 'art')).run();
   expect(selectPlacement(db, input)).toBeUndefined();
+});
+
+it('prefers a machine meeting every preferred fact, then uses the agent order among ties or fallbacks', () => {
+  const { db, input } = fixture();
+  const prefers = ['gpu:5090', 'large'];
+  db.insert(boxFacts).values([
+    { box: 'remote', fact: 'gpu:5090', fromOwner: true },
+    { box: 'remote', fact: 'large', fromOwner: false },
+  ]).run();
+  expect(selectPlacement(db, { ...input, prefers })?.box).toBe('remote');
+  expect(selectPlacement(db, { ...input, prefers: [...prefers, 'other'] })?.box).toBe('local');
+  db.delete(modelAccountBoxes).where(eq(modelAccountBoxes.box, 'remote')).run();
+  expect(selectPlacement(db, { ...input, prefers })?.box).toBe('local');
+});
+
+
+it('records why each configured machine was passed even when none can claim', () => {
+  const { db, input } = fixture();
+  const reason = (needs?: string[]) => decidePlacement(db, { ...input, needs }).decision[0];
+  expect(reason(['gpu'])).toMatchObject({ box: 'local', outcome: 'passed', reason: expect.stringContaining('gpu') });
+  db.update(modelAccounts).set({ hasRoom: false }).run();
+  expect(reason()).toMatchObject({ outcome: 'passed', reason: expect.stringContaining('account with room') });
+  db.update(boxes).set({ hostsAny: false }).where(eq(boxes.id, 'local')).run();
+  expect(reason()).toMatchObject({ outcome: 'passed', reason: expect.stringContaining('does not host art') });
+  db.update(boxes).set({ lastSeenAt: null }).where(eq(boxes.id, 'local')).run();
+  expect(reason()).toMatchObject({ outcome: 'passed', reason: expect.stringContaining('not live') });
 });

@@ -156,9 +156,10 @@ export async function workerProgram(input: {
     stage = 'token';
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
+    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     const remote = { url: config.url, token, signal: abort.signal };
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
-    const control = (input.control ?? httpWorkerControl)({ ...remote, silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
+    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container
@@ -182,7 +183,7 @@ export async function workerProgram(input: {
     };
     stage = 'health';
     if (config.accountUsage) {
-      const health = async () => { await (input.health ?? reportWorkerHealth)(config.facts === undefined ? remote : { ...remote, facts: config.facts }); };
+      const health = async () => { await (input.health ?? reportWorkerHealth)({ ...remote, slots, facts: config.facts }); };
       if (abort.signal.aborted) return 0;
       await health();
       let heartbeat: Promise<void> | undefined, failed = false;
@@ -228,7 +229,6 @@ export async function workerProgram(input: {
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
     // A slot that fails (a body it could not end) stops the others; each ends its own body before the
     // worker goes on to exit, and the first failure is the one reported.
-    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     // One number is every harness's. Otherwise each harness has what the configuration says for it, or its default.
     const said = config.accountSlots, own = (map: Readonly<Record<string, number>>, harness: string) => Object.hasOwn(map, harness) ? map[harness] : undefined;
     const turns = workerTurns({ accounts: typeof said === 'number' ? said

@@ -13,7 +13,7 @@ const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastS
 export class Machines {
   constructor(readonly db: DataDatabase, readonly now: () => string) {}
 
-  heartbeat(id: string, facts?: readonly string[]): Box {
+  heartbeat(id: string, facts?: readonly string[], slots?: number | null): Box {
     const reported = facts === undefined ? undefined : machineFacts.parse(facts);
     return this.db.transaction(() => {
       const box = this.db.select().from(boxes).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).get();
@@ -30,7 +30,7 @@ export class Machines {
         if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
       }
       new Conversations(this.db, () => at, lateMailWaits).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
-      return this.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, id)).returning().get()!;
+      return this.db.update(boxes).set({ lastSeenAt: at, slots }).where(eq(boxes.id, id)).returning().get()!;
     }, { behavior: 'immediate' });
   }
 
