@@ -148,3 +148,12 @@ it('counts complete firings in a reused wake conversation, with all retries and 
   const jobs = (await graphql({schema,source:'{conversationJobUsage(conversation:"cv"){observations}}'})).data?.conversationJobUsage;
   expect(JSON.stringify(jobs)).not.toContain('median');
 });
+
+it('keeps ordinary sweep work outside trigger totals', async () => {
+  const f = fixture();
+  f.db.insert(conversations).values({id:'sweep',agent:'art',venue:'wake',place:'sweep:art',label:'The sweep',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+  f.add('sweep-job','done',{conversation:'sweep'});
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
+  expect(await graphql({schema,source:'{jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"trigger"){key jobCount}}'}))
+    .toEqual({data:{jobUsageRollup:[{key:null,jobCount:1}]}});
+});

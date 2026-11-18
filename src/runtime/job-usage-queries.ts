@@ -46,7 +46,7 @@ const firing = sql<string|null>`(select json_array(${inboxRefs.ref}, ${inbox.sou
 
 function rows(s:JobSummaries, filter?:SQL) {
   return s.db.select({id:jobs.id,title:jobs.title,conversation:jobs.conversation,label:conversations.label,
-    state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,venue:conversations.venue,place:conversations.place,member:conversations.member,usage:jobUsage})
+    state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
     .from(jobs).leftJoin(conversations,eq(conversations.id,jobs.conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
     .where(and(s.allowed(),filter)).orderBy(desc(sql`julianday(${jobs.queuedAt})`),desc(jobs.id)).all();
 }
@@ -84,7 +84,7 @@ function assignRuns(history:Row[]) {
     if (delivery) {
       const [trigger,id] = JSON.parse(delivery) as [string,string];
       run = {trigger,id};
-    } else if (row.venue === 'wake' && row.conversation && row.place) {
+    } else if (row.venue === 'wake' && row.conversation && row.place && row.place !== 'sweep:' + row.agent) {
       const suffix = ':for:' + row.member;
       const trigger = row.member && row.place.endsWith(suffix) ? row.place.slice(0,-suffix.length) : row.place;
       run = lastWake.get(row.conversation) ?? {trigger,id:row.conversation};
