@@ -5,13 +5,14 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, messages, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, messages, threads, triggers } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
+import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
 import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS } from './silence.js';
@@ -207,19 +208,35 @@ export class Jobs {
       const mine = mail.filter(item => key(item.id) === asked), behind = starters.some(item => key(item.id) !== asked);
       // A job that takes up what loom set aside stands where that job stood among its attempts.
       const resumed = mine.map(item => item.job ? setAside.get(item.job) : undefined).find(row => row !== undefined);
+      // Place firings carry a trigger reference even in an ordinary conversation. A hand-started
+      // wake may have only its place. Only schedule mail contributes trigger references.
+      const fired = mine.filter(item => item.source === 'trigger' && item.fromKind === 'schedule').map(item => item.id);
+      const refs = fired.length ? this.db.select({ id: inboxRefs.ref }).from(inboxRefs)
+        .where(inArray(inboxRefs.item, fired)).all().map(row => row.id) : [];
+      if (conversation.venue === 'wake') {
+        for (const id of wakePlaceTriggers(conversation.place)) {
+          if (this.db.select({ id: triggers.id }).from(triggers).where(eq(triggers.id, id)).get()) { refs.push(id); break; }
+        }
+      }
+      const lanes = refs.length ? this.db.select({ needs: triggers.needs, prefers: triggers.prefers }).from(triggers)
+        .where(inArray(triggers.id, refs)).orderBy(asc(triggers.id)).all() : [];
+      const needs = new Set(lanes.flatMap(lane => lane.needs ?? []));
+      if (settings.gpu) needs.add('gpu');
+      const prefers = lanes.some(lane => lane.prefers !== null)
+        ? [...new Set(lanes.flatMap(lane => lane.prefers ?? []))] : settings.prefers;
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', prefers, brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
         houseRepository: settings.houseRepository, houseFile: settings.houseFile, houseBranch: settings.houseBranch, queuedAt: at,
         ...(resumed?.retryOf ? { retryOf: resumed.retryOf } : {}),
       }).returning().get();
-      if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
+      if (needs.size) this.db.insert(jobNeeds).values([...needs].map(need => ({ job: job.id, need }))).run();
       const waitingHere = and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'));
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(waitingHere, inArray(inbox.id, mine.map(item => item.id)))).run();
       this.delivery(job.id,'held');
@@ -361,7 +378,7 @@ export class Jobs {
     const backoff = (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth];
     const retryAt = new Date(Math.max(earliest, Date.parse(at) + backoff)).toISOString();
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-      retryOf: before.id, retryAt, queuedAt: at,
+      placementDecision: null, retryOf: before.id, retryAt, queuedAt: at,
       claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();

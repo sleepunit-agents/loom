@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq, notInArray, sql } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
+import { agents, members, projects, triggers, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
 import { Jobs, QUEUE_DEADLINE_MS, agentMailAdmission } from './jobs.js';
 import { BODY_EXIT, LOOM_EXIT, exitStage } from './job-exit.js';
 import { FakeClock } from '../core/clock.js';
@@ -548,4 +548,26 @@ it('rolls back a standalone unplaceable transition when its usage row cannot be 
   f.db.$client.exec("CREATE TRIGGER reject_usage BEFORE INSERT ON job_usage BEGIN SELECT RAISE(ABORT, 'fixture'); END");
   expect(() => f.runtime.unplaceable(job.id, 'fixture')).toThrow('fixture');
   expect(f.runtime.get(job.id).state).toBe('queued');
+});
+
+it('snapshots trigger facts with GPU and preserves placement inputs on retry', () => {
+  const f = fixture();
+  f.db.update(agentRunSettings).set({ prefers: ['house'] }).run();
+  f.db.insert(triggers).values({ id: 'tr-site', ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: '09:13', lifespan: 'until-stopped',
+    targetKind: 'inbox', toKind: 'agent', to: 'art', note: 'Lane', enabled: true, state: 'standing', createdAt: f.now(), changedAt: f.now(), needs: ['gpu','site:loom'], prefers: [] }).run();
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: f.conversation.id, source: 'trigger', fromKind: 'schedule', words: 'Do it', refs: ['tr-site'] });
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.prefers).toEqual([]);
+  const needs = (id: string) => f.db.select().from(jobNeeds).where(eq(jobNeeds.job,id)).all().map(r => r.need).sort();
+  expect(needs(job.id)).toEqual(['gpu','site:loom']);
+  f.runtime.claim(job.id,'worker'); f.runtime.started(job.id,'worker','build');
+  f.db.update(triggers).set({ needs: [], prefers: ['changed'] }).run();
+  const retry = f.runtime.finish(job.id,'worker',0).retry!;
+  expect(retry).toMatchObject({prefers: [], placementDecision: null});
+  expect(needs(retry.id)).toEqual(needs(job.id));
+});
+it('uses default machine preferences for ordinary conversation work', () => {
+  const f = fixture('loom');
+  f.db.update(agentRunSettings).set({ prefers: ['house'] }).run();
+  f.send(); expect(f.runtime.admit(f.conversation.id)?.prefers).toEqual(['house']);
 });
