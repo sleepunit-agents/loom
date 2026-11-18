@@ -76,6 +76,15 @@ it starts fresh and is told what was said earlier in the conversation
 (`src/core/conversations/bridge-history.ts`). When it has answered it hands the session back. Only Claude
 Code keeps sessions so far.
 
+A job on anybody else's word has no part in this. A session is the harness's own record of what an
+earlier body read and used, tool results included. Both session doors (`conversation.session`,
+`conversation.sessionSave`, `src/shared-conversation-sessions.ts`) refuse such a job's body, on loom's own
+reading of the job's word, and the body program does not ask. It starts fresh and is told what was said
+earlier, like any body with no session. The session an owners' job saved stays as it was: the guest's
+job cannot replace or remove it, and the guest's answer does not make it count as behind, so the next
+owners' job continues it. That continued session does not hold what the guest's job was told or said in
+between; those words are in the conversation's kept history, which a continued body is not told again.
+
 A body with file tools finds the kept files of the messages it took written into its scratch directory,
 named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
 such page the work goes on and the agent's owners get one notice.

@@ -733,10 +733,15 @@ Entries are grouped by the part of the program they belong to.
     (`docs/runtime/worker.md`, "What `loom` reach is on Claude Code, and how it was checked"). Codex and
     agy always have a shell and cannot be held so: they do not run such a job. Placement passes them over
     for the agent's next model. A job whose agent has no model on Claude Code is ended at once, with a
-    note that says so (`UNHELD_NOTE` in `src/runtime/dispatcher.ts`).
+    note that says so (`UNHELD_NOTE` in `src/runtime/dispatcher.ts`), and the mail that made it anybody
+    else's is closed with that note (`othersMail`, `Jobs.unplaceable`). Left waiting, that mail went to
+    the job the next message started and ended it the same way, an owner's included. The guest is told
+    nothing: there is no body to answer.
   - no startup secret is fetched or put in its environment, `request_secret` and `use_secret` are not
     served, and loom's doors refuse the same to a body program that asks anyway;
-  - it is handed no attachment files and names no file for a post.
+  - it is handed no attachment files and names no file for a post;
+  - it neither continues nor saves a kept harness session ("A harness session is kept between bodies").
+  A room that names no word, and an assignment with no room at all, are read as anybody else's.
   The agent's own denied tools (`agent_denied_tools`) apply on top: the guests-only rows on this word, the
   others always. A tier among outside people no longer changes any of this: tier 3 is still anybody else.
   A member of the household who does not have the agent is anybody else too.
@@ -755,8 +760,9 @@ Entries are grouped by the part of the program they belong to.
 - Where: `src/policy.ts` (`loomToolsOnly`); `src/runtime/harness-traits.ts` (`hasGuest`, `bodyReach`,
   `refusesJob`, `hasFileTools`); `src/runtime/claude-body.ts`; `src/runtime/body-program.ts`;
   `src/runtime/body-secret-tools.ts`; `src/shared-secret-inputs.ts`; `src/shared-secret-agent-commands.ts`;
-  `src/shared-bridge-reply.ts` (`bridges.say` files); `lateMailJoins` in `src/shared-place-mail.ts` and
-  `pending` in `src/core/conversations/index.ts`.
+  `src/shared-bridge-reply.ts` (`bridges.say` files); `src/shared-conversation-sessions.ts`; `jobHeld` and
+  `lateMailJoins` in `src/shared-place-mail.ts` and `pending` in `src/core/conversations/index.ts` (the
+  late-mail rule is a constructor argument there, and closed when none is given).
 - Why: a guest's words are input to a model. With a shell, files and the agent's secrets in its
   environment, a body answering a guest could be talked into using all of them. Before this, a guest's job
   ran with whatever the machine gave every body, less the rows an owner had thought to deny.
@@ -915,6 +921,13 @@ Entries are grouped by the part of the program they belong to.
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
   continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
   agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+- Not for a job on anybody else's word. A session holds what the bodies before read and used, tool
+  results included, and a guest's job that continued it would be handed all of that with nothing to
+  check its answer against. Both doors refuse such a job on loom's own reading of its word (`jobHeld`),
+  and its body program does not ask: it starts fresh with the kept history, saves nothing and removes
+  nothing. The session an owners' job left is handed to the next owners' job as it was. The price: that
+  continued session does not hold what the guest's job was told and said in between. A continued body is
+  told only its new mail, so the agent may not know, in that owners' job, what it told the guest.
 - Where a session is kept at all: only where the place the harness keeps its sessions is that body's
   alone for that one job. A restored session is the conversation's words in plain files. In a house that
   place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in

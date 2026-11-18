@@ -149,7 +149,7 @@ said whose it was, and no stage is guessed.
 | 15 | body record | Recording the answer in loom. |
 | 16 | body config | The machine's body file could not be read or is not valid. |
 | 17 | body envelope | What the worker handed over on stdin is not a body's input. |
-| 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. |
+| 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. One exception: mail from a sender nobody looked up turned the job's word after the mail was taken, and the harness always has a shell ("What a body may use"). That mail was taken and not settled; it goes back to the job. |
 | 19 | body report | The first report to loom failed: loom unreachable, or the job no longer this body's. |
 | 20 | body contact | A later report failed while the body was at work: it lost loom, or loom had ended the job. The body dropped what it was doing, whatever stage that was. |
 | 21 | worker input | Fetching the private repository input. |
@@ -618,8 +618,9 @@ container. With an engine that runs as root, a house that keeps the core's
 root runs as the machine's root inside its container; a house for such a
 machine sets a `USER` that can write the sign-in directory.
 
-**Sessions.** A body of a Discord or Slack conversation continues the session
-the last body of that conversation left: loom hands it the session, it puts the
+**Sessions.** A body of a Discord or Slack conversation whose job works on its
+owners' word, or is the agent's own work, continues the session
+the last such body of that conversation left: loom hands it the session, it puts the
 files back in the harness's own directory, and hands them back to loom when it
 has answered ([accepted-tradeoffs.md](../accepted-tradeoffs.md), "A harness
 session is kept between bodies"). It does so only where that directory is the
@@ -634,7 +635,8 @@ bodies:** each then starts fresh with what was said before. A house that sets
 `CLAUDE_CONFIG_DIR` to anywhere but `/home/agent/.claude` turns it off too, and
 so does a house whose image has no such directory: a body never makes it. A
 body run as a plain process (no `container` in the configuration) is never told
-its harness's directory is its own and keeps no session.
+its harness's directory is its own and keeps no session. A body whose job works
+on anybody else's word keeps and continues none anywhere ("What a body may use").
 
 A repository must not assume its own name in a path, a home other than `$HOME`,
 that its checkout is anywhere but `$HOME/repo` (the directory a body starts in),
@@ -1132,7 +1134,7 @@ Two things decide it, and the lesser wins.
   word, the body runs with loom's tools only, whatever the body file says
   (`loomToolsOnly` in `src/policy.ts`, `bodyReach` in
   `src/runtime/harness-traits.ts`). A room with no `word` comes from an older
-  loom and is read as `others`.
+  loom and is read as `others`. So is an assignment with no room at all.
 
 For a job on anybody else's word:
 
@@ -1146,8 +1148,11 @@ When every model the agent has runs on a harness that cannot, the job is ended
 as soon as a machine asks for work: failed by loom (exit 31), with the note
 "Never started: this job is not working for the agent's owners, so it runs with
 loom's tools only, and every model the agent has runs on a harness that always
-has a shell. Give the agent a model that runs on Claude Code." Its message is
-handed to the job the next message starts.
+has a shell. Give the agent a model that runs on Claude Code." The mail that
+made the job anybody else's is closed with the same note, so it is carried into
+no later job: an owner's next message in that conversation starts a job on
+owners' word, which runs. Nothing tells the guest; the owners see the note on
+the job.
 
 #### What `loom` reach is on Claude Code, and how it was checked
 
@@ -1191,22 +1196,30 @@ again when the Claude Code a machine uses changes:
 
 Such a body asks for no startup secret, is served neither `request_secret` nor
 `use_secret`, is handed no attachment files and may name no file for a post.
+It asks for no kept harness session and leaves none: it starts fresh, with what
+was said before in the conversation, like any body with no session.
 loom's doors refuse it the same things (`/api/secrets/private/*`,
-`secrets.request`, files on `bridges.say`), so the body program is not what
-holds the line. A job on its owners' word, or the agent's own work, is as it was.
+`secrets.request`, files on `bridges.say`, `conversation.session` and
+`conversation.sessionSave`), each on loom's own reading of the job's word, so
+the body program is not what holds the line. A job on its owners' word, or the agent's own work, is as it was.
 
 The word is settled by the mail a job was admitted for. A message from anybody
 else that arrives later waits for the next job, so a running job's word never
 falls. The body keeps one check of its own: if it is handed mail from a sender
-nobody looked up, it takes its startup secrets back out of the environment and
-runs with loom's tools only.
+nobody looked up, it takes its startup secrets back out of the environment,
+puts away the session it was handed without continuing or saving one, and runs
+with loom's tools only. If its harness always has a shell it leaves instead
+(exit 18), before any tools server or harness is started.
 
 No secret a body was handed is said by it. The body program looks for the value
-of each secret it used (as bytes and as base64) and of each startup secret of
-eight bytes or more, in its final answer and in every text of every tool call
-it sends to loom, which is how `bridges.say`, `bridges.post` and
-`bridges.reply` leave. A call or an answer that holds one is not sent.
-A shorter startup value is not looked for: it could not be told from ordinary words.
+of each secret it used and of each startup secret of eight bytes or more, each
+as its bytes and as their base64, in its final answer and in every text of
+every tool call: the commands it sends to loom, which is how `bridges.say`,
+`bridges.post` and `bridges.reply` leave, and the reason it gives
+`request_secret`. A call or an answer that holds one is not sent. A shorter
+startup value is not looked for: it could not be told from ordinary words. Only
+texts are looked at, and only these two forms: a value split up, or encoded
+another way, is not found.
 
 A job has one body. `runtime.enrollBody` binds a body token to a starting job
 only while the job has no live one; the same fingerprint again is a repeat.
