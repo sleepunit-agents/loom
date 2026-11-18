@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -621,4 +621,47 @@ it('keys what a body may do with a trigger or a note on whose word it works, not
  work(lane,[]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(200);
  expect((await f.call('tempo','set',once({conversation:kims}),token.other)).status).toBe(200);
  void cv;
+});
+
+/** What admission needs before it starts a job for the agent, and the Jobs service on the fixture's clock. */
+const runnable=(f:ReturnType<typeof fixture>)=>{f.root.writes.run(()=>{f.db.insert(agentModels).values({agent:'art',model:'primary',position:0}).run();f.db.insert(agentRunSettings).values({agent:'art',houseRepository:'r',houseFile:'Housefile',houseBranch:'main',nestedContainers:false,gpu:false}).run();});return new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());};
+it('starts a job at admission for a note and for a firing, and drops one whose word is no longer known, with its reason and a notice',async()=>{
+ const {f,cv,once}=await sharedPlace(),all=runnable(f);
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ const note=(conversation:string,id:string)=>{let item='';f.root.writes.run(()=>{item=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'handoff',sourceId:id,fromKind:'agent',fromId:'art',words:null as never,onWordKind:'outside',onWord:GUEST,chain:JSON.stringify([cv]),chainStartedAt:new Date(f.clock.now()).toISOString()}).id;});return item;};
+ const row=(id:string)=>f.db.select().from(inbox).where(eq(inbox.id,id)).get()!,end=(job:string)=>f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,job)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,job)).run();});
+ const dropped=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('word-unknown:'));
+ // A note on the guest's word, in a conversation with no job: admission starts that conversation's job, for the note.
+ const first=note(pond,'first');let started=all.admission(pond);
+ expect(started).toMatchObject({started:true,job:{agent:'art',conversation:pond,member:null,state:'queued'}});expect(row(first)).toMatchObject({state:'waiting',job:started.job!.id});
+ end(started.job!.id);
+ // A firing in the shared place, asked for by the guest: the same.
+ const mine=once();expect((await f.call('tempo','set',mine)).status).toBe(200);end('body');
+ expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);
+ const fired=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
+ started=all.admission(cv);
+ expect(started).toMatchObject({started:true,job:{conversation:cv,state:'queued'}});expect(row(fired.id)).toMatchObject({state:'waiting',job:started.job!.id});
+ // A person says stop there. A note that arrives is parked with the stopped job; nobody asks about its word yet.
+ const working=started.job!.id;f.root.writes.run(()=>f.db.update(jobs).set({state:'running'}).where(eq(jobs.id,working)).run());
+ const parked=note(cv,'parked');f.root.writes.run(()=>all.stop(working,'owner','stop'));
+ f.root.writes.run(()=>f.db.delete(agentPeople).run());
+ expect(all.admission(cv)).toEqual({});expect(row(parked)).toMatchObject({state:'waiting',job:working});expect(dropped()).toEqual([]);
+ // The owner has taken the guest's tier away. A note on that word starts no job: it is dropped with its reason, and the owner is told.
+ const late=note(pond,'late');
+ expect(all.admission(pond)).toEqual({noticed:true});
+ expect(row(late)).toMatchObject({state:'resolved',job:null,resolution:expect.stringContaining('on whose word it was sent, is no longer known to art')});
+ expect(f.db.select().from(jobs).all().filter(job=>job.conversation===pond&&job.state==='queued')).toEqual([]);
+ expect(dropped()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining('was dropped and started no work')}]);
+ // A person speaks where the note is parked: it is released, asked about then, and dropped; the job that starts is for the person's words alone.
+ let spoke='';f.root.writes.run(()=>{spoke=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'notice',sourceId:'spoke',fromKind:'person',fromId:'owner',words:'Go on'}).id;});
+ started=all.admission(cv);
+ expect(started).toMatchObject({started:true});expect(row(spoke).job).toBe(started.job!.id);
+ expect(row(parked)).toMatchObject({state:'resolved'});
+ // So is the firing the stopped job had not taken: it was asked for by the same guest.
+ expect(row(fired.id)).toMatchObject({state:'resolved'});expect(dropped()).toHaveLength(3);expect(dropped().map(item=>item.words)).toContainEqual(expect.stringContaining('A firing of a schedule'));
+ // A member's word is asked about the same way: one who has left the household is no longer known.
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'sam',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run();});
+ let sams='';f.root.writes.run(()=>{sams=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'handoff',sourceId:'sams',fromKind:'agent',fromId:'art',words:null as never,onWordKind:'member',onWord:'sam',chain:JSON.stringify([cv]),chainStartedAt:new Date(f.clock.now()).toISOString()}).id;});
+ f.root.writes.run(()=>f.db.update(members).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(members.id,'sam')).run());
+ expect(all.admission(pond)).toEqual({noticed:true});expect(row(sams).state).toBe('resolved');
 });
