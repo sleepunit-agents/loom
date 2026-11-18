@@ -209,7 +209,7 @@ def tempo():
                                                  ("owner", "who set it"), ("target", "run an operation, or drop an item in an inbox")),
          "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them."),
         ("Fire, inbox, start", "pink", flow("trigger", "fires", "inbox", "settles", "agent"),
-         "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers."),
+         "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers. A trigger carrying a machine request currently records a failed firing before it sends mail."),
         ("The sweep", "cyan", log(("Changes", "2 open, oldest 3 days"), ("Tasks", "4 ready, oldest 6 days"), ("Approvals", "1 pending, 2 hours")),
          "Each part contributes a short list of what is open and how long it has sat. One session per recipient sorts them. When nothing is open, no session starts."),
         ("Volume", "amber", opts(("full", "the default"), ("dim", "one line"), ("mute", "hidden, and always ends")),
@@ -348,7 +348,7 @@ def machines():
         ("Retries", "pink", flow("job 1", "retry of", "job 2", "retry of", "job 3"),
          "A job that fails to start is tried again, up to three times. Each retry is a new job that points back at the one before."),
         ("Boxes", "violet", gate("Its owner says which agents may run there", "An agent can be lent a machine", "A box can report health and never run agents", "An always-on box raises an alert when it goes quiet"),
-         "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine."),
+         "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine. Labels starting with loom: are reserved for reports from the worker."),
         ("Run settings", "amber", opts(("house", "the repository that defines it"), ("boxes", "preferred machines, in order"), ("may use", "named secrets, ports, a GPU")),
          "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the <a href=\"houses.html\">Houses</a> page."),
     ]
