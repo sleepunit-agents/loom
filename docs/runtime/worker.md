@@ -1113,11 +1113,55 @@ The child takes mail through the canonical body client into its own context,
 reports it received, then invokes Claude with the assignment's exact model. It
 settles the mail only after the answer is recorded (see "Attempts, retries and
 exit codes").
-Always-denied tool patterns and applicable outside/unknown guest-only patterns
-go into native --disallowedTools. A household person's missing outside tier
-does not make that person a guest. The CLI uses dontAsk permission mode,
-an empty settings-source list, no unrelated MCP servers, and no persisted native
-session. Calls needing interactive native approval are refused.
+Always-denied tool patterns, and the guests-only patterns when the job works on
+anybody else's word, go into native --disallowedTools. Held to loom's tools the
+CLI uses dontAsk permission mode with loom's tools as its allow list; with full
+reach it uses bypassPermissions. Either way it has an empty settings-source
+list and no unrelated MCP servers. Calls needing interactive native approval are refused.
+
+### What a body may use
+
+Two things decide it, and the lesser wins.
+
+- The machine's body file: `"reach":"loom"` (the default) gives a body loom's
+  tools and nothing else; `"reach":"all"` gives it the harness's own as well.
+- The job's word. loom reads on whose word a job works when it is claimed
+  (`jobWord`, `src/shared-place-mail.ts`) and hands it to the worker as
+  `run.policy.word`: `own`, `owners` or `others`. On `others`, anybody else's
+  word, the body runs with loom's tools only, whatever the body file says
+  (`loomToolsOnly` in `src/policy.ts`, `bodyReach` in
+  `src/runtime/harness-traits.ts`). A room with no `word` comes from an older
+  loom and is read as `others`.
+
+For a job on anybody else's word:
+
+| Harness | Can it run loom-only? | What happens |
+|---|---|---|
+| claude | yes | `--permission-mode dontAsk --allowedTools <loom's tools>`: no shell, no files, no web, no subagents. |
+| codex | no, it always has a shell | Refused. Placement passes it over; a body handed one anyway leaves before taking mail. |
+| agy | no, it always has a shell | The same. |
+
+Such a body asks for no startup secret, is served neither `request_secret` nor
+`use_secret`, is handed no attachment files and may name no file for a post.
+loom's doors refuse it the same things (`/api/secrets/private/*`,
+`secrets.request`, files on `bridges.say`), so the body program is not what
+holds the line. A job on its owners' word, or the agent's own work, is as it was.
+
+The word is settled by the mail a job was admitted for. A message from anybody
+else that arrives later waits for the next job, so a running job's word never
+falls. The body keeps one check of its own: if it is handed mail from a sender
+nobody looked up, it takes its startup secrets back out of the environment and
+runs with loom's tools only.
+
+No secret a body was handed is said by it. The body program looks for the value
+of each secret it used (as bytes and as base64) and of each startup secret of
+eight bytes or more, in its final answer and in every text of every tool call
+it sends to loom, which is how `bridges.say`, `bridges.post` and
+`bridges.reply` leave. A call or an answer that holds one is not sent.
+A shorter startup value is not looked for: it could not be told from ordinary words.
+
+A job has one body. `runtime.enrollBody` binds a body token to a starting job
+only while the job has no live one; the same fingerprint again is a repeat.
 
 The child publishes a reply only with the observed main assistant response model,
 and records observed tool-action models separately. Requested, initialization,

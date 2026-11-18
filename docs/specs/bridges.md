@@ -80,8 +80,12 @@ A body with file tools finds the kept files of the messages it took written into
 named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
 such page the work goes on and the agent's owners get one notice.
 
-A sender who is not a member and is not at tier 3 makes the job a guest's, and the agent's guests-only
-tool denials apply to it.
+A job whose word is anybody else's (not the agent's own work, not its owners': `jobWord`) runs with loom's
+tools only: no shell, files, web or helpers of the harness's own, no secrets, no attachment files and no
+file on a post, and the agent's guests-only tool denials apply to it. A tier does not change that, and a
+household member who does not have the agent counts as anybody else. A message that would make an owners'
+job anybody else's, arriving after the job was admitted, waits for the next job
+(`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's tools only").
 
 While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
 channel (`presence.ts`). Both are best effort.

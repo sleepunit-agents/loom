@@ -101,7 +101,7 @@ Entries are grouped by the part of the program they belong to.
   follows the agent for as long as the member has the agent at all; the days of timing measurements (`tableRules.timingDays`); and which machines the
   agent itself may run on (`tableRules.boxAgents`, the agent case). A member who has the agent reads its
   memory, notes and cards directly as well (`maySee`, the `memory` type). The agent's secrets are the
-  same: see "A secret an owner gave an agent is the agent's to use, whoever it works for".
+  same: see "A secret an owner gave an agent is the agent's to use for its owners, whichever of them the work is for".
 - **Why accepted.** The household's owner ruled it (2026-11-17): what an agent shares with the person it is
   working for is the agent's judgment, sized to who that person is, and not a wall on what it may read.
   They are what the agent knows and where it runs, not records of another person's work.
@@ -112,11 +112,13 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A record of one member's private work becoming readable through any of
   the four. Then that table needs a member label and a rule that reads it.
 
-### A secret an owner gave an agent is the agent's to use, whoever it works for
+### A secret an owner gave an agent is the agent's to use for its owners, whichever of them the work is for
 - **What.** A secret rule, the household default and a grant made for the agent and no one job are
-  standing answers about the agent. They serve every body of that agent: its own work, work for a
-  household owner, and the private work of a member who is not one. A body whose member has left the
-  household or no longer has the agent is served nothing (`agentItself`).
+  standing answers about the agent. They serve a body of that agent doing its own work, work for a
+  household owner, and the private work of a member who has the agent and is not a household owner. A body
+  whose member has left the household or no longer has the agent is served nothing (`agentItself`).
+  A body whose job works on anybody else's word is served nothing either, standing or asked for: see
+  "A job on anybody else's word runs with loom's tools only".
 - **Where.** `standingSecretAnswerServes` in `src/policy.ts`; asked by `secrets.request`
   (`src/shared-secret-agent-commands.ts`) and by the private routes (`src/shared-secret-inputs.ts`);
   carried as `standing` into `src/pieces/secrets/requests.ts` and `private-inputs.ts`.
@@ -124,13 +126,13 @@ Entries are grouped by the part of the program they belong to.
   repository secret while the job is starting, before any body runs. That hand-off has a request of its
   own (`repositoryRequestId` in `src/pieces/secrets/requests.ts`), and the grant it leaves serves that
   hand-off: no body's read counts it (`SecretRequests.grantFor`). A secret that is both the repository
-  secret and one of the house's startup secrets is asked for twice, once for each.
+  secret and one of the house's startup secrets is asked for twice, once for each. It is made whatever
+  word the job works on: the house is fetched and built before any body exists.
 - **Why accepted.** The owner's ruling, 2026-11-17: "you have permission to have the key, the ask is
   different: can I perform this task for allison. the secret part isn't really the permissions issue."
-  A secret is given to the agent. Whether the agent should do a piece of work for a person is a separate
-  question, to be asked of the work and the person, and nothing asks it through a secret. An earlier
-  version filed one card per secret for every job a non-owner member started, which asked the owner the
-  wrong question many times.
+  A secret is given to the agent. Whether the agent should do a piece of work for one of its owners is a
+  separate question, and nothing asks it through a secret. An earlier version filed one card per secret
+  for every job a non-owner member started, which asked the owner the wrong question many times.
 - **What would change the answer.** A way to ask "may this agent do this for this person" becoming part
   of the program. That check belongs where work is given, not where a secret is read.
 
@@ -719,14 +721,52 @@ Entries are grouped by the part of the program they belong to.
   and only for a member who is in the household now: removing a member keeps their link, and intake
   (`incoming.ts`) and the run policy (`body-policy.ts`) then take the account for an outside one.
 
+### A job on anybody else's word runs with loom's tools only
+- What: on whose word a job works is one ranking (`jobWord` in `src/shared-place-mail.ts`): the agent's own
+  work, its owners (household owners and members who have the agent), or anybody else, the least reach
+  winning. A job on anybody else's word runs with loom's tools only (`loomToolsOnly` in `src/policy.ts`):
+  - its harness has no shell, no file read or write, no web and no helpers of its own, on every machine,
+    whatever the machine's body file says. Claude Code is started with `--permission-mode dontAsk` and
+    loom's tools as the allow list. Codex and agy always have a shell and cannot be held so: they do not
+    run such a job. Placement passes them over for the agent's next model. A job whose agent has no model
+    on Claude Code stays queued and fails at the queue deadline (24 hours) with the general note that no
+    machine took it; that note does not yet say why.
+  - no startup secret is fetched or put in its environment, `request_secret` and `use_secret` are not
+    served, and loom's doors refuse the same to a body program that asks anyway;
+  - it is handed no attachment files and names no file for a post.
+  The agent's own denied tools (`agent_denied_tools`) apply on top: the guests-only rows on this word, the
+  others always. A tier among outside people no longer changes any of this: tier 3 is still anybody else.
+  A member of the household who does not have the agent is anybody else too.
+- The word does not fall while a job runs. A message that would make an owners' job anybody else's, written
+  after the job was admitted, waits for the next job, as a note or a firing already did. The word is read
+  from the mail the job is offered, never from everything waiting in the conversation.
+- What is not held: such a body still has every loom tool the agent has, with the agent's own reach in
+  loom: its memory and notes, its tasks, the household's shared knowledge, `loom_query`. It can read the
+  bytes of a file sent in its own conversation through `bridges.file`. What it tells a guest from those is
+  the agent's judgment. An owner narrows it per agent with a guests-only denied tool.
+- **An owner cannot yet give a named outside person more.** There is no way to say "this person's jobs may
+  read files" or "this helper may use the shell read-only". Every job on anybody else's word gets the same
+  floor. That grant is the follow-up to this change.
+- A harness loom has no adapter for (a machine's own `{job, build}` runner) is the machine's business: loom
+  hands it the word in the job's room and cannot hold it to anything.
+- Where: `src/policy.ts` (`loomToolsOnly`); `src/runtime/harness-traits.ts` (`hasGuest`, `bodyReach`,
+  `refusesJob`, `hasFileTools`); `src/runtime/claude-body.ts`; `src/runtime/body-program.ts`;
+  `src/runtime/body-secret-tools.ts`; `src/shared-secret-inputs.ts`; `src/shared-secret-agent-commands.ts`;
+  `src/shared-bridge-reply.ts` (`bridges.say` files); `lateMailJoins` in `src/shared-place-mail.ts` and
+  `pending` in `src/core/conversations/index.ts`.
+- Why: a guest's words are input to a model. With a shell, files and the agent's secrets in its
+  environment, a body answering a guest could be talked into using all of them. Before this, a guest's job
+  ran with whatever the machine gave every body, less the rows an owner had thought to deny.
+- Would change it: the follow-up above, a grant an owner makes for a named person.
+
 ### A stranger wakes nothing, and a tier is what admits an outsider
 - What: a person's message is taken only from an account linked to a member who is in the household now
   (`bridge_people`), or one the answering agent's owner has given a tier (`agent_people`). Anybody else is
   dropped with the reason `Unknown sender`, in a shared place and in a direct message, and keeps no words. There is
   no setting that lets everyone in a channel or on a connection talk to an agent.
-- Where: `receive` in `src/pieces/bridges/incoming.ts` (`hasTier`). What a guest's body is not given is
-  `src/runtime/harness-traits.ts` (`hasGuest`, `deniedTools`): a sender who is no member and is not at tier 3
-  is a guest, and one guest applies the agent's guests-only tool denials to the whole job.
+- Where: `receive` in `src/pieces/bridges/incoming.ts` (`hasTier`). What a guest's body may use is said in
+  "A job on anybody else's word runs with loom's tools only": a tier admits, and no tier makes an outside
+  person an owner.
 - Why: the bot can be written to by anyone who shares a server or a workspace with it, and a body acts with
   the agent's tools. The owner places each outsider by a card (`bodyPolicy`), which already decides what
   that person's body may not do; the same statement admits them, so there is one list and no second
@@ -765,7 +805,7 @@ Entries are grouped by the part of the program they belong to.
   delivered message, each up to 8 MB, are also fetched and kept as a Slack message's files are
   (`bridge_files`, fourteen days, or the keep time for a direct conversation). A link is used only when it
   is on `cdn.discordapp.com` or `media.discordapp.net`; an HTML page is never kept. Before its harness
-  starts, a body with file tools of its own (`hasFileTools`) writes the kept files of the messages it took into its own scratch
+  starts, a body with file tools of its own (`hasFileTools`: never one whose job works on anybody else's word) writes the kept files of the messages it took into its own scratch
   directory (at most ten files and 32 MB a run, any type that was kept) and its input names each path.
   A file that could not be fetched, or was not fetched yet when the body started, is only its link.
 - Where: `discordWords` in `src/pieces/bridges/normalize.ts`; `discord-files.ts` and the pump in
@@ -821,8 +861,9 @@ Entries are grouped by the part of the program they belong to.
   and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
   for the mail one job took, the reply among them.
   On Discord such a post may carry files: at most four, 600 KB together, and only from a body that has
-  file tools of its own (`hasFileTools`: the machine gives its bodies the harness's own tools, and
-  reading files is not among those this job's body is not given). The model names each by a path.
+  file tools of its own (`hasFileTools`: the machine gives its bodies the harness's own tools, the job
+  does not work on anybody else's word, and reading files is not among those this job's body is not
+  given). The door refuses a file from a job on anybody else's word as well. The model names each by a path.
   The body program opens it once, never following a link at its last step, and asks the rest of the open
   file: it must be a regular file with one name, and the kernel must place it inside the body's working
   directory or its scratch directory. A hard link is refused by its second name, since one made inside
