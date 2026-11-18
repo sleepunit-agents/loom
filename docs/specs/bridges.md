@@ -98,7 +98,8 @@ channel (`presence.ts`). Both are best effort.
   conversation's place (`bridge_sends.conversation`, with no `incoming`).
 - Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
   conversation are given to the stopped job, and neither they nor one that arrives later start any work
-  until a person speaks there.
+  until a person speaks there. A person speaking is mail from a member, or a delivered message from an
+  account that is no bot and no webhook.
 
 ## Between conversations
 
@@ -111,6 +112,14 @@ channel (`presence.ts`). Both are best effort.
   owners or members who have the agent, anywhere; any other body only to its channel rule's `reportsTo`
   (set on the `channel` card as `reportsTo: {platform, workspace, channel}`).
 - The receiving job counts the person the sending body worked for as in the room.
+- A note on the word of somebody no longer known (a member who left, an outside account with no tier
+  now) starts no job. Admission closes it with that reason and tells the members who have the agent, or
+  the household's owners. A firing still waiting when its asker stops being known goes the same way. A
+  note parked by a stop word is asked about when it is released.
+- The note says how to answer (a note back to the conversation it came from) only when that would be
+  taken, and otherwise says a note back would be refused.
+- A channel target's thread is judged before a conversation is opened for it: none on Discord, where a
+  thread is a channel of its own; on Slack, the time of the message that started it.
 - A chain's start, length and conversations are stored on each note: `inbox.chain_started_at` and
   `inbox.chain` (a JSON list of conversation ids, oldest first; its length is the count), with the
   conversation the note came from in `inbox_refs` and the one it went to in `inbox.conversation`.
@@ -118,10 +127,13 @@ channel (`presence.ts`). Both are best effort.
   nobody behind any of its mail, which is a lane's own start and a firing the agent itself asked for.
   Mail from an agent is never that. A brief between agents carries the sending job's word, and agent
   mail on nobody's word, or a household agent's bot writing in a channel, counts as anybody else's.
-- Mail on somebody's word that arrives after a job was admitted is left for the next job, so a job never
-  runs a guest's note under the policy it was claimed with for an owner.
+- Mail on somebody's word, from an agent or from the schedule, that arrives after a job was admitted is
+  left for the next job, so a job never runs a guest's note under the policy it was claimed with for an
+  owner. What a job was admitted for is marked by admission (`inbox.job`), not told by a clock.
 - A job whose mail is no bridge message may also post during its run with `bridges.say`; it goes where
   its answer will.
+- Neither its answer nor such a post is queued while the conversation's place is closed (its connection
+  gone or off, its channel filtered out): the body is told why.
 - A post that answers no message is seen and reviewed by whoever sees its conversation, and in a direct
   conversation is erased at the keep time with the conversation's other words.
 - A thread's rules (its channel rule, filters and report target) are its parent channel's, read by one
