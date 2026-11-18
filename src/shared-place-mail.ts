@@ -127,6 +127,8 @@ export const HELD_REFUSALS = {
   task: `This job is not working for the agent's owners: it makes and changes no task. ${ASK_INSTEAD}`,
   propose: `This job is not working for the agent's owners: it proposes no change to the household. ${ASK_INSTEAD}`,
   approval: `This job is not working for the agent's owners: it asks for no approval, and uses, reports on and withdraws none. ${ASK_INSTEAD}`,
+  question: 'This job is not working for the agent\'s owners: its question goes only to somebody who directs the agent, a member who has it, or a household owner when nobody has.',
+  questionLink: 'This job is not working for the agent\'s owners: its question carries no link. Say what you need in words.',
   memory: 'This job is not working for the agent\'s owners: of what the agent keeps it may only add, a memory with memory.remember or a new note with memory.noteWrite. It changes, archives, restores, forgets, drafts and ratifies nothing, and writes no person or project card.',
   note: 'This job is not working for the agent\'s owners: it writes a new note and overwrites none. Choose a path no note has.',
   knowledge: 'This job is not working for the agent\'s owners: it writes nothing to the household\'s knowledge or its people.',
@@ -149,11 +151,16 @@ export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: 
 /** loom's line at the head of a question a body on anybody else's word asks a person (`conversation.digest`): on
  * whose word the body was working, as loom names them. So an owner never reads a question a guest steered as the
  * agent's own, and the job that later reads the owner's answer, which quotes the question, is told the same.
- * Nothing for a job on owners' word or the agent's own work: its question is its own words alone. */
-export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }): string | undefined {
+ * Nothing for a job on owners' word or the agent's own work: its question is its own words alone.
+ * Given the question, it also refuses one such a job may not ask (throws an OperationError). */
+export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string }): string | undefined {
   const word = jobWord(db, work.job);
-  return word.woke !== 'others' ? undefined
-    : `[From loom: ${work.job.agent} asks this while working for ${word.person ? named(word.person) : 'somebody loom cannot name'}, who is not one of its owners. The words below are that job's, not ${work.job.agent}'s own work.]`;
+  if (word.woke !== 'others') return undefined;
+  // Such a question goes only to the people who direct the agent (tellOwners), not to whoever reads the room, and
+  // carries no link: a guest's job puts no address in front of an owner. Refused, not dropped, so the body hears why.
+  if (question && !tellOwners(db, work.job.agent).includes(question.to)) throw new OperationError('denied', HELD_REFUSALS.question);
+  if (question?.link !== undefined) throw new OperationError('denied', HELD_REFUSALS.questionLink);
+  return `[From loom: ${work.job.agent} asks this while working for ${word.person ? named(word.person) : 'somebody loom cannot name'}, who is not one of its owners. The words below are that job's, not ${work.job.agent}'s own work.]`;
 }
 /** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
  * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,

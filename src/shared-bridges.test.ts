@@ -1512,8 +1512,20 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  const answer=f.db.select().from(inbox).where(eq(inbox.source,'answer')).get()!;
  expect(answer).toMatchObject({toKind:'agent',fromKind:'person',fromId:'owner',words:expect.stringContaining(line)});
  const next=all.admission(cv);expect(next.started).toBe(true);expect(jobWord(f.db,next.job!)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
- // A body on the owners' word asks in its own words alone.
- f.root.writes.run(()=>{f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();});
- expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?'}})).status).toBe(200);
- expect(asked().at(-1)).toMatchObject({words:'Which door?'});
+ // Such a question carries no link: a guest's job puts no address in front of an owner. Refused, so the body hears why.
+ f.root.writes.run(()=>{f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();
+  f.db.update(inbox).set({fromKind:'unknown',fromId:null,source:'notice'}).where(eq(inbox.job,next.job!.id)).run();});
+ expect(jobWord(f.db,next.job!).woke).toBe('others');const waiting=asked().length;
+ expect(await f.call('conversation','digest',{summary:'Asked with a link.',question:{to:'owner',answers:'yes-no',words:'Is this the page?',link:'https://example.invalid/sign-in'}})).toMatchObject({status:403,body:{message:HELD_REFUSALS.questionLink}});
+ // And it goes only to the people who direct the agent: the members who have it, or the household's owners when nobody
+ // has. Sam now has art, so the question is Sam's to answer; the household's owner reads the room and is not asked.
+ f.root.writes.run(()=>{f.db.delete(memberAgents).run();f.db.insert(members).values({id:'sam',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();});
+ expect(await f.call('conversation','digest',{summary:'Asked the wrong person.',question:{to:'owner',answers:'yes-no',words:'May I?'}})).toMatchObject({status:403,body:{message:HELD_REFUSALS.question}});
+ expect(asked()).toHaveLength(waiting);
+ expect((await f.call('conversation','digest',{summary:'Asked Sam.',question:{to:'sam',answers:'yes-no',words:'May I?'}})).status).toBe(200);
+ expect(asked().at(-1)).toMatchObject({to:'sam',words:expect.stringMatching(/^\[From loom: art asks this while working for somebody loom cannot name, who is not one of its owners\..*\]\n\nMay I\?$/)});
+ f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'person',fromId:'sam'}).where(eq(inbox.job,next.job!.id)).run();});
+ // A body on the owners' word asks in its own words alone, whoever reads the room, and may send a link.
+ expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?',link:'https://example.invalid/doors'}})).status).toBe(200);
+ expect(asked().at(-1)).toMatchObject({to:'owner',words:'Which door?',link:'https://example.invalid/doors'});
 });
