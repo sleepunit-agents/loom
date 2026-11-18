@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
 import { getTableName } from 'drizzle-orm';
@@ -276,7 +277,7 @@ const upgrades: readonly (readonly string[])[] = [
   [
     "CREATE TABLE `job_usage` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`tokens_in` integer,\n\t`tokens_out` integer,\n\t`cache_read` integer,\n\t`cache_written` integer,\n\t`model_calls` integer,\n\t`tool_calls` integer,\n\t`tools` text,\n\t`largest_context` integer,\n\t`wall_ms` integer,\n\t`harness` text,\n\t`model` text,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"job_usage_source_choice\" CHECK(\"job_usage\".\"source\" in ('report','transcript','none'))\n);",
     `INSERT INTO job_usage (job, source, harness, model, wall_ms)
-     SELECT id, 'none', harness, model, max(0, round((julianday(ended_at) - julianday(claimed_at)) * 86400000))
+     SELECT id, 'none', harness, model, max(0, round((julianday(ended_at) - julianday(claimed_at)) * ${DAY_MS}))
      FROM jobs WHERE state IN ('done', 'failed', 'lost', 'stopped')`,
   ],
 ];

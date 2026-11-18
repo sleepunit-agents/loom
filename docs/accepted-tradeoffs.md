@@ -373,7 +373,7 @@ Entries are grouped by the part of the program they belong to.
 
 ### A job can finish before its usage report arrives
 
-The body sends its report as settlement begins. Job completion has priority, including when the body is killed or the receiver is slow. If the report never arrives before the credential expires, the job keeps a record with source `none` and unknown harness counters. Rollups sum reported values and can therefore understate usage. Reliable delivery after body death would require a durable worker-side handoff that preserves attempt attribution.
+On success the body sends its report alongside settlement. An ordinary harness failure with validated measurements waits up to one second for delivery on its own job credential. A missing, malformed, or oversized measurement adds no wait. If the report never arrives before the credential expires, the job keeps a record with source `none` and unknown harness counters. Rollups sum reported values and can therefore understate usage. Reliable delivery after body death would require a durable worker-side handoff that preserves attempt attribution.
 
 ### The placed account is taken on trust when a machine has one command per harness
 
@@ -1394,6 +1394,7 @@ The body sends its report as settlement begins. Job completion has priority, inc
     machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
+  - `job_usage`: `src/shared-job-usage.ts` accepts the credential-bound report. Runtime records settlement time and supplies the fallback row.
   - `action_results.read_at`: `src/core/conversations/operations.ts`. The notice of a person's own action is
     written by `src/shared-action-results.ts`; marking it read is the inbox door's, with the other reads.
   - `model_accounts` (`usage`, `usage_read_at`, `resets_at`, `has_room`): `src/runtime/account-windows.ts`

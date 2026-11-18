@@ -44,9 +44,9 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  const unsettled:string[]=[];
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation'):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation',requestTimeout=timeout):Promise<T>{
   if(!current())throw unavailable();
-  const abort=new AbortController(),end=clock.now()+timeout;controllers.add(abort);
+  const abort=new AbortController(),end=clock.now()+Math.min(timeout,requestTimeout);controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
   const cancel=clock.at(end,stop),valid=()=>current()&&!abort.signal.aborted&&clock.now()<end;
   let rejectAbort!:()=>void,response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
@@ -126,7 +126,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   cardState(clientId:string,cardState:'running'|'done'|'failed',id=randomUUID()){return call('cardState',{clientId,cardState},messageResult,id);},
   status(input:{state:'working'|'waiting'|'idle'|'offline';work:string},id=randomUUID()){return call('status',input,z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),id);},
   turn(input:Turn&{kind:'reply'|'action'|'wake'|'note'|'refused'},id=randomUUID()){return call('turn',input,z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),id);},
-  usage(input:UsageReport){return call('usage',input,z.object({saved:z.boolean()}).strict(),randomUUID());},
+  usage(input:UsageReport,timeoutMs?:number){return call('usage',input,z.object({saved:z.boolean()}).strict(),randomUUID(),'conversation',timeoutMs);},
   finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(DAY)}).strict(),id);},
   digest(input:BodyDigest,id=randomUUID()){return call('digest',input,z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),id);},
   close(){closed=true;lifetimeAbort.abort();for(const controller of controllers)controller.abort();},

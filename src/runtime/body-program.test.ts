@@ -1,3 +1,8 @@
+import { FakeClock } from '../core/clock.js';
+import type { UsageReport } from './usage-report.js';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import * as adapters from './body-harnesses.js';
 import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
@@ -310,4 +315,63 @@ it('sends one job-bound usage report without waiting for a receiver that never a
  };
  expect(await bodyProgram({...f.options,fetch:fetcher})).toBe(0);
  expect(reports).toEqual([{source:'none',harness:'claude',model:'observed',wallMs:expect.any(Number)}]);
+});
+
+it.each([false, true])('delivers measured failure usage on its job credential (hung receiver %s)', async hung => {
+ const f = fixture();
+ const harness = vi.spyOn(adapters, 'bodyHarness').mockImplementation((_name, input) => async () => {
+  input.failedUsage?.({source:'report', tokensOut:7});
+  throw new Error();
+ });
+ const received:unknown[] = [];
+ let acknowledged = false;
+ const server = createServer(async (req, res) => {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  if(req.headers.authorization === 'Bearer '+raw && req.url === '/api/conversation/usage'){
+   received.push(JSON.parse(body).input);
+   if(hung) return;
+   await new Promise(resolve=>setTimeout(resolve,25));
+   acknowledged = true;
+   res.writeHead(200, {'content-type':'application/json'}).end(JSON.stringify({ok:true,value:{saved:true}}));
+  } else res.writeHead(403).end();
+ });
+ try {
+  server.listen(0,'127.0.0.1');
+  await once(server,'listening');
+  const address = server.address();
+  if(!address || typeof address === 'string') throw new Error('No receiver address');
+  const origin = 'http://127.0.0.1:'+address.port;
+  const envelope = JSON.parse(f.input.toString());
+  envelope.bootstrap.origin = origin;
+  const fetcher:typeof fetch = (url,init) => String(url).endsWith('/conversation/usage')
+   ? fetch(url,init) : f.options.fetch(url,init);
+  expect(await bodyProgram({...f.options,native:undefined,fetch:fetcher,
+   stdin:async()=>Buffer.from(JSON.stringify(envelope))})).toBe(BODY_EXIT.harness);
+  expect(acknowledged).toBe(!hung);
+  expect(received).toEqual([{source:'report',tokensOut:7,harness:'claude',model:'requested',wallMs:expect.any(Number)}]);
+ } finally {
+  harness.mockRestore();
+  server.closeAllConnections();
+  await new Promise<void>(resolve=>server.close(()=>resolve()));
+ }
+}, 4000);
+
+it.each([
+ ['missing', undefined],
+ ['unmeasured', {source:'none'}],
+ ['malformed', {source:'report', tokensOut:-1}],
+ ['oversized', {source:'transcript', tools:{['x'.repeat(65537)]:1}}],
+] as const)('finishes harness failure immediately with %s usage', async (_name, report) => {
+ const f = fixture();
+ const harness = vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+  if(report) input.failedUsage?.(report as UsageReport);
+  throw new Error();
+ });
+ try {
+  // The clock never advances. Any wait for this receiver leaves the body stuck.
+  const fetcher:typeof fetch = (url,init) => String(url).endsWith('/conversation/usage')
+   ? new Promise(()=>{}) : f.options.fetch(url,init);
+  expect(await bodyProgram({...f.options,native:undefined,fetch:fetcher,clock:new FakeClock()})).toBe(BODY_EXIT.harness);
+ } finally { harness.mockRestore(); }
 });

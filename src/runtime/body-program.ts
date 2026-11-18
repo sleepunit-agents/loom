@@ -20,7 +20,7 @@ import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
 import {bodyFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
-import type { UsageReport } from './usage-report.js';
+import { usageReport, type UsageReport } from './usage-report.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -233,11 +233,14 @@ export async function bodyProgram(input: {
     }
     catch { if(!stopped) throw new Error(); }
     finally {
-      // Start the bounded, job-authenticated request while the ordinary settlement is still
-      // under way. A stalled receiver can never hold up this body or change its outcome.
-      void client.usage({...(answer?.usage??failureReport??{source:'none'}),harness:job.harness,model:answer?.model??job.model,
-        wallMs:Math.round(performance.now()-harnessStarted)}).catch(()=>{});
+      const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
+        model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
+      // Failure has no subsequent settlement request to keep the job credential alive.
+      // Retire the harness and its secrets immediately while measured usage is in flight.
+      const measuredFailure = !answer && !signal.aborted && report.source !== 'none' && usageReport.safeParse(report).success;
+      const delivery = client.usage(report, measuredFailure ? 1000 : undefined).catch(()=>{});
       await retire();
+      if(measuredFailure) await delivery;
     }
     if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();

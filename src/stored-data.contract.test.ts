@@ -170,6 +170,7 @@ it('lets no second module write a household table unless it is listed here and i
     conversations: { owner: conversations, others: [] },
     inbox: { owner: conversations, others: ['src/core/tempo/volume.ts', 'src/runtime/jobs.ts'] },
     inbox_refs: { owner: conversations, others: [] },
+    job_usage: { owner: runtime, others: ['src/shared-job-usage.ts'] },
     jobs: { owner: runtime, others: ['src/core/conversations/threads.ts'] },
     messages: { owner: conversations, others: ['src/runtime/jobs.ts'] },
     model_accounts: { owner: 'src/shared-model-account-admin.ts', others: ['src/runtime/account-usage.ts', 'src/runtime/account-windows.ts'] },

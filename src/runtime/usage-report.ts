@@ -1,3 +1,4 @@
+import { jobUsage } from '../core/data/schema.js';
 import { z } from 'zod';
 
 const count = z.number().int().nonnegative();
@@ -10,7 +11,7 @@ const toolCounts = z.preprocess((raw, ctx) => {
   return raw;
 }, z.record(z.string().max(200).regex(/^[a-zA-Z0-9_.-]+$/), count));
 export const usageReport = z.object({
-  source: z.enum(['report', 'transcript', 'none']),
+  source: z.enum(jobUsage.source.enumValues),
   tokensIn: count.nullish(),
   tokensOut: count.nullish(),
   cacheRead: count.nullish(),
