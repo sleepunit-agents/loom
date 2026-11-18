@@ -26,7 +26,11 @@ import { bridgeChannelApi } from './channel-api.js';
 import { discordGateway } from './discord-gateway.js';
 import { bridgeSlackSocket } from './slack-socket.js';
 import { BridgeFiles } from './files.js';
-import { discordFiles, fetchDiscordFiles, type DiscordFile } from './discord-files.js';
+import { discordFiles, fetchDiscordFiles, DISCORD_FILES_PER_MESSAGE } from './discord-files.js';
+import { parseIncomingId } from './keys.js';
+import { originalDiscordAttachments } from './normalize.js';
+import type { DiscordFileOutcome } from './attachment-limits.js';
+import { bridgeFiles } from '../../core/data/schema.js';
 type Connection=typeof bridgeConnections.$inferSelect;
 export interface SharedBridgeOptions {
  db:DataDatabase;clock:Clock;writes:DataWrites;
@@ -60,8 +64,6 @@ export class SharedBridges {
  private readonly lives=new Map<string,Life>();
  /** Channels whose details could not be classified, so each is reported once. */
  private readonly unclassified=new Set<string>();
- /** Discord attachments that could not be fetched, so each is tried once in this process. */
- private readonly unfetched=new Set<string>();
  private readonly active=new Set<Promise<unknown>>();
  private syncing?:Promise<void>;
  private settingsKey='';
@@ -226,6 +228,53 @@ export class SharedBridges {
    this.pump(life);
   }catch{const owned=this.lives.get(row.id)===life;this.retire(life);if(owned&&!this.closed){try{this.state(row.id,'backoff');}catch{ /* report fixed error below */ }this.report();}}
  }
+ /** Called only while the job that took this message may use files. Read the exact message again for
+  * fresh signed URLs. Nothing in the text (including a pasted attachment line) supplies a descriptor. */
+ prepareDiscordFile(incoming:string, permitted:()=>boolean, index:number, maxBytes:number){
+  return this.track(this.readDiscordFile(incoming,permitted,index,maxBytes));
+ }
+ private async readDiscordFile(incoming:string, permitted:()=>boolean, index:number, maxBytes:number):Promise<()=>DiscordFileOutcome>{
+  const db=this.options.db;
+  const result=(state:DiscordFileOutcome['state'],count=0,bytes=0)=>()=>({state,count,bytes});
+  const message=db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get();
+  if(!message||!message.text||!permitted())return result('unavailable');
+  const life=this.lives.get(message.connection),id=parseIncomingId(incoming,message.connection);
+  if(!life?.authenticated||!id||life.connection.platform!=='discord')return result('unavailable');
+  // The body waits 15 seconds for one command. Keep this entire metadata + file read within that window.
+  const deadline=this.options.clock.now()+12_000;
+  const current=()=>this.options.clock.now()<deadline&&this.current(life)&&permitted()&&db.select({text:bridgeIncoming.text}).from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get()?.text===message.text;
+  const api=bridgeChannelApi({platform:'discord',workspace:life.connection.workspace,tokenSecret:life.connection.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request});
+  const fresh=await api.messageFiles(message.channel,id,message.user,12_000);
+  if(!current()||!fresh)return result('unavailable');
+  if(fresh.edited||!originalDiscordAttachments(message.text,fresh.content,fresh.attachments))return result('changed');
+  const count=Math.min(fresh.attachments.length,DISCORD_FILES_PER_MESSAGE),raw=fresh.attachments[index];
+  if(index>=count)return result('absent',count);
+  const file=discordFiles({attachments:[raw]})[0];
+  if(!file)return result('too-large',count);
+  const cached=db.select({size:sql<number>`length(${bridgeFiles.contents})`}).from(bridgeFiles).where(and(eq(bridgeFiles.connection,message.connection),eq(bridgeFiles.file,file.id))).get();
+  const size=file.size;
+  const incomplete=!!cached&&cached.size!==size;
+  const failed=(state:DiscordFileOutcome['state'],bytes:number)=>()=>{
+   if(incomplete&&current())this.files.repairIncomplete(message.connection,file.id,size);
+   return {state,count,bytes};
+  };
+  if(size>maxBytes)return failed('limit',0);
+  if(cached&&!incomplete)return ()=>{
+   if(!current()||this.files.carry({connection:message.connection,incoming,files:[file.id]},false).length)return {state:'unavailable',count,bytes:0};
+   return {state:'saved',count,bytes:size};
+  };
+  const [got]=await fetchDiscordFiles([file],current,this.options.request,size,Math.max(1,deadline-this.options.clock.now()));
+  if(!got)return failed('unavailable',size);
+  if(got.bytes.length!==size){got.bytes.fill(0);return failed('unavailable',size);}
+  return ()=>{
+   try{
+    if(!current())return {state:'unavailable',count,bytes:size};
+    if(incomplete)this.files.repairIncomplete(message.connection,file.id,size,got.bytes);
+    this.files.store({connection:message.connection,incoming,file:file.id,name:file.name,contents:got.bytes},false);
+    return {state:'saved',count,bytes:got.bytes.length};
+   }finally{got.bytes.fill(0);}
+  };
+ }
  private queuePump(life:Life){
   if(!this.current(life))return;
   if(life.pumping){life.again=true;return;}
@@ -270,21 +319,11 @@ export class SharedBridges {
     }
    }
    if(!current())return;
-   const pendingFiles=new Map<string,SlackFilesPermit['files']>(),pendingDiscord=new Map<string,DiscordFile[]>();
+   const pendingFiles=new Map<string,SlackFilesPermit['files']>();
    const changes=()=> (this.options.db.$client.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
    const beforeChanges=changes();
    const before=this.options.db.select({row:sql<number>`coalesce(max(rowid),0)`}).from(inbox).get()!.row;
    try{more=this.receiver.drain(row.id,64,(incoming,raw)=>{
-    if(row.platform==='discord'){
-     // A Discord message's attachments are kept as a Slack message's are, so a body can be handed them as
-     // files. One that could not be fetched is not asked for again: its link is in the message's words.
-     const wanted=discordFiles(JSON.parse(raw.toString('utf8')).d).filter(file=>!this.unfetched.has(JSON.stringify([row.id,file.id])));
-     if(!wanted.length)return;
-     const unkept=new Set(this.files.carry({connection:row.id,incoming:incoming.id,files:wanted.map(file=>file.id)}));
-     const missing=wanted.filter(file=>unkept.has(file.id));
-     if(!missing.length)return;
-     pendingDiscord.set(incoming.id,missing);return false;
-    }
     if(row.platform!=='slack')return;
     const event=JSON.parse(raw.toString('utf8')).payload?.event;
     if(!Array.isArray(event?.files)||!event.files.length)return;
@@ -322,21 +361,6 @@ export class SharedBridges {
       .where(and(sql`${inbox}.rowid > ${before}`,eq(bridgeIncoming.connection,row.id))).all().map(item=>item.id);
      if(ids.length){try{this.options.inboxCommitted?.(ids);}catch{this.report();}}
     }
-   }
-   for(const [incoming,files] of pendingDiscord){
-    if(!current())return;
-    const message=this.options.db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),eq(bridgeIncoming.connection,row.id),eq(bridgeIncoming.state,'delivered'))).get();
-    if(!message)continue;
-    const fetched=await fetchDiscordFiles(files,current,this.options.request);
-    if(!current())return;
-    const still=this.options.db.select({state:bridgeIncoming.state,text:bridgeIncoming.text}).from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get();
-    // Words erased while the files were on their way (a direct message past its keep time) take the files with them.
-    if(still?.state==='delivered'&&still.text===message.text)for(const file of fetched)this.files.store({connection:row.id,file:file.id,incoming,name:file.name,contents:file.bytes});
-    for(const file of files)if(!fetched.some(got=>got.id===file.id)){
-     // Bounded by forgetting the oldest, never all at once: a file that failed is not asked for again while its frame is still spooled.
-     if(this.unfetched.size>=4096)this.unfetched.delete(this.unfetched.values().next().value!);
-     this.unfetched.add(JSON.stringify([row.id,file.id]));}
-    life.again=true;
    }
    // Frame and Inbox delivery have committed. Keep the original raw receipt
    // until cached files exist, so a restart can retry without a second spool.

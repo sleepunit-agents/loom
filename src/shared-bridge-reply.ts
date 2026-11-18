@@ -15,8 +15,9 @@ import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
-import type { BridgeSends } from './pieces/bridges/sends.js';
 import { SEND_FILES,SEND_FILES_BYTES } from './pieces/bridges/send-file-limit.js';
+import type { SharedBridges } from './pieces/bridges/shared-daemon.js';
+import { BODY_ATTACHMENTS, BODY_ATTACHMENT_BYTES, discordFileOutcome } from './pieces/bridges/attachment-limits.js';
 import { HANDED_FILE_BYTES } from './pieces/bridges/files.js';
 import { OperationError,type Operations } from './core/operations/index.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
@@ -24,8 +25,9 @@ import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 export const BRIDGE_POSTS_PER_JOB=20;
 /** Why a post from a job on anybody else's word carries no file. */
 export const NO_FILES_REFUSAL='This job is not working for the agent\'s owners: it runs with loom\'s tools only, and its posts carry no files.';
-export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,sends:BridgeSends,
+export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,daemon:Pick<SharedBridges,'sends'|'prepareDiscordFile'|'files'>,
  conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
+ const sends=daemon.sends;
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
  /** The current body's own conversation holds this delivered message. */
  const inConversation=(viewer:Viewer,incoming:string)=>{
@@ -169,11 +171,24 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    ctx.changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
   },
  });
- // Slack attachments, kept fourteen days. Without a file id this lists what a message carried; with
+ // Bridge attachments, kept fourteen days. Without a file id this lists what a message carried; with
  // one it returns that file. One rule with the message they hang off: a member who may read the
- // message row may read its files, and an agent reads them only as the current body of that conversation.
+ // message row may read its files. Discord bodies additionally need an unrestricted job.
  const messageRow=getTableColumns(bridgeIncoming);
- const readable=(viewer:Viewer,incoming:string)=>viewer.kind==='agent'?!!inConversation(viewer,incoming)
+ const fileBody=(viewer:Viewer,incoming:string)=>{
+  const found=inConversation(viewer,incoming);
+  return found&&(found.cv.venue!=='discord'||!jobHeld(db,found.job))?found:undefined;
+ };
+ const canPrepare=(viewer:Viewer,incoming:string)=>fileBody(viewer,incoming)?.cv.venue==='discord'&&!!target(viewer,incoming)&&effectsAllowed();
+ operations.register({name:'bridges.prepareFile',write:true,doors:['http'],
+  input:z.object({incoming:z.string().min(1).max(400),index:z.int().min(0).max(BODY_ATTACHMENTS-1),maxBytes:z.int().nonnegative().max(BODY_ATTACHMENT_BYTES)}).strict(),
+  output:discordFileOutcome,
+  may:(viewer,input)=>canPrepare(viewer,input.incoming),
+  prepare:(input,{viewer})=>daemon.prepareDiscordFile(input.incoming,()=>canPrepare(viewer,input.incoming),input.index,input.maxBytes),
+  run:(_ctx,_input,prepared)=>(prepared as Awaited<ReturnType<SharedBridges['prepareDiscordFile']>>)(),
+  after:(_input,result)=>{if(result.ok)daemon.files.published();},
+ });
+ const readable=(viewer:Viewer,incoming:string)=>viewer.kind==='agent'?!!fileBody(viewer,incoming)
   :!!db.select({id:bridgeIncoming.id}).from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),bridgeSecretsVisibility(viewer).bridgeIncoming!(messageRow))).get();
  const MAX=HANDED_FILE_BYTES;
  operations.register({name:'bridges.file',write:false,doors:['http'],

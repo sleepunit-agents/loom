@@ -70,6 +70,17 @@ describe('shared-schema bridge ingress', () => {
     expect(f.db.select().from(conversations).all()).toHaveLength(1);
     expect(f.db.select().from(turns).all().map(t => t.seq)).toEqual([1, 2]);
   });
+  it('replays held Discord attachments and deduplicates other connections across the signed-link format change',()=>{
+    const f=fixture(),stored='[attachment: pic.png (image/png, 3 bytes) https://cdn.discordapp.com/attachments/33/55/pic?hm=old]',text='[attachment: pic.png (image/png, 3 bytes)]';
+    f.db.update(bridgeConnections).set({enabled:false}).where(eq(bridgeConnections.id,'c')).run();
+    expect(f.ingress.receive({...f.message,text:stored}).state).toBe('held');
+    f.db.update(bridgeConnections).set({enabled:true}).where(eq(bridgeConnections.id,'c')).run();
+    expect(f.ingress.receive({...f.message,text},true).state).toBe('delivered');
+    const connection=f.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,'c')).get()!;
+    f.db.insert(bridgeConnections).values({...connection,id:'second'}).run();
+    expect(f.ingress.receive({...f.message,connection:'second',text}).state).toBe('delivered');
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  });
   it('addresses explicit mentions, ignores another agent, and allows direct messages', () => {
     const f = fixture();
     expect(f.ingress.receive({ ...f.message, id: 'other', mentions: ['bot-mark'] }).state).toBe('dropped');

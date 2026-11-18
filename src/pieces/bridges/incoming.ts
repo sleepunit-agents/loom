@@ -11,6 +11,7 @@
  * only while it is in use (enabled and not removed) and that agent is in the household: a retired
  * connection's bot is no agent's, so it is neither a peer that could be addressed, nor a household sender,
  * nor a second claim on a bot that another connection now holds. */
+import { discordBodyWords } from './discord-link.js';
 import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations, lateMailWaits } from '../../core/conversations/index.js';
@@ -51,8 +52,8 @@ export interface IncomingMessage {
 /** Stored words that are empty were sent empty, erased at the keep time
  * (core/conversations/private-bridge-words.ts) or never kept because the message
  * was dropped; none of these can be compared. */
-function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
- return samePosting(row,message)&&(row.text===''||row.text===message.text);
+function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage,platform:'discord'|'slack'){
+ return samePosting(row,message)&&(row.text===''||row.text===message.text||platform==='discord'&&discordBodyWords(row.text)===discordBodyWords(message.text));
 }
 /** The same message by everything but its words: where it was posted, by whom and when. */
 function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'postedAt'>,message:IncomingMessage){
@@ -98,20 +99,20 @@ export class BridgeIncoming {
   receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = incomingId(message.connection, message.id);
+      const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
+      if (!connection) throw new Error('Unknown bridge connection');
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       if (existing) {
         // A second event for a message already on record, with other words, is an edit (Slack sends an
         // `app_mention` when a posted message is edited to mention the bot). An edit is not a new message:
         // nothing new is recorded, whatever state the first is in, and the agent keeps the words it was
         // given. The caller has its row and counts the event as read.
-        if (!sameMessage(existing,message)) {
+        if (!sameMessage(existing,message,connection.platform)) {
           if (samePosting(existing,message)) return existing;
           throw new Error('Incoming id reused for a different message');
         }
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
-      const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
-      if (!connection) throw new Error('Unknown bridge connection');
       const channel = message.parent ?? message.channel;
       const route = this.db.select().from(bridgeChannels).where(and(eq(bridgeChannels.platform, connection.platform), eq(bridgeChannels.workspace, connection.workspace), eq(bridgeChannels.channel, channel))).get();
       const filters = this.db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, connection.id)).all();
@@ -207,7 +208,7 @@ export class BridgeIncoming {
             .from(inboxRefs).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
             .where(and(eq(inboxRefs.item, delivered.id), eq(bridgeIncoming.state, 'delivered'))).all()
             .find(row => row.id === incomingId(row.connection, message.id));
-          if (!original || !sameMessage(original,message)) throw Error('Bridge delivery identity changed');
+          if (!original || !sameMessage(original,message,connection.platform)) throw Error('Bridge delivery identity changed');
           deliveredAt = delivered.at;
           conversation = delivered.conversation;
           matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;

@@ -1,3 +1,4 @@
+import { discordBodyWords } from '../../pieces/bridges/discord-link.js';
 import {handoffPeersAssigned} from './handoff-access.js';
 import {handoffDeadline} from './handoff-words.js';
 import {hasPrivateInboxPayload,privateInboxDeadline,privateInboxAnswer} from './private-inbox-words.js';
@@ -64,6 +65,10 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const days=commsKeepDays(db);
   let until=Infinity;
   const items=deliveries.map(({item,words,answerContext,history})=>{
+   if(before.cv.venue==='discord'){
+    if(item.source==='discord'&&words!==null)words=discordBodyWords(words);
+    if(history)history=history.map(line=>({...line,words:discordBodyWords(line.words)}));
+   }
    let keepUntil:string|null=null,verdict:string|null=null;
    if(item.thread&&item.messageSeq!==null){
     const message=db.select().from(messages).where(and(eq(messages.thread,item.thread),eq(messages.seq,item.messageSeq),eq(messages.inboxItem,item.id))).get();

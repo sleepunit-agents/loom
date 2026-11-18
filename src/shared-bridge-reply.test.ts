@@ -9,13 +9,17 @@ import {createDataSchema} from './core/data/database.js';
 import * as s from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import {BridgeIncoming} from './pieces/bridges/incoming.js';
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {saveBodyAttachments} from './runtime/body-attachments.js';
 import {wordsKey} from './pieces/comms/crypto.js';
 import {BridgeFiles} from './pieces/bridges/files.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const owner='a'.repeat(64),member='b'.repeat(64),other='c'.repeat(64),plainAgent='d'.repeat(64);
-function fixture(){
+function fixture(discordRequest?:typeof fetch){
  const sql=new Database(':memory:');clean.push(()=>sql.close());const db=createDataSchema(sql),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString();
  db.insert(s.members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'member',role:'member',joinedAt:now()},{id:'other',role:'member',joinedAt:now()}]).run();
  db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -25,11 +29,16 @@ function fixture(){
  db.insert(s.bridgeConnections).values({id:'slack',platform:'slack',workspace:'TWORK',botUser:'UBOT',agent:'art',tokenSecret:'TOKEN',appSecret:'APP',enabled:true,state:'disconnected',stateAt:now()}).run();
  db.insert(s.bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'art',botsMayTalk:false}).run();
  db.insert(s.bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UMEMBER',member:'member'}).run();
+ if(discordRequest){
+  db.update(s.bridgeConnections).set({platform:'discord',workspace:'11',botUser:'22',appSecret:null}).run();
+  db.update(s.bridgeChannels).set({platform:'discord',workspace:'11',channel:'33'}).run();
+  db.update(s.bridgePeople).set({platform:'discord',workspace:'11',user:'44'}).run();
+ }
  const token=(value:string,row:Partial<typeof s.tokens.$inferInsert>)=>db.insert(s.tokens).values({fingerprint:createHash('sha256').update(value).digest('hex'),label:'Synthetic '+value.slice(0,12),kind:'owner',createdAt:now(),...row}).run();
  token(owner,{member:'owner'});token(member,{member:'member'});token(other,{member:'other'});token(plainAgent,{kind:'agent',agent:'art'});
  // No socket is opened: the daemon is never made ready. Only its send queue and doors are used.
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},commsKey:wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),tempo:{admit:()=>true},
-  bridges:{source:{generation:async()=>'12345678-1234-4234-8234-123456789abc',read:async()=>Buffer.from('SYNTHETIC')},effectsAllowed:()=>true}});clean.push(()=>root.close());
+  bridges:{request:discordRequest??(async()=>new Response(null,{status:503})),discord:()=>({close:async()=>{}}),source:{generation:async()=>'12345678-1234-4234-8234-123456789abc',read:async()=>Buffer.from('SYNTHETIC')},effectsAllowed:()=>true}});clean.push(()=>root.close());
  const incoming=new BridgeIncoming(db,now);let count=0;
  const receive=(dm:boolean,user='UMEMBER')=>root.writes.run(()=>incoming.receive({id:JSON.stringify([dm?'DMEMBER':'CROOM',`1794432000.00000${++count}`]),connection:'slack',channel:dm?'DMEMBER':'CROOM',thread:dm?undefined:`1794432000.00000${count}`,isDm:dm,user,text:'Synthetic words',postedAt:now(),mentions:[]})).value;
  /** A running job in the message's conversation, with the body token that proves it. */
@@ -39,10 +48,10 @@ function fixture(){
    token(value,{kind:'agent',agent:'art',job});});
   return {job,token:value};
  };
- const call=async(name:'reply'|'file',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
+ const call=async(name:'reply'|'file'|'prepareFile',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
  const reply=(incomingId:string,bearer:string)=>call('reply',{id:randomUUID(),incoming:incomingId,text:'Synthetic reply',model:'m'},bearer);
  const mail=(incomingId:string)=>db.select({item:s.inbox}).from(s.inboxRefs).innerJoin(s.inbox,eq(s.inbox.id,s.inboxRefs.item)).where(eq(s.inboxRefs.ref,incomingId)).get()!.item;
- return {db,root,clock,now,receive,body,call,reply,mail};
+ return {db,root,clock,now,receive,incoming,body,call,reply,mail};
 }
 it('settles everything the body took with its one reply, and leaves mail that arrived afterwards waiting',async()=>{
  const f=fixture(),one=f.receive(true),two=f.receive(true);expect(two.conversation).toBe(one.conversation);
@@ -65,6 +74,56 @@ it('lets a body answer only mail it took, and settles that mail with the reply',
  expect(f.mail(message.id).state).toBe('done');
  const second=f.body(message.conversation!);expect((await f.reply(message.id,second.token)).status).toBe(403);
  expect(f.db.select().from(s.bridgeSends).all()).toHaveLength(1);
+});
+it('opens the bytes of a Discord image via body preparation and the real HTTP file door',async()=>{
+ const url='https://cdn.discordapp.com/attachments/33/55/pic.png',calls:string[]=[];
+ const f=fixture(async(target,init)=>{
+  const path=String(target);calls.push(path);
+  if(path.endsWith('/users/@me'))return Response.json({id:'22',bot:true});
+  if(path.endsWith('/guilds/11'))return Response.json({id:'11'});
+  if(path.endsWith('/roles'))return Response.json([]);
+  if(path.endsWith('/channels/33/messages/66'))return Response.json({id:'66',channel_id:'33',author:{id:'44'},content:'',attachments:[{id:'55',filename:'pic.png',content_type:'image/png',size:3,url}]});
+  if(path===url){expect(init?.headers).toBeUndefined();return new Response('PNG');}
+  return new Response(null,{status:404});
+ });
+ const daemon=f.root.services.bridges.daemon!;await daemon.ready();await daemon.idle();
+ const words='[attachment: pic.png (image/png, 3 bytes)]';
+ const row=f.root.writes.run(()=>f.incoming.receive({id:'66',connection:'slack',channel:'33',isDm:false,user:'44',text:words,postedAt:f.now(),mentions:[]})).value;
+ const body=f.body(row.conversation!);
+ expect((await f.call('prepareFile',{incoming:row.id,index:0,maxBytes:1024},body.token)).status).toBe(403);
+ f.root.writes.run(()=>f.root.services.conversations.take(row.conversation!,body.job));
+ expect(calls).not.toContain(url);
+ const client={command:async(op:string,input:unknown)=>{const reply=await f.call(op==='bridges.file'?'file':'prepareFile',input,body.token);return reply.body;}};
+ const scratch=mkdtempSync(join(tmpdir(),'loom-discord-body-'));
+ try{
+  const told=await saveBodyAttachments(client as never,[row.id],scratch,undefined,new Map([[row.id,words]]));
+  const path=told?.match(/^- (.+) \(pic\.png, 3 bytes\)$/m)?.[1];
+  expect(path).toBeDefined();expect(readFileSync(path!)).toEqual(Buffer.from('PNG'));
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+ expect(calls.filter(path=>path===url)).toHaveLength(1);
+});
+it('releases legacy Discord mail and history to a guest without their signed links',async()=>{
+ const f=fixture(async()=>new Response(null,{status:503}));
+ await f.root.services.bridges.daemon?.ready();await f.root.services.bridges.daemon?.idle();
+ f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'member')).run();
+ const hear=(id:string)=>f.root.writes.run(()=>f.incoming.receive({id,connection:'slack',channel:'33',isDm:false,user:'44',text:
+  `hello\n[attachment: pic${id}.png (image/png, 12 bytes) https://cdn.discordapp.com/attachments/33/${id}/pic.png?hm=OLD_SECRET]`,postedAt:f.now(),mentions:[]})).value;
+ const past=hear('66');
+ f.db.update(s.inbox).set({state:'done'}).where(eq(s.inbox.id,f.mail(past.id).id)).run();
+ const next=hear('67'),body=f.body(next.conversation!);
+ const response=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+body.token},body:JSON.stringify({input:{}})});
+ expect(response.status).toBe(200);const packet=await response.json();
+ expect(packet.value.items[0]).toMatchObject({words:'hello\n[attachment: pic67.png (image/png, 12 bytes)]',history:[{words:'hello\n[attachment: pic66.png (image/png, 12 bytes)]'}]});
+ expect(JSON.stringify(packet)).not.toContain('OLD_SECRET');
+});
+it('denies cached bytes and preparation to a body acting on a guest’s word',async()=>{
+ const f=fixture(async()=>new Response(null,{status:503}));
+ await f.root.services.bridges.daemon?.ready();await f.root.services.bridges.daemon?.idle();
+ const room=f.incoming.receive({id:'66',connection:'slack',channel:'33',isDm:false,user:'44',text:'Files',postedAt:f.now(),mentions:[]});
+ f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'member')).run();
+ const body=f.body(room.conversation!);f.root.writes.run(()=>f.root.services.conversations.take(room.conversation!,body.job));
+ expect((await f.call('file',{incoming:room.id},body.token)).status).toBe(403);
+ expect((await f.call('prepareFile',{incoming:room.id,index:0,maxBytes:12},body.token)).status).toBe(403);
 });
 it('reads attachments under the rule of the message they hang off',async()=>{
  const f=fixture(),dm=f.receive(true),room=f.receive(false);

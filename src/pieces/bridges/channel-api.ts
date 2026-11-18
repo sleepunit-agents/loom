@@ -4,6 +4,7 @@ import type { SecretUse } from '../secrets/role.js';
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): value is Json => !!value && typeof value === 'object' && !Array.isArray(value);
+export const BRIDGE_READ_MS = 15_000;
 const MAX_BYTES = 1024 * 1024;
 
 /** Metadata reads for an already authenticated connection. Root owns bot/workspace
@@ -21,11 +22,11 @@ export function bridgeChannelApi(input: {
   const discord = platform === 'discord';
   /** One bounded read of one JSON answer, with the connection's credential. Undefined for anything but a
    * whole, current, well-formed answer that `pick` accepts. */
-  async function read<T>(valid: boolean, url: string, body: URLSearchParams | undefined, pick: (answer: unknown) => T | undefined): Promise<T | undefined> {
+  async function read<T>(valid: boolean, url: string, body: URLSearchParams | undefined, pick: (answer: unknown) => T | undefined, timeoutMs = BRIDGE_READ_MS): Promise<T | undefined> {
       if (!valid) return undefined;
       let expired = false, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       const abort = new AbortController();
-      const deadlineAt = clock.now() + 15_000;
+      const deadlineAt = clock.now() + timeoutMs;
       const current = () => !expired && clock.now() < deadlineAt && input.current();
       const cancelBody = () => { try { void reader?.cancel().catch(() => {}); } catch { /* no upstream diagnostics */ } };
       let cancel!: () => void;
@@ -34,9 +35,7 @@ export function bridgeChannelApi(input: {
           expired = true; abort.abort(); cancelBody(); resolve(undefined);
         });
       });
-      const once = async (): Promise<T | undefined> => {
-        if (!current()) return undefined;
-        const result = await secrets.withValue(tokenSecret, async token => {
+      const readResponse = async (token: string): Promise<T | undefined> => {
           if (!current()) return undefined;
           const response = await request(url, {
             method: discord ? 'GET' : 'POST', redirect: 'error', signal: abort.signal,
@@ -62,7 +61,11 @@ export function bridgeChannelApi(input: {
             if (!current()) return undefined;
             return pick(JSON.parse(Buffer.concat(chunks).toString('utf8')));
           } finally { cancelBody(); }
-        });
+      };
+      const once = async (): Promise<T | undefined> => {
+        if (!current()) return undefined;
+        // A transport or parsing failure says nothing about the borrowed credential.
+        const result = await secrets.withValue(tokenSecret, token => discord ? readResponse(token).catch(() => undefined) : readResponse(token));
         return current() ? result : undefined;
       };
       try {
@@ -81,6 +84,11 @@ export function bridgeChannelApi(input: {
           const channel = discord ? answer : answer.ok === true ? answer.channel : undefined;
           return object(channel) && channel.id === id ? channel : undefined;
         });
+    },
+    messageFiles(channel: string, message: string, author: string, timeoutMs: number): Promise<{ attachments: unknown[]; edited: boolean; content: string } | undefined> {
+      return read(discord && isDiscordId(channel) && isDiscordId(message), `https://discord.com/api/v10/channels/${channel}/messages/${message}`, undefined, answer =>
+        object(answer) && answer.id === message && answer.channel_id === channel && object(answer.author) && answer.author.id === author &&
+        Array.isArray(answer.attachments) && typeof answer.content === 'string' ? {attachments:answer.attachments, edited:answer.edited_timestamp != null, content:answer.content} : undefined, timeoutMs);
     },
     /** Discord only. Who wrote the message a thread was started from: a thread made from a message has
      * that message's id. Undefined when there is no such message (a thread made on its own, a deleted

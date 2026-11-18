@@ -313,28 +313,46 @@ it('shows nothing for mail whose job is not running, or on a connection that is 
   expect(workingOn(f.db)).toEqual([]);
 });
 
-it('keeps a delivered Discord message\'s attachments, once, and leaves one it cannot fetch as a link', async () => {
+it('waits for a body with file tools before fetching a picture-only message, then keeps readable files and reports missing ones', async () => {
   const f = discordFixture(); await f.start();
-  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
-  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1', gone = 'https://cdn.discordapp.com/attachments/1/2/gone.png?ex=1';
+  f.db.insert(bridgeChannels).values({platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false}).run();
+  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png', gone = cat + '?gone';
+  const attachments = [{id:'11',filename:'cat.png',size:7,content_type:'image/png',url:cat},
+    {id:'12',filename:'gone.png',size:2,content_type:'image/png',url:gone}];
   f.answers.set(`GET ${cat}`, Buffer.from('PNGDATA'));
-  const attachments = [{ id: '900000000000000001', filename: 'cat.png', size: 7, content_type: 'image/png', url: cat }, { id: '900000000000000002', filename: 'gone.png', size: 9, content_type: 'image/png', url: gone }];
-  const row = await f.say({ content: '', attachments });
-  f.clock.advance(1); await f.daemon.idle(); f.clock.advance(1); await f.daemon.idle();
-  // A picture alone is delivered, with both links in its words.
-  expect(row).toMatchObject({ state: 'delivered' });
-  expect(row.text).toBe(`[attachment: cat.png (image/png, 7 bytes) ${cat}]\n[attachment: gone.png (image/png, 9 bytes) ${gone}]`);
-  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{ connection: 'connection', file: '900000000000000001', name: 'cat.png', contents: Buffer.from('PNGDATA') }]);
-  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{ connection: 'connection', file: '900000000000000001', incoming: row.id }]);
-  // Each is asked for once: the one that is gone is not asked for again on every pass.
-  for (let n = 0; n < 3; n++) { f.clock.advance(5000); await f.daemon.idle(); }
-  expect(f.calls.filter(call => call.path === cat)).toHaveLength(1);
-  expect(f.calls.filter(call => call.path === gone)).toHaveLength(1);
-  // The fetch carries no credential: the link is Discord's own.
-  expect(f.request.mock.calls.find(([url]) => String(url) === cat)?.[1]?.headers).toBeUndefined();
-  // A stranger's attachment is not fetched: the message was dropped.
-  await f.say({ author: { id: '400000000000000099' }, content: 'x', attachments: [{ ...attachments[0], id: '900000000000000003', url: cat + '&other' }] });
-  expect(f.calls.filter(call => call.path === cat + '&other')).toHaveLength(0);
+  const row = await f.say({content:'',attachments});
+  expect(row.state).toBe('delivered');
+  expect(f.calls.some(call=>call.path===cat)).toBe(false);
+  expect(row.text).toContain('cat.png (image/png, 7 bytes)');
+  expect(row.text).not.toContain('https://');
+  const message = '600000000000000001';
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',attachments});
+  const prepare=async(index:number,permit=()=>true)=>(await f.daemon.prepareDiscordFile(row.id,permit,index,1024))();
+  expect(await prepare(0,()=>false)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  const commit=await f.daemon.prepareDiscordFile(row.id,()=>true,0,1024);
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  expect(commit()).toEqual({state:'saved',count:2,bytes:7});
+  expect(await prepare(1)).toMatchObject({state:'unavailable',count:2});
+  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{file:'11',contents:Buffer.from('PNGDATA')}]);
+  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{connection:'connection',file:'11',incoming:row.id}]);
+  expect(await prepare(0)).toMatchObject({state:'saved'});
+  // A previously kept short response must neither bypass the size check nor reset its original retention.
+  const received=f.db.select().from(bridgeFiles).get()!.fetchedAt;
+  f.db.update(bridgeFiles).set({contents:Buffer.from('PN')}).run();
+  expect(await prepare(0)).toMatchObject({state:'saved',bytes:7});
+  expect(f.db.select().from(bridgeFiles).get()).toMatchObject({contents:Buffer.from('PNGDATA'),fetchedAt:received});
+  f.db.update(bridgeFiles).set({contents:Buffer.from('P')}).run();
+  f.answers.set(`GET ${cat}`,Buffer.from('PN'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',edited_timestamp:'2026-11-14T12:02:00Z',attachments:[]});
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  f.request.mockRejectedValueOnce(Error('Discord temporarily offline'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  expect(f.calls.filter(call=>call.path===cat)).toHaveLength(3);
   expect(f.errors).toEqual([]);
 });
 

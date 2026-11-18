@@ -307,3 +307,26 @@ it('tells the body of a bridge job who asked before its mail, fresh or continuin
  // Owners also receive the approval instructions in private Comms.
  const h=fixture();expect(await bodyProgram(h.options)).toBe(0);expect(h.native).toHaveBeenCalledWith(job,expect.stringMatching(/approvals\.answer[\s\S]*\n\nPRIVATE MAIL$/),expect.any(AbortSignal));
 });
+
+it('answers picture-only Discord mail on a guest’s word with the file description and no download', async () => {
+ const f = fixture(), assignment = JSON.parse(f.input.toString());
+ Object.assign(assignment.job, {venue:'discord', thread:null});
+ assignment.job.run.policy.word = 'others';
+ const description = '[attachment: sunrise.jpg (image/jpeg, 1234 bytes)]';
+ const saveAttachments = vi.fn(async () => { throw Error('unexpected file access'); });
+ f.native.mockResolvedValue({text:'I can see you attached sunrise.jpg.', model:'observed', actions:[]});
+ const exit = await bodyProgram({...f.options, saveAttachments, stdin:async () => Buffer.from(JSON.stringify(assignment)),
+  fetch:async (url, options) => {
+   const response = await f.options.fetch(url, options);
+   if (!String(url).endsWith('/take')) return response;
+   const batch = await response.json();
+   Object.assign(batch.value.items[0], {source:'discord', refs:['bi:image'], words:description});
+   return Response.json(batch);
+  }});
+ expect(exit).toBe(0);
+ const prompt = f.native.mock.calls[0][1];
+ expect(prompt).toContain(description);
+ expect(prompt).toContain('cannot open');
+ expect(saveAttachments).not.toHaveBeenCalled();
+ expect(f.calls.find(row => row.path === 'reply')?.body.input).toMatchObject({incoming:'bi:image'});
+});

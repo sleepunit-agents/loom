@@ -6,8 +6,8 @@ import { bridgeConnections, bridgeFileMessages, bridgeFiles, bridgeIncoming } fr
 
 const RETENTION = 14 * DAY_MS;
 /** The largest kept file a body, or a member's page, is handed whole (bridges.file). A Discord attachment
- * larger than this is not fetched at all: it stays a link in the message's words. */
-export const HANDED_FILE_BYTES = 8 * 1024 * 1024;
+ * larger than this remains a description in the message's words. */
+export { HANDED_FILE_BYTES } from './attachment-limits.js';
 
 /** The attachment cache on the shared schema, for both platforms: a Slack message's files, fetched with
  * the connection's credential, and a Discord message's, fetched from Discord's signed links. The daemon calls store after
@@ -34,7 +34,7 @@ export class BridgeFiles {
     if (!connection || incoming?.connection !== input.connection) throw new Error('Attachment does not belong to this connection');
   }
 
-  store(input: { connection: string; file: string; incoming: string; name: string; contents: Buffer }): void {
+  store(input: { connection: string; file: string; incoming: string; name: string; contents: Buffer }, publish = true): void {
     if (this.closed) throw new Error('Bridge files closed');
     if (!input.file.trim() || !input.name.trim()) throw new Error('Attachment needs an id and name');
     this.db.transaction(tx => {
@@ -43,13 +43,29 @@ export class BridgeFiles {
       tx.insert(bridgeFiles).values({ connection: input.connection, file: input.file, name: input.name, contents: input.contents, fetchedAt: new Date(this.clock.now()).toISOString() }).onConflictDoNothing().run();
       tx.insert(bridgeFileMessages).values({ connection: input.connection, file: input.file, incoming: input.incoming }).onConflictDoNothing().run();
     });
-    this.sweep();
-    this.changed();
+    if (publish) this.published();
+  }
+
+  /** Refresh expiry and notify after a surrounding transaction has committed. */
+  published(): void { this.sweep(); this.changed(); }
+
+  /** Replace a legacy truncated copy in place, preserving its links and keep time. If the exact
+   * bytes cannot be recovered, discard the incomplete copy. Called in the preparation commit. */
+  repairIncomplete(connection: string, file: string, expected: number, replacement?: Buffer): void {
+    const key = and(eq(bridgeFiles.connection, connection), eq(bridgeFiles.file, file));
+    const incomplete = and(key, sql`length(${bridgeFiles.contents}) != ${expected}`);
+    if (replacement) {
+      if (replacement.length !== expected) throw Error('Incomplete attachment');
+      this.db.update(bridgeFiles).set({contents:replacement}).where(incomplete).run();
+    } else if (this.db.select({id:bridgeFiles.file}).from(bridgeFiles).where(incomplete).get()) {
+      this.db.delete(bridgeFileMessages).where(and(eq(bridgeFileMessages.connection, connection), eq(bridgeFileMessages.file, file))).run();
+      this.db.delete(bridgeFiles).where(incomplete).run();
+    }
   }
 
   /** List files that are already kept under one more message that carried them. Returns the ids that
    * are not kept on this connection, which the caller has still to fetch. */
-  carry(input: { connection: string; incoming: string; files: readonly string[] }): string[] {
+  carry(input: { connection: string; incoming: string; files: readonly string[] }, publish = true): string[] {
     if (this.closed) throw new Error('Bridge files closed');
     const missing = this.db.transaction(tx => {
       this.belongs(tx, input);
@@ -59,7 +75,7 @@ export class BridgeFiles {
         return false;
       });
     });
-    if (missing.length < input.files.length) this.changed();
+    if (publish && missing.length < input.files.length) this.changed();
     return missing;
   }
 
