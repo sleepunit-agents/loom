@@ -1,3 +1,4 @@
+import {responseAvailability} from '../core/data/guarded-response.js';
 import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
 import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,temporaryUnavailableReply,BODY_CONTACT_MS} from './body-contact.js';
 /** Current-body client. The parent supplies its existing enrolled body bearer.
@@ -68,8 +69,10 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     if(!response.redirected&&temporaryStatus(response.status)&&!structuredUnavailable)throw new BodyTransportFailure();
     if(!valid()||response.redirected||(!response.ok&&response.status!==401&&response.status!==403&&!structuredUnavailable)||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
+    const available=responseAvailability(response);
+    if(available&&!available())throw unavailable();
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
-    for(;;){const part=await reader.read().catch(()=>{throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
+    for(;;){const part=await reader.read().catch(()=>{if(available&&!available())throw unavailable();throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
     if(!response.ok&&length!==null&&size!==Number(length))throw unavailable();
     joined=Buffer.concat(chunks);const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(joined));
     if(!valid())throw unavailable();
