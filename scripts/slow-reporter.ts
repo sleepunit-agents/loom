@@ -1,13 +1,18 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Reporter, TestModule } from 'vitest/node';
+import type { Reporter, TestModule, Vitest } from 'vitest/node';
 
 type Timing = { name: string; ms: number };
-const slowMs = 5_000;
 const byDuration = (a: Timing, b: Timing) => b.ms - a.ms || a.name.localeCompare(b.name);
 const line = ({ name, ms }: Timing) => `  ${(ms / 1000).toFixed(3)}s  ${name}`;
 
 export default class SlowReporter implements Reporter {
+  private slowMs!: number;
+
+  onInit(vitest: Vitest) {
+    this.slowMs = vitest.config.slowTestThreshold;
+  }
+
   onTestRunEnd(modules: ReadonlyArray<TestModule>) {
     const files: Timing[] = [];
     const tests: Timing[] = [];
@@ -26,9 +31,9 @@ export default class SlowReporter implements Reporter {
     tests.sort(byDuration);
     const summary = [
       'Slowest files (tests and hooks)', ...files.slice(0, 5).map(line),
-      `Slowest tests (top five and every test over ${slowMs / 1000}s)`,
-      ...tests.filter((test, index) => index < 5 || test.ms > slowMs)
-        .map(test => line(test) + (test.ms > slowMs ? ' [slow]' : '')),
+      `Slowest tests (top five and every test over ${this.slowMs / 1000}s)`,
+      ...tests.filter((test, index) => index < 5 || test.ms > this.slowMs)
+        .map(test => line(test) + (test.ms > this.slowMs ? ' [slow]' : '')),
     ].join('\n') + '\n';
     console.log(summary);
     const path = process.env.LOOM_SLOW_REPORT;

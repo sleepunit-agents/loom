@@ -7,6 +7,8 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./web/src', import.meta.url)) } },
   test: {
     sequence: { sequencer: CiSequencer },
+    // Five seconds singled out 19 of 5,902 timed cases in CI run 44391385848.
+    slowTestThreshold: 5_000,
     reporters: ['default', './scripts/slow-reporter.ts'],
     // `.claude/worktrees/` holds abandoned agent worktrees — full stale copies
     // of this repo. Without this they get collected too, so the suite silently
