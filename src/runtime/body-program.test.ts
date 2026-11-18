@@ -296,3 +296,18 @@ it('tells the body of a bridge job who asked before its mail, fresh or continuin
  // Owners also receive the approval instructions in private Comms.
  const h=fixture();expect(await bodyProgram(h.options)).toBe(0);expect(h.native).toHaveBeenCalledWith(job,expect.stringMatching(/approvals\.answer[\s\S]*\n\nPRIVATE MAIL$/),expect.any(AbortSignal));
 });
+
+it('sends one job-bound usage report without waiting for a receiver that never answers',async()=>{
+ const f=fixture();
+ const reports:unknown[]=[];
+ const fetcher:typeof fetch=(url,init)=>{
+  if(String(url).endsWith('/conversation/usage')){
+   expect(new Headers(init?.headers).get('authorization')).toBe('Bearer '+raw);
+   reports.push(JSON.parse(String(init?.body)).input);
+   return new Promise(()=>{});
+  }
+  return f.options.fetch(url,init);
+ };
+ expect(await bodyProgram({...f.options,fetch:fetcher})).toBe(0);
+ expect(reports).toEqual([{source:'none',harness:'claude',model:'observed',wallMs:expect.any(Number)}]);
+});

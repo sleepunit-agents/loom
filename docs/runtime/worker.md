@@ -1573,3 +1573,11 @@ Task and approval answers returning to an agent in a private conversation inheri
 that conversation's member and project labels. A different member's private
 source cannot be relabelled into it. The strict receiving mail-scope guard remains
 in place; ordinary work-source records keep their own scope.
+
+### Job usage
+
+The body sends usage on its own job credential as soon as its harness returns. The request runs alongside ordinary settlement and ends when the body exits. A missing or unresponsive receiver cannot hold up the reply.
+
+Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separately. Loom adds the three for inclusive input tokens. The result supplies aggregate counters. Usage iterations and distinct assistant message IDs supply model-call counts and the largest input sent to one call. Repeated assistant events for a message or tool use count once.
+
+Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. The agy harness supplies no measured counters.

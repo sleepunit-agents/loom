@@ -3,6 +3,7 @@
  * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
  * an outstanding one is sent again before any new input. `confirm` settles it, and is sent by settle()
  * only once the answer is recorded: mail a body dies holding stays with its job for the next attempt. */
+import type { UsageReport } from './usage-report.js';
 import {DAY} from '../core/day.js';
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import {BODY_REQUEST_MS,validBodyRequestMs} from './body-request-time.js';
@@ -125,6 +126,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   cardState(clientId:string,cardState:'running'|'done'|'failed',id=randomUUID()){return call('cardState',{clientId,cardState},messageResult,id);},
   status(input:{state:'working'|'waiting'|'idle'|'offline';work:string},id=randomUUID()){return call('status',input,z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),id);},
   turn(input:Turn&{kind:'reply'|'action'|'wake'|'note'|'refused'},id=randomUUID()){return call('turn',input,z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),id);},
+  usage(input:UsageReport){return call('usage',input,z.object({saved:z.boolean()}).strict(),randomUUID());},
   finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(DAY)}).strict(),id);},
   digest(input:BodyDigest,id=randomUUID()){return call('digest',input,z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),id);},
   close(){closed=true;lifetimeAbort.abort();for(const controller of controllers)controller.abort();},

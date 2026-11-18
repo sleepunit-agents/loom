@@ -216,6 +216,7 @@ export async function bodyProgram(input: {
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
+    const harnessStarted=performance.now();
     try {
       if(!keeper)answer = await native(room, context.join('\n\n'), signal);
       else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
@@ -229,7 +230,13 @@ export async function bodyProgram(input: {
       if(!(tools??secrets).allowsReply(answer.text))throw new Error();
     }
     catch { if(!stopped) throw new Error(); }
-    finally { await retire(); }
+    finally {
+      // Start the bounded, job-authenticated request while the ordinary settlement is still
+      // under way. A stalled receiver can never hold up this body or change its outcome.
+      void client.usage({...(answer?.usage??{source:'none'}),harness:job.harness,model:answer?.model??job.model,
+        wallMs:Math.round(performance.now()-harnessStarted)}).catch(()=>{});
+      await retire();
+    }
     if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
