@@ -212,7 +212,9 @@ function offered(db: DataDatabase, job: { id: string; agent: string; conversatio
  * Mail on anybody else's word that names nobody (a sender loom cannot name, a member who has left, an agent's
  * mail on nobody's word) cannot be keyed by a person: it shares the one key `nobody`, at the floor, and is
  * never jobbed with anybody loom can name. */
-const askKey = (word: { woke: Woke; person?: OnWord }): string => word.woke !== 'others' ? 'owners' : word.person ? JSON.stringify([word.person.kind, word.person.id]) : 'nobody';
+/** The key of mail on the owners' word and of the agent's own work: the one that is jobbed first (runtime/jobs.ts). */
+export const OWNERS_KEY = 'owners';
+const askKey = (word: { woke: Woke; person?: OnWord }): string => word.woke !== 'others' ? OWNERS_KEY : word.person ? JSON.stringify([word.person.kind, word.person.id]) : 'nobody';
 /** The key of each piece of mail waiting in a conversation (askKey), whichever job it was last marked for: what
  * admission splits waiting mail by (runtime/jobs.ts), so that one job holds mail on one key. Read once, asked of each piece. */
 export function askers(db: DataDatabase, cv: { agent: string; conversation: string }): (item: string) => string {

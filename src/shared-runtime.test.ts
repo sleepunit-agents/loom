@@ -495,16 +495,18 @@ it('lets an owner end a job by hand and reads the job afterwards with who ended 
 });
 it('tells of a job a poll ended because no harness can hold it, so the mail that waited behind it gets its job', async () => {
   const f = fixture();
-  // A shared room. Somebody loom cannot name writes first, then the owner: one job holds one asker's mail, the oldest first.
+  // A shared room. Somebody loom cannot name writes first, then a member who does not have the agent: one job holds one
+  // asker's mail, and of people who are not owners the oldest first.
+  f.db.insert(members).values({ id: 'lodger', role: 'member', joinedAt: f.now() }).run();
   const room = f.root.services.conversations.open({ agent: 'art', venue: 'slack', place: JSON.stringify(['T', 'C', null]), label: 'room' });
   const say = (fromKind: 'unknown' | 'person', fromId?: string) => f.root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: room.id, source: 'notice', fromKind, fromId, words: 'Work' });
-  const guests = say('unknown'), owners = say('person', 'owner');
-  f.root.services.runtime.admit({ kind: 'agent', id: 'art' }, [guests, owners]);
-  const first = f.db.select().from(jobs).where(eq(jobs.conversation, room.id)).get()!;
-  expect(f.db.select().from(inbox).where(eq(inbox.id, owners.id)).get()!.job).toBeNull();
-  // The agent's only model runs on Codex, which cannot be held to loom's tools: the poll ends the guest's job.
+  const first = say('unknown'), second = say('person', 'lodger');
+  f.root.services.runtime.admit({ kind: 'agent', id: 'art' }, [first, second]);
+  const job = f.db.select().from(jobs).where(eq(jobs.conversation, room.id)).get()!;
+  expect(f.db.select().from(inbox).where(eq(inbox.id, second.id)).get()!.job).toBeNull();
+  // The agent's only model runs on Codex, which cannot be held to loom's tools: the poll ends the first job.
   expect((await f.call('next', {}, 'poll')).status).toBe(200);
-  expect(f.db.select().from(jobs).where(eq(jobs.id, first.id)).get()).toMatchObject({ state: 'failed', exitBy: 'loom' });
-  // Its end is told like any job's end, which is what offers the owner's waiting message to admission again.
-  expect(f.ended.mock.calls.map(call => call[0])).toContain(first.id);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'failed', exitBy: 'loom' });
+  // Its end is told like any job's end, which is what offers the waiting message to admission again.
+  expect(f.ended.mock.calls.map(call => call[0])).toContain(job.id);
 });
