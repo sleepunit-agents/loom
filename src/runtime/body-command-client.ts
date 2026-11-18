@@ -82,7 +82,7 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
     if(!current())throw unavailable();
     if(bodyJobEnded(reply.status,reply.value))throw new BodyJobEnded();
     const answer=result.parse(reply.value),status=answer.ok?200:({'denied':403,'not-found':404,'invalid':400,'conflict':409,'unavailable':503}as const)[answer.code];
-    if(reply.status!==status&&!(answer.ok===false&&answer.code==='denied'&&reply.status===401))throw unavailable();return answer;
+    if(reply.status!==status)throw unavailable();return answer;
    }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(error instanceof BodyContactExpired)throw error;throw unavailable();}
   },
   async query(input:z.infer<typeof query>){

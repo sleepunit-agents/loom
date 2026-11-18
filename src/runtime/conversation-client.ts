@@ -69,14 +69,14 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
     for(;;){const part=await reader.read().catch(()=>{throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
-    if(length!==null&&size!==Number(length))throw unavailable();
+    if(!response.ok&&length!==null&&size!==Number(length))throw unavailable();
     joined=Buffer.concat(chunks);const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(joined));
     if(!valid())throw unavailable();
     if(bodyJobEnded(response.status,value,name==='take'?'take':'command'))throw new BodyJobEnded();
     if(!response.ok)throw unavailable();
     const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(value);if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
+  }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(response?.ok&&error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}

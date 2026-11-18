@@ -751,7 +751,7 @@ it('does not hold another house\'s job behind a first build: the other job finds
   await flush(); expect(f.engine.build).toHaveBeenCalledOnce(); expect(building.started).not.toHaveBeenCalled();
   // A second slot takes a job of a house whose image is there.
   const second = workOnce({ box: 'box', control: ready, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
-  await flush(); expect(ready.started).toHaveBeenCalledExactlyOnceWith('job', built);
+  await flush(); expect(ready.started).toHaveBeenCalledExactlyOnceWith('job', built, expect.any(AbortSignal));
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
   expect(await second).toBe('finished'); expect(ready.finish).toHaveBeenCalledExactlyOnceWith('job', 0, '', 'body');
   // The first is still building, and still its worker's.
@@ -773,7 +773,7 @@ it('builds once for two jobs of one house, and a Stop on one of them ends that o
   // The build is the worker's, not that job's: it was not ended, and the other job gets its image.
   expect(f.engine.build.mock.calls[0][2].aborted).toBe(false); expect(f.abort.signal.aborted).toBe(false);
   release.resolve(); await flush();
-  expect(kept.started).toHaveBeenCalledExactlyOnceWith('kept', built); expect(f.engine.build).toHaveBeenCalledOnce();
+  expect(kept.started).toHaveBeenCalledExactlyOnceWith('kept', built, expect.any(AbortSignal)); expect(f.engine.build).toHaveBeenCalledOnce();
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
   expect(await second).toBe('finished'); expect(kept.finish).toHaveBeenCalledExactlyOnceWith('kept', 0, '', 'body');
 });
