@@ -213,7 +213,7 @@ export class Jobs {
       const fired = mine.filter(item => item.source === 'trigger' && item.fromKind === 'schedule').map(item => item.id);
       const refs = fired.length ? this.db.select({ id: inboxRefs.ref }).from(inboxRefs)
         .where(inArray(inboxRefs.item, fired)).all().map(row => row.id) : [];
-      if (conversation.venue === 'wake') {
+      if (fired.length && !refs.length && conversation.venue === 'wake') {
         for (const id of wakePlaceTriggers(conversation.place)) {
           if (this.db.select({ id: triggers.id }).from(triggers).where(eq(triggers.id, id)).get()) { refs.push(id); break; }
         }

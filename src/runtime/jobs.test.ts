@@ -571,3 +571,13 @@ it('uses default machine preferences for ordinary conversation work', () => {
   f.db.update(agentRunSettings).set({ prefers: ['house'] }).run();
   f.send(); expect(f.runtime.admit(f.conversation.id)?.prefers).toEqual(['house']);
 });
+it('uses agent defaults for a task answer in the conversation of an earlier firing', () => {
+  const f = fixture();
+  f.db.update(agentRunSettings).set({ prefers: ['house'] }).run();
+  f.db.insert(triggers).values({ id: 'thread', ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: '09:13', lifespan: 'until-stopped',
+    targetKind: 'inbox', toKind: 'agent', to: 'art', note: 'Lane', enabled: true, state: 'standing', createdAt: f.now(), changedAt: f.now(), needs: ['site:loom'], prefers: [] }).run();
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: f.conversation.id, source: 'answer', fromKind: 'person', fromId: 'owner', words: 'Continue the task' });
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.prefers).toEqual(['house']);
+  expect(f.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all()).toEqual([{ job: job.id, need: 'gpu' }]);
+});
