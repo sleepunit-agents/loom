@@ -28,8 +28,9 @@ export interface TempoOperationOptions {
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
   wordRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null; instructions?: string | null; note?: string }): string | undefined;
-  /** Why a trigger may not be turned on now (its conversation already has as many standing as it may). */
-  standRefusal?(trigger: { conversation?: string | null }): string | undefined;
+  /** Told once a trigger has come to stand, set or turned back on, in the same write: for the notice a
+   * conversation with many standing raises. It refuses nothing. */
+  stood?(trigger: { id: string; conversation?: string | null }): void;
   /** Who asks for a trigger that names a conversation, once this caller has changed its words, file or times. */
   reasked?(viewer: Viewer, trigger: { conversation: string | null }, change: { instructions?: string | null; file?: string | null; note?: string; times?: string }): Asker | undefined;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
@@ -55,7 +56,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     run(ctx, trigger) {
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
-      const row = tempo.triggers.set(as.trigger, as.member, as.asked); ctx.changed('triggers', row.id); return { id: row.id }; },
+      const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,
@@ -65,9 +66,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       // runs and stops nothing of its agent's that fires outside its own conversation (policy.ts, maySchedule).
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
-      const full = action === 'start' && stored ? options.standRefusal?.(stored) : undefined;
-      if (full) throw new OperationError('conflict', full);
-      tempo.triggers[action](input.id); ctx.changed('triggers', input.id); return { saved: true };
+      tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(stored);
+      ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
   operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1) }).strict(), output: saved,

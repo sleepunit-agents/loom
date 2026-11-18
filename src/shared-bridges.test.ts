@@ -13,7 +13,7 @@ import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
+import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
 import {triggerLog} from './core/data/schema.js';
 import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
@@ -424,14 +424,24 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
  expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
  expect(repeatsTooOften({times:'09:00',lifespan:'until-stopped'})).toBe(false);expect(repeatsTooOften({times:'09:00,09:59',lifespan:'until-stopped'})).toBe(true);
- // At most PLACE_TRIGGERS_MAX stand at once for one conversation, whoever sets them.
- expect(PLACE_TRIGGERS_MAX).toBe(10);
+ // No number of schedules is refused for one conversation, whoever sets them. The agent's people are told when ten
+ // stand, and at each further ten: loud, not a stop.
+ expect(PLACE_TRIGGERS_NOTICE_EVERY).toBe(10);
  const standing=()=>f.db.select().from(triggers).all().filter(row=>row.conversation===cv&&row.enabled).length;
- while(standing()<PLACE_TRIGGERS_MAX)expect((await f.call('tempo','set',once())).status).toBe(200);
- for(const credential of [token.body,token.owner])expect((await f.call('tempo','set',once(),credential)).status).toBe(409);
- expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);expect((await f.call('tempo','set',once())).status).toBe(200);
- // The same bound holds for turning one back on: the stopped one cannot be an eleventh.
- expect((await f.call('tempo','start',{id:mine.id})).status).toBe(409);expect(standing()).toBe(PLACE_TRIGGERS_MAX);
+ const crowded=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('place-schedules:'));
+ while(standing()<PLACE_TRIGGERS_NOTICE_EVERY-1)expect((await f.call('tempo','set',once())).status).toBe(200);
+ expect(crowded()).toEqual([]);
+ expect((await f.call('tempo','set',once())).status).toBe(200);
+ expect(crowded()).toMatchObject([{toKind:'person',to:'owner',words:`10 schedules now stand for one conversation of art (${cv}). Nothing was refused: stop any that should not stand.`}]);
+ for(const credential of [token.body,token.owner])expect((await f.call('tempo','set',once(),credential)).status).toBe(200);
+ expect(standing()).toBe(PLACE_TRIGGERS_NOTICE_EVERY+2);expect(crowded()).toHaveLength(1);
+ // Turning one back on is counted as setting one is, and is refused no more. The same mark on the same day is told once.
+ for(const id of [mine.id,hourly.id,own.id])f.root.writes.run(()=>f.root.services.tempo.triggers.stop(id));
+ expect(standing()).toBe(PLACE_TRIGGERS_NOTICE_EVERY-1);
+ expect((await f.call('tempo','start',{id:mine.id})).status).toBe(200);expect(standing()).toBe(PLACE_TRIGGERS_NOTICE_EVERY);expect(crowded()).toHaveLength(1);
+ // At twenty they are told again.
+ while(standing()<2*PLACE_TRIGGERS_NOTICE_EVERY)expect((await f.call('tempo','set',once())).status).toBe(200);
+ expect(crowded()).toHaveLength(2);expect(crowded()[1].words).toContain('20 schedules now stand');
  // Nobody loom can name is ever the asker: with the sender of the job's mail unknowable, the body sets nothing.
  f.root.writes.run(()=>{f.db.update(triggers).set({enabled:false,state:'stopped'}).where(eq(triggers.id,own.id)).run();f.db.delete(inboxRefs).run();});
  expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:'Nobody loom knows asked for this'}});
@@ -967,10 +977,10 @@ it('holds a shared place\'s body to the shared-place bounds only when it works f
  // No job starts again the trigger whose firing is in its mail.
  f.root.writes.run(()=>{const fired=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'trigger',sourceId:'own-firing',fromKind:'schedule',words:'Fired',refs:[outside.id]});f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,fired.id)).run();});
  for(const action of ['runNow','start'])expect((await f.call('tempo',action,{id:outside.id})).status,action).toBe(403);
- // At most ten stand for one conversation.
+ // No number of schedules is refused for one conversation: an eleventh is set like the first.
  const standing=()=>f.db.select().from(triggers).all().filter(row=>row.conversation===cv&&row.enabled).length;
- while(standing()<PLACE_TRIGGERS_MAX)expect((await f.call('tempo','set',once())).status).toBe(200);
- expect((await f.call('tempo','set',once())).status).toBe(409);
+ while(standing()<PLACE_TRIGGERS_NOTICE_EVERY)expect((await f.call('tempo','set',once())).status).toBe(200);
+ expect((await f.call('tempo','set',once())).status).toBe(200);
  // A member who has the agent and is no household owner speaks instead. From her own thread what she has the
  // agent schedule is her private work, and the agent's own triggers are not hers to reword or start: the same from here.
  f.root.writes.run(()=>f.db.update(inbox).set({fromId:'kim'}).where(eq(inbox.id,mail)).run());

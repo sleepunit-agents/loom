@@ -22,8 +22,9 @@ export const UNPOSTABLE_REFUSAL = 'Nothing can be posted there: on Discord a thr
 /** Whether a channel target somebody named is a place loom can post to: postable, and on Discord with no
  * thread at all, since a conversation there is found by its channel alone. */
 export const targetPostable = (to: { platform: 'discord' | 'slack'; channel: string; thread?: string }): boolean => postable(to.platform, to) && !(to.platform === 'discord' && to.thread !== undefined);
-/** The most triggers that may stand at once naming one conversation. */
-export const PLACE_TRIGGERS_MAX = 10;
+/** Each time this many more triggers stand at once naming one conversation, the agent's people are told
+ * (shared-place-triggers.ts, placeCrowded). It refuses nothing, for anybody. */
+export const PLACE_TRIGGERS_NOTICE_EVERY = 10;
 /** The hour, said once: the least time between two listed times of a repeating trigger set on the word of
  * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
  * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */

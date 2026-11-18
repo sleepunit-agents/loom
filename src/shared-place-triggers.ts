@@ -7,7 +7,7 @@ import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js
 import { OperationError } from './core/operations/index.js';
 import { editsWords, type NewTrigger, type Trigger, type TriggerAsked } from './core/tempo/triggers.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type Viewer } from './policy.js';
-import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
+import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
 export const WORD_REPEAT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners repeats no more often than once an hour, and only at listed times.';
@@ -82,10 +82,16 @@ export function partRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work |
   if (!(wordReach(db, agent, was) === 'others' && wordReach(db, agent, editor) !== 'others')) return undefined;
   return change.note !== undefined && (change.instructions != null || change.file != null) ? undefined : WORD_PART_REFUSAL;
 }
-/** Why one more trigger may not stand for this conversation: the one check, for setting one and for turning one back on. */
-export function placeFull(db: DataDatabase, conversation: string): string | undefined {
-  return db.select({ id: triggers.id }).from(triggers).where(and(eq(triggers.conversation, conversation), eq(triggers.enabled, true))).all().length >= PLACE_TRIGGERS_MAX
-    ? `A conversation has at most ${PLACE_TRIGGERS_MAX} schedules standing at once: stop one first` : undefined;
+/** The notice a conversation raises when one more trigger has come to stand for it, by being set or turned back
+ * on, and that makes PLACE_TRIGGERS_NOTICE_EVERY of them or a further multiple: whom to tell and in what words.
+ * Loud, not a stop: no number is refused. One mark is told once a day, so stopping and starting one at the mark
+ * tells nobody twice. */
+export function placeCrowded(db: DataDatabase, conversation: string, now: string): { tell: string[]; key: string; words: string } | undefined {
+  const count = db.select({ id: triggers.id }).from(triggers).where(and(eq(triggers.conversation, conversation), eq(triggers.enabled, true))).all().length;
+  if (!count || count % PLACE_TRIGGERS_NOTICE_EVERY !== 0) return undefined;
+  const agent = db.select({ agent: conversations.agent }).from(conversations).where(eq(conversations.id, conversation)).get()?.agent;
+  return agent ? { tell: tellOwners(db, agent), key: `place-schedules:${JSON.stringify([conversation, count, now.slice(0, 10)])}`,
+    words: `${count} schedules now stand for one conversation of ${agent} (${conversation}). Nothing was refused: stop any that should not stand.` } : undefined;
 }
 /** Who is asking, for a trigger that names this conversation, as it is set or its words, file or times are
  * changed. By a shared place's body, the person its job is working on the word of (the one of least reach), or the
@@ -110,12 +116,11 @@ export function asking(db: DataDatabase, viewer: Viewer, agent: string, work: Wo
   throw new OperationError('denied', 'Only a person or the agent itself asks for a schedule in a conversation');
 }
 /** Who asked, for a new trigger that names a conversation, after checking it may be set: the conversation is
- * a bridge conversation of the agent the trigger puts to work, and it has room for one more. */
+ * a bridge conversation of the agent the trigger puts to work. */
 export function placeTriggerAsker(db: DataDatabase, viewer: Viewer, trigger: NewTrigger, work: Work | undefined): Asker {
   const cv = db.select().from(conversations).where(eq(conversations.id, trigger.conversation!)).get();
   if (!cv || !isBridgeVenue(cv.venue) || trigger.targetKind !== 'inbox' || trigger.toKind !== 'agent' || trigger.to !== cv.agent)
     throw new OperationError('invalid', 'A trigger names a Discord or Slack conversation of the agent it puts to work');
-  const full = placeFull(db, cv.id); if (full) throw new OperationError('conflict', full);
   const asker = asking(db, viewer, cv.agent, work);
   // One member's private conversation is named only on that member's word, or by the agent's own work.
   if (privateRefusal(cv.member, asker)) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
