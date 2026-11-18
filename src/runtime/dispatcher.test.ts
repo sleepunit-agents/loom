@@ -36,7 +36,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id], word: 'owners' } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', accountChoices: 1, harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -178,7 +178,7 @@ it('projects current agent capabilities and only its configured ports at claim',
   ]).run();
   const assignment = f.runtime.next('first')!;
   expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
-    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id] } });
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id], word: 'owners' } });
   f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
   expect(assignment.run.nestedContainers).toBe(true);
 });
@@ -199,7 +199,7 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   f.roles[0].harness = 'claude';
   const assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(job.id);
-  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: [f.db.select().from(inbox).where(eq(inbox.conversation, incoming.conversation!)).get()!.id] });
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: [f.db.select().from(inbox).where(eq(inbox.conversation, incoming.conversation!)).get()!.id], word: 'others' });
 });
 it('passes over a model whose harness would refuse the job for the agent\'s next allowed model', () => {
   const f = fixture();

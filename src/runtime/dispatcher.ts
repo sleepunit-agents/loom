@@ -2,7 +2,7 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
-import { workerPolicy } from './body-policy.js';
+import { jobRoom } from '../shared-place-mail.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -44,7 +44,8 @@ export class Dispatcher {
         // Settings may gain GPU after admission; never claim an incapable box.
         if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
-        const policy = workerPolicy(this.db, job);
+        // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
+        const policy = jobRoom(this.db, job);
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         if (!placement || placement.box !== box) continue;

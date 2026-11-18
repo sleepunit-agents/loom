@@ -23,6 +23,10 @@ export type DigestInput = {
   question?: Question;
 };
 
+/** Mail that never joins a job already admitted, by what it is: sent on somebody's word, from an agent, or
+ * from the schedule. It starts the next job (pending). Said once, for pending and for who is counted in a
+ * job's room (runtime/body-policy.ts). */
+export const waitsForNextJob = (item: Pick<Item, 'onWordKind' | 'fromKind'>): boolean => item.onWordKind !== null || item.fromKind === 'agent' || item.fromKind === 'schedule';
 /** These live phases follow the running acknowledgement; queued/starting do not. */
 export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => state === 'running';
 
@@ -30,6 +34,10 @@ export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => st
  * the question/answer round trip. now is injected for fake-clock execution. */
 export class Conversations {
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {}
+  /** Whether mail from a person, arrived after this job was admitted, may still join it (pending). Whose word
+   * lowers a job's reach is not this service's to know: the composition sets this once, for the one instance
+   * bodies take their mail through (shared-root.ts, from shared-place-mail.ts lateMailJoins). Unset, such mail joins. */
+  lateJoins?: (job: { id: string; agent: string; conversation: string }, item: Item) => boolean;
 
   /** `at` is for a caller that stamps a second record of the same moment (a
    * thread and its conversation): it passes the one time it read. */
@@ -131,10 +139,13 @@ export class Conversations {
     // retry carries the mark over, so what came later has no job yet. By that mark and by no clock: mail
     // written in the millisecond the job was claimed came later all the same. A job nothing is marked for
     // was not started by admission (only tests make one), and nothing says what it was started for.
+    // Mail from a person that came later joins the job unless it would make the job's word anybody else's
+    // (lateJoins): a job admitted for its owners is never handed a guest's words while it runs.
     const admitted = !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId))).get();
+    const joins = (item: Item) => !waitsForNextJob(item) && (this.lateJoins?.({ id: jobId, agent: conversation.agent, conversation: conversationId }, item) ?? true);
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
       or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all()
-      .filter(item => !admitted || item.job === jobId || !(item.onWordKind !== null || item.fromKind === 'agent' || item.fromKind === 'schedule'));
+      .filter(item => !admitted || item.job === jobId || joins(item));
   }
 
   /** Only the current job can claim this conversation's waiting mail. An

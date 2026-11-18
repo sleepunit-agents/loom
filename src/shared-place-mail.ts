@@ -14,6 +14,7 @@ import type { ChannelTarget } from './core/conversations/channel-target.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
 import { workerPolicy } from './runtime/body-policy.js';
+import type { WorkerRunPolicy } from './runtime/worker.js';
 
 export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
 /** Why a channel target names no place loom can post to (pieces/bridges/reply-api.ts, postable). */
@@ -102,7 +103,26 @@ export function privateRefusal(member: string | null, word: Asker | undefined): 
  * word of the body that sent it, and one with no word (a body nobody could be named behind, another
  * agent's bot writing in a channel) is anybody else's. */
 export function jobWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): { woke: Woke; person?: OnWord } {
-  const policy = workerPolicy(db, job), sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
+  return roomWord(db, job, jobRoom(db, job));
+}
+/** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
+ * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,
+ * and mail a person wrote since that does not lower its word (lateMailJoins). */
+export function jobRoom(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy & { word: Woke } {
+  const room = workerPolicy(db, job, item => lateMailJoins(db, job, item));
+  return { ...room, word: roomWord(db, job, room).woke };
+}
+/** Whether mail from a person, arrived after this job was admitted, joins it, or waits for the next job. It
+ * joins a job that is anybody else's already, which has nothing to lose; and otherwise only if it is not
+ * itself anybody else's word. So a job admitted for its owners, or as the agent's own work, never becomes
+ * anybody else's while it runs: what it may use (policy.ts, loomToolsOnly) was settled by its mail at
+ * admission. The one answer, for the mail a body is handed (core/conversations, pending) and for the room. */
+export function lateMailJoins(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }, item: { id: string }): boolean {
+  if (roomWord(db, job, workerPolicy(db, job, () => false)).woke === 'others') return true;
+  return roomWord(db, job, workerPolicy(db, job, undefined, [item.id])).woke !== 'others';
+}
+function roomWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }, policy: WorkerRunPolicy): { woke: Woke; person?: OnWord } {
+  const sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
   const people = [...policy.people];
   const member = job.conversation ? db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.member : null;
   if (member) people.push(inHousehold({ kind: 'member', id: member }, sharing) ? { kind: 'person', person: member, tier: null } : { kind: 'unknown', person: null, tier: null });

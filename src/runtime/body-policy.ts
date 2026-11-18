@@ -7,16 +7,26 @@ import { agentDeniedTools, agentPeople, bridgeIncoming, inbox, inboxRefs } from 
 import { incomingId, outsidePersonKey, parseInboxSourceId } from '../pieces/bridges/keys.js';
 import { inHousehold } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
+import { waitsForNextJob } from '../core/conversations/index.js';
 import type { WorkerRunPolicy } from './worker.js';
 
-export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy {
+/** Who is in a job's room, read from its mail. The mail is what the job is offered and nothing more
+ * (core/conversations, pending): what admission marked for it, and what a person wrote since, unless that
+ * would make the job's word anybody else's (`joins`; shared-place-mail.ts gives it, lateMailJoins). `only`
+ * reads the room of those waiting items alone, with none of the job's own: the room one late message would bring. */
+export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null },
+  joins: (item: { id: string }) => boolean = () => true, only?: readonly string[]): WorkerRunPolicy {
   const deniedTools = db.select({ pattern: agentDeniedTools.pattern, guestsOnly: agentDeniedTools.guestsOnly })
     .from(agentDeniedTools).where(eq(agentDeniedTools.agent, job.agent))
     .orderBy(asc(agentDeniedTools.pattern), asc(agentDeniedTools.guestsOnly)).all();
   const people = new Map<string, WorkerRunPolicy['people'][number]>();
-  const items = db.select({ id: inbox.id, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord })
+  const found = db.select({ id: inbox.id, job: inbox.job, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord })
     .from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
       or(eq(inbox.job, job.id), job.conversation ? and(eq(inbox.conversation, job.conversation), isNull(inbox.job), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute')) : undefined))).all();
+  // A job nothing is marked for was not started by admission, and is offered everything that waits.
+  const admitted = found.some(item => item.job === job.id);
+  const items = only ? found.filter(item => item.job !== job.id && only.includes(item.id))
+    : found.filter(item => item.job === job.id || !admitted || (!waitsForNextJob(item) && joins(item)));
   type Tier = WorkerRunPolicy['people'][number]['tier'];
   const tierOf = (person: string) => (db.select({ tier: agentPeople.tier }).from(agentPeople)
     .where(and(eq(agentPeople.agent, job.agent), eq(agentPeople.person, person))).get()?.tier ?? null) as Tier;

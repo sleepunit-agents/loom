@@ -2,9 +2,10 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, agentPeople, agentDeniedTools, inbox, inboxRefs, jobs, bridgeIncoming } from '../core/data/schema.js';
+import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, agentPeople, agentDeniedTools, memberAgents, inbox, inboxRefs, jobs, bridgeIncoming } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { workerPolicy } from './body-policy.js';
+import { jobRoom } from '../shared-place-mail.js';
 import { hasGuest } from './harness-traits.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -169,10 +170,13 @@ it('counts a member removed since their mail arrived as an outside sender, so th
   f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'linked', member: 'guest' }).run();
   const linked = f.receive('linked', 'linked', 'linked-dm'), job = { id: 'other-job', agent: 'art', conversation: linked.conversation };
   expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'guest', tier: null }]);
-  expect(hasGuest(workerPolicy(f.db, job))).toBe(false);
+  // A member is a guest for tools unless they have the agent (the one ranking, jobWord): this one is given it.
+  expect(hasGuest(jobRoom(f.db, job))).toBe(true);
+  f.db.insert(memberAgents).values({ member: 'guest', agent: 'art' }).run();
+  expect(hasGuest(jobRoom(f.db, job))).toBe(false);
   f.db.update(members).set({ removedAt: '2026-11-14T12:00:00.000Z' }).where(eq(members.id, 'guest')).run();
   // Their outside account still names them for the tier the agent's owner gave it, and nothing more.
   const key = JSON.stringify(['discord', 'w', 'linked']);
   expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'outside', person: key, tier: null }]);
-  expect(hasGuest(workerPolicy(f.db, job))).toBe(true);
+  expect(hasGuest(jobRoom(f.db, job))).toBe(true);
 });

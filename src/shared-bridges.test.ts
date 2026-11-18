@@ -18,7 +18,7 @@ import {triggerLog} from './core/data/schema.js';
 import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
+import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 import {bridgeChannelFilters} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -592,6 +592,31 @@ it('leaves a note, a firing and another agent\'s mail that arrive after a job wa
   f.db.insert(bridgeSends).values({id:'direct-answer',incoming:null,conversation:pond,connection:'connection',channel:'CPOND',text:'Private words',state:'sent',createdAt:at(0)}).run();});
  let erased=0;f.root.writes.run(()=>{erased=expirePrivateBridgeWords(f.db,at(60_000));});
  expect(erased).toBeGreaterThan(0);expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,'direct-answer')).get()?.text).toBe('');
+});
+it('leaves a message that would make an owners\' job anybody else\'s for the next job, so the job\'s word never falls while it runs',async()=>{
+ const {f,work}=await sharedPlace(),stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'lodger',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id,job={id:'other',agent:'art',conversation:pond};
+ // Admitted for the owner's message: that mail is marked with the job, and still waiting to be taken.
+ work(pond,[{kind:'person',id:'owner'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
+ expect(jobWord(f.db,job).woke).toBe('owners');
+ const say=(sourceId:string,from:{fromKind:'person'|'unknown';fromId?:string})=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId,words:'Late words',...from}).id;});return id;};
+ // Before the body takes its mail, three more people write: a guest, a member who does not have the agent, and the owner again.
+ const guest=say('late-guest',{fromKind:'unknown'}),lodger=say('late-lodger',{fromKind:'person',fromId:'lodger'}),again=say('late-owner',{fromKind:'person',fromId:'owner'});
+ const offered=f.root.services.conversations.pending(pond,'other').map(item=>item.id);
+ expect(offered).toContain(again);expect(offered).not.toContain(guest);expect(offered).not.toContain(lodger);expect(offered).toHaveLength(2);
+ // The word is read from the mail the job is offered: it is still the owners' while the others' mail waits.
+ expect(jobWord(f.db,job)).toEqual({woke:'owners',person:{kind:'member',id:'owner'}});
+ expect(jobRoom(f.db,job)).toMatchObject({word:'owners',people:[{kind:'person',person:'owner',tier:null}]});
+ f.root.writes.run(()=>f.root.services.conversations.take(pond,'other'));
+ for(const late of [guest,lodger])expect(f.db.select().from(inbox).where(eq(inbox.id,late)).get()).toMatchObject({state:'waiting',job:null});
+ expect(f.db.select().from(inbox).where(eq(inbox.id,again)).get()).toMatchObject({state:'taken',job:'other'});
+ expect(jobWord(f.db,job).woke).toBe('owners');
+ // A job that is anybody else's already loses nothing by more mail: it takes what comes.
+ const brook=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CBROOK',null]),label:'brook'}).id;
+ work(brook,[{kind:'person',id:'lodger'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
+ let more='';f.root.writes.run(()=>{more=f.root.services.conversations.send({conversation:brook,toKind:'agent',to:'art',source:'notice',sourceId:'late-guest-2',fromKind:'unknown',words:'Late words'}).id;});
+ expect(jobWord(f.db,{...job,conversation:brook}).woke).toBe('others');expect(f.root.services.conversations.pending(brook,'other').map(item=>item.id)).toContain(more);
 });
 it('lets only an agent\'s own work post a text straight to a channel it has a rule for',async()=>{
  const {f,cv,work}=await sharedPlace(()=>false);
