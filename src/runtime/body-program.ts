@@ -23,7 +23,7 @@ import {bodySessions,type BodySessions} from './body-session.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
-import { bodyReach, hasFileTools, hasGuest, withUnknownSender } from './harness-traits.js';
+import { bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
 import { BODY_TOKEN } from './body-token.js';
 import { BODY_START_BYTES } from './body-input-limit.js';
@@ -187,6 +187,10 @@ export async function bodyProgram(input: {
     const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
     if(signal.aborted)throw new Error();
     if(sent){context.push(sent);continued.push(sent);}
+    // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
+    // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
+    // this job need not be the asker of the last (harness-traits.ts, workingFor).
+    if(bridge){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();

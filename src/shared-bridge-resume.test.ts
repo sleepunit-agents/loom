@@ -74,19 +74,27 @@ function keeper(kept?:string){
  return {sessions,calls};
 }
 
+/** What a body was told without loom's line on who it works for (harness-traits.ts, workingFor), and that line. */
+const ASKED='[From loom, not from anybody in the room.';
+const mail=(words:string)=>words.split('\n\n').filter(part=>!part.startsWith(ASKED)).join('\n\n'),asked=(words:string)=>words.split('\n\n').find(part=>part.startsWith(ASKED));
+
 it('starts a first body fresh, keeping a session, and tells the next one only the new message when it continues that session',async()=>{
  const f=await fixture(),first=await f.hear('What is the plan?');
  const one=keeper(),seen:{words:string;session?:HarnessSession}[]=[];
  const native:HarnessRun=async(_job,words,_signal,session)=>{seen.push({words,session});return{text:'Three steps.',model:'claude-opus-5-5',actions:[],session:'session-one-1'};};
  expect(await f.run('one',first.conversation!,native,one.sessions)).toBe(0);
  // Fresh: asked to keep a session and to continue none, and told who it is with its mail.
- expect(seen[0].session).toEqual({});expect(seen[0].words).toBe('IDENTITY\n\nWhat is the plan?');
+ expect(seen[0].session).toEqual({});expect(mail(seen[0].words)).toBe('IDENTITY\n\nWhat is the plan?');
+ // And who asked, by loom's reading of the room: after who it is, before the mail.
+ expect(seen[0].words.split('\n\n')[1]).toBe(asked(seen[0].words));expect(asked(seen[0].words)).toContain('This job works for ');
  expect(one.calls).toEqual(['take','save:session-one-1']);
  const second=await f.hear('Do the second one');expect(second.conversation).toBe(first.conversation);
  const two=keeper('session-one-1');
  expect(await f.run('two',second.conversation!,native,two.sessions)).toBe(0);
  // Continued: the session already holds what came before, so neither the history nor the identity is said again.
- expect(seen[1]).toEqual({words:'Do the second one',session:{resume:'session-one-1'}});
+ expect({...seen[1],words:mail(seen[1].words)}).toEqual({words:'Do the second one',session:{resume:'session-one-1'}});
+ // Who asked is said again: the asker of this job need not be the asker of the job that left the session.
+ expect(seen[1].words.split('\n\n')[0]).toBe(asked(seen[1].words));expect(asked(seen[1].words)).toContain('This job works for ');
  expect(two.calls).toEqual(['take','save:session-one-1']);
  expect(f.db.select().from(s.bridgeSends).all().map(send=>[send.text,send.state])).toEqual([['Three steps.','sent'],['Three steps.','sent']]);
 });
@@ -103,11 +111,12 @@ it('asks for no kept session on anybody else\'s word and leaves none, so the own
  expect(two.calls).toEqual([]);
  // It continues nothing and is asked to keep nothing. It is told what was said before, like any body that starts fresh.
  expect(seen[1].session).toBeUndefined();
- expect(JSON.parse(seen[1].words.slice('IDENTITY\n\n'.length))).toMatchObject({input:'What did you just do?',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
+ expect(asked(seen[1].words)).toContain('This job works for the outside account someone, who is not one of your owners, and for nobody else.');
+ expect(JSON.parse(mail(seen[1].words).slice('IDENTITY\n\n'.length))).toMatchObject({input:'What did you just do?',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
  // The owners' next body is handed the session the first one left, and continues it.
  const three=keeper('session-of-run-1');await f.hear('Go on');
  expect(await f.run('three',cv,native,three.sessions)).toBe(0);
- expect(seen[2]).toEqual({words:'Go on',session:{resume:'session-of-run-1'}});
+ expect({...seen[2],words:mail(seen[2].words)}).toEqual({words:'Go on',session:{resume:'session-of-run-1'}});
  expect(three.calls).toEqual(['take','save:session-of-run-3']);
 });
 
@@ -120,10 +129,10 @@ it('runs the same work afresh, with the kept history, when the harness cannot co
  const failing:HarnessRun=async(_job,words,_signal,session)=>{seen.push({words,session});if(session?.resume)throw new HarnessResumeUnavailable();return{text:'Done.',model:'claude-opus-5-5',actions:[],session:'session-new-2'};};
  expect(await f.run('two',second.conversation!,failing,two.sessions)).toBe(0);
  expect(seen.map(call=>call.session)).toEqual([{resume:'session-gone-9'},{}]);
- expect(seen[0].words).toBe('Do the second one');
+ expect(mail(seen[0].words)).toBe('Do the second one');
  // Afresh it is told who it is and what was said before, then the new message.
  expect(seen[1].words.startsWith('IDENTITY\n\n')).toBe(true);
- expect(JSON.parse(seen[1].words.slice('IDENTITY\n\n'.length))).toMatchObject({input:'Do the second one',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
+ expect(JSON.parse(mail(seen[1].words).slice('IDENTITY\n\n'.length))).toMatchObject({input:'Do the second one',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
  // The session the new run left is the one handed back, and the answer is posted once.
  expect(two.calls).toEqual(['take','save:session-new-2']);
  expect(f.db.select().from(s.bridgeSends).all().map(send=>send.text)).toEqual(['Three steps.','Done.']);
@@ -147,7 +156,7 @@ it('writes what was sent with a message only for a body that has file tools to o
  const native:HarnessRun=async(_job,words)=>{seen.push(words);return{text:'I see.',model:'claude-opus-5-5',actions:[]};};
  // A body held to loom's own tools has nothing to open a file with: none is fetched for it or written, and it is told of none.
  expect(await f.run('one',first.conversation!,native,keeper().sessions,{saveAttachments})).toBe(0);
- expect(asked).toEqual([]);expect(seen[0]).toBe('IDENTITY\n\nLook at this');
+ expect(asked).toEqual([]);expect(mail(seen[0])).toBe('IDENTITY\n\nLook at this');
  expect(await f.run('two',(await f.hear('And this')).conversation!,native,keeper().sessions,{reach:'loom',saveAttachments})).toBe(0);
  expect(asked).toEqual([]);
  // A body with the harness's own tools, working for its owners, is: for the messages it took, into its own scratch directory.
