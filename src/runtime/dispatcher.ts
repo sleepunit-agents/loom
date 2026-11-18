@@ -8,7 +8,7 @@ import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, boxFacts, programFirings, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
@@ -37,10 +37,14 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number) {
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false) {
     this.machines.heartbeat(box, facts, slots ?? null);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
+      // Capability is negotiated by this poll. A downgraded worker clears its previous advertisement.
+      const capability = { box, fact: 'program-step:v1', fromOwner: false };
+      if (programs) this.db.insert(boxFacts).values(capability).onConflictDoNothing().run();
+      else this.db.delete(boxFacts).where(and(eq(boxFacts.box, box), eq(boxFacts.fact, capability.fact), eq(boxFacts.fromOwner, false))).run();
       if (machine.reportOnly) return;
       const at = this.now(), roles = this.roles();
       const queued = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
@@ -50,6 +54,18 @@ export class Dispatcher {
         const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
         // Settings may gain GPU after admission; never claim an incapable box.
         if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
+        if (job.startedByKind === 'program') {
+          if (!programs) continue;
+          const firing = this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
+          if (firing?.status !== 'pending') continue;
+          const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, roles: [],
+            program: true, needs: [...needs, 'program-step:v1'], prefers: job.prefers ?? [] });
+          if (placement?.box !== box || !this.jobs.claim(job.id, box)) continue;
+          this.db.update(jobs).set({ placementDecision: decision }).where(eq(jobs.id, job.id)).run();
+          return { id: job.id, box, agent: job.agent, conversation: job.conversation, model: '', account: '',
+            harness: 'house-program', brief: '', program: firing.program,
+            house: { repository: job.houseRepository, file: job.houseFile, branch: job.houseBranch } };
+        }
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
         const policy = jobRoom(this.db, job);

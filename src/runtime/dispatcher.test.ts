@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, bridgeChannels, bridgePeople, conversations, inbox, threads } from '../core/data/schema.js';
+import { agents, members, triggers, programFirings, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, bridgeChannels, bridgePeople, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher, UNHELD_NOTE } from './dispatcher.js';
 import { LOOM_EXIT } from './job-exit.js';
@@ -385,4 +385,23 @@ it('worker slots are free after completion and terminal sessions do not occupy t
   ]).run();
   expect(f.runtime.next('first', undefined, undefined, 1)?.id).toBe(f.job.id);
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.slots).toBe(1);
+});
+
+it('keeps a program off legacy pollers even when the box has the right facts', () => {
+  const f = fixture();
+  f.db.update(jobs).set({startedByKind:'program'}).where(eq(jobs.id,f.job.id)).run();
+  expect(f.runtime.next('first', ['program-step:v1'])).toBeUndefined();
+  expect(f.runtime.jobs.get(f.job.id).state).toBe('queued');
+});
+
+it('claims the frozen program through a capable poll with no account or model', () => {
+  const f=fixture(), program={name:'watch',args:['--now'],timeoutMs:2000,secrets:[],state:{previous:2}};
+  f.db.insert(triggers).values({id:'watch',ownerKind:'agent',owner:'art',sourceKind:'time',times:'09:07',lifespan:'until-stopped',
+    targetKind:'inbox',toKind:'agent',to:'art',enabled:true,state:'standing',note:'Watch',createdAt:f.now(),changedAt:f.now()}).run();
+  f.db.update(jobs).set({startedByKind:'program',startedBy:'watch'}).where(eq(jobs.id,f.job.id)).run();
+  f.db.insert(programFirings).values({id:'watch:1',trigger:'watch',job:f.job.id,at:f.now(),program,status:'pending'}).run();
+  f.db.delete(modelAccountBoxes).run();
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.next('second',[],undefined,1,true)).toMatchObject({program,box:'second',model:'',account:'',harness:'house-program'});
+  expect(f.runtime.next('second',[],undefined,1,true)).toBeUndefined();
 });

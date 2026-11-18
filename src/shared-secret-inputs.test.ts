@@ -8,7 +8,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
-import {members,memberAgents,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal,secretRequests,inbox} from './core/data/schema.js';
+import {members,memberAgents,agents,boxes,jobs,programFirings,triggers,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal,secretRequests,inbox} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64),runner:'d'.repeat(64),foreign:'e'.repeat(64),agent:'f'.repeat(64),cookie:'g'.repeat(64)};
@@ -269,4 +269,34 @@ it('hands a body working on anybody else\'s word no secret: not at start, not a 
  from({fromKind:'person',fromId:'owner'});
  expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
  expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(200);expect((await ask(wanted('job'))).status).toBe(200);
+});
+
+it('recognizes a worker program alias read but denies it on an ordinary build', async () => {
+ const f = fixture();
+ f.rule();
+ expect((await f.post('read', { kind: 'program', job: 'build', alias: 'API_TOKEN' }, raw.runner)).status).toBe(403);
+ expect(f.source.read).not.toHaveBeenCalled();
+});
+
+it('hands the assigned worker only the frozen program alias with its current startup grant', async () => {
+ const f=fixture(), at=new Date(f.clock.now()).toISOString();
+ const program={name:'watch',args:[],secrets:['API_TOKEN'],timeoutMs:1000};
+ f.db.insert(triggers).values({id:'watch',ownerKind:'agent',owner:'art',sourceKind:'time',times:'09:07',lifespan:'until-stopped',
+  targetKind:'inbox',toKind:'agent',to:'art',enabled:true,state:'standing',note:'Watch',createdAt:at,changedAt:at,program}).run();
+ f.db.update(jobs).set({startedByKind:'program',startedBy:'watch'}).where(eq(jobs.id,'build')).run();
+ f.db.insert(programFirings).values({id:'watch:1',trigger:'watch',job:'build',at,program,status:'pending'}).run();
+ const read=(alias:string,who=raw.runner)=>f.post('read',{kind:'program',job:'build',alias},who);
+ expect((await read('API_TOKEN')).status).toBe(403);
+ f.rule();
+ expect((await read('API_TOKEN',raw.foreign)).status).toBe(403);
+ expect((await read('API_TOKEN',raw.body)).status).toBe(403);
+ expect((await read('OTHER')).status).toBe(403);
+ expect(f.source.read).not.toHaveBeenCalled();
+ const control=httpWorkerControl({url:'https://loom.test',token:raw.runner,signal:new AbortController().signal,
+  fetch:async(url,init)=>f.root.http.request(String(url),init)});
+ const values=await control.programInputs!('build',['API_TOKEN'],new AbortController().signal);
+ expect(values.get('API_TOKEN')?.toString()).toBe('PRIVATE_SOURCE_VALUE');
+ for(const bytes of values.values())bytes.fill(0);
+ expect((await read('API_TOKEN')).status).toBe(409);
+ expect(f.client.serialize().includes(Buffer.from('PRIVATE_SOURCE_VALUE'))).toBe(false);
 });
