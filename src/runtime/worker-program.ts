@@ -137,8 +137,7 @@ export async function workerProgram(input: {
       // unless reporting is configured, and neither claims jobs nor changes membership.
       const config = usageCommand.parse(JSON.parse(await input.read(input.args[1])));
       stage = 'token';
-      const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
-    const remote = config.report ? { url: config.report.url, token: doorTokenIn(await input.read(config.report.tokenFile)), signal: abort.signal } : undefined;
+      const remote = config.report ? { url: config.report.url, token: doorTokenIn(await input.read(config.report.tokenFile)), signal: abort.signal } : undefined;
       stage = 'account';
       const windows = await observe(config, remote);
       input.output(JSON.stringify({ ...config.account, windows }) + '\n');
@@ -157,6 +156,7 @@ export async function workerProgram(input: {
     stage = 'token';
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
+    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     const remote = { url: config.url, token, signal: abort.signal };
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
     const control = (input.control ?? httpWorkerControl)({ ...remote, slots, silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
