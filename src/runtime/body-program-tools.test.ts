@@ -35,7 +35,7 @@ it('preserves current Root permissions and stable write receipts',async()=>{
  f.db.update(s.jobs).set({state:'done'}).run();expect(await f.call('loom_commands',{})).toMatchObject({isError:true});expect(await f.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});
 });
 it.each([
- ['conversation.take',{}],['conversation.session',{}],['conversation.sessionSave',{session:null}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
+ ['conversation.usage',{source:'report',tokensIn:999}],['conversation.take',{}],['conversation.session',{}],['conversation.sessionSave',{session:null}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
  ['conversation.status',{state:'idle',work:''}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
 ]as const)('keeps runtime-owned %s facts and private routes out of model calls',async(operation,input)=>{
  const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'forged'})).toMatchObject({isError:true});expect(f.db.select().from(s.turns).all()).toHaveLength(0);expect(f.fetcher.mock.calls.some(([url])=>String(url).includes('/api/'+operation.replace('.','/')))).toBe(false);

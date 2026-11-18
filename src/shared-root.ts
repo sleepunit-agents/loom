@@ -60,6 +60,7 @@ import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
+import { registerJobUsage } from './shared-job-usage.js';
 import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { sharedChangesReader } from './shared-changes-reader.js';
@@ -289,6 +290,7 @@ export function sharedRoot(options: {
   comms?.install(operations);
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
+  registerJobUsage(operations, db, credentials.body);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
