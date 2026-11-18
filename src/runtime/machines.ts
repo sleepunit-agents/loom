@@ -1,5 +1,5 @@
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { machineFacts } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
@@ -24,10 +24,11 @@ export class Machines {
       // After the server's clock is set back, refusing the report would fail every worker call until the
       // clock caught up, and a kept future stamp would hide the machine from placement for as long.
       if (reported !== undefined) {
-        // Owner labels are a separate source of truth, including a fact that
-        // overlaps a report. Omitted facts preserve the previous report.
+        // A worker report supersedes a legacy owner label only in the reserved namespace.
         this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).run();
-        if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
+        if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoUpdate({
+          target: [boxFacts.box, boxFacts.fact], set: { fromOwner: false }, setWhere: sql`${boxFacts.fact} GLOB 'loom:*'`,
+        }).run();
       }
       new Conversations(this.db, () => at, lateMailWaits).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
       return this.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, id)).returning().get()!;

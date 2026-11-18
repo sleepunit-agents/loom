@@ -72,6 +72,18 @@ it('replaces only machine-reported facts, preserving owner labels and other mach
   expect(f.db.select().from(boxFacts).all().sort((a,b) => a.box.localeCompare(b.box))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
 });
 
+it('accepts a worker report over a legacy reserved owner label until the worker withdraws it', () => {
+  const { db, service, add } = fixture();
+  add('worker');
+  db.insert(boxFacts).values({ box: 'worker', fact: 'loom:test', fromOwner: true }).run();
+  service.heartbeat('worker');
+  expect(db.select().from(boxFacts).get()?.fromOwner).toBe(true);
+  service.heartbeat('worker', ['loom:test']);
+  expect(db.select().from(boxFacts).get()).toEqual({ box: 'worker', fact: 'loom:test', fromOwner: false });
+  service.heartbeat('worker', []);
+  expect(db.select().from(boxFacts).all()).toEqual([]);
+});
+
 for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\rfact'], ['bad\nline'], ['bad\0fact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i)]) it('validates trusted reports before changing facts, health or outage recovery', () => {
   const f = fixture(); f.add('worker'); f.advance(120001); f.service.sweep();
   f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run();
