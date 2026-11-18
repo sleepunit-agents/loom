@@ -6,7 +6,7 @@ import { Conversations } from '../conversations/index.js';
 import { createDataSchema } from '../data/database.js';
 import { OperationResults } from '../data/operation-results.js';
 import { DataWrites } from '../data/writes.js';
-import { agents, approvals, inbox, members, operationResults, triggerEdits, triggers } from '../data/schema.js';
+import { agents, approvals, boxes, inbox, members, operationResults, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { Operations } from '../operations/index.js';
 import { approvalService } from '../../apps/approvals.js';
 import { createTempo } from './tempo.js';
@@ -135,4 +135,20 @@ it('stops and starts one trigger and edits it as the caller, checking authority 
   f.allow(false);
   expect(f.call('tempo.edit', { id: 'tr', instructions: 'Not mine' }, 'edit-denied')).toMatchObject({ ok: false });
   expect(f.db.select().from(triggerEdits).all()).toHaveLength(1);
+});
+
+it('returns the committed failure of a manual machine firing, including on receipt replay', () => {
+  const f = fixture();
+  const times = new Date(f.clock.now() + 60_000).toISOString();
+  expect(f.call('tempo.set', { ...f.trigger, times }, 'future').ok).toBe(true);
+  f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true,
+    hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: f.now() }).run();
+  f.db.update(triggers).set({ machine: 'local' }).where(eq(triggers.id, 'tr')).run();
+  const reason = 'machine: Machine execution is unavailable';
+  const result = { ok: true, value: { saved: false, failed: true, reason } };
+  expect(f.call('tempo.runNow', { id: 'tr', words: 'different' }, 'override')).toMatchObject({ ok: false, code: 'invalid' });
+  expect(f.call('tempo.runNow', { id: 'tr' }, 'fire')).toEqual(result);
+  expect(f.call('tempo.runNow', { id: 'tr' }, 'fire')).toEqual(result);
+  expect(f.db.select().from(triggerLog).where(eq(triggerLog.event, 'failure')).all()).toMatchObject([{ note: reason }]);
+  expect(f.db.select().from(inbox).all()).toEqual([]);
 });

@@ -241,11 +241,13 @@ export class TriggerEngine {
       }
     }); this.tick();
   }
-  runNow(id: string): void {
+  runNow(id: string): string | undefined {
     this.open();
     const t = this.get(id);
     if (!t.enabled || this.paused(t)) throw new Error('Trigger is stopped or held');
-    this.fire(t, `manual:${randomUUID()}`); this.tick();
+    const failure = this.fire(t, `manual:${randomUUID()}`);
+    this.tick();
+    return failure;
   }
   private active() { return this.db.select().from(triggers).where(eq(triggers.enabled, true)).all(); }
   private expired(t: Trigger) { return t.lifespan === 'today' && localDate(Date.parse(t.createdAt), this.zone()) !== localDate(this.clock.now(), this.zone()); }
@@ -398,7 +400,7 @@ export class TriggerEngine {
     } catch (error) {
       // One bad firing must not end a standing trigger: a lane that could not read its
       // instructions tonight still runs tomorrow. Only a once-only trigger ends as failed.
-      this.db.transaction(() => {
+      return this.db.transaction(() => {
         const rest = this.rest(t, spent);
         if (this.get(t.id).enabled && rest.standing) this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', nextDueAt: rest.nextDueAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         else this.db.update(triggers).set({ state: 'failed', enabled: false, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
@@ -406,7 +408,9 @@ export class TriggerEngine {
         // which step failed and the error's first line: these are loom's own errors, not a body's words.
         this.log(t.id, 'failed', eventId);
         const why = (error instanceof Error ? error.message : String(error)).split(/[\r\n]/, 1)[0].slice(0, 200);
-        this.log(t.id, 'failure', `${stage}: ${why}`);
+        const reason = `${stage}: ${why}`;
+        this.log(t.id, 'failure', reason);
+        return reason;
       });
     }
   }
