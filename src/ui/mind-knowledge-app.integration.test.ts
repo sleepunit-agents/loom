@@ -199,4 +199,4 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       console.error('Knowledge fixture diagnostics',diagnostics);throw error;
     }
   }finally{await browser.close();await fixture.close();source.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+});

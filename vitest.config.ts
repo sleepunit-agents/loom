@@ -7,6 +7,9 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./web/src', import.meta.url)) } },
   test: {
     sequence: { sequencer: CiSequencer },
+    // Five seconds singled out 19 of 5,902 timed cases in CI run 44391385848.
+    slowTestThreshold: 5_000,
+    reporters: ['default', './scripts/slow-reporter.ts'],
     // `.claude/worktrees/` holds abandoned agent worktrees — full stale copies
     // of this repo. Without this they get collected too, so the suite silently
     // reports hundreds of extra passes from old code against current
@@ -36,7 +39,7 @@ export default defineConfig({
     // other work: on 2026-11-18 one local run showed 69 failures of which 67 were this budget, and a CI shard failed on
     // a test that had only grown with the schema. So there is one budget everywhere, and it is a hang detector: long
     // enough that a loaded machine does not reach it. A slow test is worth noticing, and is noticed by being reported
-    // (scripts/flaky-reporter.ts), not by failing.
+    // (scripts/slow-reporter.ts), not by failing.
     testTimeout: 60_000,
     env: {
       // Force filesystem backend in tests so tool-level tests don't route

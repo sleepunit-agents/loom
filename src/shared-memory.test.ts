@@ -1,17 +1,18 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterAll,afterEach,beforeAll,expect,it,vi} from 'vitest';
 import {memoryCall} from '../web/src/memory/commands.js';
 import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {cpSync,mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
-import {createDataSchema} from './core/data/database.js';
+import {dataDatabase} from './core/data/database.js';
+import {dataImage} from '../test/fixtures/data-image.js';
 import {members,tokens,agents,household,memberAgents,inbox,triggers,projects as projectRows,changes,taskLinks} from './core/data/schema.js';
 import {serveShared} from './shared-serve.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
@@ -21,16 +22,42 @@ import {ProjectsStore} from './backends/projects.js';
 const cleanup:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();vi.restoreAllMocks();});
 const raw='a'.repeat(64),fingerprint=createHash('sha256').update(raw).digest('hex');
+const initialTime=Date.parse('2026-11-14T12:00:00Z');
+let householdImage:Buffer;
+beforeAll(()=>{
+ householdImage=dataImage(db=>{
+  const at=new Date(initialTime).toISOString();
+  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
+  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  db.insert(household).values({singleton:1,defaultAgent:'fiction',timezone:'America/Chicago'}).run();
+  db.insert(tokens).values({fingerprint,label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
+ });
+});
+function sourcesFor(home:string){
+ const commons=join(home,'commons'),agent=join(home,'agents/fiction');
+ return {commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory:agent,memories:join(agent,'memories.db')}]};
+}
 function fixture(){
  const home=mkdtempSync(join(tmpdir(),'shared-memory-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
- const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(Date.parse('2026-11-14T12:00:00Z')),db=createDataSchema(client),at=new Date(clock.now()).toISOString();
- db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
- db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
- db.insert(household).values({singleton:1,defaultAgent:'fiction',timezone:'America/Chicago'}).run();
- db.insert(tokens).values({fingerprint,label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
- const commons=join(home,'commons'),agent=join(home,'agents/fiction'),sources={commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory:agent,memories:join(agent,'memories.db')}]};
+ const client=new Database(householdImage);cleanup.push(()=>client.close());
+ client.pragma('foreign_keys = ON');
+ const clock=new FakeClock(initialTime),db=dataDatabase(client),sources=sourcesFor(home);
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all(),before=tables();
  return {home,client,db,clock,sources,tables,before};
+}
+// The read/expiry cases start from the same closed, empty content stores. Each gets its own writable files.
+let preparedHome:string|undefined;
+let preparedSources:Promise<string>|undefined;
+afterAll(()=>{if(preparedHome)rmSync(preparedHome,{recursive:true,force:true});});
+async function preparedFixture(){
+ const f=fixture();
+ if(!preparedSources){
+  const directory=mkdtempSync(join(tmpdir(),'shared-memory-template-'));
+  preparedHome=directory;
+  preparedSources=prepareSharedMemorySources({checkingAgent:'fiction',sources:sourcesFor(directory)}).then(()=>directory);
+ }
+ cpSync(await preparedSources,f.home,{recursive:true});
+ return f;
 }
 async function waitMessage(ws:WebSocket,action:()=>unknown){
  const message=once(ws,'message');await action();return JSON.parse(String((await message)[0]));
@@ -94,7 +121,7 @@ it('uses the current household timezone for Activity days and metadata after a c
  expect(await read()).toMatchObject({memoryActivityAccess:{timezone:'Pacific/Kiritimati',today:'2026-11-15'},memoryActivity:{entries:[{day:'2026-11-15',hour:2}]}});
 });
 it('registers Knowledge before the one shared Tempo starts and preserves a stopped daily sweep across restart',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  const source=new KnowledgePages({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
  f.clock.advance(Date.parse('2026-11-14T13:16:59Z')-f.clock.now());
  const options={db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}};
@@ -140,7 +167,7 @@ it('rejects an unconfigured checking recipient before creating source files',asy
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);expect(existsSync(f.sources.agents[0].memories)).toBe(false);expect(f.tables()).toEqual(f.before);
 });
 it('refreshes Knowledge and Activity together at the shared root deadline without a write',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();
  const knowledge=new KnowledgePages({dbPath:f.sources.commons.knowledge});
  try{for(const slug of ['recent','aging','due'])await knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});}finally{knowledge.close();}
  const facts=new Database(f.sources.commons.knowledge);
@@ -166,7 +193,7 @@ it('refreshes Knowledge and Activity together at the shared root deadline withou
  expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:expect.arrayContaining([{slug:'recent',fresh:'fresh',recent:null},{slug:'aging',fresh:'aging',recent:null},{slug:'due',fresh:'due',recent:null}])},memoryKnowledgePage:{fresh:'due'},memoryActivity:{entries:[]},memoryActivityEntry:null}});
 });
 it('withdraws a selected private Memory card when sharing changes during a sibling await',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'PRIVATE selected Memory card'});}finally{people.close();}
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
@@ -178,7 +205,7 @@ it('withdraws a selected private Memory card when sharing changes during a sibli
  }finally{release();}
 });
 it('withdraws a selected private episode when its deadline passes during a sibling await without a SQL write',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
  const source=new Database(f.sources.agents[0].memories);
@@ -192,7 +219,7 @@ it('withdraws a selected private episode when its deadline passes during a sibli
  }finally{release();}
 });
 it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket','live'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during its read without timer delivery via $door',async({kind,door})=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  let current=f.clock.now();vi.spyOn(f.clock,'now').mockImplementation(()=>current);
  if(kind==='person'||kind==='people-list'){const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'Fictional friend'});}finally{people.close();}}
  if(kind==='project-preview'){const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});try{projects.write({slug:'pond',name:'Fictional pond'});}finally{projects.close();}}

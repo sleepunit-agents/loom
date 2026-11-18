@@ -398,14 +398,23 @@ describe('upgrading a household database', () => {
   it('gives a household that reached a number by steps exactly the pinned shape of that number', () => {
     // Recognition holds a database to the pinned shape of its own number. A household installed earlier and
     // upgraded since got there by the steps, so every step from every start must land on the pinned shape.
-    for (const from of numbers) for (const to of numbers.filter(number => number > from)) {
-      const old = household(from);
-      old.pragma('foreign_keys = OFF'); applyUpgrades(old, from, () => at, to);
+    // applyUpgrades runs the numbered SQL steps in order. After checking one destination, each
+    // household is already the exact starting state for its next step. Keep each origin's own
+    // database: recognition rehearses its actual DDL, including differences the shape ignores.
+    const households = new Map<number, Database.Database>();
+    for (const to of numbers.slice(1)) {
+      const installed = household(to - 1);
+      installed.pragma('foreign_keys = OFF');
+      households.set(to - 1, installed);
       const pinned = open(); pinned.exec(shipped(to));
-      expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(dataSchemaShape(pinned));
-      if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
+      const expected = dataSchemaShape(pinned);
+      for (const [from, old] of households) {
+        applyUpgrades(old, to - 1, () => at, to);
+        expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(expected);
+        if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
+      }
     }
-  }, 120_000); // every start to every later number: the pairs grow with each schema number, and 13 of them pass 20 seconds on a loaded runner
+  });
 
   it('recognises a readable household without opening it for writing', () => {
     const old = household(2), before = everything(old);

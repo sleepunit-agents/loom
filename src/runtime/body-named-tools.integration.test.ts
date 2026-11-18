@@ -68,7 +68,7 @@ it('serves a body the named tools a terminal session of its agent is offered, un
  // What the harness is told it may call: in Claude Code, the very strings a terminal session sees.
  expect(b.tools.allowedTools).toEqual([...SECRET,...GENERIC,...bodyNamedToolNames()].map(name=>'mcp__loom__'+name));
  expect(b.sent).toEqual([]);
-},60_000);
+});
 
 /** A named call is answered as loom's door answered the generic tool under it: refused with the door's
  * own words where the door refused, and not otherwise. Everything it sent went to the doors the generic
@@ -122,7 +122,7 @@ it('lets a body call every named tool it is offered, each answered as the door a
  expect([...called].sort()).toEqual([...bodyNamedToolNames()].sort());
  // In this household nothing above is refused to this body. Where a door does refuse, see the next test.
  expect(refused).toEqual([]);
-},120_000);
+});
 
 it('refuses a named tool exactly where the body\'s generic tool is refused, in the same words',async()=>{
  const b=await body();
@@ -150,7 +150,7 @@ it('refuses a named tool exactly where the body\'s generic tool is refused, in t
  expect(b.fixture.db.select().from(schema.tasks).where(eq(schema.tasks.id,'t-900')).get()).toMatchObject({status:'open',assignee:null});
  // What the body's generic tool refuses before any door, a named tool cannot reach either: there is no named tool for it.
  expect((await b.call('loom_command',{operation:'conversation.accept',input:{},id:crypto.randomUUID()})).error).toBe(true);
-},120_000);
+});
 
 it('serves no named tool to a body built without its agent\'s name',async()=>{
  const b=await body({});
@@ -158,7 +158,7 @@ it('serves no named tool to a body built without its agent\'s name',async()=>{
  expect(b.tools.allowedTools).toEqual([...SECRET,...GENERIC].map(name=>'mcp__loom__'+name));
  const absent=await b.model.callTool({name:'remember',arguments:{category:'reference',title:'t',content:'c'}}).catch(()=>undefined);
  expect(absent===undefined||absent.isError===true).toBe(true);expect(b.sent).toEqual([]);
-},60_000);
+});
 
 it('adds to a body\'s start only the tools\' own definitions, within a stated size',async()=>{
  const b=await body(),offered=(await b.model.listTools()).tools;
@@ -167,7 +167,7 @@ it('adds to a body\'s start only the tools\' own definitions, within a stated si
  // Measured 2026-11-17: the named tools 18,766 bytes, the five a body had 3,714. No harness was run to count
  // tokens; at 3.5 to 4 bytes a token for this kind of JSON that is about 4,700 to 5,400 tokens more.
  expect(named).toBeLessThanOrEqual(NAMED_TOOLS_BYTES);expect(named).toBeGreaterThan(before);
-},60_000);
+});
 
 it('gives a body told another agent\'s name nothing of that agent\'s: the door answers for the credential',async()=>{
  // The body's program is told it is mark. Its credential is art's. The member it works for has both agents.
@@ -218,4 +218,4 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
  for(const name of ['update','forget','memory_archive','memory_restore','memory_ratify'])expect(answers[name][0].error,name).toBe(true);
  expect(readFileSync(join(b.home,'agents','mark','IDENTITY.md'),'utf8')).toBe('MARK_SECRET_CREED');
  const marks=new ProjectsStore({dbPath:join(b.home,'agents','mark','memories.db')});try{expect(marks.rows(false)).toHaveLength(1);expect(JSON.stringify(marks.read('fictional-mark-shed'))).toContain('MARK_SECRET_PROJECT');}finally{marks.close();}
-},120_000);
+});

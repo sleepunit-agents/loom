@@ -66,4 +66,4 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  const read=await fetch(url+'/graphql',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:'{recentConversations(agent:"art",limit:1,answeredOnly:true){lastAnswer{words}}}'})});const selected=await read.json();expect(selected.errors).toBeUndefined();expect(selected.data.recentConversations[0].lastAnswer.words).toBe(reply);
  const durable=f.db.$client.serialize();for(const words of [input,reply,card,question,token]){expect(durable.includes(Buffer.from(words))).toBe(false);expect(output.join('')+errors.join('')).not.toContain(words);expect(childArgs.join(' ')).not.toContain(words);}
  expect(f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,hash(token))).get()).toMatchObject({job:job.id,madeFrom:hash(raw.runner)});
-},20000);
+});
