@@ -33,6 +33,7 @@ export interface SharedTempoOptions {
   admit?: TempoOptions['admit'];
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
+  reviewChangedMachineWords?: TempoOptions['reviewChangedMachineWords'];
   changeRevision?: TempoOptions['changeRevision'];
   mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
@@ -68,7 +69,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     return trigger.conversation ? { trigger: as.trigger, asked: placeTriggerAsker(db, viewer, as.trigger, options.bodyWork?.(viewer)) } : as; };
   const installed = installTempoComposition({ db, clock, writes, operations,
     contributors: options.contributors,beforeStart:options.beforeStart,
-    delivery: { conversations, changed,
+    delivery: { conversations, changed, reviewChangedMachineWords: options.reviewChangedMachineWords,
       // Whom the work is for is on the trigger (`member`, set with it). How far that reaches is judged now:
       // a household owner's work is the whole agent's, anyone else's is narrowed to them, and for a member
       // who has left, lost the agent or left the trigger's project the firing fails.

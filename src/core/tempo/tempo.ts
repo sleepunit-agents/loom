@@ -22,6 +22,7 @@ export interface TempoOptions {
   /** Names of further operations the composition can run, beside tempo.sweep. */
   knows?(name: string): boolean;
   instructions?(file: string): string;
+  reviewChangedMachineWords?(trigger: Trigger, words: string): void;
   /** The member a firing of this trigger is private work for, or nobody when it is the agent's own
    * (read from `triggers.member`; src/shared-tempo.ts). Throws when that member may no longer be worked for; the firing then
    * fails. Without it every firing is the agent's own. */
@@ -91,7 +92,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     },
     // Without a list from the composition, any name it handles is taken on trust, as before.
     knows: name => name === 'tempo.sweep' || (options.knows ? options.knows(name) : true),
-    instructions: options.instructions,
+    instructions: options.instructions, reviewChangedMachineWords: options.reviewChangedMachineWords,
     changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
   });
   const sources = new TempoSources(db, engine);

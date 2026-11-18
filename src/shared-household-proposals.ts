@@ -36,8 +36,12 @@
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
 import {openMachineReview,sealMachineReview} from './core/tempo/machine-review.js';
-import {randomBytes} from 'node:crypto';
-import {and,asc,eq,isNull,like} from 'drizzle-orm';
+import {readMachineReport} from './runtime/machines.js';
+import {SILENCE_MS} from './runtime/silence.js';
+import {logTrigger} from './core/tempo/triggers.js';
+import {triggerLog} from './core/data/schema.js';
+import {createHash,randomBytes} from 'node:crypto';
+import {and,asc,desc,eq,isNull,like} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import {householdId} from './slug.js';
@@ -135,7 +139,7 @@ const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)},househo
 type Proposal=z.infer<typeof proposal>;
 const changeName=z.enum(everyChange);
 // What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
-const details=z.object({change:changeName,after:z.json(),machineReview:z.string().optional(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
+const details=z.object({change:changeName,after:z.json(),machineReview:z.string().optional(),previousApproval:z.string().optional(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
 // A card from before the digest kept the replaced value itself; those are rewritten once, at start.
 const olderDetails=z.object({change:changeName,before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
@@ -165,7 +169,7 @@ const said=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleWords(v
 // The same with what it would replace, for a household owner.
 const summary=(value:Proposal,before:unknown)=>value.change==='placeSchedule'?placeScheduleWords(value.input)+(value.input.action==='edit'?' As it stands: '+JSON.stringify(before):''):isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
-const cardWords=(value:Proposal)=>value.change==='triggerMachine'?{ask:'Review the machine request for schedule '+value.input.trigger+'?',ifYes:'The worker must report that it accepts this work before an owner can allow it.',ifNo:'The trigger does not fire.'}:value.change==='placeSchedule'?placeScheduleCard(value.input):dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+const cardWords=(value:Proposal)=>value.change==='triggerMachine'?{ask:'Review the machine request for schedule '+value.input.trigger+'?',ifYes:'Allow this agent to run these exact instructions as the worker user on the named machine. The current server still refuses execution.',ifNo:'The trigger does not fire.'}:value.change==='placeSchedule'?placeScheduleCard(value.input):dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
  :value.change==='projectRetire'?{ask:'Retire project '+name(value)+'?',ifYes:'Nothing is deleted or closed, and who reads it does not change. Its unfinished tasks are shelved: not ready, not counted as open work, and none can be claimed; one already held keeps who holds it. No new task is filed under it. Reviving it brings everything back as it was.',ifNo:'It stays in use.'}
  :value.change==='projectRevive'?{ask:'Revive project '+name(value)+'?',ifYes:'Its shelved tasks are work again, each as it was left.',ifNo:'It stays retired.'}
  :value.change==='projectJoin'?{ask:joinWords(value)+'?',ifYes:value.input.agent+' is added to project '+value.input.project+' and sees what is filed under it. Nothing else about the project changes.',ifNo:value.input.agent+' stays off the project.'}
@@ -211,23 +215,31 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   const byOwner=row.ownerKind==='household'||row.ownerKind==='member'&&!!row.owner&&householdOwner(db,{kind:'member',id:row.owner});
   return (own||byOwner)&&maySetTrigger(viewer,row,sharing)&&(viewer.kind==='agent'?viewer.id===row.to:householdOwner(db,viewer));
  };
- const machineReview=(input:{trigger:string;machine:string})=>{
+ const machineReview=(input:{trigger:string;machine:string},resolved?:string)=>{
   const row=getTrigger(input.trigger),box=db.select().from(boxes).where(eq(boxes.id,input.machine)).get();
   let words:string|null=null;
-  if(row)try{words=parts.triggerWords?.(row)??null;}catch{/* An unreadable file must never authorize a firing. */}
+  if(row)try{words=resolved??parts.triggerWords?.(row)??null;}catch{/* An unreadable file must never authorize a firing. */}
   const listed=row?.to&&box?db.select().from(boxAgents).where(and(eq(boxAgents.box,box.id),eq(boxAgents.agent,row.to))).get():undefined;
-  const problem=!row||!box||box.revokedAt?'The requested trigger or machine is unavailable'
+  const report=box?readMachineReport(db,box.id):undefined;
+  const problem=!row||!box||box.revokedAt||box.reportOnly?'The requested trigger or machine is unavailable'
    :!row.to||!machineMayHost(box,listed||undefined,row.to,sharedSharing(db))?'The machine may not host this agent'
-   :words===null?'The trigger words are unavailable':'The worker has not reported support for machine bodies';
-  return {row,box,words,problem};
+   :words===null?'The trigger words are unavailable'
+   :!report?.enabled?'The worker has not reported support for machine bodies'
+   :!report.agents.includes(row.to)?'The worker does not allow this agent'
+   :!box.lastSeenAt||Date.parse(now())-Date.parse(box.lastSeenAt)>SILENCE_MS?'The machine is away':null;
+  return {row,box,words,report,problem};
  };
- // What the change would replace, in the same shape as the input, or null when it would be new.
- const reviewText=(review:ReturnType<typeof machineReview>)=>[review.row?.to,review.box?.name,'Worker user and working directory unreported',review.row?.note,
-  [review.row?.days,review.row?.times??review.row?.watches].filter(Boolean).join(' '),review.row?.file,review.words??'Trigger words unavailable'].filter(part=>part!=null).join('\n');
+ const reviewText=(review:ReturnType<typeof machineReview>)=>[
+  review.row?.to,review.box?.name,
+  review.report?`Worker user: ${review.report.user} · Starting directory: ${review.report.cwd}`:'Worker user and working directory unreported',
+  review.row?.note,[review.row?.days,review.row?.times??review.row?.watches].filter(Boolean).join(' '),
+  'A machine body runs as the worker’s own user. It can read the worker credentials, model sign-ins and that user’s SSH keys. On Loom’s machine, running as Loom’s user gives it access to Loom’s database. Approval covers these words. They cannot confine what the process does.',
+  review.row?.file,review.words??'Trigger words unavailable'].filter(part=>part!=null).join('\n');
  const before=(value:Proposal,review?:ReturnType<typeof machineReview>):unknown=>{
   if(value.change==='triggerMachine'){
-   const {row,words}=review??machineReview(value.input);
-   return {agent:row?.to,machine:row?.machine,words,owner:row?.owner,ownerKind:row?.ownerKind,conversation:row?.conversation};
+   const {row,words,report}=review??machineReview(value.input);
+   const generation=db.select({seq:triggerLog.seq}).from(triggerLog).where(and(eq(triggerLog.trigger,value.input.trigger),eq(triggerLog.event,'machine-request'))).orderBy(desc(triggerLog.seq)).limit(1).get()?.seq;
+   return {agent:row?.to,machine:row?.machine,prior:row?.machineApproval,generation,words,owner:row?.owner,ownerKind:row?.ownerKind,conversation:row?.conversation,user:report?.user,cwd:report?.cwd};
   }
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);return row?sorted({id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
   if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
@@ -282,7 +294,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Make the change. `by` is the owner on whose word it is made.
  const change=(value:Proposal,by:string)=>{
   try{
-   if(value.change==='triggerMachine')throw new OperationError('unavailable','The worker has not reported support for machine bodies');
+   if(value.change==='triggerMachine')throw new Error('Machine approval needs its verified card');
    else if(value.change==='project')projects.save(value.input);
    else if(value.change==='projectMerge')projects.merge(value.input);
    else if(value.change==='projectJoin')projects.join(value.input);
@@ -321,8 +333,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  };
  // Why the change cannot be made on what is there now, in the words of the rule it breaks; nothing when it can.
  // These depend on what the asker may not read, so they are an owner's to hear: never the asker's.
- const refusal=(value:Proposal,was:unknown)=>
-  value.change==='triggerMachine'?new OperationError('invalid',machineReview(value.input).problem)
+ const refusal=(value:Proposal,was:unknown,review?:ReturnType<typeof machineReview>)=>
+  value.change==='triggerMachine'?(review?.problem?new OperationError('invalid',review.problem):undefined)
   :value.change==='projectMerge'?projects.mergeRefusal(value.input)
   :value.change==='projectJoin'?projects.joinRefusal(value.input)
   :isState(value)?projects.stateRefusal(value.input,value.change==='projectRetire')
@@ -343,15 +355,26 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  };
  // Everything an Allow must find true before the change is made, on what is there now.
  const check=(value:Proposal,kept:z.infer<typeof details>)=>{
-  const was=before(value);
+  const review=value.change==='triggerMachine'?machineReview(value.input):undefined;
+  const was=before(value,review);
   if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
-  const refused=refusal(value,was);if(refused)throw refused;
+  const refused=refusal(value,was,review);if(refused)throw refused;
+  if(review){
+   if(!kept.machineReview)throw new OperationError('conflict','The original review is unavailable');
+   try{openMachineReview(kept.machineReview,parts.digest,target(value),kept.seal.nonce);}
+   catch{throw new OperationError('conflict','The original review is unavailable');}
+  }
+  return review;
  };
  const apply=(card:Approval)=>{
   const {kept,value}=read(card);
   if(!card.decidedBy)throw new OperationError('conflict','Wrong household card');
-  check(value,kept);
-  change(value,card.decidedBy);
+  const review=check(value,kept);
+  if(value.change==='triggerMachine'){
+   if(!review?.row||review.words===null||review.row.machine!==value.input.machine||!canRequestMachine({kind:'member',id:card.decidedBy},review.row.id))
+    throw new OperationError('denied','This trigger cannot receive machine approval');
+   db.update(triggerRows).set({machineApproval:card.id,machineWords:createHash('sha256').update(review.words).digest('hex'),changedAt:now()}).where(eq(triggerRows.id,review.row.id)).run();
+  }else change(value,card.decidedBy);
   appliedCards.add(card.id);
  };
  // Cards filed before the digest kept what they would replace, where the asking agent could read it. Take
@@ -376,7 +399,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string)=>db.transaction(()=>{
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string,replacement?:{prior:string;words:string})=>db.transaction(()=>{
   const value=proposal.parse({change:raw.change,input:raw.input});
   if(value.change==='triggerMachine'){
    const viewer:Viewer=owner?{kind:'member',id:owner}:{kind:'agent',id:agent,workingFor:where?.member??undefined};
@@ -388,13 +411,19 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    if(!db.select({id:boxes.id}).from(boxes).where(eq(boxes.id,value.input.machine)).get())throw new OperationError('invalid','The named machine is unavailable');
   }
   // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
-  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
+  const cardTarget=replacement?target(value)+':review:'+parts.digest(JSON.stringify([replacement.prior,replacement.words])):target(value);
+  const existing=db.select().from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,cardTarget),
+   replacement?undefined:eq(approvals.state,'pending'))).get();
+  if(existing){if(replacement)return existing;throw new OperationError('conflict','A card for this is already waiting for an answer');}
   if(!householdOwners(db).length)throw new OperationError('conflict','No household owner can allow this');
-  if(value.change==='triggerMachine')db.update(triggerRows).set({machine:value.input.machine,machineWords:null,machineApproval:null,changedAt:now()}).where(eq(triggerRows.id,value.input.trigger)).run();
+  if(value.change==='triggerMachine'&&!replacement){
+   db.update(triggerRows).set({machine:value.input.machine,machineWords:null,machineApproval:null,changedAt:now()}).where(eq(triggerRows.id,value.input.trigger)).run();
+   logTrigger(db,now(),value.input.trigger,'machine-request',value.input.machine);
+  }
   const nonce=randomBytes(16).toString('hex');
-  const review=value.change==='triggerMachine'?machineReview(value.input):undefined;
+  const review=value.change==='triggerMachine'?machineReview(value.input,replacement?.words):undefined;
   const snapshot=review?{machineReview:sealMachineReview(reviewText(review),parts.digest,target(value),nonce)}:{};
-  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),...snapshot,seal:{nonce,digest:seal(value,nonce,before(value,review))}}),changeSummary:said(value),
+  const card=service.request({kind:kindOf(value),operation,target:cardTarget,details:JSON.stringify({change:value.change,after:sorted(value.input),...(replacement?{previousApproval:replacement.prior}:{}),...snapshot,seal:{nonce,digest:seal(value,nonce,before(value,review))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
    askedFrom:where?.conversation??(owner?'household owner':ASKED_FROM_TERMINAL),actingFor:householdChangePrincipal(where?.member,owner),what:said(value),why:raw.why,...cardWords(value)});
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
@@ -413,6 +442,14 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  return{
   operation:[operation,apply] as const,
   file,
+  reviewChanged(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,trigger:typeof triggerRows.$inferSelect,words:string){
+   if(!trigger.to||!trigger.machine||!trigger.machineApproval)throw new Error('No approved machine request');
+   const prior=db.select().from(approvals).where(eq(approvals.id,trigger.machineApproval)).get();
+   if(!prior||prior.state!=='used'||prior.agent!==trigger.to)throw new Error('No previous machine approval');
+   const {value}=read(prior);
+   if(value.change!=='triggerMachine'||value.input.trigger!==trigger.id||value.input.machine!==trigger.machine)throw new Error('Wrong previous machine approval');
+   file(service,trigger.to,{change:'triggerMachine',input:value.input,why:'The trigger words changed since their last approval'},undefined,undefined,{prior:prior.id,words});
+  },
   // Called after the outer Allow transaction commits, so readers see the change.
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
   /** `held` answers why this caller proposes nothing, in words for the caller: the body of a job on anybody else's
@@ -462,7 +499,14 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      try{check(value,kept);}catch(error){if(!(error instanceof OperationError))throw error;problem=error.message;}
      if(value.change==='triggerMachine'){
       try{
-       if(kept.machineReview)return {summary:openMachineReview(kept.machineReview,parts.digest,target(value),kept.seal.nonce),problem};
+       if(kept.machineReview){
+        const current=openMachineReview(kept.machineReview,parts.digest,target(value),kept.seal.nonce);
+        if(!kept.previousApproval)return {summary:current,problem};
+        const prior=service.get(kept.previousApproval),previous=read(prior);
+        if(previous.value.change!=='triggerMachine'||previous.value.input.trigger!==value.input.trigger||previous.value.input.machine!==value.input.machine||!previous.kept.machineReview)throw new Error('Wrong previous approval');
+        const original=openMachineReview(previous.kept.machineReview,parts.digest,target(previous.value),previous.kept.seal.nonce);
+        return {summary:'Previously approved\n'+original+'\n\nRequested now\n'+current,problem};
+       }
       }catch{/* A program without a persistent household key cannot open a snapshot made before restart. */}
       return {summary:'The original machine review is unavailable. Ask for a fresh card.',problem:'This review cannot be opened'};
      }

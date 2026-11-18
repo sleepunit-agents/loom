@@ -63,6 +63,7 @@ export interface TriggerEffects {
   knows?(name: string): boolean;
   /** Resolve relative household repository files; no runtime home is read here. */
   instructions?(file: string): string;
+  reviewChangedMachineWords?(trigger: Trigger, words: string): void;
   changed?(): void;
 }
 
@@ -373,14 +374,20 @@ export class TriggerEngine {
   /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
   private fire(t: Trigger, eventId: string, spent: number | null = null) {
     // What the firing was doing, for the log if it fails.
+    let changedWords: string | undefined;
     let stage: 'machine' | 'operation' | 'instructions' | 'inbox' = 'operation';
     try {
       this.db.transaction(() => {
         this.db.update(triggers).set({ state: 'firing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         if (t.machine !== null) {
           stage = 'machine';
-          if (t.machineWords !== null && createHash('sha256').update(this.resolvedWords(t)).digest('hex') !== t.machineWords)
-            throw new Error('The words changed since they were approved');
+          if (t.machineWords !== null) {
+            const words = this.resolvedWords(t);
+            if (createHash('sha256').update(words).digest('hex') !== t.machineWords) {
+              changedWords = words;
+              throw new Error('The words changed since they were approved');
+            }
+          }
           throw new Error('Machine execution is unavailable');
         }
         const delivery = `${t.id}:${eventId}`;
@@ -410,6 +417,11 @@ export class TriggerEngine {
         const why = (error instanceof Error ? error.message : String(error)).split(/[\r\n]/, 1)[0].slice(0, 200);
         const reason = `${stage}: ${why}`;
         this.log(t.id, 'failure', reason);
+        if (changedWords !== undefined && this.effects.reviewChangedMachineWords) {
+          const words = changedWords;
+          try { this.db.transaction(() => this.effects.reviewChangedMachineWords!(t, words)); }
+          catch { this.log(t.id, 'failure', 'machine: A replacement review could not be filed'); }
+        }
         return reason;
       });
     }

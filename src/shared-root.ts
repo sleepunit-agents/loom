@@ -367,6 +367,7 @@ export function sharedRoot(options: {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
     bodyWork: viewer => bodyScope(viewer), bodyJob,
     // A repeating schedule asked for on anybody else's word is an owner's to allow: filed as a household card.
+    reviewChangedMachineWords: (trigger,words) => householdProposals.reviewChanged(services.approvals,trigger,words),
     askOwners: (agent, ask, why, where) => householdProposals.file(services.approvals, agent, { change: 'placeSchedule', input: ask, why }, where).id,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},

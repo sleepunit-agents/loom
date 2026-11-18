@@ -544,7 +544,7 @@ it('accepts staged status only on the authenticated worker poll and clears it on
   expect((await f.call('health', { facts: ['rack:one'] }, 'health-report')).status).toBe(200);
   expect(readMachineReport(f.db, 'worker')).toEqual(machine);
   expect((await f.call('next', { facts: ['loom:machine-user:spoofed'] }, 'forged')).status).toBe(400);
-  expect((await f.call('next', { machine: { ...machine, enabled: true } }, 'unsupported')).status).toBe(400);
+  expect((await f.call('next', { machine: { ...machine, version: 2 } }, 'unsupported')).status).toBe(400);
   await f.control.next();
   expect(readMachineReport(f.db, 'worker')).toBeUndefined();
 });

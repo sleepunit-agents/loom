@@ -448,7 +448,8 @@ it('withdraws a machine request in one audited edit before ordinary delivery res
 it.each(['file', 'stored'])('compares the complete %s words at manual and scheduled machine firings', source => {
   const approved = 'Check all alerts.\r\n' + 'é'.repeat(2500) + '\n';
   let current = approved;
-  const f = fixture({ instructions: () => current });
+  const review = vi.fn();
+  const f = fixture({ instructions: () => current, reviewChangedMachineWords: review });
   const at = new Date(f.clock.now()).toISOString();
   f.db.insert(boxes).values({ id: 'local', name: 'Local', owner: 'jonathan', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
   const t = f.engine.set({ ...f.base, times: '12:01', days: 'daily', lifespan: 'until-stopped',
@@ -462,6 +463,7 @@ it.each(['file', 'stored'])('compares the complete %s words at manual and schedu
   if (source === 'stored') f.db.update(triggers).set({ instructions: current }).where(eq(triggers.id, t.id)).run();
   f.clock.advance(60_000);
   const failures = f.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all().filter(log => log.event === 'failure');
+  expect(review).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: t.id, machineApproval: 'card' }), current);
   expect(failures.map(log => log.note)).toEqual(['machine: Machine execution is unavailable', 'machine: The words changed since they were approved']);
   expect(f.items()).toEqual([]);
 });

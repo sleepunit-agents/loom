@@ -793,3 +793,42 @@ it('refuses a hidden machine exactly like an unknown one to an agent', async () 
   expect(hidden.body.ok).toBe(false);
   expect(f.db.select().from(approvals).all()).toEqual([]);
 });
+
+it('records an owner grant for the exact reviewed words and files one replacement per changed version', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString(), token = 'e'.repeat(64);
+  f.db.insert(memberAgents).values({member:'sam',agent:'art'}).onConflictDoNothing().run();
+  f.db.insert(boxes).values({id:'work',name:'Workshop',owner:'sam',sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+  f.db.insert(boxAgents).values({box:'work',agent:'art',lent:false}).run();
+  f.db.insert(tokens).values({fingerprint:hash(token),label:'worker',kind:'runner',box:'work',createdAt:at}).run();
+  const poll = async (id:string, machine?:unknown) => f.root.http.request('http://loom/api/runtime/next',{
+    method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({id,input:machine?{machine}:{}}),
+  });
+  const report = {version:1,enabled:true,user:'operator',cwd:'/srv/triage',agents:['art']};
+  expect((await poll('capable',report)).status).toBe(200);
+  const words = 'Read the station report.\n', changed = 'Read both station reports.\n', id = 'tr-stations';
+  expect((await f.call('tempo/set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:'23:45',lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',instructions:words,note:'Station check'},'art')).body.ok).toBe(true);
+  const raw = {change:'triggerMachine',input:{trigger:id,machine:'work'},why:'Review station status'};
+  const proposed = await f.call('household/propose',raw,'art'), card = proposed.body.value!.id;
+  const review = await look(f,card);
+  expect(review.problem).toBeNull();
+  for (const item of ['operator','/srv/triage','SSH keys',words]) expect(review.summary).toContain(item);
+  const allow = (which:string) => f.call('approvals/answer',{id:which,answer:'allow'},'sam');
+  expect((await allow(card)).body.ok).toBe(true);
+  const trigger = () => f.db.select().from(triggers).where(eq(triggers.id,id)).get();
+  expect(trigger()).toMatchObject({machineApproval:card,machineWords:hash(words)});
+  expect((await f.call('tempo/edit',{id,times:'23:42',note:'New label'},'art')).body.ok).toBe(true);
+  await f.call('tempo/runNow',{id},'art');
+  const pending = () => f.db.select().from(approvals).where(eq(approvals.state,'pending')).all();
+  expect(pending()).toHaveLength(0);
+  expect((await f.call('tempo/edit',{id,instructions:changed},'art')).body.ok).toBe(true);
+  for (let n=0;n<2;n++) expect((await f.call('tempo/runNow',{id},'art')).body.value).toMatchObject({failed:true,reason:expect.stringMatching(/changed/)});
+  expect(pending()).toHaveLength(1);
+  const replacement = pending()[0].id;
+  for (const text of [words,changed]) expect((await look(f,replacement)).summary).toContain(text);
+  await poll('legacy');
+  expect((await allow(replacement)).body.ok).toBe(false);
+  expect(trigger()?.machineApproval).toBe(card);
+  await poll('current',report);
+  expect((await allow(replacement)).body.ok).toBe(true);
+  expect(trigger()).toMatchObject({machineApproval:replacement,machineWords:hash(changed)});
+});
