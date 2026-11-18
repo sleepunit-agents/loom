@@ -6,9 +6,8 @@ import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { editsWords, type NewTrigger, type Trigger, type TriggerAsked } from './core/tempo/triggers.js';
-import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, membersWithAgent, type Asker, type Viewer } from './policy.js';
-import { householdOwners, sharedSharing } from './shared-sharing.js';
-import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, wordReach } from './shared-place-mail.js';
+import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type Viewer } from './policy.js';
+import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
 export const WORD_REPEAT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners repeats no more often than once an hour, and only at listed times.';
@@ -136,7 +135,7 @@ export function placeFiring(db: DataDatabase, trigger: Trigger, now: string): { 
     ?? privateRefusal(cv.member, asker)
     // Only listed times can be put off; the doors let nobody but owners set a trigger that watches an event.
     ?? (others && trigger.sourceKind !== 'time' ? `it watches an event, and ${named(asker)}, who asked for it, is not one of ${agent}'s owners` : undefined);
-  if (why) { const sharing = sharedSharing(db); let tell = membersWithAgent(agent, sharing); if (!tell.length) tell = householdOwners(db); return { stop: why, tell }; }
+  if (why) return { stop: why, tell: tellOwners(db, agent) };
   if (others) {
     const last = db.select({ at: inbox.at, kind: inbox.onWordKind, id: inbox.onWord }).from(inbox).where(and(eq(inbox.conversation, cv!.id), eq(inbox.source, 'trigger'), isNotNull(inbox.onWord))).orderBy(desc(inbox.at)).all()
       .find(item => wordReach(db, agent, { kind: item.kind!, id: item.id! }) === 'others');

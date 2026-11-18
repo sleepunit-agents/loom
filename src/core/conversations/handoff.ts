@@ -28,8 +28,8 @@ export interface HandoffToSelf{
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
- /** Why this job may hand no further note, or nothing: asked as a new note is about to be written, never of one sent again. */
- full(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
+ /** Told after a new note or brief is written, never of one sent again: for the notice a job that hands many raises. */
+ handed(work:{job:{id:string;agent:string;conversation:string|null}}):void;
  /** Told after a note is written, for the notice a long chain raises. */
  sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
 }
@@ -62,7 +62,6 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
     const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
     if(before?.conversation)return {conversation:before.conversation,item:before.id};
-    const full=self.full({job});if(full)throw new OperationError('conflict',full);
     // Resolved once, when the words were sealed. It is judged again here, and must still be the same: what the
     // receiving body is told and what the row says cannot disagree.
     const {sealed,resolved:how}=prepared as {sealed:string;resolved:ReturnType<HandoffToSelf['target']>},again=self.target({job,cv},input.to);
@@ -72,7 +71,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     const item=cvs.send({conversation:target,toKind:'agent',to:cv.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:sealed,refs:[cv.id],
      chain:JSON.stringify(chain),chainStartedAt:how.startedAt,...(how.onWord?{onWordKind:how.onWord.kind,onWord:how.onWord.id}:{})});
     cvs.turn({conversation:target,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
-    self.sent({chain,startedAt:how.startedAt,to:target,agent:cv.agent});
+    self.sent({chain,startedAt:how.startedAt,to:target,agent:cv.agent});self.handed({job});
     ctx.changed('conversations',target);ctx.changed('inbox',item.id);ctx.changed('turns',target);
     return {conversation:target,item:item.id};
    }
@@ -85,14 +84,13 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    }
    // The handoff carries every label that says who may read the words it came from: the project, the member,
    // and whether it was a direct message.
-   // The composition's rules for a hand-off of any kind: one hop on anybody else's word, and the flood guard.
+   // The composition's rule for a hand-off of any kind: one hop on anybody else's word.
    const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
-   const full=self?.full({job});if(full)throw new OperationError('conflict',full);
    const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
    if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const word=self?.word({job});
    const item=cvs.send({conversation:target.id,toKind:'agent',to:input.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
-   cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
+   cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});
    ctx.changed('conversations',target.id);ctx.changed('inbox',item.id);ctx.changed('turns',target.id);
    return {conversation:target.id,item:item.id};
   },

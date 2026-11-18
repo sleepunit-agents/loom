@@ -28,10 +28,11 @@ export const PLACE_TRIGGERS_MAX = 10;
  * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
  * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */
 export const WORD_REPEAT_MIN_MS = 3_600_000;
-/** The most notes one job on the word of anybody but owners hands, briefs to a peer agent counted with them. A flood guard on one job, like the bound
- * on its posts (BRIDGE_POSTS_PER_JOB): each note may open a conversation and start a job. It is no limit on
- * an exchange, which no rule cuts short; a job working for owners, and the agent's own work, is not counted. */
-export const NOTES_PER_JOB = 5;
+/** Each time one job on the word of anybody but owners has handed this many more notes, briefs to a peer agent counted with
+ * them, the agent's people are told (selfHandoff, handed). It refuses nothing: each note may open a conversation and
+ * start a job, so a job that hands many is made loud, not stopped. A job working for owners, and the agent's own
+ * work, is not counted. */
+export const NOTES_NOTICE_EVERY = 5;
 /** A chain of hand-offs this long, and each further one this long, is told to the household's owners. It refuses nothing. */
 export const CHAIN_NOTICE_EVERY = 25;
 
@@ -197,6 +198,12 @@ export function reportsTo(db: DataDatabase, cv: Place): string | null {
   return db.select({ reportsTo: bridgeChannels.reportsTo }).from(bridgeChannels)
     .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)), eq(bridgeChannels.answers, cv.agent))).get()?.reportsTo ?? null;
 }
+/** Whom loom tells of what an agent's bodies do on anybody else's word: the members who have the agent, or the
+ * household's owners when nobody has it. The one audience for a stopped trigger and for every loud notice here. */
+export function tellOwners(db: DataDatabase, agent: string): string[] {
+  const have = membersWithAgent(agent, sharedSharing(db));
+  return have.length ? have : householdOwners(db);
+}
 /** A person as a body is told of them: by what kind they are and the id loom knows them by. */
 export const named = (who: { kind: string; id: string }): string => who.kind === 'member' ? `the member ${who.id}` : who.kind === 'agent' ? 'yourself' : `the outside account ${who.id}`;
 
@@ -266,11 +273,15 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       return jobWord(db, work.job).woke === 'others' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'handoff'))).get()
         ? 'A note or a brief started this job, and it is not working for the agent\'s owners: it hands nothing on. Say what there is to say here.' : undefined;
     },
-    full(work) {
-      if (jobWord(db, work.job).woke !== 'others') return undefined;
+    handed(work) {
+      // Loud, not a stop: the agent's people are told each time such a job has handed NOTES_NOTICE_EVERY more.
+      const word = jobWord(db, work.job);
+      if (word.woke !== 'others') return;
       const mine = JSON.stringify([work.job.id]).slice(0, -1) + ',';
-      const sent = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'), eq(inbox.fromId, work.job.agent))).all().filter(item => item.sourceId?.startsWith(mine));
-      return sent.length >= NOTES_PER_JOB ? `A job that is not working for the agent's owners hands at most ${NOTES_PER_JOB} notes and briefs` : undefined;
+      const count = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'), eq(inbox.fromId, work.job.agent))).all().filter(item => item.sourceId?.startsWith(mine)).length;
+      if (!count || count % NOTES_NOTICE_EVERY !== 0) return;
+      for (const member of tellOwners(db, work.job.agent)) mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `job-notes:${JSON.stringify([work.job.id, count])}`, fromKind: 'unknown',
+        words: `A job of ${work.job.agent} that is not working for its owners has handed ${count} notes and briefs${word.person ? `, on the word of ${named(word.person)}` : ''}, from conversation ${work.job.conversation}. Nothing was stopped: say stop in that conversation, or stop the job, if it should end.`, refs: [work.job.agent] });
     },
     sent(note) {
       // Loud, not a stop: the household's owners are told once each time a chain grows by CHAIN_NOTICE_EVERY.

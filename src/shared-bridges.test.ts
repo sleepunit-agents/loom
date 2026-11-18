@@ -13,7 +13,7 @@ import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,NOTES_PER_JOB,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
+import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
 import {triggerLog} from './core/data/schema.js';
 import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
@@ -1055,7 +1055,7 @@ it('ends a loop of firings on a guest\'s word: a job a firing or a note woke sch
  expect((await f.call('tempo','runNow',{id:owners.id},token.owner)).status).toBe(200);expect(fired()).toHaveLength(3);
 });
 
-it('lets a guest\'s word go one hop and five notes, and reads a report target only from a rule of the agent\'s own',async()=>{
+it('lets a guest\'s word go one hop, tells the agent\'s people of every fifth note it hands and refuses none, and reads a report target only from a rule of the agent\'s own',async()=>{
  const {f,cv,work}=await sharedPlace(()=>false);
  const key=(channel:string)=>JSON.stringify(['slack','TWORK',channel]),pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
  f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -1069,16 +1069,30 @@ it('lets a guest\'s word go one hop and five notes, and reads a report target on
  expect(reportsTo(f.db,f.db.select().from(conversations).where(eq(conversations.id,there)).get()!)).toBe(key('CTHIRD'));
  expect(jobWord(f.db,{id:'other',agent:'art',conversation:there})).toEqual({woke:'others',person:{kind:'outside',id:GUEST}});
  expect((await note({platform:'slack',workspace:'TWORK',channel:'CTHIRD'},token.other)).status).toBe(403);
- // A job on a guest's word hands at most five notes, wherever each would go; the same note sent again is the same note.
- expect(NOTES_PER_JOB).toBe(5);
+ // A job on a guest's word is refused no note for how many it has handed. The agent's people are told at five and at
+ // each further five: loud, not a stop. The same note sent again is the same note, and is told of once.
+ expect(NOTES_NOTICE_EVERY).toBe(5);
+ const told=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('job-notes:'));
+ const thread=(n:number)=>`17944320${String(n).padStart(2,'0')}.000001`;
  const again={to:{...pond,thread:'1794432000.000002'},clientId:'fifth',label:'Note',words:'Words'};
- for(let n=2;n<NOTES_PER_JOB;n++)expect((await note({...pond,thread:`179443200${n}.000001`})).status,String(n)).toBe(200);
+ for(let n=2;n<NOTES_NOTICE_EVERY;n++)expect((await note({...pond,thread:thread(n)})).status,String(n)).toBe(200);
+ expect(told()).toEqual([]);
  expect((await f.call('conversation','handoff',again)).status).toBe(200);
- expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(409);expect((await f.call('conversation','handoff',again)).status).toBe(200);
- expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(NOTES_PER_JOB);
- // A job working for owners is not counted.
+ // Nobody has the agent, so the household's owners are told: who the job works for, where, and that nothing was stopped.
+ expect(told()).toMatchObject([{toKind:'person',to:'owner',fromKind:'unknown'}]);
+ expect(told()[0].words).toBe(`A job of art that is not working for its owners has handed 5 notes and briefs, on the word of the outside account ${GUEST}, from conversation ${cv}. Nothing was stopped: say stop in that conversation, or stop the job, if it should end.`);
+ expect((await f.call('conversation','handoff',again)).status).toBe(200);expect(told()).toHaveLength(1);
+ // The sixth is handed like the first, and raises nothing.
+ expect((await note({...pond,thread:thread(6)})).status).toBe(200);expect(told()).toHaveLength(1);
+ // At ten, the members who have the agent are told, and not the other owners.
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'kim',agent:'art'}).run();});
+ for(let n=7;n<=2*NOTES_NOTICE_EVERY;n++)expect((await note({...pond,thread:thread(n)})).status,String(n)).toBe(200);
+ expect(told()).toHaveLength(2);expect(told()[1]).toMatchObject({to:'kim',words:expect.stringContaining('has handed 10 notes and briefs')});
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(2*NOTES_NOTICE_EVERY);
+ // A job working for owners is not counted, and nobody is told of its notes.
  f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
- expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(200);
+ for(let n=11;n<=3*NOTES_NOTICE_EVERY;n++)expect((await note({...pond,thread:thread(n)})).status,String(n)).toBe(200);
+ expect(told()).toHaveLength(2);
  f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'unknown',fromId:null}).where(and(eq(inbox.job,'body'),eq(inbox.source,'slack'))).run());
  // A report target is read from the rule of the agent that answers there. In a channel mark answers, art's body, woken by a guest's mention, reports nowhere.
  f.root.writes.run(()=>f.db.update(bridgeChannels).set({answers:'mark'}).where(eq(bridgeChannels.channel,'CROOM')).run());
@@ -1173,13 +1187,18 @@ it('lets no job a brief started on a guest\'s word brief back',async()=>{
  expect((await brief(marks,'art')).status).toBe(403);
  expect(f.db.select().from(inbox).all().filter(item=>item.source==='handoff'&&item.to==='art')).toEqual([]);
 });
-it('counts a brief to a peer agent with the notes a job on a guest\'s word may hand',async()=>{
+it('counts a brief to a peer agent with the notes a job on a guest\'s word hands, for the notice and for no refusal',async()=>{
  const {f,pond,brief,note}=await noteStarted();
- for(let n=1;n<NOTES_PER_JOB;n++)expect((await note({...pond,thread:`179443200${n}.000001`})).status,String(n)).toBe(200);
- // Every brief from one job is in the one conversation that job opened, and each is one more hand-off.
+ const told=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('job-notes:'));
+ for(let n=1;n<NOTES_NOTICE_EVERY;n++)expect((await note({...pond,thread:`179443200${n}.000001`})).status,String(n)).toBe(200);
+ expect(told()).toEqual([]);
+ // Every brief from one job is in the one conversation that job opened, and each is one more hand-off: the fifth here.
  expect((await brief(token.body)).status).toBe(200);
- expect((await brief(token.body)).status).toBe(409);expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(409);
- expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(NOTES_PER_JOB);
+ expect(told()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining('has handed 5 notes and briefs')}]);
+ // Neither a further brief nor a further note is refused.
+ expect((await brief(token.body)).status).toBe(200);expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(200);
+ expect(told()).toHaveLength(1);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(NOTES_NOTICE_EVERY+2);
 });
 it('stops at the firing a trigger that watches an event on the word of anybody but owners',async()=>{
  const {f,once}=await sharedPlace();
