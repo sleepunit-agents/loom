@@ -4,10 +4,10 @@ import { Loading, Error } from '../../kit';
 import { stamp } from './time';
 
 export const currentJobsQuery = `query DeskCurrentJobs($agent: String!) {
-  currentJobs(agent: $agent) { id agent title state kind box queuedAt }
+  currentJobs(agent: $agent) { id agent title state kind box machine queuedAt }
   boxes { id name }
 }`;
-export type CurrentJob = { id: string; agent: string; title: string; state: string; kind?: string; box: string | null; queuedAt: string };
+export type CurrentJob = { id: string; agent: string; title: string; state: string; kind?: string; box: string | null; machine?: string | null; queuedAt: string };
 type Data = { currentJobs: CurrentJob[]; boxes?: {id:string;name:string}[] };
 /** Jobs stay scoped to this card; machine names come only from viewer-visible
  * registry rows in the same selection. A lent assignment grants no name lookup.
@@ -26,8 +26,14 @@ export function CurrentJobs({ agent, name, compact = false, onChange }: { agent:
     if(box===null)return 'Unassigned';
     const name=visibleMachines.get(box);return name?'Box '+name:'Assigned machine';
   };
-  const location = (job: CurrentJob) => job.kind === 'terminal'
-    ? `Terminal · ${machine(job.box)} · Controlled on the machine` : `${job.state} · ${machine(job.box)}`;
+  const location = (job: CurrentJob) => {
+    if (job.kind === 'terminal') return `Terminal · ${machine(job.box)} · Controlled on the machine`;
+    if (job.machine) {
+      const name = visibleMachines.get(job.machine);
+      return `${job.state} · Requested machine${name ? ': ' + name : ''}`;
+    }
+    return `${job.state} · ${machine(job.box)}`;
+  };
   if (compact) return <div className="desk-rail-jobs" aria-label={`${name} current jobs`}>
     <span className="desk-rail-kicker">Current jobs{live ? ` · ${jobs.length}` : ''}</span>
     {!live ? <p>Jobs unavailable</p> : !jobs.length ? <p>No current jobs.</p> : <ul>{jobs.map(job => <li key={job.id}>

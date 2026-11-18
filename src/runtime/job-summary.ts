@@ -31,7 +31,7 @@ export class JobSummaries {
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
       kind: sql<string>`case when ${jobs.startedByKind} = 'terminal' then 'terminal' else 'job' end`,
-      state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
+      state: jobs.state, box: jobs.box, machine: jobs.machine, queuedAt: jobs.queuedAt }).from(jobs)
       .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates),
         or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
       .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
@@ -41,7 +41,7 @@ export class JobSummaries {
     const allowed = this.allowed();
     const visibleParents = this.db.select({id:jobs.id}).from(jobs).where(allowed);
     const visibleRuns = this.db.select({id:terminalRuns.job}).from(terminalRuns).where(inArray(terminalRuns.parent,visibleParents));
-    return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
+    return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box, machine: jobs.machine,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
@@ -54,7 +54,7 @@ const text = { type: GraphQLString };
 const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
   title: { type: new GraphQLNonNull(GraphQLString) }, state: { type: new GraphQLNonNull(GraphQLString) },
-  box: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
+  box: text, machine: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
   exitCode: { type: GraphQLInt }, exitBy: text, exitStage: text, logTail: text, endedBy: text, endedReason: text, endedNote: text,
   queuedAt: { type: new GraphQLNonNull(GraphQLString) }, claimedAt: text, heardAt: text, endedAt: text,
 } });
@@ -65,7 +65,7 @@ const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {
   title: { type: new GraphQLNonNull(GraphQLString) },
   state: { type: new GraphQLNonNull(GraphQLString) },
   // This is the assigned machine ID on the visible job, not a separate box read.
-  box: { type: GraphQLString },
+  box: { type: GraphQLString }, machine: text,
   queuedAt: { type: new GraphQLNonNull(GraphQLString) },
 } });
 /** Add to the existing generated query root. Root owns authentication, current

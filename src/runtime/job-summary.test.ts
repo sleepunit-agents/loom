@@ -59,7 +59,7 @@ it('fails closed for absent or invalid policies and never offers private executi
   f.policy({ jobs: () => undefined as never });
   expect(() => f.summaries.current('art')).toThrow('SQL visibility required');
   f.policy({ jobs: () => sql`true` });
-  expect(Object.keys(f.summaries.current('art')[0])).toEqual(['id', 'agent', 'title', 'kind', 'state', 'box', 'queuedAt']);
+  expect(Object.keys(f.summaries.current('art')[0])).toEqual(['id', 'agent', 'title', 'kind', 'state', 'box', 'machine', 'queuedAt']);
 });
 
 it('constrains the single SQL read before fetching rows and never reads machine metadata', async () => {
@@ -189,4 +189,15 @@ it('groups terminal main and subagent usage under their visible parent conversat
     {id:'child',title:'Inspect parser',runKind:'subagent',usage:{totalTokens:7}}],jobUsageRollup:[{key:'cv',totalTokens:11}]}});
   f.policy({jobs:fields=>sql`${fields.id} != 'main'`});
   expect((await graphql({schema,source:query})).data?.jobUsageRollup).toEqual([]);
+});
+
+it('shows the requested machine on visible jobs even when the worker never claimed them', async () => {
+  const f = fixture();
+  f.add('requested', 'queued', { machine: 'attic' });
+  f.add('private', 'queued', { machine: 'attic', member: 'owner' });
+  f.policy({ jobs: fields => sql`${fields.member} is null` });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(f.summaries) }) });
+  const row = { id: 'requested', machine: 'attic', box: null };
+  expect(await graphql({ schema, source: '{currentJobs(agent:"art"){id machine box} jobHistory(agent:"art"){id machine box}}' }))
+    .toEqual({ data: { currentJobs: [row], jobHistory: [row] } });
 });
