@@ -10,7 +10,7 @@ import { editsWords, triggerEdit, triggerInput, type NewTrigger, type Trigger, t
 import { nextTime } from './core/tempo/calendar.js';
 import { householdTimezone } from './core/data/household-settings.js';
 import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type OnWord, type Viewer } from './policy.js';
-import { PRIVATE_PLACE_REFUSAL, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, placeAddress, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
+import { PRIVATE_PLACE_REFUSAL, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobHeld, jobWord, named, placeAddress, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
 /** Why a body working for anybody but owners may not make this change to a trigger it may otherwise touch (one naming its own conversation). */
@@ -20,6 +20,15 @@ export const RUN_NOW_REFUSAL = 'You are awake: do the work now. Only a body work
 export const WORD_EVENT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners fires at listed times, never on an event.';
 export const WORD_PART_REFUSAL = 'Somebody with less reach than you asked for this schedule, and a firing never carries one person\'s text on another\'s word: give both a new note and new instructions (or a file), or leave its words alone.';
 export const WOKEN_BY_MAIL_REFUSAL = 'A firing or a note woke this job, and it is not working for the agent\'s owners: it may set a one-time schedule to come back to its work here, and it sets, changes and starts no repeating one. It may stop one the same person asked for.';
+/** Why a body working for anybody but owners holds back nothing of its agent's: a pause holds every trigger the agent
+ * has, and muted mail starts no job and joins none, in whatever conversation it waits. */
+export const WORD_PAUSE_REFUSAL = 'This job is not working for the agent\'s owners: it does not pause or resume the agent. Stop a schedule the same person asked for here, or have an owner do it.';
+export const WORD_VOLUME_REFUSAL = 'This job is not working for the agent\'s owners: it does not change the volume of any mail.';
+/** Why this job may not pause or resume its agent, or set the volume of mail: it works on anybody else's word. The
+ * one question for the three doors (core/tempo/operations.ts, heldRefusal). */
+export function heldRefusal(db: DataDatabase, work: Work | undefined, action: 'pause' | 'resume' | 'volume'): string | undefined {
+  return work && jobHeld(db, work.job) ? action === 'volume' ? WORD_VOLUME_REFUSAL : WORD_PAUSE_REFUSAL : undefined;
+}
 export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it does not fire or start it again.';
 /** Why this job may not do this to a trigger, by whose word it works on (jobWord) and never by where it sits.
  * For every job: it does not fire or start again the trigger whose firing is in its mail. A job working for

@@ -28,6 +28,9 @@ export interface TempoOperationOptions {
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
   wordRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null; instructions?: string | null; note?: string }): string | undefined;
+  /** Why this caller may not pause or resume an agent, or set the volume of mail, because of whose word its job works
+   * on, in words for the caller, or nothing. Asked after `authorize`: who the caller is does not answer it. */
+  heldRefusal?(viewer: Viewer, action: 'pause' | 'resume' | 'volume'): string | undefined;
   /** When what this caller asks is an owner's to allow first (src/shared-place-triggers.ts, ownersFirst): the
    * composition has asked them, and nothing is set or changed here. `waits` is what the caller is told, and `card`
    * the approval that waits. Asked after `wordRefusal`. Nothing for anything the caller may do itself. */
@@ -95,6 +98,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     name: `tempo.${action}`, input: z.object({ agent: z.string().min(1) }).strict(), output: saved,
     may: (viewer, input) => options.authorize(viewer, { action, agent: input.agent }),
     run(ctx, input) {
+      // A pause holds every trigger of the agent, wherever it fires: on whose word the caller works is asked, as for a trigger.
+      const refused = options.heldRefusal?.(ctx.viewer, action); if (refused) throw new OperationError('denied', refused);
       tempo.triggers[action](input.agent); ctx.changed('agentPauses', input.agent); ctx.changed('triggers', input.agent);
       return { saved: true };
     },
@@ -106,6 +111,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       return !!item && options.authorize(viewer, { action: 'volume', item });
     },
     run(ctx, input) {
+      // Muted mail starts no job and joins none (runtime/jobs.ts): the same question.
+      const refused = options.heldRefusal?.(ctx.viewer, 'volume'); if (refused) throw new OperationError('denied', refused);
       const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get()!;
       tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, input.volume, input.until);
       ctx.changed('inbox', item.id); return { saved: true };

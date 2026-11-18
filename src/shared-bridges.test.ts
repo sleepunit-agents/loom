@@ -17,6 +17,7 @@ import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVAT
 import {SCHEDULE_ASKED,WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {COME_BACK_NOTICE_EVERY,REFIRE_REFUSAL,RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,repeats} from './shared-place-triggers.js';
 import {triggerLog} from './core/data/schema.js';
+import {WORD_PAUSE_REFUSAL,WORD_VOLUME_REFUSAL} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
@@ -1313,4 +1314,32 @@ it('drops at admission a firing that waits in one member\'s private conversation
  expect(all.admission(kims)).toEqual({noticed:true});
  expect(f.db.select().from(inbox).where(eq(inbox.id,firing)).get()).toMatchObject({state:'resolved',resolution:expect.stringContaining('private to the member kim')});
  expect(f.db.select().from(jobs).all().filter(job=>job.conversation===kims)).toEqual([]);
+});
+it('lets no body on anybody else\'s word pause or resume its agent',async()=>{
+ const {f,cv,once}=await sharedPlace();
+ expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('others');
+ const lane=once({conversation:undefined,lifespan:'until-stopped',times:'09:00'});expect((await f.call('tempo','set',lane,token.other)).status).toBe(200);
+ const state=()=>f.db.select().from(triggers).where(eq(triggers.id,lane.id)).get()!.state;
+ // A pause holds every trigger of the agent, in every conversation: not a guest's body's to do.
+ expect(await f.call('tempo','pause',{agent:'art'})).toMatchObject({status:403,body:{message:WORD_PAUSE_REFUSAL}});expect(state()).toBe('standing');
+ // Nor does it undo a pause the agent's own work, or an owner, made.
+ expect((await f.call('tempo','pause',{agent:'art'},token.other)).status).toBe(200);expect(state()).toBe('held');
+ expect(await f.call('tempo','resume',{agent:'art'})).toMatchObject({status:403,body:{message:WORD_PAUSE_REFUSAL}});expect(state()).toBe('held');
+ // The owner speaks there: the body on the owner's word does what it could from the owner's thread.
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
+ expect((await f.call('tempo','resume',{agent:'art'})).status).toBe(200);expect(state()).toBe('standing');
+});
+it('lets no body on anybody else\'s word change the volume of mail, its own job\'s or another conversation\'s',async()=>{
+ const {f,cv}=await sharedPlace();
+ const elsewhere=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','COTHER',null]),label:'other'}).id;
+ let item='';f.root.writes.run(()=>{item=f.root.services.conversations.send({conversation:elsewhere,toKind:'agent',to:'art',source:'notice',sourceId:'owners-ask',fromKind:'person',fromId:'owner',words:'Owner asks for something'}).id;});
+ const volume=(id:string)=>f.db.select({volume:inbox.volume}).from(inbox).where(eq(inbox.id,id)).get()!.volume;
+ // Muted mail starts no job and joins none: a guest's body would park an owner's message waiting in another conversation.
+ for(const level of ['mute','dim'] as const)expect(await f.call('inbox','volume',{item,volume:level})).toMatchObject({status:403,body:{message:WORD_VOLUME_REFUSAL}});
+ expect(volume(item)).toBe('full');
+ const mine=f.db.select().from(inbox).all().find(mail=>mail.job==='body')!.id;
+ expect(await f.call('inbox','volume',{item:mine,volume:'mute'})).toMatchObject({status:403,body:{message:WORD_VOLUME_REFUSAL}});expect(volume(mine)).toBe('full');
+ expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('others');
+ // The agent's own work, with nobody behind it, sets the volume of its agent's mail as before.
+ expect((await f.call('inbox','volume',{item,volume:'dim'},token.other)).status).toBe(200);expect(volume(item)).toBe('dim');
 });

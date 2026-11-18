@@ -1,7 +1,7 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
 import { randomUUID } from 'node:crypto';
-import { NO_OWNER_TO_ASK, SCHEDULE_ASKED, applyPlaceSchedule, asking, continueComeBack, ownersFirst, placeFiring, partRewordRefusal, placeCrowded, privateRewordRefusal, wordRefusal, placeTriggerAsker, type PlaceScheduleAsk } from './shared-place-triggers.js';
+import { NO_OWNER_TO_ASK, SCHEDULE_ASKED, applyPlaceSchedule, asking, continueComeBack, heldRefusal, ownersFirst, placeFiring, partRewordRefusal, placeCrowded, privateRewordRefusal, wordRefusal, placeTriggerAsker, type PlaceScheduleAsk } from './shared-place-triggers.js';
 import { named } from './shared-place-mail.js';
 import { OperationError } from './core/operations/index.js';
 import { jobWord } from './shared-place-mail.js';
@@ -93,6 +93,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change)
         ?? (action === 'edit' ? partRewordRefusal(db, viewer, work, trigger, change) : undefined); },
       // A come-back set or moved by a job a firing woke, on anybody else's word, is recorded as following that firing.
+      heldRefusal: (viewer, action) => heldRefusal(db, options.bodyWork?.(viewer), action),
       stood: (viewer, action, trigger) => { if (action !== 'edit') stood(trigger);
         if (action !== 'start' && trigger.conversation) continueComeBack(db, new Date(clock.now()).toISOString(), options.bodyWork?.(viewer), trigger.id); },
       // A repeating schedule on anybody else's word is an owner's to allow: the card is filed here, with the trigger as
