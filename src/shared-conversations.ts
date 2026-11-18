@@ -15,11 +15,14 @@ import { CommsQueries, commsQueryFields } from './core/conversations/comms-query
 import { InboxQueries, inboxQueryFields } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
+import { lateMailJoins } from './shared-place-mail.js';
 import type { WordsKey } from './core/conversations/words.js';
 
 export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey) {
   const now = () => new Date(clock.now()).toISOString();
-  const service = new CommsMessages(db, key, now);
+  // Bodies take their mail through this service: mail a person writes after a job was admitted joins it only
+  // if the job's word does not fall by it (shared-place-mail.ts, lateMailJoins).
+  const service = new CommsMessages(db, key, now, job => lateMailJoins(db, job));
   // A thread is read by the rule of its conversation: its own member, nobody else.
   const policy = (viewer: Viewer, fields: Record<string, AnyColumn>) => conversationVisibility(viewer).conversations!(fields);
   const questionPolicy=conversationQuestionPolicy(db);

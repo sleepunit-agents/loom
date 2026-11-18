@@ -14,7 +14,7 @@ import {and,eq,or,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
 import {inbox} from './core/data/schema.js';
-import {Conversations} from './core/conversations/index.js';
+import {Conversations, lateMailWaits} from './core/conversations/index.js';
 import type {Clock} from './core/clock.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {agentsPeople,holds,rules,type Viewer} from './policy.js';
@@ -57,7 +57,7 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
   output:z.object({item:z.string(),raised:z.boolean(),pushed:z.boolean()}).strict(),
   run(ctx,input){
    const name=agent(ctx.viewer);if(!name)throw new OperationError('denied','An agent\'s own credential is required');
-   const mail=new Conversations(db,now),all=ofKey(name,input.key),people=agentsPeople(name,sharedSharing(db));
+   const mail=new Conversations(db,now,lateMailWaits),all=ofKey(name,input.key),people=agentsPeople(name,sharedSharing(db));
    // Who has the agent is read again on every raise. A notice waiting for someone who no longer has it is
    // settled as it stands: the new words are for the people who have the agent now.
    for(const row of all.filter(row=>row.state==='waiting'&&!people.includes(row.to))){mail.resolveItem(row.id,settledByLoom(name));ctx.changed('inbox',row.id);}
@@ -90,7 +90,7 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
    // Who has the agent is read again, as on a raise. The agent's reason is written only for the people who
    // have it now. A notice still waiting for someone else is settled with loom's own line: nothing the agent
    // writes reaches the Inbox of a person it is no longer for. `cleared` is about the people who have it.
-   const mail=new Conversations(db,now),people=agentsPeople(name,sharedSharing(db)),waiting=ofKey(name,input.key).filter(row=>row.state==='waiting');
+   const mail=new Conversations(db,now,lateMailWaits),people=agentsPeople(name,sharedSharing(db)),waiting=ofKey(name,input.key).filter(row=>row.state==='waiting');
    for(const row of waiting){mail.resolveItem(row.id,people.includes(row.to)?input.why:settledByLoom(name));ctx.changed('inbox',row.id);}
    return{cleared:waiting.some(row=>people.includes(row.to))};
   },

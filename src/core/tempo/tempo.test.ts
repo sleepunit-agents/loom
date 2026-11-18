@@ -100,7 +100,8 @@ it('settles real conversation mail, retries capacity, and takes only audible ite
   const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
   const at = () => new Date(clock.now()).toISOString();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  const mail = new Conversations(db, at);
+  // This test is about volume, not whose word mail is on: a person's late mail joins the running job here.
+  const mail = new Conversations(db, at, () => () => true);
   const cv = mail.open({ agent: 'art', venue: 'loom', place: 'pump', label: 'Pump' });
   let capacity = false, attempts = 0;
   const taken: string[][] = [];

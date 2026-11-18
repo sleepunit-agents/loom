@@ -10,7 +10,7 @@ import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
-import { Conversations } from '../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
@@ -54,7 +54,7 @@ export interface Admission {
 }
 export class Jobs {
   private readonly mail: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now); }
+  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now, lateMailWaits); }
 
   get(id: string): Job {
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
@@ -253,7 +253,7 @@ export class Jobs {
   private endIfStopAsked(job: Job, values: Partial<Job> = {}): Job | undefined {
     const asked = this.stopAsked(job);
     if (!asked) return undefined;
-    new Threads(this.db, this.now).takeStop(asked.thread);
+    new Threads(this.db, this.now, lateMailWaits).takeStop(asked.thread);
     return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'stop', endedAt: this.now() });
   }
 

@@ -14,8 +14,8 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { holds, loomToolsOnly, rules, standingSecretAnswerServes, type Viewer } from './policy.js';
-import { jobWord } from './shared-place-mail.js';
+import { holds, rules, standingSecretAnswerServes, type Viewer } from './policy.js';
+import { jobHeld } from './shared-place-mail.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, secretRequests, secretUses } from './core/data/schema.js';
@@ -34,7 +34,7 @@ export function registerSharedSecretAgentCommands(operations:Operations,db:DataD
  };
  // A body whose job works on anybody else's word asks for no secret (policy.ts, loomToolsOnly). A terminal
  // session of the agent is bound to no job and asks as before.
- const held=(viewer:Viewer)=>{const job=target(viewer);return !!job&&loomToolsOnly(jobWord(db,job).woke);};
+ const held=(viewer:Viewer)=>{const job=target(viewer);return !!job&&jobHeld(db,job);};
  operations.register({name:'secrets.request',input:agentSecretRequest,output:requestState,write:true,recheckPolicy:true,
   inputHash:(canonical,{actor})=>{const job=target(actor);return createHash('sha256').update('loom-shared-secret-request-receipt-v1\0').update(JSON.stringify([job?.id??null,job?.conversation??null,canonical])).digest('hex');},
   may:(viewer,input)=>itself(viewer,viewer.id)&&!held(viewer)&&(input.scope==='agent'?standingSecretAnswerServes(viewer,sharedSharing(db)):!!target(viewer)),

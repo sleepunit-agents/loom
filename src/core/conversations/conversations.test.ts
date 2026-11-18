@@ -12,7 +12,8 @@ function fixture() {
   const db = createDataSchema(client, () => now);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now }).run();
   for (const id of ['art', 'mark']) db.insert(agents).values({ id, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  const service = new Conversations(db, () => now);
+  // These tests are about the mail itself, not whose word it is on: late mail from a person joins a running job here.
+  const service = new Conversations(db, () => now, () => () => true);
   const cv = service.open({ agent: 'art', venue: 'loom', place: 'thread-1', label: 'Pond pump', member: 'jonathan' });
   return { db, service, cv, advance: () => { now = '2026-11-14T18:01:00.000Z'; } };
 }

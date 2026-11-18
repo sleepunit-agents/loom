@@ -6,14 +6,14 @@
 import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
-import { inHousehold, isHouseholdOwner, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
+import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
 import type { ChannelTarget } from './core/conversations/channel-target.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
-import { workerPolicy } from './runtime/body-policy.js';
+import { jobMail } from './runtime/body-policy.js';
 import type { WorkerRunPolicy } from './runtime/worker.js';
 
 export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
@@ -103,39 +103,80 @@ export function privateRefusal(member: string | null, word: Asker | undefined): 
  * word of the body that sent it, and one with no word (a body nobody could be named behind, another
  * agent's bot writing in a channel) is anybody else's. */
 export function jobWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): { woke: Woke; person?: OnWord } {
-  return roomWord(db, job, jobRoom(db, job));
+  const offer = offered(db, job);
+  return offer.word(offer.room());
+}
+/** Whether a job is held to loom's tools: its word is anybody else's (policy.ts, loomToolsOnly). The one
+ * question every door asks of the job before it hands over a secret, a file or a kept session. */
+export function jobHeld(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): boolean {
+  return loomToolsOnly(jobWord(db, job).woke);
 }
 /** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
  * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,
  * and mail a person wrote since that does not lower its word (lateMailJoins). */
 export function jobRoom(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy & { word: Woke } {
-  const room = workerPolicy(db, job, item => lateMailJoins(db, job, item));
-  return { ...room, word: roomWord(db, job, room).woke };
+  const offer = offered(db, job), room = offer.room();
+  return { ...room, word: offer.word(room).woke };
 }
 /** Whether mail from a person, arrived after this job was admitted, joins it, or waits for the next job. It
  * joins a job that is anybody else's already, which has nothing to lose; and otherwise only if it is not
  * itself anybody else's word. So a job admitted for its owners, or as the agent's own work, never becomes
  * anybody else's while it runs: what it may use (policy.ts, loomToolsOnly) was settled by its mail at
- * admission. The one answer, for the mail a body is handed (core/conversations, pending) and for the room. */
-export function lateMailJoins(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }, item: { id: string }): boolean {
-  if (roomWord(db, job, workerPolicy(db, job, () => false)).woke === 'others') return true;
-  return roomWord(db, job, workerPolicy(db, job, undefined, [item.id])).woke !== 'others';
+ * admission. The one answer, for the mail a body is handed (core/conversations, pending) and for the room.
+ * Asked once for a job and then of each piece: the job's mail and its word are read once, however much waits. */
+export function lateMailJoins(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): (item: { id: string }) => boolean {
+  const offer = offered(db, job);
+  return item => offer.joins(item.id);
 }
-function roomWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }, policy: WorkerRunPolicy): { woke: Woke; person?: OnWord } {
+/** The mail of this job that makes its word anybody else's: each piece whose own room is. What is settled
+ * when such a job can never be run (runtime/dispatcher.ts), so that it lowers no later job. */
+export function othersMail(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): string[] {
+  const offer = offered(db, job);
+  return offer.room().mail!.filter(id => offer.word(offer.mail.room([id])).woke === 'others');
+}
+/** What a job is offered, decided once: its mail (runtime/body-policy.ts, jobMail), the word any room of it
+ * works on, and which late piece joins. Every question above is asked of one of these, so the mail and the
+ * household are read once per question, and each late piece is judged once. */
+function offered(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }) {
+  const mail = jobMail(db, job), word = wordOf(db, job);
+  // A job nothing is marked for was not started by admission, and is offered everything that waits.
+  const late = new Map(mail.late.map(item => [item.id, item])), judged = new Map<string, boolean>();
+  let lost: boolean | undefined;
+  /** Whether the job is anybody else's by the mail admission marked for it: it then has nothing to lose. */
+  const nothingToLose = () => lost ??= word(mail.room(mail.marked)).woke === 'others';
+  const joins = (id: string): boolean => {
+    const item = late.get(id); if (!item) return false;
+    if (!mail.admitted) return true;
+    if (item.waits) return false;
+    let answer = judged.get(id);
+    if (answer === undefined) judged.set(id, answer = nothingToLose() || word(mail.room([id])).woke !== 'others');
+    return answer;
+  };
+  return { mail, word, joins, room: () => mail.room([...mail.marked, ...mail.late.filter(item => joins(item.id)).map(item => item.id)]) };
+}
+/** The word a room of this job's mail works on. The household and the conversation's member are read once. */
+function wordOf(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): (policy: WorkerRunPolicy) => { woke: Woke; person?: OnWord } {
   const sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
-  const people = [...policy.people];
   const member = job.conversation ? db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.member : null;
-  if (member) people.push(inHousehold({ kind: 'member', id: member }, sharing) ? { kind: 'person', person: member, tier: null } : { kind: 'unknown', person: null, tier: null });
-  const mail = policy.mail ?? [];
-  const unspoken = mail.length > 0 && db.select({ id: inbox.id }).from(inbox).where(and(inArray(inbox.id, mail), eq(inbox.fromKind, 'agent'), isNull(inbox.onWord))).all().length > 0;
-  if (unspoken) return { woke: 'others' };
-  if (!people.length) return { woke: 'own' };
-  const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === null ? 0 : p.tier === 3 ? 2 : 1)
-    : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : have.has(p.person) ? 4 : 3;
-  const least = [...people].sort((a, b) => rank(a) - rank(b))[0], lowest = rank(least);
-  // Somebody nobody can name, or an outside account with no tier (a stranger), is behind it: nothing is done on such a word.
-  if (lowest === 0 || least.person === null) return { woke: 'others' };
-  return { woke: lowest >= 4 ? 'owners' : 'others', person: { kind: least.kind === 'person' ? 'member' : 'outside', id: least.person } };
+  const unvouched = new Map<string, boolean>();
+  /** Mail from an agent with nobody's word on it: a body nobody could be named behind. */
+  const unspoken = (mail: readonly string[]) => {
+    const unasked = mail.filter(id => !unvouched.has(id));
+    if (unasked.length) { const found = new Set(db.select({ id: inbox.id }).from(inbox).where(and(inArray(inbox.id, unasked), eq(inbox.fromKind, 'agent'), isNull(inbox.onWord))).all().map(row => row.id)); for (const id of unasked) unvouched.set(id, found.has(id)); }
+    return mail.some(id => unvouched.get(id));
+  };
+  return policy => {
+    const people = [...policy.people];
+    if (member) people.push(inHousehold({ kind: 'member', id: member }, sharing) ? { kind: 'person', person: member, tier: null } : { kind: 'unknown', person: null, tier: null });
+    if (unspoken(policy.mail ?? [])) return { woke: 'others' };
+    if (!people.length) return { woke: 'own' };
+    const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === null ? 0 : p.tier === 3 ? 2 : 1)
+      : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : have.has(p.person) ? 4 : 3;
+    const least = [...people].sort((a, b) => rank(a) - rank(b))[0], lowest = rank(least);
+    // Somebody nobody can name, or an outside account with no tier (a stranger), is behind it: nothing is done on such a word.
+    if (lowest === 0 || least.person === null) return { woke: 'others' };
+    return { woke: lowest >= 4 ? 'owners' : 'others', person: { kind: least.kind === 'person' ? 'member' : 'outside', id: least.person } };
+  };
 }
 /** The chain a note from this job continues: that of the note its job took, if it took one; and otherwise,
  * when the note goes back to a conversation the last note here came through, that note's: the answer a

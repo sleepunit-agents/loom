@@ -25,8 +25,8 @@ import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/dat
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
 import {secretName,houseSecretAlias} from './pieces/secrets/input.js';
-import {holds,loomToolsOnly,rules,standingSecretAnswerServes} from './policy.js';
-import {jobWord} from './shared-place-mail.js';
+import {holds,rules,standingSecretAnswerServes} from './policy.js';
+import {jobHeld} from './shared-place-mail.js';
 import {sharedSharing} from './shared-sharing.js';
 type Credentials=ReturnType<typeof sharedCredentials>;
 const readInput=z.discriminatedUnion('kind',[
@@ -49,19 +49,18 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  const itself=(caller:ReturnType<typeof actor>)=>!caller.body||holds(rules.agentItself,caller.auth.viewer,{agent:caller.body.agent},sharedSharing(db));
  // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): its body is handed no
  // secret here, at start or on request, whatever was granted. Asked of the job, by the mail it is offered
- // (shared-place-mail.ts, jobWord), each time, so a body program that asked anyway gets nothing.
- const held=(job:typeof jobs.$inferSelect)=>loomToolsOnly(jobWord(db,job).woke);
+ // (shared-place-mail.ts, jobHeld), each time, so a body program that asked anyway gets nothing.
  const standing=(caller:ReturnType<typeof actor>)=>!caller.body||standingSecretAnswerServes(caller.auth.viewer,sharedSharing(db));
  const target=(caller:ReturnType<typeof actor>,id?:string)=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
-  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&held(job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
+  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&jobHeld(db,job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
   if(!valid())throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
    if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;
    const now=db.select().from(jobs).where(eq(jobs.id,job!.id)).get();
-   return !!now&&binding(now)===stamp&&!(caller.body&&held(now))&&(caller.body?now.state==='running':now.state==='starting'&&now.box===caller.runner?.box);
+   return !!now&&binding(now)===stamp&&!(caller.body&&jobHeld(db,now))&&(caller.body?now.state==='running':now.state==='starting'&&now.box===caller.runner?.box);
   }};
  };
  app.onError((error,c)=>{const code=error instanceof PrivateInputError?error.code:'unavailable';return c.json({ok:false,message:'Private secret input unavailable'},code==='denied'?403:code==='conflict'?409:503);});

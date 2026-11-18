@@ -24,7 +24,7 @@ import { sharedSharing } from './shared-sharing.js';
 import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
 import { accountSignins, boxes, inbox, modelAccounts } from './core/data/schema.js';
-import { Conversations } from './core/conversations/index.js';
+import { Conversations, lateMailWaits } from './core/conversations/index.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
 import { signInReason } from './runtime/account-signin-reasons.js';
@@ -75,7 +75,7 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
     db.update(accountSignins).set({ state, why, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
     // The pasted code has no use once the sign-in is over, whether or not the worker ever collected it.
     if (!row.item) return;
-    const mail = new Conversations(db, () => at);
+    const mail = new Conversations(db, () => at, lateMailWaits);
     mail.redactAnswer(row.item, USED);
     mail.resolveItem(row.item, state === 'done' ? 'Signed in' : why ?? 'The sign-in did not finish');
   };
@@ -130,7 +130,7 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       const words = input.userCode
         ? `Sign ${of.label} in on ${box.name}. Open the page and enter the code ${input.userCode}. There is nothing to answer: this clears when the sign-in finishes.`
         : `Sign ${of.label} in on ${box.name}. Open the page, sign in, then answer with the code it shows.`;
-      const item = new Conversations(db, () => at).send({ toKind: 'person', to: of.owner, member: of.owner, source: 'notice', sourceId: 'signin:' + row.id, fromKind: 'unknown',
+      const item = new Conversations(db, () => at, lateMailWaits).send({ toKind: 'person', to: of.owner, member: of.owner, source: 'notice', sourceId: 'signin:' + row.id, fromKind: 'unknown',
         words, link: input.link, ...(input.userCode ? {} : { answers: 'words' as const }), refs: [row.account, row.box] });
       db.update(accountSignins).set({ state: 'waiting', item: item.id, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
       ctx.changed('accountSignin', row.id); ctx.changed('inbox', item.id); return { saved: true as const };
@@ -143,7 +143,7 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       const row = request(input.id)!, code = pasted(row);
       // A code is taken once: after a take has committed there is no pasted answer left to take.
       if (row.state !== 'waiting' || lapsed(row, now()) || held.has(row.id) || code === undefined || !signInCode.test(code)) return { taken: false };
-      new Conversations(db, now).redactAnswer(row.item!, USED);
+      new Conversations(db, now, lateMailWaits).redactAnswer(row.item!, USED);
       taking.set(input, Object.freeze({ request: row.id, take: ctx.receipt!.id, code }));
       ctx.changed('inbox', row.item!); return { taken: true };
     },

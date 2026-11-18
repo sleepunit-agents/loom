@@ -10,30 +10,45 @@ import { sharedSharing } from '../shared-sharing.js';
 import { waitsForNextJob } from '../core/conversations/index.js';
 import type { WorkerRunPolicy } from './worker.js';
 
-/** Who is in a job's room, read from its mail. The mail is what the job is offered and nothing more
- * (core/conversations, pending): what admission marked for it, and what a person wrote since, unless that
- * would make the job's word anybody else's (`joins`; shared-place-mail.ts gives it, lateMailJoins). `only`
- * reads the room of those waiting items alone, with none of the job's own: the room one late message would bring. */
-export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null },
-  joins: (item: { id: string }) => boolean = () => true, only?: readonly string[]): WorkerRunPolicy {
+/** A job's mail, read once: what admission marked for it, what has come to its conversation since, and the
+ * room any part of it brings. Everything that asks who is in a job's room goes through here, so the mail is
+ * read once per question however much of it waits. */
+export interface JobMail {
+  /** Whether admission marked any mail for the job. A job nothing is marked for was not started by
+   * admission (only tests make one), and is offered everything that waits. */
+  admitted: boolean;
+  /** The mail admission marked for the job. */
+  marked: readonly string[];
+  /** Mail waiting in the job's conversation that no job is marked for: what came after admission. `waits`
+   * is whether it never joins a running job, by what it is (core/conversations, waitsForNextJob). */
+  late: readonly { id: string; waits: boolean }[];
+  /** The room these pieces of mail bring, and no other: who each is from, and on whose word it was sent. */
+  room(ids: readonly string[]): WorkerRunPolicy;
+}
+/** Who is in a job's room when every person's message that came since admission joins it: the widest room
+ * the job could be offered. loom's own answer leaves out a message that would lower the job's word
+ * (shared-place-mail.ts, jobRoom); this is the room without that rule, for what asks who has written. */
+export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy {
+  const mail = jobMail(db, job);
+  return mail.room([...mail.marked, ...mail.late.filter(item => !mail.admitted || !item.waits).map(item => item.id)]);
+}
+export function jobMail(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): JobMail {
   const deniedTools = db.select({ pattern: agentDeniedTools.pattern, guestsOnly: agentDeniedTools.guestsOnly })
     .from(agentDeniedTools).where(eq(agentDeniedTools.agent, job.agent))
     .orderBy(asc(agentDeniedTools.pattern), asc(agentDeniedTools.guestsOnly)).all();
-  const people = new Map<string, WorkerRunPolicy['people'][number]>();
   const found = db.select({ id: inbox.id, job: inbox.job, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId, onWordKind: inbox.onWordKind, onWord: inbox.onWord })
     .from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
       or(eq(inbox.job, job.id), job.conversation ? and(eq(inbox.conversation, job.conversation), isNull(inbox.job), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute')) : undefined))).all();
-  // A job nothing is marked for was not started by admission, and is offered everything that waits.
-  const admitted = found.some(item => item.job === job.id);
-  const items = only ? found.filter(item => item.job !== job.id && only.includes(item.id))
-    : found.filter(item => item.job === job.id || !admitted || (!waitsForNextJob(item) && joins(item)));
+  const marked = found.filter(item => item.job === job.id);
+  type Found = typeof found[number];
+  type Entry = [string, WorkerRunPolicy['people'][number]];
   type Tier = WorkerRunPolicy['people'][number]['tier'];
   const tierOf = (person: string) => (db.select({ tier: agentPeople.tier }).from(agentPeople)
     .where(and(eq(agentPeople.agent, job.agent), eq(agentPeople.person, person))).get()?.tier ?? null) as Tier;
   /** The outside key of whoever sent a bridge item, read from the stored bridge event it was delivered from,
    * never from words or a claimed identity. `member` is the household member the event was filed under
    * (null: nobody). More than one key, or none, names nobody. */
-  const outsideKey = (item: typeof items[number], member: string | null): string | null => {
+  const outsideKey = (item: Found, member: string | null): string | null => {
     if (!item.conversation || (item.source !== 'discord' && item.source !== 'slack')) return null;
     const source = parseInboxSourceId(item.sourceId);
     if (!source) return null;
@@ -48,7 +63,11 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
     return keys.size === 1 ? [...keys][0] : null;
   };
   const sharing = sharedSharing(db);
-  for (const item of items) {
+  /** The people one piece of mail brings, looked up once however often its room is asked for. */
+  const brought = new Map<string, Entry[]>();
+  const bringers = (item: Found): Entry[] => {
+    const known = brought.get(item.id); if (known) return known;
+    const entries: Entry[] = []; brought.set(item.id, entries);
     // Mail sent on somebody's word (a trigger's firing in a shared place, a note from another body) brings that
     // person into the room as they stand now: a member while in the household, an outside account at the
     // tier it has now, and otherwise somebody nobody vouches for.
@@ -56,9 +75,9 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
       const on = item.onWordKind === 'member'
         ? (inHousehold({ kind: 'member', id: item.onWord }, sharing) ? { kind: 'person' as const, person: item.onWord, tier: null } : { kind: 'unknown' as const, person: null, tier: null })
         : { kind: 'outside' as const, person: item.onWord, tier: tierOf(item.onWord) };
-      people.set(JSON.stringify([on.kind, on.person]), on);
+      entries.push([JSON.stringify([on.kind, on.person]), on]);
     }
-    if (item.fromKind !== 'person' && item.fromKind !== 'unknown') continue;
+    if (item.fromKind !== 'person' && item.fromKind !== 'unknown') return entries;
     let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null, tier: Tier = null;
     // The item says who sent it when it arrived. Whether that member is in the household is asked now
     // (policy.ts): mail from a member removed since is mail from outside, under the account it came from.
@@ -74,7 +93,17 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
       const outside = outsideKey(item, member);
       if (outside !== null) { kind = 'outside'; person = outside; tier = tierOf(outside); }
     }
-    people.set(JSON.stringify([kind, person]), { kind, person, tier });
-  }
-  return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: items.map(item => item.id).sort() };
+    entries.push([JSON.stringify([kind, person]), { kind, person, tier }]);
+    return entries;
+  };
+  return {
+    admitted: marked.length > 0, marked: marked.map(item => item.id),
+    late: found.filter(item => item.job !== job.id).map(item => ({ id: item.id, waits: waitsForNextJob(item) })),
+    room(ids) {
+      const wanted = new Set(ids), people = new Map<string, WorkerRunPolicy['people'][number]>(), mail: string[] = [];
+      // In the order the mail was read, so a person two pieces bring is the later one's reading, as before.
+      for (const item of found) if (wanted.has(item.id)) { mail.push(item.id); for (const [key, value] of bringers(item)) people.set(key, value); }
+      return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: mail.sort() };
+    },
+  };
 }

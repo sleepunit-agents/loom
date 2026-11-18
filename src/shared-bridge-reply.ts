@@ -4,14 +4,14 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
-import { channelPlace,isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
+import { channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
 import { channelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { householdOwners,sharedSharing } from './shared-sharing.js';
-import {loomToolsOnly, membersWithAgent } from './policy.js';
+import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
@@ -135,7 +135,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    if(!bound.incoming&&bound.place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${bound.place.closed}`);
    // A job on anybody else's word has no file tools (policy.ts, loomToolsOnly; runtime/harness-traits.ts, hasFileTools),
    // so its body program reads no file for a post. The door says the same, for a body program that sent bytes anyway.
-   if(input.files){const found=current(ctx.viewer);if(!found||loomToolsOnly(jobWord(db,found.job).woke))throw new OperationError('denied',NO_FILES_REFUSAL);}
+   if(input.files){const found=current(ctx.viewer);if(!found||jobHeld(db,found.job))throw new OperationError('denied',NO_FILES_REFUSAL);}
    // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
    const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);

@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, ne, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
-import { Conversations } from '../../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../../core/conversations/index.js';
 import { household, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations } from '../../core/data/schema.js';
 import { householdOwners } from '../../shared-sharing.js';
 import { householdSettings } from '../../core/data/household-settings.js';
@@ -32,7 +32,7 @@ export const secretRuleInput = z.object({ secret: secretName, answer: secretAnsw
 
 export class SecretRequests {
   private readonly mail: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) { this.mail = new Conversations(db, now); }
+  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) { this.mail = new Conversations(db, now, lateMailWaits); }
 
   request(raw: SecretRequestInput, when: 'on_request' | 'at_start' = 'on_request', standing = true): Request {
     const input = requestInput.parse(raw);

@@ -6,15 +6,16 @@ import { and, count, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { unendedJobStates } from '../data/job-states.js';
 import { conversations, deletedThreads, jobs, messages, threads } from '../data/schema.js';
-import { Conversations } from './index.js';
+import { Conversations, lateMailWaits, type LateJoins } from './index.js';
 
 type Thread = typeof threads.$inferSelect;
 export type ThreadInput = { id?: string; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
 
 export class Threads {
   readonly conversations: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {
-    this.conversations = new Conversations(db, now);
+  /** `lateJoins` is the conversations service's (index.ts): closed unless the composition gives the rule. */
+  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), lateJoins: LateJoins = lateMailWaits) {
+    this.conversations = new Conversations(db, now, lateJoins);
   }
 
   thread(id: string): Thread {

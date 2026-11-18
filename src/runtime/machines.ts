@@ -3,7 +3,7 @@ import { and, eq, gt, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { machineFacts } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
-import { Conversations } from '../core/conversations/index.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { SILENCE_MS } from './silence.js';
 
 type Box = typeof boxes.$inferSelect;
@@ -29,7 +29,7 @@ export class Machines {
         this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).run();
         if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
       }
-      new Conversations(this.db, () => at).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
+      new Conversations(this.db, () => at, lateMailWaits).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
       return this.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, id)).returning().get()!;
     }, { behavior: 'immediate' });
   }
@@ -41,7 +41,7 @@ export class Machines {
     const at = this.now(), now = Date.parse(at);
     if (!Number.isFinite(now)) throw new Error('Invalid machine time');
     return this.db.transaction(() => {
-      const notices = new Conversations(this.db, () => at);
+      const notices = new Conversations(this.db, () => at, lateMailWaits);
       // As in Jobs.sweep: a stamp later than now is left by a clock since set back, and is counted from now.
       this.db.update(boxes).set({ lastSeenAt: at }).where(gt(boxes.lastSeenAt, at)).run();
       return this.db.select().from(boxes).where(and(eq(boxes.alwaysOn, true), isNull(boxes.revokedAt))).all()

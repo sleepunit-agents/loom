@@ -624,6 +624,39 @@ it('leaves a message that would make an owners\' job anybody else\'s for the nex
  let more='';f.root.writes.run(()=>{more=f.root.services.conversations.send({conversation:brook,toKind:'agent',to:'art',source:'notice',sourceId:'late-guest-2',fromKind:'unknown',words:'Late words'}).id;});
  expect(jobWord(f.db,{...job,conversation:brook}).woke).toBe('others');expect(f.root.services.conversations.pending(brook,'other').map(item=>item.id)).toContain(more);
 });
+it('holds a late answer to a card to the same rule: the owner\'s joins the running owners\' job, and anybody else\'s waits for the next',async()=>{
+ const {f,work}=await sharedPlace(),stamp=new Date(f.clock.now()).toISOString(),mail=f.root.services.conversations;
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'lodger',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=mail.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id,job={id:'other',agent:'art',conversation:pond};
+ work(pond,[{kind:'person',id:'owner'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
+ // The running owners' job has asked two people a question each. Both answer while it runs (Conversations.answer: mail from that member).
+ const ask=(to:string)=>{let id='';f.root.writes.run(()=>{id=mail.send({toKind:'person',to,conversation:pond,source:'thread',sourceId:'card-'+to,fromKind:'agent',fromId:'art',answers:'yes-no',words:'May I?'}).id;});return id;};
+ const cards={lodger:ask('lodger'),owner:ask('owner')};
+ f.root.writes.run(()=>{mail.answer(cards.lodger,'lodger','yes');mail.answer(cards.owner,'owner','no');});
+ const answer=(card:string)=>f.db.select().from(inbox).where(and(eq(inbox.source,'answer'),eq(inbox.sourceId,card))).get()!;
+ expect(answer(cards.lodger)).toMatchObject({toKind:'agent',fromKind:'person',fromId:'lodger',state:'waiting',job:null});
+ // The member who does not have the agent would make the job anybody else's: that answer waits. The owner's joins.
+ const offered=mail.pending(pond,'other').map(item=>item.id);
+ expect(offered).toContain(answer(cards.owner).id);
+ expect(offered).not.toContain(answer(cards.lodger).id);
+ expect(jobWord(f.db,job).woke).toBe('owners');
+ f.root.writes.run(()=>mail.take(pond,'other'));
+ expect(answer(cards.lodger)).toMatchObject({state:'waiting',job:null});expect(answer(cards.owner)).toMatchObject({state:'taken',job:'other'});
+});
+it('reads a job\'s mail once to say its word, however much waits: the work grows with the mail and no faster',async()=>{
+ const {f,work}=await sharedPlace();f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();});
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id,job={id:'other',agent:'art',conversation:pond};
+ work(pond,[{kind:'person',id:'owner'}]);f.root.writes.run(()=>{f.db.update(inbox).set({state:'waiting'}).where(eq(inbox.job,'other')).run();});
+ const late=(count:number)=>f.root.writes.run(()=>{for(let n=0;n<count;n++)f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:randomUUID(),fromKind:'unknown',words:'Late words'});});
+ // Every statement loom runs to say the word, and every row those statements read from the inbox.
+ const cost=()=>{const prepare=f.client.prepare.bind(f.client);let statements=0;const spy=vi.spyOn(f.client,'prepare').mockImplementation((sql:string)=>{statements++;return prepare(sql);});
+  try{expect(jobWord(f.db,job).woke).toBe('owners');expect(f.root.services.conversations.pending(pond,'other')).toHaveLength(1);}finally{spy.mockRestore();}return statements;};
+ const none=cost();late(8);const eight=cost();late(8);const sixteen=cost();late(16);const thirtyTwo=cost();
+ // Each waiting piece costs the same few statements, whether sixteen wait or thirty-two.
+ expect(eight).toBeGreaterThan(none);
+ expect(thirtyTwo-sixteen).toBe(2*(sixteen-eight));
+ expect((sixteen-eight)/8).toBeLessThanOrEqual(4);
+});
 it('lets only an agent\'s own work post a text straight to a channel it has a rule for',async()=>{
  const {f,cv,work}=await sharedPlace(()=>false);
  const post=(to:unknown)=>({id:randomUUID(),to,text:'Standup: all green',model:'observed'}),croom={platform:'slack',workspace:'TWORK',channel:'CROOM'};
