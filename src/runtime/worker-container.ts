@@ -444,7 +444,7 @@ export function containerWorkerExecutor(config: {
             AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
             HostConfig: { Runtime: fixed.container.runtime ?? 'runc', Mounts: [], CapDrop: ['ALL'],
               SecurityOpt: ['no-new-privileges'], Privileged: false, PublishAllPorts: false,
-              PidsLimit: 128, ReadonlyRootfs: true, 
+              PidsLimit: 128, ReadonlyRootfs: true,
               LogConfig: { Type: 'none', Config: {} } },
           } : createSpec(assignment, house,
             { repository: assignment.house.repository, branch: assignment.house.branch, commit: houseCommit(image) }, fixed.container, mounts, bindings);

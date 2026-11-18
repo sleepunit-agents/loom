@@ -300,3 +300,12 @@ it('sends the validated program result on the retried finish receipt', async () 
   expect(reports[0].input.programResult).toEqual(result);
   expect(reports[1]).toEqual(reports[0]);
 });
+
+it('polls a pre-program server after its explicit pre-claim schema refusal only', async () => {
+ const fetcher=vi.fn<typeof fetch>()
+   .mockResolvedValueOnce(new Response(JSON.stringify({ok:false,code:'invalid',message:'Input does not match operation schema'}),{status:400}))
+   .mockResolvedValueOnce(response(assignment));
+ const control=httpWorkerControl({url:'https://loom.example',token:'fixture',signal:new AbortController().signal,fetch:fetcher,programs:true});
+ expect(await control.next()).toEqual(assignment);
+ expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{programs:true},{}]);
+});

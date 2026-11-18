@@ -35,6 +35,7 @@ export interface WorkerHttpOptions {
   /** Wait between attempts at a receipt-backed report. */
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
+class PollSchemaRefused extends Error {}
 class WorkerOperationFailure extends Error {
   constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false) {
     super(`Worker ${name} failed; outcome may be uncertain`);
@@ -72,7 +73,7 @@ function operationCaller(input: WorkerHttpOptions) {
       } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
       // Only a parsed refusal from Loom says this worker has lost authority. A gateway
       // can return its own page (including a 403) while Loom is starting.
-      if (!response.ok && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
+      if (!response.ok && !(name === 'next' && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
         throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
       }
       if (!response.body) throw new WorkerOperationFailure(name, false);
@@ -92,12 +93,14 @@ function operationCaller(input: WorkerHttpOptions) {
       if (signal.aborted) throw new Error('Worker request cancelled');
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (!response.ok) {
+        if (name === 'next' && response.status === 400 && data?.ok === false &&
+            data.code === 'invalid' && data.message === 'Input does not match operation schema') throw new PollSchemaRefused();
         const denied = z.object({ ok: z.literal(false), code: z.literal('denied'), message: z.string() }).strict().safeParse(data).success;
         throw new WorkerOperationFailure(name, false, false, denied);
       }
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
     } catch (error) {
-      if (error instanceof WorkerOperationFailure) throw error;
+      if (error instanceof WorkerOperationFailure || error instanceof PollSchemaRefused) throw error;
       // Never include upstream bodies, URLs, tokens or fetch diagnostics in logs.
       throw new WorkerOperationFailure(name, deadline.signal.aborted);
     } finally {
@@ -195,7 +198,15 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => (await call('next', { facts, slots: input.slots, programs: input.programs || undefined }, workerAssignment.nullable())) ?? undefined,
+    next: async () => {
+      const poll = (programs?: true) => call('next', { facts, slots: input.slots, programs }, workerAssignment.nullable());
+      try { return (await poll(input.programs || undefined)) ?? undefined; }
+      catch (error) {
+        // A v14 server refused the shape before claiming a job. No other failure permits a second poll.
+        if (!(error instanceof PollSchemaRefused) || !input.programs) throw error;
+        return (await poll()) ?? undefined;
+      }
+    },
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
       const report = operationCaller(options);
