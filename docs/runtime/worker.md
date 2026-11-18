@@ -1130,7 +1130,9 @@ Two things decide it, and the lesser wins.
   tools and nothing else; `"reach":"all"` gives it the harness's own as well.
 - The job's word. loom reads on whose word a job works when it is claimed
   (`jobWord`, `src/shared-place-mail.ts`) and hands it to the worker as
-  `run.policy.word`: `own`, `owners` or `others`. On `others`, anybody else's
+  `run.policy.word`: `own`, `owners` or `others`. A job holds one asker's mail,
+  so the word is that asker's: reach follows who asked, not who else is in the
+  room ([bridges.md](../specs/bridges.md), "Who asked"). On `others`, anybody else's
   word, the body runs with loom's tools only, whatever the body file says
   (`loomToolsOnly` in `src/policy.ts`, `bodyReach` in
   `src/runtime/harness-traits.ts`). A room with no `word` comes from an older
@@ -1150,9 +1152,10 @@ as soon as a machine asks for work: failed by loom (exit 31), with the note
 loom's tools only, and every model the agent has runs on a harness that always
 has a shell. Give the agent a model that runs on Claude Code." The mail that
 made the job anybody else's is closed with the same note, so it is carried into
-no later job: an owner's next message in that conversation starts a job on
-owners' word, which runs. Nothing tells the guest; the owners see the note on
-the job.
+no later job. An owner's message in that conversation, waiting behind it or
+written later, gets a job on owners' word, which runs: the end of the guest's
+job is reported like any job's end, and that offers the waiting mail to
+admission again. Nothing tells the guest; the owners see the note on the job.
 
 #### What `loom` reach is on Claude Code, and how it was checked
 
@@ -1203,9 +1206,25 @@ loom's doors refuse it the same things (`/api/secrets/private/*`,
 `conversation.sessionSave`), each on loom's own reading of the job's word, so
 the body program is not what holds the line. A job on its owners' word, or the agent's own work, is as it was.
 
-The word is settled by the mail a job was admitted for. A message from anybody
-else that arrives later waits for the next job, so a running job's word never
-falls. The body keeps one check of its own: if it is handed mail from a sender
+The word is settled by the mail a job was formed for, and that is one asker's
+mail. A message that arrives later joins the job only when the same asker wrote
+it (any owner for an owners' job; that same person for a guest's); anybody
+else's waits for a job of its own, so a job's word never changes while it is
+queued or running.
+
+A body in a Discord or Slack conversation is told, before its mail, who its job
+works for and that what others said in the room is talk to read, not
+instructions (`workingFor`, `src/runtime/harness-traits.ts`). The line is made
+from the room handed with the job, so it is loom's reading and not anything said
+in the room. A body that continues a kept session is told it as well.
+
+On anybody else's word loom also refuses the body, at the door: notices
+(`notices.raise`, `notices.clear`), every task change (`tasks.command`),
+`household.propose`, and `approvals.request`, `.use`, `.report` and
+`.withdraw`. It may ask a person a question with `conversation.digest`; the
+question begins with loom's line saying on whose word the body was working.
+
+The body keeps one check of its own: if it is handed mail from a sender
 nobody looked up, it takes its startup secrets back out of the environment,
 puts away the session it was handed without continuing or saving one, and runs
 with loom's tools only. If its harness always has a shell it leaves instead

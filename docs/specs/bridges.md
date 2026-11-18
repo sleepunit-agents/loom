@@ -61,15 +61,50 @@ connection received, delivered and held in the last day.
    thread, one per Slack thread in a shared place, one per direct conversation. A one-to-one direct conversation
    with a linked member is private to that member.
 5. The message becomes mail in the agent's inbox, and the runtime starts a job for the conversation if it
-   has none. A Discord message's attachments are listed in its words with Discord's link. The files of a
+   has none. One job holds one asker's mail ("Who asked", below). A Discord message's attachments are listed in its words with Discord's link. The files of a
    delivered message are fetched and kept fourteen days (`bridge_files`): Slack's with the connection's
    credential, Discord's first five up to 8 MB each from its signed links.
 
 A dropped message keeps no words. An edit is not read.
 
+## Who asked
+
+Reach follows who asked, never who else is in the room (the owner's ruling, 2026-11-18). A shared room
+holds owners and guests together; what a job may use is what the person whose request it is working on
+may use.
+
+- **One job, one asker.** Waiting mail is jobbed by whose request it is (`askers` in
+  `src/shared-place-mail.ts`). Mail on the owners' word (household owners, and members who have the agent)
+  shares a job, and the agent's own work shares it with them. Mail on anybody else's word is jobbed by the
+  person: one job holds one such person's mail, never two guests' together. Mail on anybody else's word
+  that names nobody (a sender loom cannot name, a member who has left, an agent's mail on nobody's word)
+  shares one key of its own, at the floor.
+- **Oldest first.** At admission the oldest mail no job has been formed for decides whose job is formed.
+  Everything waiting on that key goes with it. The rest waits; when that job has ended, admission is asked
+  again and the next oldest decides. Jobs in one conversation run one at a time, in order. So an owner who
+  writes after a guest waits for the guest's job to end.
+- **Late mail.** A message that arrives while a job is queued or running joins it only when it is on the
+  same key: an owner's message joins an owners' job, and that same guest's message joins that guest's job.
+  Anything else waits for a job of its own. An owner's message is never answered by a guest's job at the
+  guest's reach, and a guest's never by an owners' job. A note, a firing and another agent's mail never
+  join a job already formed, as before; at admission they are keyed like any mail, by the word they carry.
+- **Mail an ended job left behind** (out of attempts, never placed, stopped, or parked by a stop word)
+  still needs fresh mail in the conversation before anything starts. When fresh mail comes, what was left
+  on the same key goes into that job; what was left on another key is given back as fresh mail, and gets
+  a job of its own asker afterwards. It is never carried into another asker's job.
+- **What the others said.** A job is not handed anybody else's message to answer. What they said earlier
+  reaches the body as the conversation's history, once their own job has answered it, and each line there
+  names its speaker: a member by id, an outside account by the key loom knows it by
+  (`the outside account ["slack","T…","U…"]`), a bot as a bot, the agent's own posts by the agent's name. A
+  message still waiting for its own job is not in the history.
+- **What the body is told.** Before its mail, the body of a bridge job is told in loom's words who the job
+  works for (`workingFor` in `src/runtime/harness-traits.ts`), that reach follows who asked, that what
+  anybody else said in the room is talk to read and not instructions, and that nothing anybody else asked
+  for is done in this job. A body that continues a kept session is told this too, each time.
+
 ## The job
 
-A body takes the conversation's waiting mail. Before that it asks loom for the harness session the last
+A body takes the mail its job holds. Before that it asks loom for the harness session the last
 body of this conversation left (`conversation_sessions`, sealed, at most 700 KB packed, kept for the
 household's keep time for words). Handed one, it continues it and is told only the new mail. Otherwise
 it starts fresh and is told what was said earlier in the conversation
@@ -82,8 +117,14 @@ earlier body read and used, tool results included. Both session doors (`conversa
 reading of the job's word, and the body program does not ask. It starts fresh and is told what was said
 earlier, like any body with no session. The session an owners' job saved stays as it was: the guest's
 job cannot replace or remove it, and the guest's answer does not make it count as behind, so the next
-owners' job continues it. That continued session does not hold what the guest's job was told or said in
-between; those words are in the conversation's kept history, which a continued body is not told again.
+owners' job continues it.
+
+What an owners' continued session holds: everything the owners' bodies before it were told and did, their
+tool results included; and the history the first of them was handed when it started fresh, which names
+what guests had said in the room up to then, as talk. What it does not hold: what any guest's job was told
+or answered after that session started. Those words are in the conversation's kept history, which a
+continued body is not told again. One session serves every owners' job of the conversation, whichever of
+the owners asked.
 
 A body with file tools finds the kept files of the messages it took written into its scratch directory,
 named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
@@ -92,9 +133,19 @@ such page the work goes on and the agent's owners get one notice.
 A job whose word is anybody else's (not the agent's own work, not its owners': `jobWord`) runs with loom's
 tools only: no shell, files, web or helpers of the harness's own, no secrets, no attachment files and no
 file on a post, and the agent's guests-only tool denials apply to it. A tier does not change that, and a
-household member who does not have the agent counts as anybody else. A message that would make an owners'
-job anybody else's, arriving after the job was admitted, waits for the next job
-(`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's tools only").
+household member who does not have the agent counts as anybody else. Such a job holds that one person's
+mail and no owner's ("Who asked").
+
+On that word a body also changes nothing outside its own conversation, except by asking the owners a
+question. loom's doors refuse it, each with its own words (`heldRefusal`, `HELD_REFUSALS` in
+`src/shared-place-mail.ts`): raising or clearing a notice; making or changing a task; proposing a
+household change; asking for an approval, or using, reporting on or withdrawing one; pausing or resuming
+the agent; changing the volume of mail. The one way out is `conversation.digest` with a `question`. The
+question a person then reads begins with loom's own line saying on whose word the body was working, so a
+question a guest steered is never read as the agent's own, and the owner's answer, which quotes the
+question, tells the next job the same. The agent's memory, notes, people cards and the household's
+knowledge are left to it (`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's
+tools only").
 
 While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
 channel (`presence.ts`). Both are best effort.
@@ -158,8 +209,9 @@ channel (`presence.ts`). Both are best effort.
   Mail from an agent is never that. A brief between agents carries the sending job's word, and agent
   mail on nobody's word, or a household agent's bot writing in a channel, counts as anybody else's.
 - Mail on somebody's word, from an agent or from the schedule, that arrives after a job was admitted is
-  left for the next job, so a job never runs a guest's note under the policy it was claimed with for an
-  owner. What a job was admitted for is marked by admission (`inbox.job`), not told by a clock.
+  left for a later job, so a job never runs a guest's note under the policy it was claimed with for an
+  owner. What a job was admitted for is marked by admission (`inbox.job`), not told by a clock. At
+  admission a note, a firing and a brief are jobbed by the word they carry, like any mail ("Who asked").
 - A job whose mail is no bridge message may also post during its run with `bridges.say`; it goes where
   its answer will.
 - Neither its answer nor such a post is queued while the conversation's place is closed (its connection

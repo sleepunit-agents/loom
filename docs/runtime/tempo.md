@@ -71,7 +71,7 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
 - **Who asked** is recorded with it (`asked_by_kind`, `asked_by`, `asked_at`).
   Set by a person, it is that member. Set by a body, it is the person on whose
   word its job works, wherever the job sits: the member it works for, or the
-  person behind its mail, and of several the one of least reach. The agent is
+  person behind its mail (a job holds one asker's mail). The agent is
   the asker only when the work is its own, with nobody behind it. Nobody loom
   cannot name is ever the asker.
   A firing never carries one person's text on another's word. Changing a

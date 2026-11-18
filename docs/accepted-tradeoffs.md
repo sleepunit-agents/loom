@@ -725,8 +725,10 @@ Entries are grouped by the part of the program they belong to.
 
 ### A job on anybody else's word runs with loom's tools only
 - What: on whose word a job works is one ranking (`jobWord` in `src/shared-place-mail.ts`): the agent's own
-  work, its owners (household owners and members who have the agent), or anybody else, the least reach
-  winning. A job on anybody else's word runs with loom's tools only (`loomToolsOnly` in `src/policy.ts`):
+  work, its owners (household owners and members who have the agent), or anybody else. A job holds one
+  asker's mail ("One job holds one asker's mail"), so the word is that asker's; if the reading is ever
+  handed mixed mail, the least reach wins. A job on anybody else's word runs with loom's tools only
+  (`loomToolsOnly` in `src/policy.ts`):
   - its harness has no shell, no file read or write, no web and no helpers of its own, on every machine,
     whatever the machine's body file says. Claude Code is started with no built-in tool (`--tools ""`),
     every built-in tool denied by name, and `--permission-mode dontAsk` with loom's tools as the allow
@@ -747,13 +749,27 @@ Entries are grouped by the part of the program they belong to.
   The agent's own denied tools (`agent_denied_tools`) apply on top: the guests-only rows on this word, the
   others always. A tier among outside people no longer changes any of this: tier 3 is still anybody else.
   A member of the household who does not have the agent is anybody else too.
-- The word does not fall while a job runs. A message that would make an owners' job anybody else's, written
-  after the job was admitted, waits for the next job, as a note or a firing already did. The word is read
-  from the mail the job is offered, never from everything waiting in the conversation.
-- What is not held: such a body still has every loom tool the agent has, with the agent's own reach in
-  loom: its memory and notes, its tasks, the household's shared knowledge, `loom_query`. It can read the
-  bytes of a file sent in its own conversation through `bridges.file`. What it tells a guest from those is
-  the agent's judgment. An owner narrows it per agent with a guests-only denied tool.
+- The word does not change while a job is queued or running. A message joins a job already formed only
+  when the same asker wrote it; anybody else's waits for a job of its own. The word is read from the mail
+  the job is offered, never from everything waiting in the conversation.
+- Outside its own conversation such a body changes nothing, except by asking the owners a question. loom's
+  doors refuse it (`heldRefusal`): a notice raised or cleared, any task change, a household proposal, an
+  approval asked for, used, reported on or withdrawn, a pause or resume of the agent, the volume of mail.
+  A repeating schedule it asks for is a card loom files, naming who asked. Its question
+  (`conversation.digest`) begins with loom's line naming on whose word it was working.
+- What is not held: such a body reads what the agent reads in loom (`loom_query`, its tasks, its memory
+  and notes, the household's shared knowledge), and can read the bytes of a file sent in its own
+  conversation through `bridges.file`. What it tells a guest from those is the agent's judgment. And it
+  still writes the agent's own memory (`memory.remember`, `.update`, `.archive`, `.restore`, `.forget`,
+  `.restoreRevision`, `.propose`, `.ratify`), its notes (`memory.noteWrite`), its person and project cards
+  (`memory.personWrite`, `.personRestoreRevision`, `.projectWrite`), the household's shared knowledge
+  (`mind.knowledgeAdd`, `.knowledgeEdit`, `.knowledgeRecheck`, `.knowledgeRestore`, `.knowledgeVerify`) and,
+  when it is the household's default agent, the people directory (`mind.personAdd`). These are left as
+  they are: what an agent keeps is the agent's judgment ("A body keeps the agent's own knowledge, whoever
+  it is working for"). What a guest gets the agent to remember is there for its next job,
+  whoever that is for: a later owners' job may read, as its own memory, a line a guest's job wrote. An
+  owner narrows any of it per agent with a guests-only denied tool. It may also brief a peer agent, one
+  hop, on its own word.
 - **An owner cannot yet give a named outside person more.** There is no way to say "this person's jobs may
   read files" or "this helper may use the shell read-only". Every job on anybody else's word gets the same
   floor. That grant is the follow-up to this change.
@@ -762,9 +778,11 @@ Entries are grouped by the part of the program they belong to.
 - Where: `src/policy.ts` (`loomToolsOnly`); `src/runtime/harness-traits.ts` (`hasGuest`, `bodyReach`,
   `refusesJob`, `hasFileTools`); `src/runtime/claude-body.ts`; `src/runtime/body-program.ts`;
   `src/runtime/body-secret-tools.ts`; `src/shared-secret-inputs.ts`; `src/shared-secret-agent-commands.ts`;
-  `src/shared-bridge-reply.ts` (`bridges.say` files); `src/shared-conversation-sessions.ts`; `jobHeld` and
-  `lateMailJoins` in `src/shared-place-mail.ts` and `pending` in `src/core/conversations/index.ts` (the
-  late-mail rule is a constructor argument there, and closed when none is given).
+  `src/shared-bridge-reply.ts` (`bridges.say` files); `src/shared-conversation-sessions.ts`; `jobHeld`,
+  `heldRefusal`, `askedOnWord` and `lateMailJoins` in `src/shared-place-mail.ts` and `pending` in
+  `src/core/conversations/index.ts` (the late-mail rule is a constructor argument there, and closed when
+  none is given); the refused doors are `src/shared-notices.ts`, `src/shared-task-commands.ts`,
+  `src/shared-household-proposals.ts` and `src/shared-work-body.ts`.
 - Why: a guest's words are input to a model. With a shell, files and the agent's secrets in its
   environment, a body answering a guest could be talked into using all of them. Before this, a guest's job
   ran with whatever the machine gave every body, less the rows an owner had thought to deny.
@@ -915,6 +933,37 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
   and cleared at start.
 
+### One job holds one asker's mail
+- What: reach follows who asked, never who else is in the room (the owner's ruling, 2026-11-18: "If he
+  asks, no. If I ask, sure."). Waiting mail in a conversation is jobbed by whose request it is: the
+  owners' class together, with the agent's own work, or one other person (`askers`,
+  `src/shared-place-mail.ts`; `Jobs.admission`). The oldest mail no job was formed for decides the job;
+  the rest waits for a job of its own. Late mail joins only on the same key. Before this, one job took
+  everything waiting and ran at the least reach in the batch, so an owner who spoke beside a guest was
+  answered at the guest's reach.
+- What it costs:
+  - An owner waits behind a guest. Jobs in one conversation run one at a time, in order, so an owner who
+    writes after a guest is answered when the guest's job has ended. If the guest's job waits long for a
+    machine (it runs only on Claude Code), the owner's message in that room waits with it, up to the queue
+    deadline. Writing in the owner's own thread is not held up.
+  - More jobs. Three people writing at once in one room are three jobs, each starting its own body.
+  - A body does not see a message that is waiting for another asker's job. It reads it later, as history,
+    once that job has answered.
+  - Mail on anybody else's word that names nobody shares one key. Two senders loom cannot name may still
+    share a job, at the floor. Nothing is given to nobody, so nothing is gained by it.
+  - Mail an ended job left behind on another key is given back as fresh mail when somebody speaks, and is
+    tried again in a job of its own asker. A guest's request that failed out of its attempts is tried
+    again each time anybody speaks there, as it was before, but now in its own job.
+- What the model is trusted with: the wall is which mail a job holds and what its doors and harness give
+  it. That an owners' body does not carry out what a guest said earlier in the room is told to it
+  (`workingFor`) and is the agent's judgment, like anything else a person reads aloud to it. The history
+  names each speaker so that it can tell.
+- An owner's answer to a guest's job's question is an owner asking. The answer is mail from the owner, so
+  the job that reads it works on owners' word; loom's line in the quoted question says whose word the
+  question came from.
+- Would change it: grants for a named person or project, which is why the key is the person and not the
+  class. Or owners being held up behind guests often enough to want two jobs of one conversation at once.
+
 ### A harness session is kept between bodies, sealed, for the next body alone
 - What: a bridge conversation's body continues the session the last body of that conversation left. When
   it has answered, the body packs the harness's own files for the session (for Claude Code, the transcript
@@ -930,6 +979,9 @@ Entries are grouped by the part of the program they belong to.
   nothing. The session an owners' job left is handed to the next owners' job as it was. The price: that
   continued session does not hold what the guest's job was told and said in between. A continued body is
   told only its new mail, so the agent may not know, in that owners' job, what it told the guest.
+  What it does hold of guests: the history its first body was handed when it started fresh, which names
+  what guests had said in the room until then, as talk. One session serves every owners' job in the
+  conversation, whichever owner asked; each body, continued or fresh, is told who asked this time.
 - Where a session is kept at all: only where the place the harness keeps its sessions is that body's
   alone for that one job. A restored session is the conversation's words in plain files. In a house that
   place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in
@@ -1037,7 +1089,7 @@ Entries are grouped by the part of the program they belong to.
   body says it in its own words. A body working for owners or members who have the agent, and the agent's
   own work, may hand to any conversation or ruled channel of the agent. A body working for anybody else
   may hand only to the channel its own channel's rule names (`reportsTo`), and nowhere with none named.
-  A mixed batch of mail counts as anybody else's: least reach wins. The one direct post is the agent's
+  A job holds one asker's mail, so it is one or the other. The one direct post is the agent's
   own work, with no person behind it, to a ruled channel (`bridges.post`).
 - Where: `mayHandTo` in `src/policy.ts`; `src/shared-place-mail.ts`; `src/core/conversations/handoff.ts`.
 - Why: each body has the context of its own venue, and a note crosses with only what the sender chose to
