@@ -26,6 +26,7 @@ export const WORD_FILE_REFUSAL = 'A schedule set or reworded by a job that is no
 export const WORD_ASKER_REFUSAL = 'Somebody else asked for this schedule: only they, or somebody the agent works for, may change, stop, start or run it.';
 export const RUN_NOW_REFUSAL = 'You are awake: do the work now. Only a body working for the agent\'s owners, or the agent\'s own work, fires a schedule by hand.';
 export const WORD_EVENT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners fires at listed times, never on an event.';
+export const WORD_PART_REFUSAL = 'Somebody with less reach than you asked for this schedule, and a firing never carries one person\'s text on another\'s word: give both a new note and new instructions (or a file), or leave its words alone.';
 export const WOKEN_BY_MAIL_REFUSAL = 'A firing or a note woke this job, and it is not working for the agent\'s owners: it sets, changes, starts and runs no schedule. It may stop one the same person asked for.';
 export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it does not fire or start it again.';
 /** Why this job may not do this to a trigger, by whose word it works on (jobWord) and never by where it sits.
@@ -66,6 +67,21 @@ export function privateRewordRefusal(db: DataDatabase, viewer: Viewer, work: Wor
   if (!trigger.conversation || !change || !editsWords(change)) return undefined;
   const cv = db.select({ agent: conversations.agent, member: conversations.member }).from(conversations).where(eq(conversations.id, trigger.conversation)).get();
   return cv && cv.member !== null && privateRefusal(cv.member, asking(db, viewer, cv.agent, work)) ? PRIVATE_PLACE_REFUSAL : undefined;
+}
+/** Why this caller may not change only part of a trigger's words: a firing never carries one person's text
+ * on another's word. Changed words re-stamp the asker to the editor (shared-tempo.ts, reasked), so an edit
+ * that left the note or the instructions as the old asker wrote them would fire that text on the editor's
+ * word. The rule bites only when the old asker's reach is lower than the editor's, said once here: the
+ * asker changing their own trigger, and owners' reach changing what the agent or an owner asked for, are
+ * free. Otherwise the edit replaces all of it (the note, and the instructions or a file) or is refused. */
+export function partRewordRefusal(db: DataDatabase, viewer: Viewer, work: Work | undefined, trigger: TriggerAsked, change?: { instructions?: string | null; file?: string | null; note?: string }): string | undefined {
+  if (!trigger.conversation || !trigger.askedByKind || !trigger.askedBy || !change || !editsWords(change)) return undefined;
+  const agent = db.select({ agent: conversations.agent }).from(conversations).where(eq(conversations.id, trigger.conversation)).get()?.agent;
+  if (!agent) return undefined;
+  const was = { kind: trigger.askedByKind, id: trigger.askedBy } as Asker, editor = asking(db, viewer, agent, work);
+  if (editor.kind === was.kind && editor.id === was.id) return undefined;
+  if (!(wordReach(db, agent, was) === 'others' && wordReach(db, agent, editor) !== 'others')) return undefined;
+  return change.note !== undefined && (change.instructions != null || change.file != null) ? undefined : WORD_PART_REFUSAL;
 }
 /** Why one more trigger may not stand for this conversation: the one check, for setting one and for turning one back on. */
 export function placeFull(db: DataDatabase, conversation: string): string | undefined {

@@ -15,7 +15,7 @@ import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,NOTES_PER_JOB,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
 import {triggerLog} from './core/data/schema.js';
-import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL} from './shared-place-triggers.js';
+import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
@@ -370,8 +370,8 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  for(const [action,input] of [['edit',{id:own.id,instructions:'The guest\'s words on the agent\'s word'}],['stop',{id:own.id}],['start',{id:own.id}],['runNow',{id:own.id}]] as const)
   expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:action==='runNow'?RUN_NOW_REFUSAL:WORD_ASKER_REFUSAL}});
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
- // Whoever changes its words becomes its asker: the owner rewording the guest's trigger makes it the owner's.
- expect((await f.call('tempo','edit',{id:hourly.id,instructions:'The owner\'s words'},token.owner)).status).toBe(200);
+ // Whoever changes its words becomes its asker: the owner replacing the words of the guest's trigger, all of them, makes it the owner's.
+ expect((await f.call('tempo','edit',{id:hourly.id,instructions:'The owner\'s words',note:'The owner\'s note'},token.owner)).status).toBe(200);
  expect(f.db.select().from(triggers).where(eq(triggers.id,hourly.id)).get()).toMatchObject({askedByKind:'member',askedBy:'owner'});
  expect(await f.call('tempo','stop',{id:hourly.id})).toMatchObject({status:403,body:{message:WORD_ASKER_REFUSAL}});
  // From a shared place a trigger carries words, never a file of the household's repository, and watches no event.
@@ -1005,12 +1005,35 @@ it('refuses an owner\'s change of file on a trigger that names another member\'s
  expect(await f.call('tempo','edit',{id:own.id,file:'lanes/owner.md'},token.owner)).toMatchObject({status:403,body:{message:PRIVATE_PLACE_REFUSAL}});
  expect(row()).toMatchObject({file:null,instructions:'Post the numbers',askedByKind:'agent'});
 });
-it('re-stamps the asker when a trigger\'s note changes, as when its instructions do',async()=>{
- const {f,cv,once}=await sharedPlace();
- const guests=once();expect((await f.call('tempo','set',guests)).status).toBe(200);
+/** A shared place, a trigger there the guest's body asked for, and an owner who has the agent. */
+async function guestsTrigger(){
+ const made=await sharedPlace(),{f,once}=made,guests=once();expect((await f.call('tempo','set',guests)).status).toBe(200);
  f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
- expect((await f.call('tempo','edit',{id:guests.id,note:'The owner\'s note'},token.owner)).status).toBe(200);
- expect(f.db.select().from(triggers).where(eq(triggers.id,guests.id)).get()).toMatchObject({conversation:cv,note:'The owner\'s note',askedByKind:'member',askedBy:'owner'});
+ return {...made,guests,row:(id=guests.id)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get()!};
+}
+it('refuses an owner who changes only part of the words of a trigger a guest asked for: no firing carries one person\'s text on another\'s word',async()=>{
+ const {f,guests,row}=await guestsTrigger();
+ for(const part of [{note:'Typo fixed'},{instructions:'The owner\'s instructions'},{file:'lanes/owner.md'}])
+  expect(await f.call('tempo','edit',{id:guests.id,...part},token.owner),JSON.stringify(part)).toMatchObject({status:403,body:{message:WORD_PART_REFUSAL}});
+ expect(row()).toMatchObject({note:'Daily numbers',instructions:'Post the numbers',file:null,askedByKind:'outside',askedBy:GUEST});
+});
+it('re-stamps the asker to an owner who replaces all the words of a trigger a guest asked for',async()=>{
+ const {f,cv,guests,row}=await guestsTrigger();
+ expect((await f.call('tempo','edit',{id:guests.id,note:'The owner\'s note',instructions:'The owner\'s instructions'},token.owner)).status).toBe(200);
+ expect(row()).toMatchObject({conversation:cv,note:'The owner\'s note',instructions:'The owner\'s instructions',askedByKind:'member',askedBy:'owner'});
+});
+it('lets the asker\'s own body change any part of its trigger\'s words',async()=>{
+ const {f,guests,row}=await guestsTrigger();
+ expect((await f.call('tempo','edit',{id:guests.id,note:'The guest\'s new note'})).status).toBe(200);
+ expect((await f.call('tempo','edit',{id:guests.id,instructions:'The guest\'s new instructions'})).status).toBe(200);
+ expect(row()).toMatchObject({note:'The guest\'s new note',instructions:'The guest\'s new instructions',askedByKind:'outside',askedBy:GUEST});
+});
+it('lets an owner change part of the words of a trigger an owner or the agent asked for',async()=>{
+ const {f,once,row}=await guestsTrigger();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'kim',agent:'art'}).run();});
+ const own=once(),kims=once();expect((await f.call('tempo','set',own,token.other)).status).toBe(200);expect((await f.call('tempo','set',kims,token.other)).status).toBe(200);
+ f.root.writes.run(()=>f.db.update(triggers).set({askedByKind:'member',askedBy:'kim'}).where(eq(triggers.id,kims.id)).run());
+ for(const id of [own.id,kims.id]){expect((await f.call('tempo','edit',{id,note:'Typo fixed'},token.owner)).status).toBe(200);expect(row(id)).toMatchObject({note:'Typo fixed',instructions:'Post the numbers',askedByKind:'member',askedBy:'owner'});}
 });
 it('holds a trigger\'s note to the length its instructions are held to, set or changed',async()=>{
  const {f,once}=await sharedPlace(),long='n'.repeat(100_001);
