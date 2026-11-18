@@ -1212,8 +1212,10 @@ it (any owner for an owners' job; that same person for a guest's); anybody
 else's waits for a job of its own, so a job's word never changes while it is
 queued or running. Owners go first: a guest's job that is still queued when an
 owner's mail arrives is set aside (state `stopped`, with a note that says so,
-no exit code) and its mail waits for a job after the owners'. A job a machine
-has claimed is left to finish.
+no exit code) and its mail is jobbed again after the owners', as the same
+attempt. A job a machine has claimed is left to finish. Mail any other ended
+job left behind waits for its own asker to write again; a job a person stopped,
+reset or wrote off for the owners has its mail closed with the reason.
 
 A body in a Discord or Slack conversation is told, before its mail, who its job
 works for and that what others said in the room is talk to read, not
@@ -1221,15 +1223,18 @@ instructions (`workingFor`, `src/runtime/harness-traits.ts`). The line is made
 from the room handed with the job, so it is loom's reading and not anything said
 in the room. A body that continues a kept session is told it as well.
 
-On anybody else's word loom also refuses the body, at the door: notices
+On anybody else's word loom also refuses the body, at the door: every schedule
+(`tempo.set`, `.edit`, `.start`, `.runNow`, `.stop`), notices
 (`notices.raise`, `notices.clear`), every task change (`tasks.command`),
 `household.propose`, and `approvals.request`, `.use`, `.report` and
 `.withdraw`. Of the agent's memory and notes it only adds (`memory.remember`,
 and `memory.noteWrite` at a path no note has), and loom stamps what it adds
 with whose word it was written on; every other memory, card, knowledge and
 people write is refused. It may ask a question with `conversation.digest`, of
-somebody who directs the agent and with no link; the question begins with
-loom's line saying on whose word the body was working.
+somebody who directs the agent, with no link and waiting on no task or
+approval; the question and the digest's summary both begin with loom's line
+saying on whose word the body was working. Its `conversation.status` reports
+are answered and write nothing to the agent's status.
 
 The body keeps one check of its own: if it is handed mail from a sender
 nobody looked up, it takes its startup secrets back out of the environment,

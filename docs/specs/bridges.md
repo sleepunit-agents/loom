@@ -79,24 +79,29 @@ may use.
   person: one job holds one such person's mail, never two guests' together. Mail on anybody else's word
   that names nobody (a sender loom cannot name, a member who has left, an agent's mail on nobody's word)
   shares one key of its own, at the floor.
-- **Owners first.** At admission, when mail on the owners' key waits (the agent's own work with it), that
-  job is formed. Otherwise the oldest mail no job has been formed for decides. Everything waiting on the
-  chosen key goes with it. The rest waits; when that job has ended, admission is asked again. Jobs in one
-  conversation run one at a time.
+- **Owners first.** At admission, when fresh mail on the owners' key waits (the agent's own work with it),
+  that job is formed. Otherwise the oldest fresh mail decides. Fresh mail is mail no job has been formed
+  for. The rest waits; when that job has ended, admission is asked again. Jobs in one conversation run one
+  at a time.
 - **A guest's job no machine has taken holds no owner behind it.** When an owner's mail comes to wait while
   a job on anybody else's key is still queued, loom sets that job aside (`stopped`, with the note
-  `SET_ASIDE_NOTE`; nothing ran and nothing failed), gives its mail back as fresh mail, and forms the
-  owners' job in the same write. The guest's mail gets its job again afterwards. A job a machine has
-  claimed is not interrupted: an owner then waits for that one job to end, and no longer.
+  `SET_ASIDE_NOTE`; nothing ran and nothing failed) and forms the owners' job in the same write. The
+  guest's mail is jobbed again after the owners' job with nobody writing, and the new job stands where the
+  set-aside one stood among its attempts. A job a machine has claimed is not interrupted: an owner then
+  waits for that one job to end, and no longer.
 - **Late mail.** A message that arrives while a job is queued or running joins it only when it is on the
   same key: an owner's message joins an owners' job, and that same guest's message joins that guest's job.
   Anything else waits for a job of its own. An owner's message is never answered by a guest's job at the
   guest's reach, and a guest's never by an owners' job. A note, a firing and another agent's mail never
   join a job already formed, as before; at admission they are keyed like any mail, by the word they carry.
-- **Mail an ended job left behind** (out of attempts, never placed, stopped, or parked by a stop word)
-  still needs fresh mail in the conversation before anything starts. When fresh mail comes, what was left
-  on the same key goes into that job; what was left on another key is given back as fresh mail, and gets
-  a job of its own asker afterwards. It is never carried into another asker's job.
+- **Mail an ended job left behind** (out of attempts, never placed, stopped, or parked by a stop word) is
+  never revived by somebody else. It goes into a job only when its own asker next writes: fresh mail on
+  the same key takes it along. Mail on another key forms no job from it and never hands it back as fresh,
+  so an owner's failed request is not run again because a guest spoke, and two askers' failing mail do not
+  re-job each other.
+- **A person's stop settles an owners' request.** A stop word, a reset or a write-off on an owners' job
+  closes that job's mail with the reason. It does not wait, so nothing forms a job from it again. A job on
+  anybody else's key that is stopped keeps its mail, for that person's next message.
 - **What the others said.** A job is not handed anybody else's message to answer. What they said earlier
   reaches the body as the conversation's history, once their own job has answered it, and each line there
   names its speaker: a member by id, an outside account by the key loom knows it by
@@ -145,12 +150,17 @@ On that word a body also changes nothing outside its own conversation, except by
 question. loom's doors refuse it, each with its own words (`heldRefusal`, `HELD_REFUSALS` in
 `src/shared-place-mail.ts`): raising or clearing a notice; making or changing a task; proposing a
 household change; asking for an approval, or using, reporting on or withdrawing one; pausing or resuming
-the agent; changing the volume of mail. The one way out is `conversation.digest` with a `question`. The
+the agent; changing the volume of mail; setting, changing, starting, running or stopping any schedule. Its
+status report (`conversation.status`) is answered, since that is how a body hears of a Stop, and writes
+nothing to the agent's one status row. Its digest summary begins with loom's line saying whose word and
+which conversation, question or none, because summaries are on the tape every later body of the agent is
+started with; the line is part of the summary's 600 characters. The one way out is `conversation.digest`
+with a `question`. The
 question a person then reads begins with loom's own line saying on whose word the body was working, so a
 question a guest steered is never read as the agent's own, and the owner's answer, which quotes the
 question, tells the next job the same. The question goes only to the people who direct the agent (the
-members who have it, or the household's owners when nobody has), and carries no link: one with a link is
-refused.
+members who have it, or the household's owners when nobody has), carries no link and waits on no task or
+approval: one with either is refused.
 
 Of what the agent and the household keep, such a body only adds. It may remember (`memory.remember`) and
 write a note at a path no note has (`memory.noteWrite`). loom stamps each: a memory's first line, its
@@ -173,16 +183,16 @@ channel (`presence.ts`). Both are best effort.
   settled.
 - What a body may schedule follows whose word its job works on, not the place (`docs/runtime/tempo.md`):
   working for owners, or as the agent's own work, it schedules from a shared place what it could from the
-  owner's own thread; working for anybody else, only into the shared place it is in, at listed times,
-  with its own words. On such a word a one-time trigger is set at once: a body comes back to work it is
-  doing any time. A repeating one is asked of the household's owners as a card, and set only when an
-  owner allows it.
+  owner's own thread; working for anybody else, nothing. Schedules are switched off on that word until an
+  owner can grant a person or a project tools of their own: every schedule door refuses such a body with
+  one line, and the card for a repeating schedule and the come-back are dormant.
 - A job whose mail is no message from the bridge (a trigger's firing in the conversation, a note from
   another body of the agent) answers by a post in the conversation itself, addressed from the
   conversation's place (`bridge_sends.conversation`, with no `incoming`).
 - Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
   conversation are given to the stopped job, and neither they nor one that arrives later start any work
-  until a person speaks there. (Only in a bridge's conversation: a stop elsewhere parks nothing.) A person speaking is mail from a member, or a delivered message from an
+  until a person speaks there. What was given to the stopped job is then taken up only by fresh mail on
+  its own key ("Who asked"). (Only in a bridge's conversation: a stop elsewhere parks nothing.) A person speaking is mail from a member, or a delivered message from an
   account that is no bot and no webhook.
 
 ## Between conversations

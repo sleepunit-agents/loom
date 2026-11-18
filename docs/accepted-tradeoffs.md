@@ -755,10 +755,14 @@ Entries are grouped by the part of the program they belong to.
 - Outside its own conversation such a body changes nothing, except by asking the owners a question. loom's
   doors refuse it (`heldRefusal`): a notice raised or cleared, any task change, a household proposal, an
   approval asked for, used, reported on or withdrawn, a pause or resume of the agent, the volume of mail.
-  A repeating schedule it asks for is a card loom files, naming who asked. Its question
+  It has no schedule door ("A body working for anybody but owners has no schedule yet"). Its status report
+  is answered and writes nothing to the agent's status row. Its question
   (`conversation.digest`) begins with loom's line naming on whose word it was working, goes only to the
-  people who direct the agent (members who have it, or household owners when nobody has), and carries no
-  link: a question with a link is refused, not sent without it, so the body hears why.
+  people who direct the agent (members who have it, or household owners when nobody has), carries no
+  link and waits on no task or approval: a question with either is refused, not sent without it, so the
+  body hears why. Its digest summary begins with loom's line too (whose word, which conversation),
+  question or none: a summary is on the tape every later body of the agent is started with ("Last 24
+  hours"), and the line is counted in the summary's 600 characters.
 - Of what the agent and the household keep, such a body only adds, and loom says whose word it was.
   - Allowed: `memory.remember`, and `memory.noteWrite` at a path no note has.
   - Stamped by loom, never by the body. A memory: `written_on_word` in its metadata (`who`, as loom names
@@ -963,16 +967,22 @@ Entries are grouped by the part of the program they belong to.
     formed at once, so an owner is never held behind a job that is waiting for a machine. Writing in the
     owner's own thread is not held up at all.
   - A guest waits behind every owner. A guest's request in a busy room is answered when no owners' mail
-    waits there. A job set aside shows as `stopped` with loom's note, not as a failure; if it was a retry,
-    its count of attempts starts again when its mail is next jobbed.
+    waits there. A job set aside shows as `stopped` with loom's note, not as a failure; the job that takes
+    its mail up again stands where it stood among its attempts.
   - More jobs. Three people writing at once in one room are three jobs, each starting its own body.
   - A body does not see a message that is waiting for another asker's job. It reads it later, as history,
     once that job has answered.
   - Mail on anybody else's word that names nobody shares one key. Two senders loom cannot name may still
     share a job, at the floor. Nothing is given to nobody, so nothing is gained by it.
-  - Mail an ended job left behind on another key is given back as fresh mail when somebody speaks, and is
-    tried again in a job of its own asker. A guest's request that failed out of its attempts is tried
-    again each time anybody speaks there, as it was before, but now in its own job.
+  - Mail an ended job left behind waits for its own asker. A request that ran out of attempts, or was
+    never placed, is tried again only when the same asker writes again (any owner, for the owners' key).
+    Nobody else's message revives it, in either direction, and it is never handed back as fresh. Before,
+    anybody's next message carried it along. So a guest whose job failed is not answered because an owner
+    spoke later, and has to ask again.
+  - A person's stop settles an owners' request. A stop word, a reset or a write-off on an owners' job
+    closes its mail with the reason; said again in new words it is a new request. A stopped job on
+    anybody else's key keeps its mail for that person's next message. A Stop pressed in a Comms thread is
+    not changed by this: that mail stays with its job and the member's next message takes it along.
 - What the model is trusted with: the wall is which mail a job holds and what its doors and harness give
   it. That an owners' body does not carry out what a guest said earlier in the room is told to it
   (`workingFor`) and is the agent's judgment, like anything else a person reads aloud to it. The history
@@ -1081,19 +1091,32 @@ Entries are grouped by the part of the program they belong to.
   an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
 - Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
 
-### A body working for anybody but owners schedules only into its own shared place
+### A body working for anybody but owners has no schedule yet
 - What: a job with anybody but owners behind it (a guest, a member who does not have the agent, somebody
-  loom cannot name) may set, reword, stop and start only a trigger naming the shared place it is working
-  in (a Discord or Slack conversation that is not one member's own), with its own words, at listed times.
-  A one-time trigger it sets at once; a repeating one is asked of the household's owners as a card and set
-  only when one allows it. No count or interval refuses one: what could run away is told to the agent's
-  people instead (`docs/runtime/tempo.md`). Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
-  that conversation, on its asker's word. A job working for owners, and the agent's own work, is held to
-  none of this in a shared place: reach follows the person, not the venue.
-- Where: `isSharedPlace`, `maySchedule` and `WORD_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
-  `docs/runtime/tempo.md`.
-- Why: such a body works under the limits of whoever is in the room. A trigger it set for its agent's
-  own wake would run words chosen there without them. One that comes back into the conversation runs under them.
+  loom cannot name) sets, changes, starts, runs and stops no trigger: `tempo.set`, `.edit`, `.start`,
+  `.runNow` and `.stop` refuse it with "A job that is not working for the agent's owners sets and changes no schedule yet. Ask the owners a question instead." (`HELD_REFUSALS.schedule`, through `heldRefusal`). The question is asked of the job the
+  credential is bound to, as `tempo.pause`, `.resume` and `inbox.volume` now are, so it does not fail open
+  when the conversation was relabelled under a running job. A job working for owners, and the agent's own
+  work, is held to none of this in a shared place: reach follows the person, not the venue.
+- Switched off, not removed (the owner's decision, 2026-11-18): until an owner can grant a person or a
+  project tools of their own, such a body has loom's tools only and nothing long-running to come back to.
+  Dormant in the code, reachable from no door of such a body:
+  - the `placeSchedule` card (`ownersFirst`, `placeScheduleWords`, `applyPlaceSchedule`). Still carried out
+    if loom's own code files one and an owner allows it;
+  - the one-time come-back, its `comes back` log row and the notice at every fifth (`continueComeBack`,
+    `COME_BACK_NOTICE_EVERY`);
+  - the finer refusals in `wordRefusal` for such a job. `REFIRE_REFUSAL` still holds for every job.
+  A trigger already standing on such a person's word still fires on that word, at the floor.
+- What it closed: two one-time triggers of one asker restarted in turn by the jobs their firings woke, for
+  ever and with no notice; and a trigger id the body chose, unquoted in the card's question and so in the
+  answer mailed to the agent on the owner's word. The card now quotes the id, cut at 80 characters, and
+  the model wanted, and a change shows the standing note and words; that holds for whoever files one.
+- Where: `HELD_REFUSALS` and `heldRefusal` in `src/shared-place-mail.ts`; `src/core/tempo/operations.ts`;
+  `src/shared-tempo.ts` (`bodyJob`); `src/shared-place-triggers.ts`; `docs/runtime/tempo.md`.
+- Why: a guest's words are input to a model, and a schedule is those words run again later with nobody
+  speaking. With nothing useful for such a job to come back to, every schedule door was reach with no use.
+- Would change it: grants for a named person or project. Then the dormant card and come-back are the
+  starting point, with the two holes above already closed.
 - **Open: a body working for a guest still reads all of its agent's triggers.** Reads go through the query door, which
   judges a body by its agent and the member it works for, and knows neither what conversation its job is
   in nor on whose word it works. So a guest-woken body can see its agent's other schedules (their notes, times

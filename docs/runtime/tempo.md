@@ -52,12 +52,16 @@ from somebody who is no member.
   household owner is judged as in her own thread: what she has the agent
   schedule is her private work.
 - A job with **anybody else** behind it (a guest, a member who does not have
-  the agent, somebody loom cannot name) sets, rewords, stops and starts only a
-  trigger that **names the shared place it is working in**, under the bounds
-  below. Anywhere else (a brief's conversation, a wake) that is nothing. Every
-  other call is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it."
-- Least reach wins: one such person among the people behind a job's mail makes
-  it anybody else's.
+  the agent, somebody loom cannot name) has **no schedule door yet**.
+  `tempo.set`, `tempo.edit`, `tempo.start`, `tempo.runNow` and `tempo.stop`
+  are refused it with "A job that is not working for the agent's owners sets and changes no schedule yet. Ask the owners a question instead."
+  It also neither pauses nor resumes the agent, nor changes any mail's volume.
+  The question is asked of the job the caller's credential is bound to, in
+  whatever state that job or its conversation is.
+- Why switched off: until an owner can grant a named person or a project tools
+  of their own, such a body runs with loom's tools only and has nothing
+  long-running to come back to. See "Switched off until grants" below for what
+  stays in the code and is not reachable.
 
 ### A trigger that names a conversation
 
@@ -115,33 +119,26 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
     10 (`PLACE_TRIGGERS_NOTICE_EVERY`), counted when one is set or turned back
     on; one mark is told once a day;
   - when come-backs follow one another 5 times in a row, and at each further 5
-    (`COME_BACK_NOTICE_EVERY`): see the next point.
-- **A repeating schedule on anybody else's word is an owner's to allow.** A
-  trigger repeats unless it is once-only or its time is one date. A job
-  working for anybody but owners sets a one-time trigger at once: a body
-  comes back to work it is doing any time. When it sets a repeating one, or
-  changes one so that it repeats once changed (its times or its words),
-  nothing is set or changed. loom files a card for the household's owners
-  (`placeSchedule`, a household card) that shows who asked, the conversation,
-  the times, and the note and words in full, and `tempo.set` / `tempo.edit`
-  answer with `waits`, a plain line saying the request went to the owners.
-  Allowed, the trigger is made or changed on the asker's word exactly as the
-  door would have; denied, nothing is. The owner's answer comes to the
-  conversation as mail to the agent. No standing approval rule answers this
-  card, and nobody proposes one: `household.propose` does not take the kind,
-  so who asked is always loom's reading of the job's mail. What the owner is
-  asked and what the answer says are loom's words only; the body's note and
-  words are on the card and nowhere in the answer.
-- **A job a firing or a note woke, on anybody else's word, may come back and
-  no more.** Nobody is speaking, so it sets and moves only a one-time trigger
-  into its own conversation. It sets, changes and starts no repeating one, and
-  no card is filed for one; it may stop one the same person asked for. A
-  come-back set or moved by the job a firing woke is recorded in the trigger's
-  log as following that firing (`comes back`, with the first trigger of the
-  chain and which firing in a row it will be), and the notice above counts
-  from that.
-- **A trigger keeps to its asker.** A body working for anybody but owners may
-  reword, stop and start only a trigger the same person asked for. A trigger's
+    (`COME_BACK_NOTICE_EVERY`). Dormant: see "Switched off until grants".
+- **Switched off until grants** (the owner's decision, 2026-11-18). These are
+  in the code and no door of a body on anybody else's word reaches them now:
+  - the owner's card for a repeating schedule on such a word (`placeSchedule`,
+    filed by `ownersFirst`). The kind still works when loom's own code files
+    one: an owner allows or denies it, no standing rule answers it,
+    `household.propose` does not take it, and what the owner is asked and what
+    the answer says are loom's words only. On the card every word a caller
+    chose is quoted: the note, the words, the model wanted, and the trigger's
+    id, which is also cut at 80 characters wherever loom shows it. A change
+    shows the standing note, words and times beside what changes;
+  - the one-time come-back such a job could set, the `comes back` row in the
+    trigger's log, and the notice at every fifth come-back in a row
+    (`COME_BACK_NOTICE_EVERY`);
+  - the finer refusals for such a job (own shared place only, own words, no
+    file, no event, the same asker's triggers only, nothing fired by hand).
+  A trigger that already stands on such a person's word (in the database from
+  before, or made by the card) still fires on that word, at the floor, and is
+  stopped as described above when its asker is no longer known.
+- **A trigger keeps to its asker.** A trigger's
   words are its instructions, its file and its note (`editsWords`). Whoever
   changes a trigger's words becomes its asker; a change of times alone leaves
   both as they were. So a firing's words and its asker always come from the
