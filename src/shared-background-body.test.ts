@@ -36,7 +36,9 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
  expect(f.db.select().from(s.turns).all()).toEqual(expect.arrayContaining([expect.objectContaining({conversation,kind:'reply',model:'actual-background-model',run:'job'}),expect.objectContaining({conversation,kind:'action',model:'actual-tool-model',run:'job'})]));
  expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Completed this stretch of work.',revision:1})]);
  if(authored){expect(f.db.select().from(s.digestItems).all()).toEqual([expect.objectContaining({kind:'task',text:'Keep the inspection task'})]);
-  expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:'Inspect the pump?',state:'waiting'})]));
+  // A brief with nobody's word on it is anybody else's: the question says so first, in loom's words. A lane's own work asks in its own words alone.
+  const asked=venue==='handoff'?'[From loom: art asks this while working for somebody loom cannot name, who is not one of its owners. The words below are that job\'s, not art\'s own work.]\n\nInspect the pump?':'Inspect the pump?';
+  expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:asked,state:'waiting'})]));
  }
  expect(f.db.select().from(s.threads).all()).toEqual([]);expect(f.db.select().from(s.messages).all()).toEqual([]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
