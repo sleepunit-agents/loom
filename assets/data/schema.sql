@@ -1292,6 +1292,24 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `job_usage` (
+	`job` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`tokens_in` integer,
+	`tokens_out` integer,
+	`cache_read` integer,
+	`cache_written` integer,
+	`model_calls` integer,
+	`tool_calls` integer,
+	`tools` text,
+	`largest_context` integer,
+	`wall_ms` integer,
+	`harness` text,
+	`model` text,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "job_usage_source_choice" CHECK("job_usage"."source" in ('report','transcript','none'))
+);
+
 CREATE TABLE `program_tokens` (
 	`token` text PRIMARY KEY NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade

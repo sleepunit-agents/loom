@@ -272,6 +272,13 @@ const upgrades: readonly (readonly string[])[] = [
     "CREATE TABLE `bridge_send_files` (\n\t`send` text NOT NULL,\n\t`position` integer NOT NULL,\n\t`name` text NOT NULL,\n\t`contents` blob NOT NULL,\n\tPRIMARY KEY(`send`, `position`),\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action\n)",
     "CREATE TABLE `conversation_sessions` (\n\t`conversation` text NOT NULL,\n\t`harness` text NOT NULL,\n\t`session` text NOT NULL,\n\t`files` blob NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`started_at` text NOT NULL,\n\tPRIMARY KEY(`conversation`, `harness`),\n\tFOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"conversation_sessions_started_at_utc\" CHECK(\"conversation_sessions\".\"started_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"conversation_sessions\".\"started_at\") = \"conversation_sessions\".\"started_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"conversation_sessions\".\"started_at\") = \"conversation_sessions\".\"started_at\", 0))\n)",
   ],
+  // 12: old attempts have no observed counters. Only elapsed claim-to-end time and placement survive.
+  [
+    "CREATE TABLE `job_usage` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`tokens_in` integer,\n\t`tokens_out` integer,\n\t`cache_read` integer,\n\t`cache_written` integer,\n\t`model_calls` integer,\n\t`tool_calls` integer,\n\t`tools` text,\n\t`largest_context` integer,\n\t`wall_ms` integer,\n\t`harness` text,\n\t`model` text,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"job_usage_source_choice\" CHECK(\"job_usage\".\"source\" in ('report','transcript','none'))\n);",
+    `INSERT INTO job_usage (job, source, harness, model, wall_ms)
+     SELECT id, 'none', harness, model, max(0, round((julianday(ended_at) - julianday(claimed_at)) * 86400000))
+     FROM jobs WHERE state IN ('done', 'failed', 'lost', 'stopped')`,
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

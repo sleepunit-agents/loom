@@ -989,6 +989,23 @@ export const jobs = sqliteTable('jobs', {
   index('jobs_box_state_idx').on(t.box, t.state),
 ]);
 
+/** Counts for one attempt. An absent counter is unknown, including for jobs with no report. */
+export const jobUsage = sqliteTable('job_usage', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  source: text('source', {enum: ['report', 'transcript', 'none']}).notNull(),
+  tokensIn: integer('tokens_in'),
+  tokensOut: integer('tokens_out'),
+  cacheRead: integer('cache_read'),
+  cacheWritten: integer('cache_written'),
+  modelCalls: integer('model_calls'),
+  toolCalls: integer('tool_calls'),
+  tools: text('tools', {mode: 'json'}).$type<Record<string, number>>(),
+  largestContext: integer('largest_context'),
+  wallMs: integer('wall_ms'),
+  harness: text('harness'),
+  model: text('model'),
+}, t => [check('job_usage_source_choice', sql`${t.source} in ('report','transcript','none')`)]);
+
 /** What a job needs from a machine. */
 export const jobNeeds = sqliteTable('job_needs', {
   job: text('job').notNull().references((): AnySQLiteColumn => jobs.id),
@@ -1975,6 +1992,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = {
+  jobUsage,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {

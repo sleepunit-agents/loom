@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
-import { eq, notInArray } from 'drizzle-orm';
+import { eq, notInArray, sql } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
@@ -519,4 +519,18 @@ it('tells listeners of an admission only when it started a job or wrote a notice
   // Mail the job does not hold is not admitted, so the settled inbox keeps offering it.
   expect(admit({ kind: 'agent', id: 'art' }, f.db.select().from(inbox).all())).toBe(false);
   expect(changes).toBe(1);
+});
+
+it('records missing counters on a failed attempt and its stopped retry independently', () => {
+  const f = fixture();
+  f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker');
+  f.tick(51);
+  const retry = f.runtime.finish(job.id, 'worker', 1).retry!;
+  f.runtime.stop(retry.id, 'owner', 'reset');
+  expect(f.db.all(sql`select job, source, wall_ms, tokens_in from job_usage order by rowid`)).toEqual([
+    { job: job.id, source: 'none', wall_ms: 51, tokens_in: null },
+    { job: retry.id, source: 'none', wall_ms: null, tokens_in: null },
+  ]);
 });

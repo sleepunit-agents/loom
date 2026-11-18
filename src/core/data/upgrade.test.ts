@@ -56,6 +56,21 @@ describe('upgrading a household database', () => {
     expect(made.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: dataSchemaNumber });
   });
 
+  it('backfills ended attempts at step 12, keeping unknown counters absent and queued attempts pending', () => {
+    const old = household(11);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot')`);
+    const insert = old.prepare(`INSERT INTO jobs (id, agent, title, state, brief, model, started_by_kind, started_by, house_repository, house_file, house_branch, queued_at, claimed_at, ended_at)
+      VALUES (?, 'art', '', ?, '', 'model', 'agent', 'art', '', '', '', ?, ?, ?)`);
+    insert.run('ended', 'lost', at, at, '2026-11-15T00:00:00.071Z');
+    insert.run('stopped', 'stopped', at, null, at);
+    insert.run('queued', 'queued', at, null, null);
+    upgradeDataSchema(old);
+    expect(old.prepare('SELECT job, source, tokens_in, wall_ms FROM job_usage ORDER BY job').all()).toEqual([
+      { job: 'ended', source: 'none', tokens_in: null, wall_ms: 71 },
+      { job: 'stopped', source: 'none', tokens_in: null, wall_ms: null },
+    ]);
+  });
+
   it('rebuilds conversations in step 6 with every row and everything that points at them kept', () => {
     const old = household(5);
     old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');

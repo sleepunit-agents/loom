@@ -776,6 +776,7 @@ PLUMBING = [
  ("bridge_send_parts", "The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own."),
  ("bridge_file_messages", "Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once."),
  ("bridge_send_files", "The files a post carries, kept only until the post is sent, dismissed or left in doubt."),
+ ("job_usage", "Usage counters for one job attempt. Missing counters stay unknown. A report, a transcript, or neither supplied the counts."),
  ("conversation_sessions", "A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over."),
  ("secret_write_journal", "A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done."),
 ]

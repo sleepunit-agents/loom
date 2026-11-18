@@ -5,7 +5,7 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
@@ -444,6 +444,9 @@ export class Jobs {
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
+    const wallMs = job.claimedAt && ended.endedAt ? Math.max(0, Date.parse(ended.endedAt) - Date.parse(job.claimedAt)) : null;
+    this.db.insert(jobUsage).values({ job: job.id, source: 'none', harness: job.harness, model: job.model, wallMs })
+      .onConflictDoUpdate({ target: jobUsage.job, set: { wallMs: sql`coalesce(${wallMs}, ${jobUsage.wallMs})` } }).run();
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it. However the job ended, that
     // mail stays with this job and is never handed back as fresh: retry() gives it to a successor within
