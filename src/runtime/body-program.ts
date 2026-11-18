@@ -191,6 +191,10 @@ export async function bodyProgram(input: {
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(job.venue==='discord'&&job.venueDescription){
+      const where='Current conversation: '+job.venueDescription+'. This is your location for this turn, including when your Discord role page describes the server in general.';
+      context.unshift(where);continued.unshift(where);
+    }
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();

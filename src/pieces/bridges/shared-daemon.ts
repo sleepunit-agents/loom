@@ -237,9 +237,17 @@ export class SharedBridges {
     // under; a thread with no such message, or one that cannot be read, hangs under nobody's.
     const starter=row.platform==='discord'&&evidence&&(evidence.type===10||evidence.type===11)&&typeof evidence.parent_id==='string'?await api.starter(evidence.parent_id,id):undefined;
     if(!current())return;
+    let parentName: string | undefined;
+    if(row.platform==='discord'&&evidence&&[10,11,12].includes(Number(evidence.type))&&evidence.guild_id===row.workspace&&typeof evidence.parent_id==='string'){
+     parentName=this.channels.discord(row.id,evidence.parent_id)?.name;
+     if(!parentName){
+      const parent=await api.channel(evidence.parent_id);if(!current())return;
+      if(parent?.guild_id===row.workspace&&typeof parent.name==='string')parentName=parent.name;
+     }
+    }
     // Details this code cannot classify leave that one channel's events waiting. They must not stop the
     // pass: every other channel of the connection is still to be drained.
-    try{if(evidence)life.channels!.put(id,evidence,starter);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
+    try{if(evidence)life.channels!.put(id,evidence,starter,parentName);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
    }
    if(!current())return;
    const pendingFiles=new Map<string,SlackFilesPermit['files']>(),pendingDiscord=new Map<string,DiscordFile[]>();

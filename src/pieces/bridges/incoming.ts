@@ -15,11 +15,14 @@ import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations, lateMailWaits } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
-import { conversationPlace } from './place.js';
+import { conversationPlace, discordPlace } from './place.js';
 import { holds, inHousehold, rules } from '../../policy.js';
 import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
 import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+
+// A held receipt keeps the reason nobody received it and the routing fact Discord supplied.
+const BOT_MENTION_HELD = '; the message explicitly mentioned a bot';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -27,6 +30,9 @@ export interface IncomingMessage {
   connection: string;
   channel: string;
   parent?: string;
+  channelName?: string;
+  parentName?: string;
+  mentionsBot?: boolean;
   thread?: string;
   isDm: boolean;
   /** Authenticated channel kind; group DMs are not private to one sender. */
@@ -159,6 +165,10 @@ export class BridgeIncoming {
         if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
+      // An explicit bot mention takes precedence over the channel default, a reply, and the thread's starter.
+      else if (!message.isDm && message.mentionsBot && !message.mentions.includes(connection.botUser)) {
+        state = 'dropped'; reason = 'Another agent or no channel answer';
+      }
       // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
       // working, and not said to another agent: that job is ended and the message is nobody's mail. It is
       // acted on only as the message is first taken in, and only fresh (a held or late one is spent, above),
@@ -206,7 +216,11 @@ export class BridgeIncoming {
           // nobody in this household. A duplicate delivery (above) keeps its original recorded scope.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
           const place = conversationPlace(connection.workspace, message, member);
-          conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member, direct: message.isDm }).id;
+          const label = connection.platform === 'discord' ? discordPlace(message, member) : message.thread ?? message.channel;
+          const cv = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label, member, direct: message.isDm });
+          conversation = cv.id;
+          if (connection.platform === 'discord' && label !== cv.label && (cv.label === message.channel || (message.channelName && /^(Discord channel #|Discord thread #)/.test(cv.label))))
+            this.db.update(conversations).set({ label }).where(eq(conversations.id, cv.id)).run();
         }
         if (!delivered) {
           this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
@@ -214,6 +228,7 @@ export class BridgeIncoming {
         }
       }
       // A dropped message is never delivered or tried again, and nobody is shown it: it keeps no words.
+      if (state === 'held' && message.mentionsBot) reason += BOT_MENTION_HELD;
       return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null, ...(state === 'dropped' ? { text: '' } : {}) }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
   }
@@ -235,7 +250,7 @@ export class BridgeIncoming {
       const message = row && parseIncomingId(row.id, row.connection);
       if (!row || row.state !== 'held' || row.mentions === null || !message) return row;
       return this.receive({ id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
-        mentions: JSON.parse(row.mentions) as string[], bot: !!row.bot, webhook: !!row.webhook,
+        mentions: JSON.parse(row.mentions) as string[], mentionsBot: row.reason?.endsWith(BOT_MENTION_HELD), bot: !!row.bot, webhook: !!row.webhook,
         ...(row.thread === null ? {} : { thread: row.thread }), ...(row.parent === null ? {} : { parent: row.parent }),
         ...(row.repliesTo === null ? {} : { repliesTo: row.repliesTo }), ...(row.groupDm ? { groupDm: true } : {}) }, true, row.receivedAt);
     });

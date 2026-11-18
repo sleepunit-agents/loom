@@ -9,7 +9,7 @@ import type { BridgeChannelCache } from './receiver.js';
 import type { DiscordChannel, SlackChannel } from './normalize.js';
 
 const id = z.string().min(1).max(256);
-const discordEvidence = z.object({ id, type: z.number().int(), guild_id: id.nullish(), parent_id: id.nullish() });
+const discordEvidence = z.object({ id, type: z.number().int(), guild_id: id.nullish(), parent_id: id.nullish(), name: z.string().nullish() });
 const slackEvidence = z.object({ id, context_team_id: id.optional(), is_im: z.boolean().optional(), is_mpim: z.boolean().optional(), is_channel: z.boolean().optional(), is_group: z.boolean().optional() });
 type Binding = { platform: 'discord' | 'slack'; workspace: string };
 /** A role Discord made for a bot when it joined (`managed`, with the bot's id in its tags). */
@@ -38,7 +38,7 @@ export class BridgeChannels implements BridgeChannelCache {
        */
       /** `starter` is who wrote the message a Discord thread was started from, when the adapter could
        * read it (channel-api.ts): a thread under a bot's message addresses that bot (normalize.ts). */
-      put: (channel: string, evidence: unknown, starter?: string): boolean => {
+      put: (channel: string, evidence: unknown, starter?: string, parentName?: string): boolean => {
         if (!current()) return false;
         id.parse(channel);
         life.channels.delete(channel);
@@ -51,10 +51,10 @@ export class BridgeChannels implements BridgeChannelCache {
             value = { id: channel, kind: 'dm', ...(raw.type === 3 ? { group: true } : {}) };
           } else {
             if (raw.guild_id !== life.workspace) throw Error('Discord channel workspace mismatch');
-            if ([0, 5].includes(raw.type)) value = { id: channel, guild: life.workspace, kind: 'channel' };
+            if ([0, 5].includes(raw.type)) value = { id: channel, guild: life.workspace, kind: 'channel', ...(raw.name && { name: raw.name }) };
             else if ([10, 11, 12].includes(raw.type)) {
               if (!raw.parent_id || raw.parent_id === channel) throw Error('Discord thread needs a parent');
-              value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id, ...(starter !== undefined ? { starter: id.parse(starter) } : {}) };
+              value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id, ...(raw.name && { name: raw.name }), ...(parentName && { parentName }), ...(starter !== undefined ? { starter: id.parse(starter) } : {}) };
             } else {
               // Remembered, so its messages are set aside at once and nobody asks Discord about it again
               // (docs/accepted-tradeoffs.md, "Some Discord channels carry no conversation").

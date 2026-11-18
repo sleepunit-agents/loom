@@ -206,6 +206,7 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   new BridgeIncoming(f.db, f.now).receive({ id: 'm2', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Again', postedAt: f.now(), mentions: [] });
   const second = f.runtime.jobs.admit(incoming.conversation!)!, assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(second.id);
+  expect(assignment.venueDescription).toBe('Discord direct message with outside');
   expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: f.db.select().from(inbox).where(eq(inbox.job, second.id)).all().map(item => item.id).sort(), word: 'others' });
   // The message the ended job never answered was closed with it, and is not carried into this one.
   expect(assignment.run.policy!.mail).toHaveLength(1);

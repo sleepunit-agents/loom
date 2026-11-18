@@ -138,6 +138,14 @@ describe('shared-schema bridge ingress', () => {
     f.db.update(bridgeConnections).set({ enabled: true }).run();
     expect(f.ingress.retry('bi:["c","old"]')?.state).toBe('held');
   });
+  it('preserves a resolved third-party bot mention when a held receipt is retried', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ enabled: false }).run();
+    const held = f.ingress.receive({ ...f.message, mentions: ['outside-bot'], mentionsBot: true });
+    expect(held).toMatchObject({ state: 'held', mentions: '["outside-bot"]' });
+    f.db.update(bridgeConnections).set({ enabled: true }).run();
+    expect(f.ingress.retry(held.id)).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
+  });
   it('takes nothing from a stranger, in a shared place or a direct message, mentioned or not', () => {
     const f = fixture();
     for (const [id, more] of [['room', {}], ['mention', { mentions: ['bot-art'] }], ['reply', { repliesTo: 'bot-art' }], ['dm', { channel: 'direct', isDm: true }], ['group', { channel: 'group', isDm: true, groupDm: true }]] as const)

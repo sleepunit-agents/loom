@@ -14,7 +14,7 @@ const discordMessage = z.object({
   id, type: z.number().int(), channel_id: id, guild_id: id.optional(),
   author: z.object({ id, bot: z.boolean().optional() }),
   content: z.string(), timestamp: z.iso.datetime({ offset: true }),
-  mentions: z.array(z.object({ id })), webhook_id: id.optional(),
+  mentions: z.array(z.object({ id, bot: z.boolean().optional() })), webhook_id: id.optional(),
   // The roles the message pinged, as Discord resolved them.
   mention_roles: z.array(id).optional(),
   attachments: z.array(z.object({ filename: z.string(), size: z.number().int().nonnegative(), content_type: z.string().nullish(), url: z.string() }).passthrough()).optional(),
@@ -46,6 +46,8 @@ export interface DiscordChannel {
   kind: 'channel' | 'thread' | 'dm' | 'other';
   group?: boolean;
   parent?: string;
+  name?: string;
+  parentName?: string;
   /** A thread only: who wrote the message it was started from, when that is known. */
   starter?: string;
 }
@@ -90,13 +92,17 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
+  const mentions = discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles);
+  const knownBots = new Set([...botRoles.values(), ...message.mentions.filter(mention => mention.bot).map(mention => mention.id)]);
   return {
+    ...(mentions.some(id => knownBots.has(id)) && { mentionsBot: true }),
+    ...(channel.name && { channelName: channel.name }), ...(channel.parentName && { parentName: channel.parentName }),
     id: message.id, connection: connection.id, channel: message.channel_id,
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),
     ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
     isDm: channel.kind === 'dm', user: message.author.id, text: discordWords(message.content, message.attachments ?? []),
     postedAt: new Date(message.timestamp).toISOString(),
-    mentions: discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles),
+    mentions,
     // An explicit reply answers the author it points at. Any other message in a thread answers whoever
     // wrote the message the thread was started from, as a Slack thread reply answers its root.
     ...(message.type === 19 && message.referenced_message ? { repliesTo: message.referenced_message.author.id }

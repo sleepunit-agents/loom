@@ -148,6 +148,17 @@ it('replies to the last accepted matching bridge reference even when its words a
   const batch=await response.json(),first={...batch.value.items[0],source:'slack',refs:['bi:first']};batch.value.items=[first,{...first,id:'second',seq:2,words:null,refs:['bi:last']}];return Response.json(batch);
  }})).toBe(0);expect(f.native).toHaveBeenCalledWith(expect.anything(),expect.stringMatching(/\n\nPRIVATE MAIL$/),expect.any(AbortSignal));expect(f.calls.find(row=>row.path==='reply')?.body.input).toMatchObject({incoming:'bi:last',model:'observed'});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });
+it.each(['fresh','continued'])('tells a %s Discord body where this conversation is', async mode => {
+ const f=fixture(), value=JSON.parse(f.input.toString());
+ Object.assign(value.job,{venue:'discord',thread:null,venueDescription:'Discord direct message with Jonathan'});
+ f.native.mockResolvedValue({text:'Answer',model:'observed',actions:[]});
+ const sessions=mode==='continued'?{take:async()=>'session-1',save:async()=>{},discard:()=>{}}:undefined;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),sessions,fetch:async(url,options)=>{
+  const response=await f.options.fetch(url,options);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json();Object.assign(batch.value.items[0],{source:'discord',refs:['bi:first']});return Response.json(batch);
+ }})).toBe(0);
+ expect(f.native.mock.calls[0][1]).toContain('Current conversation: Discord direct message with Jonathan. This is your location for this turn');
+});
 it('passes retained question context with a short answer to native execution',async()=>{
  const f=fixture(),fetcher=f.options.fetch,question={words:'PRIVATE QUESTION',why:'PRIVATE WHY',ifYes:'PRIVATE YES',ifNo:'PRIVATE NO',link:null};
  const fetchWithContext=async(url:Parameters<typeof fetcher>[0],init?:Parameters<typeof fetcher>[1])=>{

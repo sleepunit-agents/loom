@@ -3,7 +3,7 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
-import { jobRoom, othersMail } from '../shared-place-mail.js';
+import { describePlace, jobRoom, othersMail } from '../shared-place-mail.js';
 import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
@@ -73,8 +73,9 @@ export class Dispatcher {
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
         const thread = this.currentThread(claimed);
         if(thread)new Threads(this.db,this.now,lateMailWaits).working(thread.id,true);
-        const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
-        return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        const cv=claimed.conversation?this.db.select().from(conversations).where(eq(conversations.id,claimed.conversation)).get():undefined;
+        const venue=cv?.venue;
+        return { venue:venue??null, ...(cv?.venue==='discord' && { venueDescription: describePlace(this.db, cv) }), thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };

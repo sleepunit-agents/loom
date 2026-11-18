@@ -7,7 +7,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { eq } from 'drizzle-orm';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
+import { conversations, members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { STOP_WORD } from './incoming.js';
 import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
@@ -75,6 +75,30 @@ it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own 
   f.db.insert(bridgeConnections).values({ id: 'marks', platform: 'discord', workspace: guild, botUser: mark, agent: 'mark', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: new Date(f.clock.now()).toISOString() }).run();
   expect(await f.say({ content: `<@&${markRole}> yours`, mention_roles: [markRole] })).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
   expect(f.calls.filter(call => call.path === `guilds/${guild}/roles`)).toHaveLength(1);
+});
+
+it('describes a direct message, named channel and thread where the conversation is opened', async () => {
+  const f = discordFixture(); await f.start();
+  const dm = '700000000000000010', thread = '700000000000000011';
+  f.answers.set(`GET channels/${dm}`, { id: dm, type: 1 });
+  f.answers.set(`GET channels/${room}`, { id: room, guild_id: guild, type: 0, name: 'pond' });
+  f.answers.set(`GET channels/${thread}`, { id: thread, guild_id: guild, type: 11, parent_id: room, name: 'otters' });
+  const addressed = { content: `<@${bot}> hello`, mentions: [{ id: bot }] };
+  const label = async (data: Record<string, unknown>) => {
+    const row = await f.say({ ...addressed, ...data });
+    return f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get()?.label;
+  };
+  expect(await label({ guild_id: undefined, channel_id: dm })).toBe('Discord direct message with owner');
+  expect(await label({ channel_id: thread })).toBe('Discord thread #otters under #pond');
+  expect(await label({ channel_id: room })).toBe('Discord channel #pond');
+});
+
+it('leaves a ping of another bot alone even when that bot has no loom connection', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  expect(await f.say({ content: `<@&${markRole}> yours`, mention_roles: [markRole] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${mark}> yours`, mentions: [{ id: mark, bot: true }] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${person}> hello`, mentions: [{ id: person }] })).toMatchObject({ state: 'delivered' });
 });
 
 it('connects and takes mentions when the roles cannot be read; a role ping is then nobody\'s', async () => {
