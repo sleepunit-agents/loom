@@ -38,7 +38,7 @@ export class Dispatcher {
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
   next(box: string, facts?: readonly string[], ended?: string[], slots?: number) {
-    this.machines.heartbeat(box, facts, slots);
+    this.machines.heartbeat(box, facts, slots ?? null);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       if (machine.reportOnly) return;

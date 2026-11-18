@@ -13,7 +13,7 @@ const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastS
 export class Machines {
   constructor(readonly db: DataDatabase, readonly now: () => string) {}
 
-  heartbeat(id: string, facts?: readonly string[], slots?: number): Box {
+  heartbeat(id: string, facts?: readonly string[], slots?: number | null): Box {
     const reported = facts === undefined ? undefined : machineFacts.parse(facts);
     return this.db.transaction(() => {
       const box = this.db.select().from(boxes).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).get();

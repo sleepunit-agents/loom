@@ -260,6 +260,16 @@ it('reports local worker facts through default HTTP and uses them in the same po
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.slots).toBe(1);
   expect(f.db.select().from(boxFacts).all().sort((a,b) => (a.box+a.fact).localeCompare(b.box+b.fact))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'gpu:5090', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
 });
+it('forgets prior reported capacity when an older worker replaces the reporter', async () => {
+  const f = fixture();
+  const slots = () => f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.slots;
+  for (const operation of ['health', 'next']) {
+    expect((await f.call('health', { slots: 4 }, 'reported-'+operation)).status).toBe(200);
+    expect(slots()).toBe(4);
+    expect((await f.call(operation, {}, 'legacy-'+operation)).status).toBe(200);
+    expect(slots()).toBeNull();
+  }
+});
 it('rolls machine facts and health back with a failed poll receipt and refuses replay', async () => {
   const f = fixture(), job = f.send(); f.db.insert(jobNeeds).values({ job: job.id, need: 'after' }).run(); f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run(); const health = f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt;
   f.clock.advance(1000);
