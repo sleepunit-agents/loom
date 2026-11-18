@@ -534,3 +534,12 @@ it('records missing counters on a failed attempt and its stopped retry independe
     { job: retry.id, source: 'none', wall_ms: null, tokens_in: null },
   ]);
 });
+
+it('rolls back a standalone unplaceable transition when its usage row cannot be written', () => {
+  const f = fixture();
+  f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  f.db.$client.exec("CREATE TRIGGER reject_usage BEFORE INSERT ON job_usage BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+  expect(() => f.runtime.unplaceable(job.id, 'fixture')).toThrow('fixture');
+  expect(f.runtime.get(job.id).state).toBe('queued');
+});

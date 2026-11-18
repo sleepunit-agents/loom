@@ -434,12 +434,14 @@ export class Jobs {
    * later message in the conversation. The rest of its mail waits as before, for that next job. Whether a
    * job is such a one, and which mail makes it so, is the dispatcher's to say (Dispatcher.next). */
   unplaceable(id: string, note: string, settle: readonly string[] = []): Job | undefined {
-    const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
-    if (!job || job.state !== 'queued') return undefined;
-    const ended = this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
-    for (const item of this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).all())
-      if (settle.includes(item.id)) this.mail.resolveItem(item.id, note);
-    return ended;
+    return this.db.transaction(() => {
+      const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
+      if (!job || job.state !== 'queued') return undefined;
+      const ended = this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: note });
+      for (const item of this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).all())
+        if (settle.includes(item.id)) this.mail.resolveItem(item.id, note);
+      return ended;
+    }, { behavior: 'immediate' });
   }
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
