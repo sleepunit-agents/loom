@@ -382,7 +382,7 @@ describe('upgrading a household database', () => {
       expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(dataSchemaShape(pinned));
       if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
     }
-  });
+  }, 120_000); // every start to every later number: the pairs grow with each schema number, and 13 of them pass 20 seconds on a loaded runner
 
   it('recognises a readable household without opening it for writing', () => {
     const old = household(2), before = everything(old);
