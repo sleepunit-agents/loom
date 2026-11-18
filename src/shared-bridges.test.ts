@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {approvals,agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -13,10 +13,9 @@ import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
-import {triggerLog} from './core/data/schema.js';
-import {WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
-import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,WORD_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
+import {CHAIN_NOTICE_EVERY,NOTES_NOTICE_EVERY,PLACE_TRIGGERS_NOTICE_EVERY,PRIVATE_PLACE_REFUSAL} from './shared-place-mail.js';
+import {SCHEDULE_ASKED,WOKEN_BY_MAIL_REFUSAL,WORD_EVENT_REFUSAL,WORD_PART_REFUSAL} from './shared-place-triggers.js';
+import {RUN_NOW_REFUSAL,WORD_ASKER_REFUSAL,WORD_FILE_REFUSAL,repeats} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,jobRoom,reportsTo,placeClosed,selfHandoff} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
@@ -383,10 +382,15 @@ async function sharedPlace(effects:()=>boolean=()=>true){
  const work=(conversation:string,from:{kind:'person'|'unknown';id?:string}[])=>f.root.writes.run(()=>{
   f.db.update(inbox).set({job:null}).where(eq(inbox.job,'other')).run();f.db.update(jobs).set({conversation}).where(eq(jobs.id,'other')).run();
   from.forEach((who,index)=>{const item=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',sourceId:randomUUID()+index,fromKind:who.kind,fromId:who.id,words:'Go on'});f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,item.id)).run();});});
- return {f,incoming,cv,once,work};
+ /** The card that waits for an owner about this trigger, and an owner's answer to it. */
+ const card=(trigger:string)=>f.db.select().from(approvals).all().filter(row=>row.target===`household:placeSchedule:${trigger}`).at(-1);
+ const answer=(trigger:string,answer:'allow'|'deny')=>f.call('approvals','answer',{id:card(trigger)!.id,answer},token.owner);
+ /** A repeating trigger the guest's body asks for and an owner allows: the only way one comes to stand on a guest's word. */
+ const allowed=async(trigger:{id:string})=>{expect(await f.call('tempo','set',trigger)).toMatchObject({status:200,body:{value:{id:trigger.id,waits:SCHEDULE_ASKED}}});expect((await answer(trigger.id,'allow')).status).toBe(200);};
+ return {f,incoming,cv,once,work,card,answer,allowed};
 }
 it('lets a shared place\'s body set a trigger that names its own conversation, records who asked, and holds it to that conversation and to the bounds',async()=>{
- const {f,cv,once}=await sharedPlace();
+ const {f,cv,once,allowed,answer}=await sharedPlace();
  const mine=once();
  expect((await f.call('tempo','set',mine)).status).toBe(200);
  // The asker is the person whose message started the job: here the guest, by the account loom knows them by.
@@ -397,12 +401,12 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  for(const other of [{conversation:undefined},{conversation:elsewhere}])expect(await f.call('tempo','set',once(other))).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
  // What is named must be a bridge conversation of the agent the trigger puts to work.
  expect((await f.call('tempo','set',once({conversation:'cv-none'}),token.other)).status).toBe(400);
- // From a shared place a repeating one comes no more often than hourly, at listed times; a rewording is held to the same.
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
- const hourly=once({lifespan:'until-stopped',times:'09:00,10:00'});expect((await f.call('tempo','set',hourly)).status).toBe(200);
- expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:WORD_REPEAT_REFUSAL}});
- expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the shared place'})).status).toBe(200);
+ // A repeating one is an owner's to allow (the test below); allowed, it stands on the guest's word.
+ // How often it repeats is refused by no number: ten minutes apart is asked of the owners like any other.
+ const hourly=once({lifespan:'until-stopped',times:'09:00,09:10'});await allowed(hourly);
+ expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the shared place'})).toMatchObject({status:200,body:{value:{saved:false,waits:SCHEDULE_ASKED}}});
+ expect((await answer(hourly.id,'allow')).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,hourly.id)).get()).toMatchObject({times:'09:00,11:00',instructions:'Reworded in the shared place',askedByKind:'outside',askedBy:GUEST});
  // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
  const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
  for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(action==='runNow'?403:200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});}
@@ -423,7 +427,6 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  // From a shared place a trigger carries words, never a file of the household's repository, and watches no event.
  expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
  expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
- expect(repeatsTooOften({times:'09:00',lifespan:'until-stopped'})).toBe(false);expect(repeatsTooOften({times:'09:00,09:59',lifespan:'until-stopped'})).toBe(true);
  // No number of schedules is refused for one conversation, whoever sets them. The agent's people are told when ten
  // stand, and at each further ten: loud, not a stop.
  expect(PLACE_TRIGGERS_NOTICE_EVERY).toBe(10);
@@ -445,6 +448,71 @@ it('lets a shared place\'s body set a trigger that names its own conversation, r
  // Nobody loom can name is ever the asker: with the sender of the job's mail unknowable, the body sets nothing.
  f.root.writes.run(()=>{f.db.update(triggers).set({enabled:false,state:'stopped'}).where(eq(triggers.id,own.id)).run();f.db.delete(inboxRefs).run();});
  expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:'Nobody loom knows asked for this'}});
+});
+it('sends a repeating schedule asked for on anybody else\'s word to the owners as a card, and sets or changes it only when an owner allows',async()=>{
+ const {f,cv,once,card,answer}=await sharedPlace();
+ const rows=()=>f.db.select().from(triggers).all(),row=(id:string)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get();
+ // A body coming back to its own work sets a one-time trigger any time, with no owner asked.
+ const comeBack=once();expect(await f.call('tempo','set',comeBack)).toEqual({status:200,body:expect.objectContaining({value:{id:comeBack.id}})});
+ expect(f.db.select().from(approvals).all()).toEqual([]);
+ // The guest wants a schedule set up. Nothing is set: the body is told in plain words that the owners were asked.
+ const daily=once({lifespan:'until-stopped',times:'09:00,09:30',days:'weekdays',note:'Daily numbers for Dana',instructions:'Post the numbers, then say hello'});
+ expect(await f.call('tempo','set',daily)).toMatchObject({status:200,body:{value:{id:daily.id,waits:SCHEDULE_ASKED}}});
+ expect(rows().map(trigger=>trigger.id)).toEqual([comeBack.id]);
+ // The card is a household card from this conversation. It shows who asked, where, the times, and the note and words in full.
+ expect(card(daily.id)).toMatchObject({kind:'setting',operation:'household.change',state:'pending',agent:'art',conversation:cv,askedFrom:cv,actingFor:'unknown'});
+ expect(card(daily.id)!.what).toBe(`Set a repeating schedule for art in conversation ${cv} (slack channel CROOM, thread 1794432000.000001), asked for there by the outside account ${GUEST}, who is not one of art's owners. Times: 09:00,09:30, on weekdays, until it is stopped. `
+  +`Its note, in the words of the body that asked and not loom's: "Daily numbers for Dana". What each firing tells the body, in the same body's words: "Post the numbers, then say hello".`);
+ expect(card(daily.id)!.why).toBe(`the outside account ${GUEST} asked art for this in slack channel CROOM, thread 1794432000.000001. They are not one of art's owners, so loom asks you first.`);
+ // What the owner is asked, and what the answer says, is loom's alone: the answer is mail to the agent on the owner's word, and carries no word of the body's.
+ for(const line of [card(daily.id)!.ask,card(daily.id)!.ifYes,card(daily.id)!.ifNo]){expect(line).not.toContain('Dana');expect(line).not.toContain('hello');}
+ expect(card(daily.id)!.ask).toBe(`Set a repeating schedule for art in conversation ${cv}, asked for by the outside account ${GUEST}?`);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'approval')).all()).toMatchObject([{toKind:'person',to:'owner',waitsOnId:card(daily.id)!.id}]);
+ // No standing rule answers such a card, not even filed as if from an owner's own thread under a rule for every setting.
+ f.root.writes.run(()=>f.root.services.setup.rule({kind:'setting',scope:'household:*',person:'',tier:'do'},'owner'));
+ const same={...JSON.parse(card(daily.id)!.details).after,trigger:{...JSON.parse(card(daily.id)!.details).after.trigger,id:'tr-as-if'}};
+ expect(f.root.writes.run(()=>f.root.services.setup.propose('art',{change:'placeSchedule',input:same,why:'As if from the owner\'s thread'},{conversation:cv,member:'owner',project:null})).value).toMatchObject({state:'pending'});
+ expect((await answer('tr-as-if','deny')).status).toBe(200);
+ const second=once({lifespan:'today',times:'23:58,23:59'});expect(await f.call('tempo','set',second)).toMatchObject({status:200,body:{value:{waits:SCHEDULE_ASKED}}});
+ expect(card(second.id)).toMatchObject({state:'pending'});expect(card(second.id)!.what).toContain('today only');
+ // Denied, nothing is made.
+ expect((await answer(second.id,'deny')).status).toBe(200);expect(rows().map(trigger=>trigger.id)).toEqual([comeBack.id]);
+ // Allowed, the trigger is made with the person who asked as its asker, exactly as the door would have made it.
+ expect((await answer(daily.id,'allow')).status).toBe(200);
+ expect(row(daily.id)).toMatchObject({conversation:cv,ownerKind:'agent',owner:'art',member:null,toKind:'agent',to:'art',sourceKind:'time',times:'09:00,09:30',days:'weekdays',lifespan:'until-stopped',
+  note:'Daily numbers for Dana',instructions:'Post the numbers, then say hello',file:null,askedByKind:'outside',askedBy:GUEST,enabled:true,state:'standing'});
+ expect(card(daily.id)).toMatchObject({state:'used',decidedBy:'owner'});
+ // A change of times that makes a one-time trigger repeat is asked the same way, and so is any change to one that repeats.
+ const dated=once({lifespan:'until-stopped'});expect(await f.call('tempo','set',dated)).toEqual({status:200,body:expect.objectContaining({value:{id:dated.id}})});
+ expect(await f.call('tempo','edit',{id:dated.id,times:'08:00,20:00'})).toMatchObject({status:200,body:{value:{saved:false,waits:SCHEDULE_ASKED}}});
+ expect(row(dated.id)).toMatchObject({times:dated.times});
+ expect(card(dated.id)!.what).toBe(`Change schedule ${dated.id} of art in conversation ${cv} (slack channel CROOM, thread 1794432000.000001), asked for there by the outside account ${GUEST}, who is not one of art's owners. It repeats once changed. `
+  +`Changed, with the note and words in the words of the body that asked and not loom's: times 08:00,20:00.`);
+ expect((await answer(dated.id,'allow')).status).toBe(200);expect(row(dated.id)).toMatchObject({times:'08:00,20:00',askedByKind:'outside',askedBy:GUEST});
+ expect(await f.call('tempo','edit',{id:daily.id,instructions:'Post something else entirely'})).toMatchObject({status:200,body:{value:{saved:false}}});
+ expect(card(daily.id)!.what).toContain('what each firing tells the body "Post something else entirely"');
+ expect((await answer(daily.id,'deny')).status).toBe(200);expect(row(daily.id)).toMatchObject({instructions:'Post the numbers, then say hello'});
+ // A change that leaves a trigger one-time, and stopping one, ask nobody.
+ expect(await f.call('tempo','edit',{id:comeBack.id,instructions:'Look again'})).toMatchObject({status:200,body:{value:{saved:true}}});
+ expect((await f.call('tempo','stop',{id:daily.id})).status).toBe(200);
+ // The other rules stand before any card: a file, an event and another conversation are refused, and no card is filed.
+ const before=f.db.select().from(approvals).all().length;
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00',instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:WORD_FILE_REFUSAL}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00',conversation:undefined}))).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'25:00'}))).toMatchObject({status:400});
+ expect(f.db.select().from(approvals).all()).toHaveLength(before);
+ // Nobody proposes such a card: who asked is loom's to say. The agent itself, outside any job, is refused by the door.
+ expect((await f.call('household','propose',{change:'placeSchedule',input:{action:'set',agent:'art',conversation:cv,place:'anywhere',asker:{kind:'member',id:'owner'},trigger:once({lifespan:'until-stopped',times:'09:00'})},why:'The owner asked'},token.other)).status).toBe(400);
+ expect(f.db.select().from(approvals).all()).toHaveLength(before);
+ // An owner's answer comes too late for somebody the agent no longer knows: Allow is refused in plain words, and nothing is set.
+ const late=once({lifespan:'until-stopped',times:'07:00'});expect((await f.call('tempo','set',late)).status).toBe(200);
+ f.root.writes.run(()=>f.db.delete(agentPeople).run());
+ expect(await answer(late.id,'allow')).toMatchObject({body:{ok:false,message:`the outside account ${GUEST}, who asked for it, is no longer known to art`}});
+ expect(row(late.id)).toBeUndefined();expect(card(late.id)).toMatchObject({state:'pending'});
+ // A job working for the agent's owners, there or anywhere, sets a repeating one itself as before.
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
+ const owners=once({lifespan:'until-stopped',times:'09:00,09:30'});expect(await f.call('tempo','set',owners)).toEqual({status:200,body:expect.objectContaining({value:{id:owners.id}})});
+ expect(row(owners.id)).toMatchObject({askedByKind:'member',askedBy:'owner'});
 });
 it('fires such a trigger as mail from the schedule in its conversation, on its asker\'s word, and answers by a post there',async()=>{
  const {f,cv,once}=await sharedPlace(()=>false);
@@ -478,10 +546,10 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
 });
 it('stops such a trigger, with one notice, when its asker is no longer known or its conversation cannot be posted to',async()=>{
- const {f,once}=await sharedPlace();
+ const {f,once,allowed}=await sharedPlace();
  const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('place-trigger-stopped:'));
  const asked=once({lifespan:'until-stopped',times:'09:00'}),closed=once({lifespan:'until-stopped',times:'10:00'});
- for(const trigger of [asked,closed])expect((await f.call('tempo','set',trigger)).status).toBe(200);
+ for(const trigger of [asked,closed])await allowed(trigger);
  // A removed channel rule alone stops nothing: a mention there would still wake the agent.
  f.root.writes.run(()=>f.db.delete(bridgeChannels).run());
  expect((await f.call('tempo','runNow',{id:asked.id},token.other)).status).toBe(200);
@@ -947,14 +1015,15 @@ it('holds a shared place\'s body to the shared-place bounds only when it works f
  f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'kim',agent:'art'}]).run();});
  const elsewhere=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','COTHER',null]),label:'other'}).id;
  const mail=f.db.select().from(inbox).all().find(item=>item.job==='body')!.id;
- // The four a guest-woken body there is refused, and one that watches an event.
- const asks=():[string,ReturnType<typeof once>,string][]=>[
-  ['half-hourly',once({lifespan:'until-stopped',times:'09:00,09:30'}),WORD_REPEAT_REFUSAL],
+ // The three a guest-woken body there is refused, one that watches an event, and a repeating one, which is asked of
+ // the owners and not set.
+ const asks=():[string,ReturnType<typeof once>,string|undefined][]=>[
+  ['half-hourly',once({lifespan:'until-stopped',times:'09:00,09:30'}),undefined],
   ['a file',once({instructions:undefined,file:'lanes/numbers.md'}),WORD_FILE_REFUSAL],
   ['another conversation',once({conversation:elsewhere}),SHARED_PLACE_LINE],
   ['an ordinary wake',once({conversation:undefined}),SHARED_PLACE_LINE],
   ['an event',once({sourceKind:'answer',watches:`question:${mail}`,times:undefined,lifespan:'until-stopped'}),WORD_EVENT_REFUSAL]];
- for(const [name,trigger,message] of asks())expect(await f.call('tempo','set',trigger),name).toMatchObject({status:403,body:{message}});
+ for(const [name,trigger,message] of asks())expect(await f.call('tempo','set',trigger),name).toMatchObject(message?{status:403,body:{message}}:{status:200,body:{value:{waits:SCHEDULE_ASKED}}});
  expect(f.db.select().from(triggers).all()).toEqual([]);
  // The line is true wherever it is shown: it speaks of whose word the job is on, not of where the body sits.
  expect(SHARED_PLACE_LINE).toBe('This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.');
@@ -1030,12 +1099,11 @@ it('delivers mail into one member\'s private conversation only on that member\'s
 });
 it('ends a loop of firings on a guest\'s word: a job a firing or a note woke schedules nothing, and such firings into one conversation come an hour apart',async()=>{
  const {f,cv,once}=await sharedPlace();
- expect(WORD_REPEAT_MIN_MS).toBe(3_600_000);
+ expect(repeats({times:'09:00',lifespan:'until-stopped'})).toBe(true);expect(repeats({times:'09:00,09:01',lifespan:'once'})).toBe(false);expect(repeats({times:'2026-12-01T09:00:00Z',lifespan:'until-stopped'})).toBe(false);expect(repeats({times:'09:00,10:00',lifespan:'today'})).toBe(true);
  const mine=once(),second=once();for(const trigger of [mine,second])expect((await f.call('tempo','set',trigger)).status).toBe(200);
  const fired=()=>f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all(),row=(id:string)=>f.db.select().from(triggers).where(eq(triggers.id,id)).get()!;
  // The first fires, and its firing is the job's mail.
  expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);expect(fired()).toHaveLength(1);
- const first=new Date(f.clock.now()).toISOString();
  f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.source,'slack')).run();f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.source,'trigger')).run();});
  // The two ways round the hourly rule: move a trigger to a minute ahead, or set a fresh one a minute ahead each time. Neither, nor a start or a run.
  const soon=new Date(f.clock.now()+60_000).toISOString();
@@ -1046,20 +1114,12 @@ it('ends a loop of firings on a guest\'s word: a job a firing or a note woke sch
  expect(row(second.id)).toMatchObject({times:second.times,instructions:'Post the numbers'});
  // It may still stop what the same person asked for.
  expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);
- // With the doors out of the way (the row moved to a minute ahead, as the edit would leave it), the firing itself
- // holds: a second firing on the guest's word inside the hour is not delivered and not lost. It is put off to the hour.
+ // No firing is held back for how soon it follows another: a second on the guest's word a minute later is delivered
+ // at its time (the row moved to a minute ahead, as the edit would leave it).
  f.root.writes.run(()=>f.db.update(triggers).set({times:soon,nextDueAt:soon}).where(eq(triggers.id,second.id)).run());
  f.clock.advance(60_000);f.root.services.tempo.triggers.tick();
- const mark=new Date(Date.parse(first)+WORD_REPEAT_MIN_MS).toISOString();
- expect(fired()).toHaveLength(1);expect(row(second.id)).toMatchObject({enabled:true,state:'standing',nextDueAt:mark,lastFiredAt:null});
- // Fired again by hand meanwhile, it is the one put-off firing still.
- expect((await f.call('tempo','runNow',{id:second.id},token.other)).status).toBe(200);
- expect(fired()).toHaveLength(1);expect(row(second.id).nextDueAt).toBe(mark);
- expect(f.db.select().from(triggerLog).all().filter(log=>log.trigger===second.id&&log.event==='put off')).toMatchObject([{note:mark}]);
- // At the hour it is delivered, once.
- f.clock.advance(WORD_REPEAT_MIN_MS);
- expect(fired()).toHaveLength(2);expect(row(second.id)).toMatchObject({enabled:false,state:'fired'});
- // An owner's trigger there is held to no hour.
+ expect(fired()).toHaveLength(2);expect(row(second.id)).toMatchObject({enabled:false,state:'fired',lastFiredAt:soon});
+ // An owner's trigger there fires as before.
  f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
  const owners=once({ownerKind:'member',owner:'owner'});expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);
  expect((await f.call('tempo','runNow',{id:owners.id},token.owner)).status).toBe(200);expect(fired()).toHaveLength(3);

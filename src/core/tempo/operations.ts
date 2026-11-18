@@ -11,7 +11,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked } from './triggers.js';
+import { triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
@@ -28,6 +28,10 @@ export interface TempoOperationOptions {
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
   wordRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null; instructions?: string | null; note?: string }): string | undefined;
+  /** When what this caller asks is an owner's to allow first (src/shared-place-triggers.ts, ownersFirst): the
+   * composition has asked them, and nothing is set or changed here. `waits` is what the caller is told, and `card`
+   * the approval that waits. Asked after `wordRefusal`. Nothing for anything the caller may do itself. */
+  ownersFirst?(viewer: Viewer, ask: { action: 'set'; trigger: NewTrigger } | { action: 'edit'; trigger: Trigger; change: TriggerEdit }): { id: string; card: string; waits: string } | undefined;
   /** Told once a trigger has come to stand, set or turned back on, in the same write: for the notice a
    * conversation with many standing raises. It refuses nothing. */
   stood?(trigger: { id: string; conversation?: string | null }): void;
@@ -38,6 +42,8 @@ export interface TempoOperationOptions {
 }
 const id = z.object({ id: z.string().min(1) }).strict();
 const saved = z.object({ saved: z.literal(true) }).strict();
+/** `waits`: nothing was set or changed, and why, in words for the caller (an owner is asked first). */
+const waits = z.string().optional();
 
 export function registerTempoOperations(operations: Operations, db: DataDatabase,
   tempo: ReturnType<typeof createTempo>, options: TempoOperationOptions): void {
@@ -51,10 +57,12 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
     return !!trigger && options.authorize(viewer, { action, trigger });
   };
-  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
+  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string(), waits }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
     run(ctx, trigger) {
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
+      const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
+      if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { id: first.id, waits: first.waits }; }
       const as = options.recorded?.(ctx.viewer, trigger) ?? { trigger };
       const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
@@ -70,12 +78,14 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1) }).strict(), output: saved,
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1) }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
     may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
     run(ctx, { id: target, ...change }) {
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);
       if (refused) throw new OperationError('denied', refused);
+      const first = stored && options.ownersFirst?.(ctx.viewer, { action: 'edit', trigger: stored, change });
+      if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { saved: false, waits: first.waits }; }
       tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id }, stored ? options.reasked?.(ctx.viewer, stored, change) : undefined);
       ctx.changed('triggers', target); ctx.changed('triggerEdits', target); return { saved: true };
     },

@@ -25,10 +25,6 @@ export const targetPostable = (to: { platform: 'discord' | 'slack'; channel: str
 /** Each time this many more triggers stand at once naming one conversation, the agent's people are told
  * (shared-place-triggers.ts, placeCrowded). It refuses nothing, for anybody. */
 export const PLACE_TRIGGERS_NOTICE_EVERY = 10;
-/** The hour, said once: the least time between two listed times of a repeating trigger set on the word of
- * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
- * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */
-export const WORD_REPEAT_MIN_MS = 3_600_000;
 /** Each time one job on the word of anybody but owners has handed this many more notes, briefs to a peer agent counted with
  * them, the agent's people are told (selfHandoff, handed). It refuses nothing: each note may open a conversation and
  * start a job, so a job that hands many is made loud, not stopped. A job working for owners, and the agent's own

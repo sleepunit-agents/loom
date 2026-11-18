@@ -44,9 +44,8 @@ export type TriggerAsked = { id?: string; conversation?: string | null; times?: 
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
-  /** `stop`: the trigger can no longer fire and is stopped with this firing. `putOff`: nothing was delivered,
-   * and the firing is due again at that time. */
-  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop' | { putOff: string };
+  /** `stop`: the trigger can no longer fire and is stopped with this firing. */
+  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop';
   operation(name: string, trigger: Trigger, deliveryId: string): void;
   /** Whether an operation target names something this program can run. Checked when a trigger is set. */
   knows?(name: string): boolean;
@@ -364,13 +363,6 @@ export class TriggerEngine {
           // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
           const did = this.effects.inbox(t, delivery, words);
           if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
-          // Put off: the trigger stays as it stood and is due at that time, whichever of its times or a firing by
-          // hand this was. Put off again before then, it is the one firing still, and is logged once.
-          else if (did) {
-            if (t.nextDueAt !== did.putOff) this.log(t.id, 'put off', did.putOff);
-            this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', nextDueAt: did.putOff, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
-            return;
-          }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
         this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();

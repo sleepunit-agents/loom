@@ -1,25 +1,18 @@
 /** A trigger that names a conversation (`triggers.conversation`): its firing is mail from the schedule in
  * that Discord or Slack conversation, starting a job there like any message, on the word of whoever asked
  * for it. Set, bounded and fired by the rules here; who may is policy.ts's (maySetTrigger, maySchedule). */
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
-import { editsWords, type NewTrigger, type Trigger, type TriggerAsked } from './core/tempo/triggers.js';
-import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type Viewer } from './policy.js';
-import { PRIVATE_PLACE_REFUSAL, WORD_REPEAT_MIN_MS, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
+import { z } from 'zod';
+import { editsWords, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit, type TriggerEngine } from './core/tempo/triggers.js';
+import { nextTime } from './core/tempo/calendar.js';
+import { householdTimezone } from './core/data/household-settings.js';
+import { WORD_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, type Asker, type OnWord, type Viewer } from './policy.js';
+import { PRIVATE_PLACE_REFUSAL, PLACE_TRIGGERS_NOTICE_EVERY, isBridgeVenue, jobWord, named, placeAddress, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
-export const WORD_REPEAT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners repeats no more often than once an hour, and only at listed times.';
-
-/** Whether listed times come closer together than the least a trigger set on the word of anybody but owners may repeat at. One time, and one date, never do. */
-export function repeatsTooOften(trigger: { times?: string | null; lifespan?: string }): boolean {
-  const times = trigger.times ?? '';
-  if (/^\d{4}-/.test(times) || trigger.lifespan === 'once') return false;
-  const minutes = [...new Set(times.split(',').map(part => part.trim()).filter(Boolean).map(part => { const [h, m] = part.split(':').map(Number); return h * 60 + m; }))].sort((a, b) => a - b);
-  return minutes.some((at, index) => index > 0 && (at - minutes[index - 1]) * 60_000 < WORD_REPEAT_MIN_MS)
-    || (minutes.length > 1 && (minutes[0] + 1440 - minutes[minutes.length - 1]) * 60_000 < WORD_REPEAT_MIN_MS);
-}
 /** Why a body working for anybody but owners may not make this change to a trigger it may otherwise touch (one naming its own conversation). */
 export const WORD_FILE_REFUSAL = 'A schedule set or reworded by a job that is not working for the agent\'s owners carries its own words, never a file.';
 export const WORD_ASKER_REFUSAL = 'Somebody else asked for this schedule: only they, or somebody the agent works for, may change, stop, start or run it.';
@@ -33,7 +26,8 @@ export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it doe
  * owners, and the agent's own work, is held to nothing else here, in a shared place as anywhere. A job
  * on anybody else's word touches only what fires into the shared place it is working in (policy.ts,
  * maySchedule), fires nothing by hand, keeps to triggers the same person asked for, names no file, and
- * sets or moves one only to listed times an hour apart. */
+ * sets one only for listed times. How often one repeats is refused by no number: a repeating one is an
+ * owner's to allow (ownersFirst). */
 export function wordRefusal(db: DataDatabase, work: Work | undefined, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null }): string | undefined {
   if (!work) return undefined;
   const word = jobWord(db, work.job), stored = action !== 'set';
@@ -54,10 +48,83 @@ export function wordRefusal(db: DataDatabase, work: Work | undefined, action: 's
   if (stored && !(word.person && word.person.kind === trigger.askedByKind && word.person.id === trigger.askedBy)) return WORD_ASKER_REFUSAL;
   // Words only: a file is the household repository's, and what it says is not this body's to bring into the conversation.
   if (action === 'edit' ? change?.file != null : action === 'set' && trigger.file != null) return WORD_FILE_REFUSAL;
-  // How often it repeats is asked when it is set and when its times change, and never to stop, start or reword one.
-  if (action === 'set' && trigger.sourceKind !== undefined && trigger.sourceKind !== 'time') return WORD_EVENT_REFUSAL;
-  if (action === 'set') return repeatsTooOften(trigger) ? WORD_REPEAT_REFUSAL : undefined;
-  return action === 'edit' && change?.times !== undefined && repeatsTooOften({ ...trigger, times: change.times }) ? WORD_REPEAT_REFUSAL : undefined;
+  // Listed times only: nobody but owners sets a trigger that watches an event.
+  return action === 'set' && trigger.sourceKind !== undefined && trigger.sourceKind !== 'time' ? WORD_EVENT_REFUSAL : undefined;
+}
+/** Whether a trigger fires more than once: it is not once-only and its time is not one date. The one statement of
+ * "repeating", for what a body may set on anybody else's word without an owner (ownersFirst). */
+export const repeats = (trigger: { times?: string | null; lifespan?: string }): boolean => !(trigger.lifespan === 'once' || /^\d{4}-/.test(trigger.times ?? ''));
+/** What a body is told when what it asked went to the owners instead of being set or changed. */
+export const SCHEDULE_ASKED = 'Not done yet. A repeating schedule asked for by somebody who is not one of the agent\'s owners needs an owner\'s answer, so loom sent the request to them as a card, with who asked, the times and the words in full. Nothing is set or changed until an owner allows it. Say so to the person; the answer comes to this conversation.';
+export const NO_OWNER_TO_ASK = 'A repeating schedule asked for by somebody who is not one of the agent\'s owners needs an owner\'s answer, and this program cannot ask one. Set a one-time schedule, or have an owner set it.';
+const asker = z.object({ kind: z.enum(['member', 'outside']), id: z.string().min(1) }).strict();
+const asked = { agent: z.string().min(1), conversation: z.string().min(1), place: z.string().min(1).max(500), asker };
+/** A repeating schedule in a shared place, asked for there on the word of somebody who is not one of the agent's
+ * owners: the card an owner answers (shared-household-proposals.ts, `placeSchedule`). It holds the trigger as it
+ * would have been recorded, or the change to one that stands, and who asked. loom files it and nobody proposes it,
+ * so the asker on it is loom's reading of the job's mail and never a caller's claim. */
+export const placeScheduleAsk = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('set'), ...asked, trigger: triggerInput.extend({ id: z.string().min(1), sourceKind: z.literal('time'), targetKind: z.literal('inbox'), toKind: z.literal('agent'), file: z.null().optional() }).strict() }).strict(),
+  z.object({ action: z.literal('edit'), ...asked, id: z.string().min(1), change: triggerEdit.extend({ file: z.null().optional() }).strict() }).strict(),
+]);
+export type PlaceScheduleAsk = z.infer<typeof placeScheduleAsk>;
+/** The card's words, for everyone who may read it: who asked, where, the times, and the note and words in full. The
+ * note and the words are a body's, written for somebody who is not an owner, and are quoted as such. */
+export function placeScheduleWords(ask: PlaceScheduleAsk): string {
+  const quoted = (value: string | null | undefined) => value == null ? 'none' : JSON.stringify(value);
+  const who = `asked for there by ${named(ask.asker)}, who is not one of ${ask.agent}'s owners`, where = `conversation ${ask.conversation} (${ask.place})`;
+  if (ask.action === 'set') { const t = ask.trigger;
+    return `Set a repeating schedule for ${ask.agent} in ${where}, ${who}. Times: ${t.times}${t.days ? `, on ${t.days}` : ', every day'}, ${t.lifespan === 'today' ? 'today only' : 'until it is stopped'}. `
+      + `Its note, in the words of the body that asked and not loom's: ${quoted(t.note)}. What each firing tells the body, in the same body's words: ${quoted(t.instructions)}.${t.wantsModel ? ` Model wanted: ${t.wantsModel}.` : ''}`; }
+  const c = ask.change, parts = [c.times !== undefined ? `times ${c.times}` : '', c.days !== undefined ? `days ${c.days ?? 'every day'}` : '', c.note !== undefined ? `its note ${quoted(c.note)}` : '',
+    c.instructions !== undefined ? `what each firing tells the body ${quoted(c.instructions)}` : '', c.wantsModel !== undefined ? `model wanted ${c.wantsModel ?? 'none'}` : ''].filter(Boolean);
+  return `Change schedule ${ask.id} of ${ask.agent} in ${where}, ${who}. It repeats once changed. Changed, with the note and words in the words of the body that asked and not loom's: ${parts.join('; ')}.`;
+}
+/** What the owner is asked, and told the answer does. None of it is a body's words: the answer is mail to the agent
+ * on the owner's word, and carries these lines. */
+export function placeScheduleCard(ask: PlaceScheduleAsk): { ask: string; ifYes: string; ifNo: string } {
+  const where = `conversation ${ask.conversation}`, who = named(ask.asker);
+  return ask.action === 'set'
+    ? { ask: `Set a repeating schedule for ${ask.agent} in ${where}, asked for by ${who}?`, ifYes: `The schedule is set as the card shows, on the word of ${who}: each firing starts a job in that conversation with loom's tools only.`, ifNo: 'Nothing is set.' }
+    : { ask: `Change schedule ${ask.id} in ${where} so that it repeats, asked for by ${who}?`, ifYes: `The schedule is changed as the card shows, and stays on the word of ${who}.`, ifNo: 'The schedule stays as it is.' };
+}
+/** When what a body asks needs an owner's answer first, the card to file: a job on anybody else's word sets no
+ * repeating trigger and changes none that repeats once changed (the owner's ruling, 2026-11-18: a body coming back
+ * to its own work may, any time; a schedule somebody who is not an owner wants set up is asked of an owner).
+ * Asked after wordRefusal, so what reaches here names the job's own shared place, carries words and no file, fires
+ * at listed times, and, for a change, is the same person's. Nothing for any other job, and for a one-time trigger. */
+export function ownersFirst(db: DataDatabase, now: number, work: Work | undefined, ask: { action: 'set'; trigger: NewTrigger; asked: Asker | undefined } | { action: 'edit'; trigger: Trigger; change: TriggerEdit }): PlaceScheduleAsk | undefined {
+  if (!work || jobWord(db, work.job).woke !== 'others') return undefined;
+  const after = ask.action === 'set' ? ask.trigger : { lifespan: ask.trigger.lifespan, times: ask.change.times ?? ask.trigger.times, days: ask.change.days !== undefined ? ask.change.days : ask.trigger.days };
+  if (!repeats(after)) return undefined;
+  // Times that could never fire are the asker's to hear now, not an owner's to find on Allow.
+  try { nextTime(after.times ?? '', after.days ?? null, now, householdTimezone(db)); } catch (error) { throw new OperationError('invalid', error instanceof Error ? error.message : 'Invalid times'); }
+  const at = placeAddress(db, work.cv), place = at ? `${work.cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}${at.thread ? `, thread ${at.thread}` : ''}` : work.cv.venue;
+  const who = ask.action === 'set' ? ask.asked : ask.trigger.askedByKind && ask.trigger.askedBy ? { kind: ask.trigger.askedByKind, id: ask.trigger.askedBy } : undefined;
+  if (!who || who.kind === 'agent') throw new OperationError('denied', 'Nobody loom knows asked for this');
+  const base = { agent: work.cv.agent, conversation: work.cv.id, place, asker: who as OnWord };
+  // Only what was sent goes on the card: JSON drops what is not there.
+  return placeScheduleAsk.parse(JSON.parse(JSON.stringify(ask.action === 'set' ? { action: 'set', ...base, trigger: ask.trigger } : { action: 'edit', ...base, id: ask.trigger.id, change: ask.change })));
+}
+/** Why an allowed card can no longer be carried out, in words for the owner who allowed it, or nothing: asked on
+ * what is there when they answer. The conversation is still a shared place of the agent that can be posted to,
+ * the asker is still known to the agent, and a trigger to change still stands for that conversation and asker. */
+export function placeScheduleRefusal(db: DataDatabase, ask: PlaceScheduleAsk): string | undefined {
+  const cv = db.select().from(conversations).where(eq(conversations.id, ask.conversation)).get();
+  if (!cv || cv.agent !== ask.agent || !isSharedPlace(cv)) return 'Its conversation is gone';
+  const closed = placeClosed(db, cv); if (closed) return `Nothing can be posted there: ${closed}`;
+  if (!stillKnown(db, ask.agent, ask.asker)) return `${named(ask.asker)}, who asked for it, is no longer known to ${ask.agent}`;
+  if (ask.action === 'set') return ask.trigger.conversation === cv.id && ask.trigger.to === cv.agent ? undefined : 'A trigger names a Discord or Slack conversation of the agent it puts to work';
+  const stored = db.select().from(triggers).where(eq(triggers.id, ask.id)).get();
+  return stored && stored.conversation === cv.id && stored.askedByKind === ask.asker.kind && stored.askedBy === ask.asker.id ? undefined : 'The schedule is gone, or somebody else has reworded it since';
+}
+/** Carry out an allowed card: the trigger is made with the person who asked as its asker, exactly as the door would
+ * have made it, or the change is made as that person's body would have made it. */
+export function applyPlaceSchedule(db: DataDatabase, engine: Pick<TriggerEngine, 'set' | 'edit'>, ask: PlaceScheduleAsk): Trigger {
+  const refused = placeScheduleRefusal(db, ask); if (refused) throw new OperationError('invalid', refused);
+  if (ask.action === 'set') return engine.set(ask.trigger, undefined, ask.asker);
+  engine.edit(ask.id, ask.change, { kind: 'agent', id: ask.agent }, editsWords(ask.change) ? ask.asker : undefined);
+  return db.select().from(triggers).where(eq(triggers.id, ask.id)).get()!;
 }
 /** Why this caller may not reword a trigger that names one member's private conversation: the words would
  * become the caller's and fire there on the caller's word. Asked of every caller, a person too. The firing
@@ -129,24 +196,17 @@ export function placeTriggerAsker(db: DataDatabase, viewer: Viewer, trigger: New
 /** Asked as such a trigger fires (core/tempo/tempo.ts): the one place every firing into a conversation
  * passes, whatever door set or changed the trigger. It is stopped, with a notice, when its conversation is
  * gone or closed, when its asker is no longer known, and when the conversation is one member's private one
- * and the asker is anybody else. A firing on the word of anybody but owners that comes less than
- * WORD_REPEAT_MIN_MS after the last such firing into the same conversation is put off to that mark. */
-export function placeFiring(db: DataDatabase, trigger: Trigger, now: string): { stop: string; tell: string[] } | { putOff: string } | { told: string; onWord?: { kind: 'member' | 'outside'; id: string } } {
+ * and the asker is anybody else. No firing is put off or held back for how soon it follows another. */
+export function placeFiring(db: DataDatabase, trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: { kind: 'member' | 'outside'; id: string } } {
   const agent = trigger.to!, asker = { kind: trigger.askedByKind!, id: trigger.askedBy! };
   const cv = db.select().from(conversations).where(eq(conversations.id, trigger.conversation!)).get();
   const others = wordReach(db, agent, asker) === 'others';
   const why = !cv || cv.agent !== agent || !isBridgeVenue(cv.venue) ? 'its conversation is gone' : placeClosed(db, cv)?.replace(/^its/, "its conversation's")
     ?? (stillKnown(db, agent, asker) ? undefined : `${named(asker)}, who asked for it, is no longer known to ${agent}`)
     ?? privateRefusal(cv.member, asker)
-    // Only listed times can be put off; the doors let nobody but owners set a trigger that watches an event.
+    // The doors let nobody but owners set a trigger that watches an event; one that stands on another word is stopped here.
     ?? (others && trigger.sourceKind !== 'time' ? `it watches an event, and ${named(asker)}, who asked for it, is not one of ${agent}'s owners` : undefined);
   if (why) return { stop: why, tell: tellOwners(db, agent) };
-  if (others) {
-    const last = db.select({ at: inbox.at, kind: inbox.onWordKind, id: inbox.onWord }).from(inbox).where(and(eq(inbox.conversation, cv!.id), eq(inbox.source, 'trigger'), isNotNull(inbox.onWord))).orderBy(desc(inbox.at)).all()
-      .find(item => wordReach(db, agent, { kind: item.kind!, id: item.id! }) === 'others');
-    const mark = last && new Date(Date.parse(last.at) + WORD_REPEAT_MIN_MS).toISOString();
-    if (mark && now < mark) return { putOff: mark };
-  }
   return { told: `[From the schedule, not from a person speaking now: ${JSON.stringify(trigger.note.replace(/[\[\]]/g, ''))}. ${asker.kind === 'agent' ? 'You set it yourself' : `Asked for by ${named(asker)}`} at ${trigger.askedAt}. What you answer is posted in this conversation as a new message.]`,
     ...(asker.kind === 'agent' ? {} : { onWord: { kind: asker.kind, id: asker.id } }) };
 }

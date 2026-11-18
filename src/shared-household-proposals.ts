@@ -67,6 +67,8 @@ import {householdSettings} from './core/data/household-settings.js';
 import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
+import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
+import {triggers as triggerRows} from './core/data/schema.js';
 const operation='household.change';
 const kinds={project:projectInput,
  // One project emptied into another and removed. Its records cannot be told apart again afterwards.
@@ -99,7 +101,10 @@ const kinds={project:projectInput,
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
  // A machine by the name people see; a signed-in browser by whose it is and its description.
  boxRevoke:z.object({name:z.string().trim().min(1).max(200)}).strict(),
- browserSignOut:z.object({member:householdId,device:z.string().trim().min(1).max(200)}).strict()};
+ browserSignOut:z.object({member:householdId,device:z.string().trim().min(1).max(200)}).strict(),
+ // A repeating schedule in a Discord or Slack conversation, asked for there by somebody who is not one of the agent's
+ // owners (shared-place-triggers.ts, ownersFirst). loom files it; nobody proposes it (`filedByLoom`).
+ placeSchedule:placeScheduleAsk};
 // The dangerous actions: none can be put back. Each card says so, and Approvals asks the owner to confirm.
 const danger={
  projectMerge:{verb:'Merge',done:'merged',yes:'Everything filed under the first project is filed under the second, whose people and agents then see all of it. The first project\'s members, agents and repositories join the second, and the first is removed. This cannot be undone: restoring the first puts back an empty project.',no:'Both projects stay as they are.'},
@@ -114,14 +119,19 @@ export const dangerousHouseholdChanges=Object.keys(danger) as Array<keyof typeof
 const dangerOf=(value:{change:string;input?:unknown})=>value.change in danger?danger[value.change as keyof typeof danger]
  :value.change==='rule'&&(value.input as {kind?:string;tier?:string|null}|undefined)?.kind==='dangerous'&&['tell','do'].includes((value.input as {tier?:string|null}).tier??'')?dangerousRule:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-/** Every kind of household change, once: the keys of `kinds`. The card, the command's input and the
- * `propose` tool (src/shared-mcp-named.ts) all take their list from here. */
-export const householdChanges=Object.keys(kinds) as [keyof typeof kinds,...Array<keyof typeof kinds>];
+/** Every kind of household change, once: the keys of `kinds`. The card takes its list from there; the command's
+ * input and the `propose` tool (src/shared-mcp-named.ts) take theirs from `householdChanges`, which leaves out
+ * the kinds loom files itself. */
+const everyChange=Object.keys(kinds) as [keyof typeof kinds,...Array<keyof typeof kinds>];
+/** The kinds loom files itself and nobody proposes: who asked is on the card, and that is loom's to say and never a
+ * caller's. `household.propose` and the `propose` tool do not take them. */
+const filedByLoom:ReadonlySet<string>=new Set<keyof typeof kinds>(['placeSchedule']);
+export const householdChanges=everyChange.filter(change=>!filedByLoom.has(change)) as [keyof typeof kinds,...Array<keyof typeof kinds>];
 type Kind<S extends z.ZodRawShape>={[K in keyof typeof kinds]:ReturnType<typeof one<K,S>>}[keyof typeof kinds];
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',householdChanges.map(change=>one(change,more)) as unknown as [Kind<S>,...Kind<S>[]]);
-const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
+const all=<S extends z.ZodRawShape>(more:S,changes:readonly (keyof typeof kinds)[]=everyChange)=>z.discriminatedUnion('change',changes.map(change=>one(change,more)) as unknown as [Kind<S>,...Kind<S>[]]);
+const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)},householdChanges);
 type Proposal=z.infer<typeof proposal>;
-const changeName=z.enum(householdChanges);
+const changeName=z.enum(everyChange);
 // What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
 const details=z.object({change:changeName,after:z.json(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
 // A card from before the digest kept the replaced value itself; those are rewritten once, at start.
@@ -136,8 +146,8 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
  :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project
- :value.change==='projectRetire'||value.change==='projectRevive'?value.input.project:value.input.id;
-const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+ :value.change==='projectRetire'||value.change==='projectRevive'?value.input.project:value.change==='placeSchedule'?(value.input.action==='set'?value.input.trigger.id:value.input.id):value.input.id;
+const label=(value:Proposal)=>value.change==='placeSchedule'?'a repeating schedule in conversation '+value.input.conversation:value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs'+(value.input.houseFile===''?', in the core house with no Housefile of its own':''):value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
@@ -148,12 +158,12 @@ const joinWords=(value:Proposal)=>value.change==='projectJoin'?'Let '+value.inpu
 const stateWords=(value:Proposal)=>value.change==='projectRetire'?'Retire project '+name(value)+'. Everything in it stays and stays readable; its unfinished tasks are shelved until it is revived.'
  :'Revive project '+name(value)+'. Its shelved tasks are work again, as they were.';
 const isState=(value:Proposal):value is Extract<Proposal,{change:'projectRetire'|'projectRevive'}>=>value.change==='projectRetire'||value.change==='projectRevive';
-const said=(value:Proposal)=>isState(value)?stateWords(value):value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
+const said=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleWords(value.input):isState(value)?stateWords(value):value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
  :label(value)+': '+JSON.stringify(sorted(value.input));
 // The same with what it would replace, for a household owner.
-const summary=(value:Proposal,before:unknown)=>isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
+const summary=(value:Proposal,before:unknown)=>value.change==='placeSchedule'?placeScheduleWords(value.input)+(value.input.action==='edit'?' As it stands: '+JSON.stringify(before):''):isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
-const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+const cardWords=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleCard(value.input):dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
  :value.change==='projectRetire'?{ask:'Retire project '+name(value)+'?',ifYes:'Nothing is deleted or closed, and who reads it does not change. Its unfinished tasks are shelved: not ready, not counted as open work, and none can be claimed; one already held keeps who holds it. No new task is filed under it. Reviving it brings everything back as it was.',ifNo:'It stays in use.'}
  :value.change==='projectRevive'?{ask:'Revive project '+name(value)+'?',ifYes:'Its shelved tasks are work again, each as it was left.',ifNo:'It stays retired.'}
  :value.change==='projectJoin'?{ask:joinWords(value)+'?',ifYes:value.input.agent+' is added to project '+value.input.project+' and sees what is filed under it. Nothing else about the project changes.',ifNo:value.input.agent+' stays off the project.'}
@@ -167,12 +177,17 @@ const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '
  *    card is still a setting: one plain Allow, with nothing more to confirm.
  *  - `projectMerge`: a merge cannot be undone, and it shows each project's people the other's records. A
  *    rule for dangerous actions, set for revocations, is not an owner looking at these two projects: the
- *    owner allows and confirms each merge by hand. */
-export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge']);
+ *    owner allows and confirms each merge by hand.
+ *  - `placeSchedule`: a repeating schedule somebody who is not an owner asked for in a shared place. The owner
+ *    ruled that such a request is asked of an owner; a rule for settings is not an owner reading this
+ *    person's words and times. */
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule']);
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
  parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
+  /** Carry out an allowed `placeSchedule` card: set the trigger, or change it, on the asker's word (shared-tempo.ts). */
+  schedule(ask:PlaceScheduleAsk):unknown;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void};
   /** A keyed digest only this program can make or check. */
@@ -230,6 +245,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='tokenRevoke'){const row=liveToken(value.input.label);return row?sorted({label:row.label,kind:row.kind,for:row.member??row.agent??row.box}):null;}
   if(value.change==='boxRevoke'){const row=liveBox(value.input.name);return row?sorted({name:row.name,owner:row.owner}):null;}
   if(value.change==='browserSignOut'){const rows=browsers(value.input);return rows.length?sorted({member:value.input.member,device:value.input.device,browsers:rows.length}):null;}
+  // A new schedule replaces nothing. A change is sealed on what the schedule says now and whose it is.
+  if(value.change==='placeSchedule'){const id=value.input.action==='set'?value.input.trigger.id:value.input.id,row=db.select().from(triggerRows).where(eq(triggerRows.id,id)).get();
+   return row?sorted({id:row.id,times:row.times,days:row.days,lifespan:row.lifespan,note:row.note,instructions:row.instructions,wantsModel:row.wantsModel,on:row.enabled,askedByKind:row.askedByKind,askedBy:row.askedBy}):null;}
   const current=household.settings() as Record<string,unknown>;
   return sorted(Object.fromEntries(Object.keys(value.input).map(key=>[key,current[key]])));
  };
@@ -261,6 +279,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='order')household.setOrder(value.input.of,value.input.ids);
    else if(value.change==='secretDescription'){if(!describeSecret(db,{...value.input,by,at:now()}))throw new OperationError('not-found','No secret has that name');}
    // apply has already refused a dangerous card whose token or machine is not there (refusal).
+   else if(value.change==='placeSchedule')parts.schedule(value.input);
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')parts.machines.revoke(liveBox(value.input.name)!.id);
    else for(const row of browsers(value.input))endBrowser(db,row.id);
@@ -277,6 +296,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   value.change==='projectMerge'?projects.mergeRefusal(value.input)
   :value.change==='projectJoin'?projects.joinRefusal(value.input)
   :isState(value)?projects.stateRefusal(value.input,value.change==='projectRetire')
+  :value.change==='placeSchedule'?(value.input.action==='set'&&was!==null?new OperationError('conflict','A schedule with that id is already there')
+    :value.input.action==='edit'&&was===null?new OperationError('not-found','No such schedule')
+    :(reason=>reason?new OperationError('invalid',reason):undefined)(placeScheduleRefusal(db,value.input)))
   :value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
   :value.change==='boxSettings'&&was===null?new OperationError('not-found','No live machine has that id')
   :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')

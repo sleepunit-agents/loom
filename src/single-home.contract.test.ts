@@ -369,7 +369,7 @@ it('lists the kinds of household change once', () => {
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
   // The kinds no standing rule answers are named once, and filing asks that one list.
-  expect([...alwaysAsks].sort()).toEqual(['projectJoin', 'projectMerge', 'rule']);
+  expect([...alwaysAsks].sort()).toEqual(['placeSchedule', 'projectJoin', 'projectMerge', 'rule']);
   expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
   expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin|projectMerge)'\)return card/);
   // What cannot be put back: three revocations, and a merge of two projects.

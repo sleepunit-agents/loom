@@ -149,7 +149,7 @@ export function sharedRoot(options: {
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db, now), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
-  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
+  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume']; schedule?: ReturnType<typeof installSharedTempo>['placeSchedule'] } = {};
   // The household's own key when it has one. Without one (a program run with no Comms) the key lasts as long
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
@@ -161,6 +161,7 @@ export function sharedRoot(options: {
       machines: { revoke: id => late.revokeMachine!(id) },
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
+      schedule: ask => late.schedule!(ask),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
@@ -235,7 +236,7 @@ export function sharedRoot(options: {
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);
-  late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume;
+  late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume; late.schedule = ask => tempo.placeSchedule(ask);
   const secretCommit = <T>(write: () => T): T => {
     const result = data.writes.run(write);
     for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
@@ -348,6 +349,8 @@ export function sharedRoot(options: {
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
     bodyWork: viewer => bodyScope(viewer),
+    // A repeating schedule asked for on anybody else's word is an owner's to allow: filed as a household card.
+    askOwners: (agent, ask, why, where) => householdProposals.file(services.approvals, agent, { change: 'placeSchedule', input: ask, why }, where).id,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
