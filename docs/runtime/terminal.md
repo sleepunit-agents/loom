@@ -159,3 +159,46 @@ An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or
 A body working on its owners' word can answer with `onWord: {quote}` when exactly one eligible message in its credential's job contains the quote. If several match, quote a longer passage. A body that knows the inbox item can still use `onWord: {item, quote}` to name it directly. Loom checks a human bridge message against the venue link or reads the signed-in member's Comms message. The writer must still be a household owner and able to answer the card. The quote is 1–500 characters, copied exactly. One message can support multiple cards, including cards filed by the same agent. Card-specific checks, such as a merge head still matching, apply.
 
 A quoted instruction supplies the confirmation for a dangerous card. The owner receives the decision and quote in their Inbox. Dangerous cards and household proposals that always ask produce a full-volume item. Other quoted decisions produce a dim item. The permanent approval record includes the attribution and timestamp.
+
+## Observing a terminal conversation
+
+A household owner can issue an agent credential for an enrolled machine. At
+`POST /api/signin/token`, include `terminalMachine` (the box ID) alongside
+`kind: "agent"`, `agent` and `label`. Keep the bearer on that machine. Loom
+records its current owner when issuing the credential and checks the binding
+on each write. Reassigning or revoking the machine invalidates that binding.
+Unbound terminal credentials continue to work for their existing tools.
+
+The hook sends an authenticated `POST /api/terminal/session` operation with
+`{id,input}`. Use a fresh operation ID for a new activity and the same ID when
+retrying it. Every input names the machine, harness and harness session ID.
+Loom supplies the member from the binding. Machine control is the trust
+assumption here. Anyone with the credential can report what was typed there.
+
+| Action | Additional input | Effect |
+| --- | --- | --- |
+| open | cwd, model (nullable) | Opens or resumes the same private conversation |
+| turn | eventId, role (member or agent), words | Records the submitted prompt or finished answer once |
+| usage | runId, description (nullable), revision, report | Replaces this run’s cumulative usage with a newer measured snapshot |
+| heartbeat | none | Refreshes observed activity |
+| end | none | Removes the session from running work |
+
+Prompts and finished answers use the Comms message store and sealing key.
+The household chooses the word retention period, from one to fourteen days
+(default fourteen). Shortening it takes effect on existing messages.
+Conversation and usage metadata survive word expiry. Tool counts come from
+the transcript. Tool arguments, output, and intermediate reasoning stay out
+of the report.
+
+A session ages out after fifteen minutes without a heartbeat or another
+accepted activity. This allows quiet stretches during an answer and bounds
+how long a crashed terminal appears live. An idle terminal can disappear and
+reappear on its next activity. Ended sessions can resume with the same
+harness session ID. Control of the process stays on its machine.
+
+Each transcript supplies a cumulative snapshot of the existing job usage
+record. The main transcript uses run ID `main`. Each subagent uses its own
+run ID under the same conversation. A report's revision is the byte count of
+the transcript snapshot it measured. Duplicate and older revisions do not
+add cost. Missing measurements remain unknown. A quoted terminal approval
+uses the existing owner's approval door.

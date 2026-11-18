@@ -12,7 +12,7 @@ import { jobClaimed } from '../data/job-states.js';
 import type { Viewer } from '../../policy.js';
 import { householdOwner } from '../../shared-sharing.js';
 import type { Clock } from '../clock.js';
-import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
+import { agents, boxes, jobs, members, terminalCredentials, tokens } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const id = z.string().min(1).max(200);
 const label = z.string().trim().min(1).max(120).regex(/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u);
@@ -20,14 +20,14 @@ const common = { label, expiresAt: z.iso.datetime().optional() };
 const forMember = z.object({ ...common, kind: z.literal('owner'), member: id }).strict();
 const forRunner = z.object({ ...common, kind: z.literal('runner'), box: id }).strict();
 export const sharedTokenInput = z.discriminatedUnion('kind', [
-  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id, job: id.optional() }).strict(), forRunner,
+  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id, terminalMachine: id.optional(), job: id.optional() }).strict(), forRunner,
 ]);
 /** What a household owner may ask for at the sign-in door: a member's, an agent's terminal or a machine's
  * token. Not one bound to a job. A token bound to a job is that job's body, and a job has one body: its
  * worker enrols it (enrolBody), where loom never holds the bearer. A bearer for a running job handed to an
  * owner would be a second body, in a thread that may be another member's private one. */
 export const ownerTokenInput = z.discriminatedUnion('kind', [
-  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id }).strict(), forRunner,
+  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id, terminalMachine: id.optional() }).strict(), forRunner,
 ]);
 /** Tokens are made and revoked by a current household owner: the one owner check, under this door's name. */
 export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => householdOwner(db, viewer);
@@ -50,7 +50,7 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');
       if (value.job) {
         const job = db.select().from(jobs).where(eq(jobs.id, value.job)).get();
-        if (!job || job.agent !== value.agent || !job.box || !jobClaimed(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
+        if (!job || job.startedByKind === 'terminal' || job.agent !== value.agent || !job.box || !jobClaimed(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
       }
     }
     if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
@@ -58,7 +58,14 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
     // is live, shared-body-enrollment.ts; this holds the same for every other caller.)
     if (value.kind === 'agent' && value.job) db.update(tokens).set({ revokedAt: new Date(now).toISOString() })
       .where(and(eq(tokens.kind, 'agent'), eq(tokens.job, value.job), ne(tokens.fingerprint, fingerprint), isNull(tokens.revokedAt))).run();
+    if (value.kind === 'agent' && value.terminalMachine && value.job) throw new OperationError('invalid', 'Choose either a machine terminal or a job');
     db.insert(tokens).values({ ...value, fingerprint, ...(madeFrom === undefined ? {} : { madeFrom }), createdAt: new Date(now).toISOString() }).run();
+    if (value.kind === 'agent' && value.terminalMachine) {
+      const machine = db.select({owner:boxes.owner}).from(boxes)
+        .where(and(eq(boxes.id, value.terminalMachine), isNull(boxes.revokedAt))).get();
+      if (!machine?.owner) throw new OperationError('invalid', 'Choose an active machine with a signed-in owner');
+      db.insert(terminalCredentials).values({fingerprint, machine:value.terminalMachine, member:machine.owner}).run();
+    }
   };
   return {
     /** Makes the bearer here and hands it back. For trusted callers; the sign-in door narrows what an owner

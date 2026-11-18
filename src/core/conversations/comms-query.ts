@@ -114,7 +114,7 @@ export class CommsQueries {
 
 export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const thread = new GraphQLObjectType({ name: 'CommsThreadView', fields: {
-    ...Object.fromEntries(['id', 'conversation', 'title', 'titledBy', 'agent', 'openedAt', 'lastAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
+    ...Object.fromEntries(['id', 'conversation', 'venue', 'title', 'titledBy', 'agent', 'openedAt', 'lastAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['project', 'member', 'archivedAt', 'workingSince', 'workingBeat'].map(name => [name, { type: GraphQLString }])),
     ...Object.fromEntries(['pinned', 'working', 'stopRequested'].map(name => [name, { type: new GraphQLNonNull(GraphQLBoolean) }])),
     readSeq: { type: new GraphQLNonNull(GraphQLInt) },

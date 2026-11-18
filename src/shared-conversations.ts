@@ -46,6 +46,8 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
           return access.member === viewer.id && mayCreate(viewer, record, sharing) && mayAct(viewer, record, sharing, 'give-work');
         }
         if ('item' in access) return !!inbox.item(viewer,access.item.id) && (access.action === 'read' || answers(viewer)(access.item));
+        if (access.conversation.venue === 'terminal' &&
+            (access.action === 'send' || (access.action === 'change' && access.change === 'stop'))) return false;
         // A thread is its member's alone, to read, send to or manage (docs/specs/comms.md, rule 2).
         return access.conversation.member === viewer.id && mayAct(viewer, scope(access.conversation), sharing, access.action === 'send' ? 'give-work' : 'act');
       } });

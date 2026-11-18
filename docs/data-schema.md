@@ -3,7 +3,7 @@
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
 schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their named
 columns, `model_account_windows`, the ten internal bookkeeping tables listed there
-and three internal programme restriction/grant tables: 96 tables. The programme
+and three internal programme restriction/grant tables: 99 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
@@ -82,6 +82,9 @@ Step 11 is the same kind: it adds one empty column, `bridge_channels.brief`, and
 `bridge_send_files` and `conversation_sessions`. Neither table is read by the query door.
 
 Step 12 adds `job_usage` and backfills each ended job with its model, harness and available claim-to-end time. Historical harness counters stay null. Open jobs receive their usage record when they end.
+
+Step 13 adds the terminal conversation venue and tables for machine-bound credential grants, observed sessions and their individual runs. Existing conversations retain their IDs and contents. Existing agent credentials receive no machine grant.
+
 
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).

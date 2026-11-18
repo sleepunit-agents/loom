@@ -1991,7 +1991,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   // SQLite trim defaults to ASCII spaces; include Unicode whitespace too.
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
-/** A grant is bound to the owner who issued it and the enrolled machine. */
+/** A grant pins the enrolled machine and its owner at issuance. */
 export const terminalCredentials = sqliteTable('terminal_credentials', {
   fingerprint: text('fingerprint').primaryKey().notNull().references(() => tokens.fingerprint, {onDelete:'cascade'}),
   machine: text('machine').notNull().references(() => boxes.id),

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Machine-bound terminal hooks can record private conversations, show live sessions, report measured main and subagent usage, and supply retained source turns for owner-word approvals. Schema 13 adds the machine binding and observed-session records.
+
 - Job usage records show reported tokens, calls, tool names and peak context for each attempt. Open **Job usage** in the launcher to rank conversations by reported tokens and inspect their jobs over a date range. GraphQL also groups usage by trigger, day and model.
 
 - An agent can allow or deny an approval on a household owner's quoted words from its job's mail. With `onWord: {quote}`, exactly one eligible message must contain the quote. If several match, quote a longer passage. The card records the owner, agent and source. Owners can also record an unverified terminal instruction.

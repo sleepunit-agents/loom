@@ -1,12 +1,12 @@
 /** Current credential claims at the outside door. Never derive authority from a
  * caller's Viewer label, job argument, or an installed-module name. */
 import {isReservedProgramOperation,programSnapshot,sameProgramGrants,type ProgramGrantReader,type ProgramGrants} from './shared-program-access.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
 import { credentialFingerprint, dataAuthentication, presentedCredential } from './core/data/authentication.js';
-import { tokens, sessions, jobs } from './core/data/schema.js';
+import { tokens, sessions, jobs, terminalCredentials, boxes, members } from './core/data/schema.js';
 import { jobClaimed } from './core/data/job-states.js';
 import type { Authentication } from './core/live/index.js';
 
@@ -106,6 +106,15 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       const found=proof(viewer);
       return found?.bearer && viewer.kind==='agent' && found.token.kind==='agent' && !found.token.job && !found.token.box
         ? Object.freeze({agent:viewer.id}) : undefined;
+    },
+    terminalMachine(viewer: Viewer) {
+      const found = proof(viewer);
+      if (!found?.bearer || viewer.kind !== 'agent' || found.token.kind !== 'agent' || found.token.job || found.token.box) return;
+      const binding = db.select({machine: boxes.id, member: terminalCredentials.member}).from(terminalCredentials)
+        .innerJoin(boxes, and(eq(boxes.id, terminalCredentials.machine), eq(boxes.owner, terminalCredentials.member)))
+        .innerJoin(members, and(eq(members.id, terminalCredentials.member), isNull(members.removedAt)))
+        .where(and(eq(terminalCredentials.fingerprint, found.token.fingerprint), isNull(boxes.revokedAt))).get();
+      return binding && {agent: viewer.id, ...binding};
     },
     body(viewer: Viewer): Readonly<{ job: string; agent: string; box: string }> | undefined {
       const found = proof(viewer);

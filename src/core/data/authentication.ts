@@ -81,8 +81,8 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
   if (token.kind === 'agent' && token.agent) {
     if (!db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, token.agent), isNull(agents.removedAt))).get()) return;
     if (token.job) {
-      const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member }).from(jobs).where(eq(jobs.id, token.job)).get();
-      if (!job || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;
+      const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member, source: jobs.startedByKind }).from(jobs).where(eq(jobs.id, token.job)).get();
+      if (!job || job.source === 'terminal' || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;
       if (!machineCurrent(db, job.box)) return;
       // A body is its agent narrowed to the member its job is for (policy.ts, Viewer.workingFor). It is said
       // here, where the job row is read, so no door can meet a body's token as the whole agent.

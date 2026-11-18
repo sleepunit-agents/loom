@@ -41,7 +41,7 @@ function visibleConversation(id: SQL, allowed: SQL) {
 }
 export function readCommsThreads(db: DataDatabase, allowed: SQL, input: { id?: string; member?: string; agent?: string; archived?: boolean; search?: string; count: number; offset: number }) {
   return db.query.threads.findMany({
-    with: { conversationRow: { columns: { agent: true, project: true, member: true } } },
+    with: { conversationRow: { columns: { agent: true, project: true, member: true, venue: true } } },
     where: f => {
       const scope = sql`exists(select 1 from ${conversations} where ${conversations.id}=${f.conversation} and ${allowed}
         ${input.member ? sql`and ${conversations.member}=${input.member}` : sql``}

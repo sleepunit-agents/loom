@@ -173,6 +173,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
 | Tempo | `triggers`, `trigger_log`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync` |
+| Observed terminals | `terminal_credentials`, `terminal_sessions`, `terminal_runs` |
 | Runtime | `boxes`, `box_agents`, `box_facts`, `jobs`, `job_usage`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `model_account_boxes`, `agent_models`, `account_signins` |
 | Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_send_parts`, `bridge_send_files`, `bridge_files`, `bridge_file_messages`, `bridge_raw_events`, `bridge_resume` |
 | Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |

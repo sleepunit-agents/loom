@@ -156,6 +156,7 @@ export class Jobs {
     return this.db.transaction(() => {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
       if (!conversation) throw new Error('Conversation not found');
+      if (conversation.venue === 'terminal') return { declined: 'This conversation runs on its terminal' };
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
       const waits = () => this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
       const waiting = waits();
@@ -244,7 +245,7 @@ export class Jobs {
   claim(id: string, box: string): Job | undefined {
     return this.db.transaction(() => {
       const job = this.get(id), at = this.now();
-      if (job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
+      if (job.startedByKind === 'terminal' || job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
       const claimed = this.db.update(jobs).set({ box, state: 'starting', claimedAt: at, heardAt: at })
         .where(and(eq(jobs.id, id), eq(jobs.state, 'queued'))).returning().get();
       if(claimed)this.delivery(id,'sending');
@@ -254,7 +255,7 @@ export class Jobs {
 
   private assigned(id: string, box: string, states: readonly Job['state'][]): Job {
     const job = this.get(id);
-    if (job.box !== box || !states.includes(job.state)) throw new Error('Job is not assigned in this state');
+    if (job.startedByKind === 'terminal' || job.box !== box || !states.includes(job.state)) throw new Error('Job is not assigned in this state');
     return job;
   }
 
@@ -372,6 +373,7 @@ export class Jobs {
   stop(id: string, member: string, reason: 'reset' | 'write-off' | 'stop'): Job {
     return this.db.transaction(() => {
       const job = this.get(id);
+      if (job.startedByKind === 'terminal') throw new Error('This terminal is controlled on its machine');
       if (!jobUnended(job.state)) throw new Error('Job has ended');
       const ended = this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
       // A person ending an owners' job settles that request. Its mail is closed with the reason and does not wait: left
@@ -408,8 +410,8 @@ export class Jobs {
       const at = this.now(), now = Date.parse(at);
       // Only a clock that has since been set back leaves a report stamped later than now. Its true age is
       // unknown; counting from now delays noticing a dead job by one interval and never loses a live one.
-      this.db.update(jobs).set({ heardAt: at }).where(and(inArray(jobs.state, claimedJobStates), gt(jobs.heardAt, at))).run();
-      const lost = this.db.select().from(jobs).where(inArray(jobs.state, claimedJobStates)).all()
+      this.db.update(jobs).set({ heardAt: at }).where(and(ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates), gt(jobs.heardAt, at))).run();
+      const lost = this.db.select().from(jobs).where(and(ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).all()
         .filter(job => now - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
           const asked = this.endIfStopAsked(job, { endedNote: `Lost while ${job.state}: its worker stopped reporting` });

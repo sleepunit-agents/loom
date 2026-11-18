@@ -14,8 +14,8 @@ import { Jobs } from './runtime/jobs.js';
 export function registerSharedJobControl(operations: Operations, db: DataDatabase, options: { now(): string; jobEnded(job: string): void }) {
   const store = new Jobs(db, options.now);
   const may = (viewer: Viewer, id: string) => {
-    const job = db.select({ agent: jobs.agent }).from(jobs).where(eq(jobs.id, id)).get();
-    return !!job && holds(rules.stopJob, viewer, job, sharedSharing(db));
+    const job = db.select({ agent: jobs.agent, startedByKind: jobs.startedByKind }).from(jobs).where(eq(jobs.id, id)).get();
+    return !!job && job.startedByKind !== 'terminal' && holds(rules.stopJob, viewer, job, sharedSharing(db));
   };
   operations.register({ name: 'runtime.jobStop', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ job: z.string().min(1).max(200), reason: z.enum(['reset', 'write-off']) }).strict(),

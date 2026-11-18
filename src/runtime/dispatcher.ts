@@ -124,7 +124,7 @@ export class Dispatcher {
     return this.db.transaction(() => {
       this.liveMachine(box);
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
-      if (!job || job.box !== box || job.state !== state) return { active: false };
+      if (!job || job.startedByKind === 'terminal' || job.box !== box || job.state !== state) return { active: false };
       if (state === 'starting') {
         // Nothing is running yet, so a Comms Stop ends the job here. Once a body runs, the Stop is the body's
         // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.

@@ -1394,6 +1394,7 @@ On success the body sends its report alongside settlement. A body with validated
     machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
+  - `jobs` and `job_usage`: `src/core/conversations/terminal-sessions.ts` records observed runs and their cumulative measurements in the same transaction as the terminal event.
   - `job_usage`: `src/shared-job-usage.ts` accepts the credential-bound report. Runtime records settlement time and supplies the fallback row.
   - `action_results.read_at`: `src/core/conversations/operations.ts`. The notice of a person's own action is
     written by `src/shared-action-results.ts`; marking it read is the inbox door's, with the other reads.

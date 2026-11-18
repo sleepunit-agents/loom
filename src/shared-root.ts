@@ -60,6 +60,8 @@ import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
+import { expireTerminalSessions } from './core/conversations/terminal-sessions.js';
+import { registerTerminalSession } from './shared-terminal-session.js';
 import { registerJobUsage } from './shared-job-usage.js';
 import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
@@ -240,7 +242,7 @@ export function sharedRoot(options: {
       if (meter?.enabled()) meter.run('job', name, work); else work();
     }),
   });
-  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: accountSignIns.expire, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
   registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
@@ -290,6 +292,7 @@ export function sharedRoot(options: {
   comms?.install(operations);
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
+  if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
