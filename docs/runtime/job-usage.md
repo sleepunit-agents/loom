@@ -38,3 +38,13 @@ query ConversationCost($id: String!, $from: String!, $to: String!) {
 ```
 
 For one attempt, query `jobUsage(id: "job-…") { id observations usage { source totalTokens } }`. Sources are `report` for a structured harness report, `transcript` for observed stream events, and `none` when the harness supplies no counts.
+
+### Submitting a report
+
+A runtime client with a live job credential can post to `/api/conversation/usage` using the usual bearer and command envelope. The server derives the job from the credential. For example, a client that measured input and output can send:
+
+```json
+{"id":"report-1","input":{"source":"report","tokensIn":4288,"tokensOut":4}}
+```
+
+Omit unknown counters or send null. Send tool names and counts as a JSON object in `tools`. The first accepted report wins. A second distinct submission returns `saved: false`; reusing the original command ID and payload follows the normal receipt rules. When the job ends, its credential expires. The terminal record keeps claim-to-end elapsed time when both timestamps exist. Harness text, prompts, and tool arguments have no field in this report.
