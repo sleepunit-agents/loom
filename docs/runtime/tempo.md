@@ -72,8 +72,10 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   asker is still known to the agent (a member in the household now, or an
   outside account that still has a tier), and whether the conversation is
   there and can be posted to (its connection in use, its channel not filtered
-  out). If not, nothing is delivered, the trigger is stopped, and the agent's
-  owners get one notice saying why. **A channel rule that was removed does not
+  out). If not, nothing is delivered, the trigger is stopped, and a notice saying
+  why goes to the members who have the agent, or to the household's owners
+  when nobody has it. The notice is written each time the trigger is stopped
+  this way: turned back on and stopped again, they are told again. **A channel rule that was removed does not
   by itself stop a firing: a mention there would still wake the agent.**
 - **A trigger keeps to its asker.** From a shared place, a body working for
   anybody but owners or members who have the agent may reword, stop and start

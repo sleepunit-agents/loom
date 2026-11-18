@@ -150,7 +150,7 @@ it('runs a body whose only mail is a firing from the schedule, and posts its ans
  const f=await fixture(),first=await f.hear('Remind us at nine'),cv=first.conversation!;
  const native:HarnessRun=async(_job,words)=>{seen.push(words);return{text:seen.length===1?'I will.':'It is nine.',model:'claude-opus-5-5',actions:[]};},seen:string[]=[];
  expect(await f.run('one',cv,native,keeper().sessions)).toBe(0);
- // The schedule's mail arrives in the room with no message from the bridge beside it.
+ // The schedule's mail arrives in the conversation with no message from the bridge beside it.
  f.root.writes.run(()=>{f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'trigger',sourceId:'tr-1:now',fromKind:'schedule',words:'[From the schedule, not from a person speaking now.]\n\nSay it is nine',onWordKind:'outside',onWord:JSON.stringify(['slack','TWORK','UUSER'])});});
  expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
  // The body is told the schedule's words, and with them what was said in the conversation before: a job a

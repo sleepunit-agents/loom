@@ -954,8 +954,8 @@ Entries are grouped by the part of the program they belong to.
   have an owner schedule it." Such a trigger fires as mail in that conversation, on its asker's word.
 - Where: `isSharedPlace`, `maySchedule` and `SHARED_PLACE_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
   `docs/runtime/tempo.md`.
-- Why: a shared place's body works under the room's limits. A trigger it set for its agent's own wake would run
-  words chosen in the room without them. One that comes back into the room runs under them.
+- Why: a shared place's body works under the limits of whoever is in the room. A trigger it set for its agent's
+  own wake would run words chosen there without them. One that comes back into the conversation runs under them.
 - **Open: a shared place's body still reads all of its agent's triggers.** Reads go through the query door, which
   judges a body by its agent and the member it works for, and does not know what conversation its job is
   in. So a shared place's body can see its agent's other schedules (their notes, times and instructions) though
@@ -978,10 +978,10 @@ Entries are grouped by the part of the program they belong to.
 - Accepted with it: no chain of notes is refused for its length. Each note shows its chain to the body that
   receives it, which is told to stop and say so to a person when the exchange is not getting anywhere,
   and the household's owners are told at 25 hand-offs and each further 25 (`CHAIN_NOTICE_EVERY`). A stop
-  word in either room ends that room's job, and the notes and firings waiting there wait for a person to
-  speak. A job started by a note or a firing alone is told no kept history: a note carries what it needs,
-  and the conversation's stored session carries the rest where there is one. In a Slack room a post that
-  answers no message starts a thread of its own, so a reply to it is a new conversation.
+  word in either place ends that place's job, and the notes and firings waiting there wait for a person to
+  speak. A job started by a note or a firing is handed the conversation's kept history like any other job
+  there, and the stored session where there is one. In a Slack channel a post that answers no message
+  starts a thread of its own, so a reply to it is a new conversation.
 - Would change it: bodies that need to read another conversation. Jonathan's principle for that is on
   record (a body woken by an owner may read what the agent is party to, by person and not venue); nothing is built for it.
 

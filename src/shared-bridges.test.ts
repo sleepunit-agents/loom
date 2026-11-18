@@ -266,14 +266,14 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
 });
 // What a body may schedule depends on where its job is (policy.ts, maySchedule). A shared place's body would be
-// setting words that later run as the agent's own wake, outside the conversation and its limits; Tempo cannot yet
-// address a firing to a conversation, so every trigger from a shared place's body is refused.
-it('refuses every trigger a room\'s body sets, rewords, stops, starts or runs, with a line that says what to do instead',async()=>{
+// setting words that later run as the agent's own wake, outside the conversation and its limits: every trigger
+// that does not name its own conversation is refused there.
+it('refuses every trigger a shared place\'s body sets, rewords, stops, starts or runs outside its own conversation, with a line that says what to do instead',async()=>{
  const f=fixture();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
- // A Slack channel, and its sender an outside account: a room, with a guest in it.
+ // A Slack channel, and its sender an outside account: a shared place, with a guest in the room.
  expect(f.db.select().from(conversations).get()).toMatchObject({venue:'slack',member:null});expect(f.db.select().from(inbox).get()).toMatchObject({fromKind:'unknown'});
- const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the room',note:'Set from a shared place',...more});
+ const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the shared place',note:'Set from a shared place',...more});
  const line='A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
  // The agent's own wake: who the caller is would allow it; where its job is does not.
  expect(await f.call('tempo','set',trigger({}))).toMatchObject({status:403,body:{ok:false,code:'denied',message:line}});
@@ -283,12 +283,12 @@ it('refuses every trigger a room\'s body sets, rewords, stops, starts or runs, w
  // Nor may it reword a trigger of its agent's that is already set: the words would run the same way.
  // A body of the same agent whose job is not in a shared place is judged as before, by who it is: the other job here
  // has no conversation at all.
- const owned=trigger({instructions:'Set outside any room'});
+ const owned=trigger({instructions:'Set outside any shared place'});
  expect((await f.call('tempo','set',owned,token.other)).status).toBe(200);
- // Nor may the room's body reword that trigger: the words would run the same way.
- expect(await f.call('tempo','edit',{id:owned.id,instructions:'Reworded in the room'})).toMatchObject({status:403,body:{message:line}});
- expect(f.db.select().from(triggers).all()).toMatchObject([{id:owned.id,instructions:'Set outside any room'}]);
- // Nor stop it, start it, or fire it at a time of its choosing: each would decide in the room what happens outside it.
+ // Nor may the shared place's body reword that trigger: the words would run the same way.
+ expect(await f.call('tempo','edit',{id:owned.id,instructions:'Reworded in the shared place'})).toMatchObject({status:403,body:{message:line}});
+ expect(f.db.select().from(triggers).all()).toMatchObject([{id:owned.id,instructions:'Set outside any shared place'}]);
+ // Nor stop it, start it, or fire it at a time of its choosing: each would decide in the shared place what happens outside it.
  for(const action of ['stop','start','runNow'])expect(await f.call('tempo',action,{id:owned.id}),action).toMatchObject({status:403,body:{message:line}});
  expect(f.db.select().from(triggers).get()).toMatchObject({state:'standing',lastFiredAt:null});
  expect((await f.call('tempo','edit',{id:owned.id,instructions:'Reworded outside it'},token.other)).status).toBe(200);
@@ -313,8 +313,8 @@ it('attaches the earlier words of a bridge conversation to one piece of mail in 
 /** The conversation a call's answer names, wherever the door puts its output. */
 const made=(body:unknown):string=>{const found=JSON.stringify(body).match(/"conversation":"([^"]+)"/);if(!found)throw new Error('No conversation in '+JSON.stringify(body));return found[1];};
 const GUEST=JSON.stringify(['slack','TWORK','UUSER']),SHARED_PLACE_LINE='A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
-/** A room with a guest's message in it and the body's job working there. */
-async function room(effects:()=>boolean=()=>true){
+/** A shared place with a guest's message in it and the body's job working there. */
+async function sharedPlace(effects:()=>boolean=()=>true){
  let received=false;const f=fixture(()=>!received||effects(),true),incoming=await f.receive(),cv=incoming.conversation!;received=true;
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(cv,'body');});
  const once=(more:Record<string,unknown>={})=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+86_400_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Post the numbers',note:'Daily numbers',conversation:cv,...more});
@@ -324,8 +324,8 @@ async function room(effects:()=>boolean=()=>true){
   from.forEach((who,index)=>{const item=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',sourceId:randomUUID()+index,fromKind:who.kind,fromId:who.id,words:'Go on'});f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,item.id)).run();});});
  return {f,incoming,cv,once,work};
 }
-it('lets a room\'s body set a trigger that names its own conversation, records who asked, and holds it to that conversation and to the bounds',async()=>{
- const {f,cv,once}=await room();
+it('lets a shared place\'s body set a trigger that names its own conversation, records who asked, and holds it to that conversation and to the bounds',async()=>{
+ const {f,cv,once}=await sharedPlace();
  const mine=once();
  expect((await f.call('tempo','set',mine)).status).toBe(200);
  // The asker is the person whose message started the job: here the guest, by the account loom knows them by.
@@ -341,7 +341,7 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
  const hourly=once({lifespan:'until-stopped',times:'09:00,10:00'});expect((await f.call('tempo','set',hourly)).status).toBe(200);
  expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
- expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the room'})).status).toBe(200);
+ expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the shared place'})).status).toBe(200);
  // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
  const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
  for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(action==='runNow'?403:200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});}
@@ -376,11 +376,11 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:'Nobody loom knows asked for this'}});
 });
 it('fires such a trigger as mail from the schedule in its conversation, on its asker\'s word, and answers by a post there',async()=>{
- const {f,cv,once}=await room(()=>false);
+ const {f,cv,once}=await sharedPlace(()=>false);
  const mine=once();expect((await f.call('tempo','set',mine)).status).toBe(200);
  const before=f.db.select().from(conversations).all().length;
  expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);
- // Mail in the room, and no wake of its own.
+ // Mail in the conversation, and no wake of its own.
  expect(f.db.select().from(conversations).all()).toHaveLength(before);
  const fired=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
  expect(fired).toMatchObject({conversation:cv,toKind:'agent',to:'art',fromKind:'schedule',onWordKind:'outside',onWord:GUEST,state:'waiting'});
@@ -407,7 +407,7 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
 });
 it('stops such a trigger, with one notice, when its asker is no longer known or its conversation cannot be posted to',async()=>{
- const {f,once}=await room();
+ const {f,once}=await sharedPlace();
  const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('place-trigger-stopped:'));
  const asked=once({lifespan:'until-stopped',times:'09:00'}),closed=once({lifespan:'until-stopped',times:'10:00'});
  for(const trigger of [asked,closed])expect((await f.call('tempo','set',trigger)).status).toBe(200);
@@ -433,7 +433,7 @@ it('stops such a trigger, with one notice, when its asker is no longer known or 
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
 });
 it('hands a note to the agent\'s own body in another conversation, by who the sending body works for',async()=>{
- const {f,cv,work}=await room(()=>false);
+ const {f,cv,work}=await sharedPlace(()=>false);
  const pond={platform:'slack',workspace:'TWORK',channel:'CPOND'},note=(to:unknown,words='I talked to them; here is what I need to know')=>({to,clientId:randomUUID(),label:'Debrief',words});
  f.root.writes.run(()=>{f.db.insert(bridgeChannels).values({...pond,answers:'art',botsMayTalk:false}).run();f.db.insert(members).values([{id:'sam',role:'member',joinedAt:new Date(f.clock.now()).toISOString()},{id:'kim',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}]).run();f.db.insert(memberAgents).values({member:'kim',agent:'art'}).run();});
  const notes=()=>f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all();
@@ -478,7 +478,7 @@ it('hands a note to the agent\'s own body in another conversation, by who the se
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
 });
 it('refuses no note for the length of its chain, and tells the owners each time it grows by twenty-five',async()=>{
- const {f,cv,work}=await room();
+ const {f,cv,work}=await sharedPlace();
  const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
  expect(CHAIN_NOTICE_EVERY).toBe(25);
  const chain=Array.from({length:CHAIN_NOTICE_EVERY-1},(_,index)=>index%2?pond:cv),started='2026-11-01T00:00:00.000Z';
@@ -501,7 +501,7 @@ it('refuses no note for the length of its chain, and tells the owners each time 
  expect(()=>f.root.writes.run(()=>f.db.update(inbox).set({chain:'{}'}).where(eq(inbox.sourceId,'earlier')).run())).toThrow('CHECK');
 });
 it('gives a stopped job the notes and firings waiting in its conversation, so they start no work until a person speaks there',async()=>{
- const {f,cv}=await room();
+ const {f,cv}=await sharedPlace();
  const send=(fromKind:'agent'|'schedule'|'person',source:'handoff'|'trigger'|'notice')=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source,sourceId:randomUUID(),fromKind,fromId:fromKind==='person'?'owner':'art',words:source==='handoff'?null as never:'Words'}).id;});return id;};
  const note=send('agent','handoff'),firing=send('schedule','trigger'),said=send('person','notice');
  const all=new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());
@@ -522,7 +522,7 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  expect(Object.keys(all.admission(cv))).not.toEqual([]);
 });
 it('leaves a note that arrives after a job was claimed for the next job, and reads a thread\'s rules by its parent channel',async()=>{
- const {f,cv,work}=await room();
+ const {f,cv,work}=await sharedPlace();
  const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
  work(pond,[{kind:'person',id:'owner'}]);
  const at=(ms:number)=>new Date(f.clock.now()+ms).toISOString();
@@ -550,9 +550,9 @@ it('leaves a note that arrives after a job was claimed for the next job, and rea
  expect(erased).toBeGreaterThan(0);expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,'direct-answer')).get()?.text).toBe('');
 });
 it('lets only an agent\'s own work post a text straight to a channel it has a rule for',async()=>{
- const {f,cv,work}=await room(()=>false);
+ const {f,cv,work}=await sharedPlace(()=>false);
  const post=(to:unknown)=>({id:randomUUID(),to,text:'Standup: all green',model:'observed'}),croom={platform:'slack',workspace:'TWORK',channel:'CROOM'};
- // The room's body works for a guest: it posts nowhere this way.
+ // The shared place's body works for a guest: it posts nowhere this way.
  expect((await f.call('bridges','post',post(croom))).status).toBe(403);
  const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
  // A job with a person behind it, an owner included, hands a note instead.
@@ -581,7 +581,7 @@ it('lets only an agent\'s own work post a text straight to a channel it has a ru
 });
 
 it('keys what a body may do with a trigger or a note on whose word it works, not on where it is',async()=>{
- const {f,cv,once,work}=await room();
+ const {f,cv,once,work}=await sharedPlace();
  const stamp=new Date(f.clock.now()).toISOString();
  f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values([{member:'kim',agent:'art'},{member:'owner',agent:'art'}]).run();
   f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CPOND',answers:'art',botsMayTalk:false}).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CPOND'])}).where(eq(bridgeChannels.channel,'CROOM')).run();});
