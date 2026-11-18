@@ -151,34 +151,31 @@ it('reacts to a message a running job has taken, shows typing while it works, an
   const reaction = `channels/${room}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, typing = `channels/${room}/typing`;
   const made = (method: string, path: string) => f.calls.filter(call => call.method === method && call.path === path).length;
   const shown = async () => { f.daemon.changed(); await f.daemon.idle(); };
+  const second = await f.say({ content: 'One more detail' });
   // Delivered and waiting: nobody has taken it, so nothing is shown.
   await shown();
   expect(workingOn(f.db)).toEqual([]); expect(made('PUT', reaction)).toBe(0); expect(made('POST', typing)).toBe(0);
   // A job takes it.
   f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
   f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
-  expect(workingOn(f.db)).toEqual([{ connection: 'connection', channel: room, message }]);
-  // The first try does not even reach Discord (the network is down). The connection is not given up for it.
-  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
-  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
-  await shown();
-  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
-  expect(f.gateways).toHaveLength(1);
-  f.calls.length = 0;
-  // Discord refuses the next try (a missing permission, a rate limit): nothing else changes, and it is tried again.
-  const before = JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()]);
-  await shown();
-  expect(made('PUT', reaction)).toBe(1);
-  expect(JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()])).toBe(before);
-  expect(f.errors).toEqual([]);
-  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
-  await shown();
-  expect(made('PUT', reaction)).toBe(2);
-  // Once Discord has the reaction it is not asked for again, and typing is asked for no more often than it lapses.
+  expect(workingOn(f.db)).toHaveLength(2);
+  const secondId = JSON.parse(second.id.slice(3))[1] as string;
+  const secondReaction = reaction.replace(message, secondId);
+  f.answers.set(`PUT ${secondReaction}`, null);
+  f.request.mockImplementationOnce(async () => Response.json({ retry_after: 15 }, {status:429,headers:{'Retry-After':'15'}}));
+  const before = f.request.mock.calls.length;
   await shown(); await shown();
-  expect(made('PUT', reaction)).toBe(2); expect(made('POST', typing)).toBe(0);
-  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(f.request.mock.calls.length - before).toBe(1);
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
+  for (let i = 0; i < 2; i++) { f.clock.advance(5_000); await f.daemon.idle(); }
+  expect(f.request.mock.calls.length - before).toBe(1);
+  f.clock.advance(5_000); await f.daemon.idle();
+  expect(made('PUT', reaction)).toBe(1);
+  expect(made('PUT', secondReaction)).toBe(1);
   expect(made('POST', typing)).toBe(1);
+  await shown(); await shown();
+  expect(made('PUT', reaction)).toBe(1); expect(made('POST', typing)).toBe(1);
   f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
   expect(made('POST', typing)).toBe(2);
   // The reply settles the mail: the reaction comes off and typing stops.
@@ -199,6 +196,23 @@ it('shows nothing for mail whose job is not running, or on a connection that is 
   expect(workingOn(f.db)).toEqual([]);
   f.db.update(jobs).set({ state: 'running' }).run();
   expect(workingOn(f.db)).toHaveLength(1);
+  const typingOnly = [{connection:'connection',channel:room}];
+  f.db.update(bridgeIncoming).set({bot:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  f.db.update(bridgeIncoming).set({bot:false,webhook:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  for (const source of ['trigger','handoff'] as const) {
+    f.db.update(inbox).set({source}).run();
+    expect(workingOn(f.db)).toEqual(typingOnly);
+  }
+  f.db.update(inbox).set({state:'done'}).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(inbox).set({source:'discord',state:'taken'}).run();
+  f.db.update(bridgeIncoming).set({webhook:false}).run();
+  for (const state of ['starting','failed','lost','done'] as const) {
+    f.db.update(jobs).set({state}).run();
+    expect(workingOn(f.db)).toEqual([]);
+  }
   f.db.update(jobs).set({ state: 'stopped' }).run();
   expect(workingOn(f.db)).toEqual([]);
   f.db.update(jobs).set({ state: 'running' }).run();

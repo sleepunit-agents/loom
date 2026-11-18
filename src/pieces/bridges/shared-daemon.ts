@@ -44,7 +44,7 @@ export interface SharedBridgeOptions {
  slack?:typeof bridgeSlackSocket;
 }
 type Life={connection:Connection;key:string;generation:string;stamp:number;active:boolean;authenticated:boolean;
- secrets:ReturnType<typeof sharedBridgeSecretUse>;channels?:ReturnType<BridgeChannels['bind']>;
+ secrets:ReturnType<typeof sharedBridgeSecretUse>;presence?:ReturnType<typeof bridgePresenceApi>;channels?:ReturnType<BridgeChannels['bind']>;
  transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
 export class SharedBridges {
@@ -83,7 +83,8 @@ export class SharedBridges {
   },options.stopJob);
   this.presence=new BridgePresence(options.db,options.clock,id=>{
    const life=this.lives.get(id);
-   return life&&life.authenticated&&this.current(life)?bridgePresenceApi({tokenSecret:life.connection.tokenSecret,secrets:life.secrets,current:()=>this.current(life),request:options.request}):undefined;
+   if(!life||!life.authenticated||!this.current(life))return undefined;
+   return life.presence??=bridgePresenceApi({clock:options.clock,tokenSecret:life.connection.tokenSecret,secrets:life.secrets,current:()=>this.current(life),request:options.request});
   });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
