@@ -404,7 +404,7 @@ it('runs the fixed private body entry against Root with a fake native Claude pro
   const launch = vi.fn<ClaudeSpawn>((_command, args) => {
     const session = args[args.indexOf('--session-id') + 1];
     const child = Object.assign(new EventEmitter(), {
-      stdin: new Writable({ write(chunk, _encoding, done) { expect(chunk.toString()).toBe('Private work instructions'); done(); },
+      stdin: new Writable({ write(chunk, _encoding, done) { expect(chunk.toString()).toMatch(/approvals\.answer[\s\S]*\n\nPrivate work instructions$/); done(); },
         final(done) { done(); queueMicrotask(() => {
           (child.stderr as PassThrough).write(privateDiagnostic);
           (child.stdout as PassThrough).write(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, session_id: session, message: { model: 'actual-provider-model', content: [{ type: 'text', text: 'Native answer' }] } })+'\n');

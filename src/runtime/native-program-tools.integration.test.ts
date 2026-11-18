@@ -69,7 +69,7 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    void(async()=>{
     const model=new Client({name:'fictional-native-model',version:'1'},{capabilities:{}});
     try{
-     expect(words).toBe('Use canonical tools privately');
+     expect(words).toMatch(/approvals\.answer[\s\S]*\n\nUse canonical tools privately$/);
      await model.connect(new StreamableHTTPClientTransport(new URL(endpoint!.url),{requestInit:{headers:endpoint!.headers}}));
      expect((await model.listTools()).tools.map(tool=>tool.name)).toEqual(served());
      // A named tool, as the default body serves it: for this job's agent, through the body's own credential.

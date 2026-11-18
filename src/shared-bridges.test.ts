@@ -1658,6 +1658,7 @@ it('answers on the linked bridge account and checks the current receipt, link an
  const answer=(id:string)=>f.call('approvals','answer',{id,answer:'deny',onWord:{item:item.id,quote:'Hello'}});
  expect((await answer(ask())).body.ok).toBe(true);
 
+ expect((await f.call('approvals','answer',{id:ask(),answer:'deny',onWord:{quote:'Hello'}})).body.ok).toBe(true);
  const pending=ask();
  const snapshot=()=>({
   card:f.root.services.approvals.get(pending), record:f.db.select().from(approvalRecord).all(),

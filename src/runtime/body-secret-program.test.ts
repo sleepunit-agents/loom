@@ -39,7 +39,7 @@ function fixture(){
  return{env,abort,clock,calls,errors,options,bytes,planned,cancel,words:()=>words,stop:()=>{stop=true;tick();},tick:()=>tick(),pending:()=>{pending=true;}};
 }
 it('uses default startup delivery before the actual native constructor and removes its environment on completion',async()=>{
- const f=fixture();expect(await bodyProgram(f.options)).toBe(0);expect(spawn).toHaveBeenCalledOnce();expect(f.words()).toBe('ACCEPTED_MAIL');expect(f.words()).not.toContain(privateValue);expect(f.env).toEqual({PATH:'/bin',ACCOUNT_PROFILE:'/account'});expect(f.errors).not.toHaveBeenCalled();expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.cancel).toHaveBeenCalledOnce();
+ const f=fixture();expect(await bodyProgram(f.options)).toBe(0);expect(spawn).toHaveBeenCalledOnce();expect(f.words()).toMatch(/approvals\.answer[\s\S]*\n\nACCEPTED_MAIL$/);expect(f.words()).not.toContain(privateValue);expect(f.env).toEqual({PATH:'/bin',ACCOUNT_PROFILE:'/account'});expect(f.errors).not.toHaveBeenCalled();expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.cancel).toHaveBeenCalledOnce();
  expect(f.calls.filter(p=>p==='confirm')).toHaveLength(2);expect(f.calls.lastIndexOf('confirm')).toBeGreaterThan(f.calls.indexOf('message'));
 });
 it('observes Stop while default startup consent is pending, without launching a model or injecting late values',async()=>{

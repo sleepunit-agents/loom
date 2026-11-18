@@ -15,7 +15,7 @@ const quote = z.string().min(1).refine(value =>
   value.length <= 1000 && !/\p{Surrogate}/u.test(value) && Array.from(value).length <= 500,
   'Quote between 1 and 500 complete Unicode characters.');
 export const ownerWord = z.union([
-  z.object({ item: z.string().min(1), quote }).strict(),
+  z.object({ item: z.string().min(1).optional(), quote }).strict(),
   z.object({ venue: z.literal('terminal'), through: z.string().min(1), quote }).strict(),
 ]);
 type Word = z.infer<typeof ownerWord>;
@@ -27,7 +27,7 @@ export type EvidenceSources = {
   words?(thread: string, seq: number): Promise<string | null>;
 };
 type Evidence = { member: string; basis?: string; through?: string } & (
-  | { sealed: Buffer; thread: string; seq: number }
+  | { item: string; sealed: Buffer; thread: string; seq: number }
   | { sealed?: undefined }
 );
 
@@ -37,25 +37,39 @@ function refused(message: string): never {
 
 /** Read again in the write transaction. For Comms, the sealed words also bind
  * the asynchronously opened text to the message still retained at commit. */
-export function answerEvidence(db: DataDatabase, sources: EvidenceSources, viewer: Viewer, word?: Word): Evidence {
+export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, viewer: Viewer, word?: Word): Evidence[] {
   if (workAnswersAllowed(db, viewer)) {
-    if (!word) return { member: viewer.id };
+    if (!word) return [{ member: viewer.id }];
     if (sources.isProgram(viewer)) refused('Use the owner’s own credential for a terminal answer.');
     if (!('venue' in word)) refused('A terminal answer names the agent and quotes the owner.');
     const agent = db.select({ id: agents.id }).from(agents).where(eq(agents.id, word.through)).get();
     if (!agent) refused('Name an agent in this household.');
-    return {
+    return [{
       member: viewer.id, through: agent.id,
       basis: `${viewer.id} as told to ${agent.id} at the terminal (unverified): “${word.quote}”`,
-    };
+    }];
   }
 
   const job = sources.bodyJob(viewer)?.job;
   if (!job) refused('A household owner or a job on their word is required.');
   if (jobWord(db, job).woke !== 'owners') refused('This job is not working on the owners’ word.');
-  if (!word || !('item' in word)) refused('Name the owner’s message and quote their words.');
-  const item = db.select().from(inbox).where(eq(inbox.id, word.item)).get();
-  if (!item || item.job !== job.id || item.toKind !== 'agent' || item.to !== job.agent ||
+  if (!word || 'venue' in word) refused('Name the owner’s message and quote their words.');
+  if (word.item !== undefined) {
+    const item = db.select().from(inbox).where(eq(inbox.id, word.item)).get();
+    if (!item) refused('That message is outside this job.');
+    return [mailEvidence(db, sources, job, item, word.quote)];
+  }
+  const candidates: Evidence[] = [];
+  for (const item of db.select().from(inbox).where(eq(inbox.job, job.id)).all()) {
+    try { candidates.push(mailEvidence(db, sources, job, item, word.quote)); }
+    catch (error) { if (!(error instanceof OperationError && error.code === 'denied')) throw error; }
+  }
+  if (!candidates.length) refused('Those words do not appear in that message.');
+  return candidates;
+}
+
+function mailEvidence(db: DataDatabase, sources: EvidenceSources, job: Job, item: typeof inbox.$inferSelect, quote: string): Evidence {
+  if (item.job !== job.id || item.toKind !== 'agent' || item.to !== job.agent ||
       !job.conversation || item.conversation !== job.conversation) {
     refused('That message is outside this job.');
   }
@@ -63,7 +77,7 @@ export function answerEvidence(db: DataDatabase, sources: EvidenceSources, viewe
   if (item.fromKind !== 'person' || !item.fromId) refused(personRequired);
   const member = item.fromId;
   if (!workAnswersAllowed(db, { kind: 'member', id: member })) refused('The writer is not a household owner.');
-  const basis = `${member} through ${job.agent}, on their words: “${word.quote}” (conversation ${job.conversation}, message ${item.sourceId}, item ${item.id})`;
+  const basis = `${member} through ${job.agent}, on their words: “${quote}” (conversation ${job.conversation}, message ${item.sourceId}, item ${item.id})`;
   const proof = { member, through: job.agent, basis };
   if (item.source === 'thread') {
     if (!item.thread || item.messageSeq === null || item.sourceId !== `${item.thread}:${item.messageSeq}`) refused(personRequired);
@@ -72,7 +86,7 @@ export function answerEvidence(db: DataDatabase, sources: EvidenceSources, viewe
     )).get();
     if (!row || row.kind !== 'message' || row.sender !== member) refused(personRequired);
     if (!row.words || !wordsKept(row, commsKeepDays(db), sources.now())) refused('The message’s words are no longer kept.');
-    return { ...proof, sealed: row.words, thread: row.thread, seq: row.seq };
+    return { ...proof, item: item.id, sealed: row.words, thread: row.thread, seq: row.seq };
   }
 
   if (item.source !== 'slack' && item.source !== 'discord') refused(personRequired);
@@ -96,6 +110,6 @@ export function answerEvidence(db: DataDatabase, sources: EvidenceSources, viewe
     const deadline = ageLimit(Date.parse(receipt.event.receivedAt), commsKeepDays(db));
     if (!(deadline > Date.parse(sources.now()))) refused('The message’s words are no longer kept.');
   }
-  if (!receipt.event.text.includes(word.quote)) refused('Those words do not appear in that message.');
+  if (!receipt.event.text.includes(quote)) refused('Those words do not appear in that message.');
   return proof;
 }

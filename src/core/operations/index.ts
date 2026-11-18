@@ -68,6 +68,8 @@ export interface Operation<I = unknown> {
   admit?(ctx: Context, input: I): void;
   /** Validate a matching cached receipt inside the transaction, including any
    * prepared source snapshot. Must not mutate; throw OperationError to refuse. */
+  /** Re-open private source evidence before validating an existing receipt. */
+  prepareReplay?(input: I): boolean;
   validateReplay?(viewer: Viewer, input: I, prepared?: unknown): void;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
@@ -301,6 +303,7 @@ export class Operations {
           const old = this.receipt(who, id!);
           if (old) {
             if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
+            if (preflight && op.prepare && op.prepareReplay?.(parsed.data)) return new PreparationNeeded(undefined);
             op.validateReplay?.(viewer, parsed.data, prepared);
             if(!this.outsideAllowed(door,viewer,name))throw new OperationError('denied','Permission denied');
             this.completedWriteDeadlines.set(old.result,old.expires);

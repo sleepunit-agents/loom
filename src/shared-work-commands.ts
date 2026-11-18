@@ -2,7 +2,7 @@
  * (workAnswersAllowed); there is no narrower rule per card or per change, because an
  * owner already sees every change. What is checked beyond that is that the card and
  * the change it names still exist; the exact head is checked when the answer runs. */
-import { answerEvidence, ownerWord, type EvidenceSources } from './approval-owner-word.js';
+import { evidenceCandidates, ownerWord, type EvidenceSources } from './approval-owner-word.js';
 import { alwaysAsks } from './shared-household-proposals.js';
 import { COMMIT, parseMergeTarget } from './apps/merge-target.js';
 import { eq } from 'drizzle-orm';
@@ -51,34 +51,55 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     // DataWrites publishes all audit/Inbox effects in this same transaction.
     ctx.changed('approvals', input.approval); ctx.changed('changes', input.id);
   };
+  function resolveEvidence(viewer: Context['viewer'], word: z.infer<typeof ownerWord> | undefined, prepared: unknown) {
+    const matches = evidenceCandidates(db, sources, viewer, word).filter(candidate => {
+      if (!candidate.sealed) return true;
+      const opened = prepared instanceof Map && prepared.get(candidate.item);
+      if (!opened || opened.thread !== candidate.thread || opened.seq !== candidate.seq || !candidate.sealed.equals(opened.sealed)) throw new OperationError('conflict','The message changed. Read it again.');
+      return opened.matches;
+    });
+    if (!matches.length) throw new OperationError('denied','Those words do not appear in that message.');
+    if (matches.length > 1) throw new OperationError('denied','Those words appear in more than one message. Quote a longer passage.');
+    return matches[0];
+  }
+  const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
+    basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
     input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer)) return false;
-      answerEvidence(db, sources, viewer, input.onWord);
+      evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
       return !merge || input.answer === 'deny' || !!change(merge.id);
     },
     async prepare(input, {viewer}) {
-      const proof = answerEvidence(db, sources, viewer, input.onWord);
-      if (proof.sealed) {
+      const opened = new Map<string, { sealed: Buffer; thread: string; seq: number; matches: boolean }>();
+      for (const proof of evidenceCandidates(db, sources, viewer, input.onWord)) {
+        if (!proof.sealed) continue;
         const words = await sources.words?.(proof.thread, proof.seq);
-        if (!input.onWord || !words?.includes(input.onWord.quote)) throw new OperationError('denied','Those words do not appear in that message.');
+        if (words == null) throw new OperationError('denied','Those words do not appear in that message.');
+        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: !!input.onWord && words.includes(input.onWord.quote) });
       }
-      return proof.sealed;
+      return opened;
     },
-    validateReplay(_viewer, input) {
+    prepareReplay: input => !!input.onWord && !('venue' in input.onWord) && input.onWord.item === undefined,
+    validateReplay(viewer, input, prepared) {
+      if (prepared instanceof Map && input.onWord && !('venue' in input.onWord) && input.onWord.item === undefined) {
+        const proof = resolveEvidence(viewer, input.onWord, prepared);
+        const basis = decisionBasis(input.answer, proof.basis);
+        if (!service.record(input.id).some(event => event.event === input.answer && event.note === basis))
+          throw new OperationError('conflict','The message changed. Read it again.');
+      }
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       const merge = mergeTarget(row); if (merge && input.answer !== 'deny') currentHead(merge);
     },
     run(ctx, input, prepared) {
-      const proof = answerEvidence(db, sources, ctx.viewer, input.onWord);
-      if (proof.sealed && (!Buffer.isBuffer(prepared) || !proof.sealed.equals(prepared))) throw new OperationError('conflict','The message changed. Read it again.');
-      const basis = proof.basis && (input.answer === 'allow' ? 'Allowed by ' : 'Denied by ') + proof.basis;
+      const proof = resolveEvidence(ctx.viewer, input.onWord, prepared);
+      const basis = decisionBasis(input.answer, proof.basis);
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       // A dangerous action cannot be put back, so allowing one takes a second, explicit yes.

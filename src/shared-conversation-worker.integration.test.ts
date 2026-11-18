@@ -50,7 +50,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const ended=new WeakSet<ChildProcessWithoutNullStreams>(),aborts=new WeakMap<ChildProcessWithoutNullStreams,AbortController>();
  const native=claudeBody({command:'/fake/claude',cwd:'/work',env:{},spawn:(_command,args)=>{
   const events=new EventEmitter();let words='';const child=Object.assign(events,{stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn(()=>true),stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();},final(done){done();queueMicrotask(()=>{
-   expect(words).toBe('PRIVATE WORKER INPUT');expect(args[args.indexOf('--model')+1]).toBe('requested-model');child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));nativeReply(child,args);
+   expect(words).toMatch(/approvals\.answer[\s\S]*\n\nPRIVATE WORKER INPUT$/);expect(args[args.indexOf('--model')+1]).toBe('requested-model');child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));nativeReply(child,args);
   });}})})as unknown as ChildProcessWithoutNullStreams;return child;
  }});
  // Keep the scenario assertions separate from provider stream plumbing.
@@ -105,7 +105,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   const execute=()=>{if(started||!inputEnded||!connection)return;started=true;void(async()=>{
    const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
    try{
-    expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
+    expect(words).toMatch(/approvals\.answer[\s\S]*\n\nPRIVATE WORKER INPUT$/);expect(acknowledged).toBe(true);
     expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
     const tools=(await protocol.listTools()).tools;

@@ -197,6 +197,8 @@ it('tells a body in a shared room who it works for, by loom\'s reading of the jo
   // Owners are named together: mail on owners\' word shares a job.
   expect(workingFor(room('owners', [], [{ kind: 'person', person: 'jonathan', tier: null }, { kind: 'person', person: 'sam', tier: null }]))).toContain('This job works for the member jonathan and the member sam, your owners, and for nobody else.');
   // The agent\'s own work has nobody behind it.
+  expect(workingFor(room('owners', [], [{kind:'person',person:'jonathan',tier:null}]))).toContain('approvals.answer');
+  expect(guest).not.toContain('approvals.answer');
   expect(workingFor(room('own'))).toContain('This job is your own work: nobody in the room asked for it.');
   // Nobody loom can name: said so, and never as an owner.
   expect(workingFor(withUnknownSender(room('owners', [], [{ kind: 'person', person: 'jonathan', tier: null }])))).toContain('This job works for somebody loom cannot name, who is not one of your owners, and for nobody else.');

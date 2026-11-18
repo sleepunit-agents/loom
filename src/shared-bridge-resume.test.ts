@@ -186,7 +186,7 @@ it('runs a body whose only mail is a firing from the schedule, and posts its ans
  expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
  // The body is told the schedule's words, and with them what was said in the conversation before: a job a
  // firing starts has its venue's context like any other job there.
- const told=JSON.parse(seen[1].slice(seen[1].indexOf('{'))) as {history:{words:string}[];input:string};
+ const told=JSON.parse(mail(seen[1]).slice('IDENTITY\n\n'.length)) as {history:{words:string}[];input:string};
  expect(told.input).toBe('[From the schedule, not from a person speaking now.]\n\nSay it is nine');
  expect(told.history.map(line=>line.words)).toEqual(['Remind us at nine','I will.']);
  const sends=f.db.select().from(s.bridgeSends).all();
@@ -210,7 +210,7 @@ it('runs a body on a note from another body of the agent: it is told the note is
  expect(note).toMatchObject({conversation:cv,onWordKind:null,chain:JSON.stringify([lane])});expect(note.words).not.toContain('Tell them');
  // The words the job is started with are not copied into its brief: they are sealed.
  expect(await f.run('two',cv,native,keeper().sessions)).toBe(0);
- const told=JSON.parse(seen[1].slice(seen[1].indexOf('{'))) as {history:{words:string}[];input:string};
+ const told=JSON.parse(mail(seen[1]).slice('IDENTITY\n\n'.length)) as {history:{words:string}[];input:string};
  expect(told.input).toMatch(/^\[A note from another body of yours, not a person speaking\. It was working in its own work \(wake\) \(conversation .*\), on your own work\. .*Hand-offs before this one in this exchange: 0\. If this exchange is no longer making progress, stop and say so to a person instead of handing on\.\]\n\nTell them about X$/s);
  expect(told.history.map(line=>line.words)).toEqual(['Hello there','Hello.']);
  expect(f.db.select().from(s.bridgeSends).all().at(-1)).toMatchObject({incoming:null,conversation:cv,text:'Somebody asked about X.'});

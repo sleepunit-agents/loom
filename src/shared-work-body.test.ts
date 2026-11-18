@@ -143,10 +143,12 @@ it('validates the exact conversation approval selection through the shared query
  const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toHaveLength(2);expect(result.data.approvals).toEqual(expect.arrayContaining([{id},{id:setting.id}]));expect(result.data.inboxItems).toEqual([]);
 });
 
-it.each(['verified','no words','wrong item','wrong writer','wrong quote','generated mail','other word','own work','moved head'] as const)('checks owner mail before answering: %s', async scenario => {
+it.each(['verified','quote only','ambiguous','guest quote','member quote','missing quote','no words','wrong item','wrong writer','wrong quote','generated mail','other word','own work','moved head'] as const)('checks owner mail before answering: %s', async scenario => {
  const f=await fixture(), id=await f.ask(), second=await f.ask();
- if(scenario!=='wrong writer') f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ if(scenario!=='wrong writer' && scenario!=='member quote') f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
  expect((await f.send('Yes to both changes','word')).status).toBe(200);
+ if(scenario==='quote only') expect((await f.send('A different instruction','distinct')).status).toBe(200);
+ if(scenario==='ambiguous') expect((await f.send('Yes to both changes again','also')).status).toBe(200);
  const delivery=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
  expect(delivery.status).toBe(200);
  const mail=(await delivery.json()).value.items as {id:string;words:string|null}[];
@@ -163,18 +165,18 @@ it.each(['verified','no words','wrong item','wrong writer','wrong quote','genera
   evidenceItem=other.id;
  }
  if(scenario==='generated mail') f.db.update(s.inbox).set({source:'notice'}).where(eq(s.inbox.id,item.id)).run();
- if(scenario==='other word') f.db.update(s.inbox).set({fromKind:'unknown',fromId:'guest'}).where(eq(s.inbox.id,item.id)).run();
+ if(scenario==='other word'||scenario==='guest quote') f.db.update(s.inbox).set({fromKind:'unknown',fromId:'guest'}).where(eq(s.inbox.id,item.id)).run();
  if(scenario==='own work'){
   f.db.update(s.conversations).set({member:null}).where(eq(s.conversations.id,f.thread.conversation)).run();
   f.db.update(s.inbox).set({source:'trigger',fromKind:'schedule',fromId:null}).where(eq(s.inbox.id,item.id)).run();
  }
  if(scenario==='moved head') f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run();
- const onWord={item:evidenceItem,quote:scenario==='wrong quote'?'fabricated':'Yes to both changes'};
+ const onWord={...(['quote only','ambiguous','guest quote','member quote','missing quote'].includes(scenario)?{}:{item:evidenceItem}),quote:scenario==='wrong quote'||scenario==='missing quote'?'fabricated':'Yes to both changes'};
  const answer=(card:string,decision:string)=>f.call('answer',{id:card,answer:decision,...(scenario==='no words'?{}:{onWord})});
  const snapshot=()=>({...f.snapshot(),mail:f.db.select().from(s.inbox).all()});
  const before=snapshot();
  const result=await (await answer(id,'allow')).json();
- if(scenario==='verified'){
+ if(scenario==='verified'||scenario==='quote only'){
   expect(result.ok).toBe(true);
   expect((await (await answer(second,'deny')).json()).ok).toBe(true);
   for(const card of [id,second]){
@@ -183,8 +185,29 @@ it.each(['verified','no words','wrong item','wrong writer','wrong quote','genera
    expect(f.root.services.approvals.get(card).decidedBy).toBe('alice');
   }
  }else{
-  const refusals={'no words':'Name the owner’s message and quote their words.','wrong item':'That message is outside this job.','wrong writer':'The writer is not a household owner.','wrong quote':'Those words do not appear in that message.','generated mail':'Choose a message written by a person.','other word':'This job is not working on the owners’ word.','own work':'This job is not working on the owners’ word.','moved head':'The change head moved. Open it again.'};
+  const refusals={'member quote':'Those words do not appear in that message.','guest quote':'This job is not working on the owners’ word.','ambiguous':'Those words appear in more than one message. Quote a longer passage.','missing quote':'Those words do not appear in that message.','no words':'Name the owner’s message and quote their words.','wrong item':'That message is outside this job.','wrong writer':'The writer is not a household owner.','wrong quote':'Those words do not appear in that message.','generated mail':'Choose a message written by a person.','other word':'This job is not working on the owners’ word.','own work':'This job is not working on the owners’ word.','moved head':'The change head moved. Open it again.'};
   expect(result).toMatchObject({ok:false,message:refusals[scenario]});
   expect(snapshot()).toEqual(before);
  }
+});
+
+it('checks quote uniqueness again before returning a cached approval answer', async () => {
+ const f=await fixture(), id=await f.ask();
+ f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ const take=()=>f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const answer=()=>f.call('answer',{id,answer:'allow',onWord:{quote:'yes to the pump'}},'one-answer');
+ expect((await f.send('yes to the pump change','first')).status).toBe(200);
+ expect((await take()).status).toBe(200);
+ expect((await answer()).status).toBe(200);
+ expect((await answer()).status).toBe(200);
+ expect((await f.send('yes to the pump again','second')).status).toBe(200);
+ expect((await take()).status).toBe(200);
+ const before=f.snapshot();
+ expect(await (await answer()).json()).toMatchObject({ok:false,message:'Those words appear in more than one message. Quote a longer passage.'});
+ expect(f.snapshot()).toEqual(before);
+ const original=f.db.select().from(s.messages).where(eq(s.messages.sender,'alice')).all().find(row=>row.clientId==='first');
+ expect(original).toBeDefined();
+ f.db.update(s.messages).set({words:null}).where(eq(s.messages.inboxItem,original!.inboxItem!)).run();
+ expect(await (await answer()).json()).toMatchObject({ok:false,message:'The message changed. Read it again.'});
+ expect(f.snapshot()).toEqual(before);
 });

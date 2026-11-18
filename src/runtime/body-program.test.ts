@@ -34,7 +34,7 @@ it('accepts within the child, settles its mail only after the answer is recorded
   const paths = f.calls.map(row => row.path);
   expect(paths.filter(path => path === 'confirm')).toHaveLength(1); expect(paths.indexOf('confirm')).toBeGreaterThan(paths.indexOf('message'));
   expect(f.calls.find(row => row.path === 'confirm')?.body.input).toEqual({ items: ['mail'] });
-  expect(f.native).toHaveBeenCalledWith(job, 'PRIVATE MAIL', expect.any(AbortSignal));
+  expect(f.native).toHaveBeenCalledWith(job, expect.stringMatching(/approvals\.answer[\s\S]*\n\nPRIVATE MAIL$/), expect.any(AbortSignal));
   expect(f.calls.find(row => row.path === 'message')?.body.input).toMatchObject({ kind: 'reply', words: 'Actual answer', model: 'observed' });
   expect(f.calls.find(row => row.path === 'turn')?.body.input).toEqual({ kind: 'action', model: 'action-model', outcome: 'progressed' });
   expect(JSON.stringify(f.calls)).not.toContain(raw); expect(f.error).not.toHaveBeenCalled(); expect(f.input.every(byte => byte === 0)).toBe(true);
@@ -156,7 +156,7 @@ it('passes retained question context with a short answer to native execution',as
   return response;
  };
  expect(await bodyProgram({...f.options,fetch:fetchWithContext})).toBe(0);
- expect(f.native).toHaveBeenCalledWith(job,JSON.stringify({question,answer:'yes',verdict:'yes'}),expect.any(AbortSignal));
+ expect(f.native).toHaveBeenCalledWith(job,expect.stringContaining('\n\n'+JSON.stringify({question,answer:'yes',verdict:'yes'})),expect.any(AbortSignal));
  expect(JSON.stringify(f.calls)).not.toContain('PRIVATE QUESTION');
 });
 it('retires a Stop seen in the accepted batch before a held heartbeat drains',async()=>{
@@ -293,6 +293,6 @@ it('tells the body of a bridge job who asked before its mail, fresh or continuin
  expect(await bodyProgram({...g.options,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,options)=>{const response=await g.options.fetch(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:'slack',refs:['bi:first']});return Response.json(batch);},sessions})).toBe(0);
  expect(g.native.mock.calls[0][1].split('\n\n')).toEqual([expect.stringContaining('This job works for the member owner, your owner, and for nobody else.'),'PRIVATE MAIL']);
- // A thread is one member\'s own: there is no room, and nothing is added.
- const h=fixture();expect(await bodyProgram(h.options)).toBe(0);expect(h.native).toHaveBeenCalledWith(job,'PRIVATE MAIL',expect.any(AbortSignal));
+ // Owners also receive the approval instructions in private Comms.
+ const h=fixture();expect(await bodyProgram(h.options)).toBe(0);expect(h.native).toHaveBeenCalledWith(job,expect.stringMatching(/approvals\.answer[\s\S]*\n\nPRIVATE MAIL$/),expect.any(AbortSignal));
 });

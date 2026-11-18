@@ -82,7 +82,7 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
    expect(config!.loom).toMatchObject({timeout:86_400_000});
    const protocol=new Client({name:'native-model-fixture',version:'1'},{capabilities:{}}),connection=config!.loom;
    try{
-    expect(words).toBe('Use the requested credential without repeating it');expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
+    expect(words).toMatch(/approvals\.answer[\s\S]*\n\nUse the requested credential without repeating it$/);expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));
     const request=randomUUID();expect(JSON.parse(text(await protocol.callTool({name:'request_secret',arguments:{id:request,secret:'TOKEN',why:'Use it privately',minutes:5}}))).state).toBe('pending');
     const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}},undefined,{timeout:Number(options.env?.MCP_TOOL_TIMEOUT)});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
