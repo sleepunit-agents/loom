@@ -81,6 +81,8 @@ Step 10 is the plainest kind: it adds one empty column, `projects.retired_at`, a
 Step 11 is the same kind: it adds one empty column, `bridge_channels.brief`, and two empty tables,
 `bridge_send_files` and `conversation_sessions`. Neither table is read by the query door.
 
+Step 12 adds `job_usage` and backfills each ended job with its model, harness and available claim-to-end time. Historical harness counters stay null. Open jobs receive their usage record when they end.
+
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).
 
