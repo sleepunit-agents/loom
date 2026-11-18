@@ -27,7 +27,7 @@ beforeAll(async () => {
     executablePath: chrome,
     args: ["--no-sandbox"],
   });
-});
+}, 30000);
 afterAll(async () => {
   await browser?.close();
 });

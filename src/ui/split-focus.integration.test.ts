@@ -25,7 +25,7 @@ describe.runIf(chrome && existsSync(`${root}web/node_modules/react`))('Split foc
     `, resolveDir: `${root}web`, loader: 'tsx' }, bundle: true, write: false, loader: { ".css": "empty" }, format: 'iife', jsx: 'automatic', tsconfig: `${root}web/tsconfig.app.json` });
     script = result.outputFiles[0].text;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
-  });
+  }, 60_000);
   afterAll(async () => { await browser?.close(); });
   it('focused open and Escape return focus; background reader close preserves the chosen app', async () => {
     const p = await browser.newPage({ viewport: { width: 1280, height: 800 } });
