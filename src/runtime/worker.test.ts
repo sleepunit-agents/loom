@@ -27,6 +27,17 @@ function fixture(turns?: WorkerTurns, assignment: WorkerAssignment = job) {
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 describe('worker work plane', () => {
+  it('fails a marked machine job before fetching or building on an ordinary worker', async () => {
+    const f = fixture(undefined, { ...job, run: { ...job.run!, machine: { approval: 'a-1' } } });
+    f.control.repositoryInput = vi.fn(async () => undefined);
+    const run = f.run();
+    await flush();
+    expect(f.control.repositoryInput).not.toHaveBeenCalled();
+    expect(f.executor.build).not.toHaveBeenCalled();
+    expect(f.executor.start).not.toHaveBeenCalled();
+    expect(await run).toBe('finished');
+    expect(f.control.finish).toHaveBeenCalledWith('j', WORKER_EXIT.machine, expect.any(String), 'worker');
+  });
   it.each([false, true])('hands repository bytes privately to build and erases them after settlement (failure=%s)', async failed => {
     const f = fixture(), bytes = Buffer.from('PRIVATE_REPOSITORY_INPUT');
     const input = deferred<Uint8Array | undefined>();

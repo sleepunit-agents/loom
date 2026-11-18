@@ -22,6 +22,14 @@ describe('worker operation client', () => {
     expect(new Set(requests.map(r => r.data.id)).size).toBe(4);
     expect(requests.every(r => r.redirect === 'error' && r.signal && (r.headers as Record<string,string>).authorization === 'Bearer private-token')).toBe(true);
   });
+  it('preserves the machine approval marker and rejects a malformed one', async () => {
+    const run = { nestedContainers: false, gpu: false, ports: [], machine: { approval: 'a-1' } };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ ...assignment, run }))
+      .mockResolvedValueOnce(response({ ...assignment, run: { ...run, machine: {} } }));
+    const control = client(fetcher);
+    expect((await control.next())?.run).toEqual(run);
+    await expect(control.next()).rejects.toThrow('Worker next failed');
+  });
   it('accepts no work and rejects malformed assignments without retrying', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response(null)).mockResolvedValueOnce(response({ id: 'incomplete' }));
     const control = client(fetcher);

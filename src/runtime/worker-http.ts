@@ -24,6 +24,7 @@ export const workerAssignment = z.object({
     mail: z.array(z.string().min(1)).optional(),
     word: z.enum(['own', 'owners', 'others']).optional(),
   }).optional(), nestedContainers: z.boolean(), gpu: z.boolean(),
+    machine: z.object({ approval: z.string().trim().min(1) }).strict().optional(),
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),

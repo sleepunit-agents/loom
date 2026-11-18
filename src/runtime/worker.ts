@@ -19,6 +19,7 @@ export interface WorkerRunPolicy {
   word?: 'own' | 'owners' | 'others';
 }
 export interface WorkerRunOptions {
+  machine?: { approval: string };
   policy?: WorkerRunPolicy;
   nestedContainers: boolean;
   gpu: boolean;
@@ -186,6 +187,10 @@ export async function workOnce(input: {
     let stage: keyof typeof WORKER_EXIT = 'input';
     try {
       if (abort.signal.aborted) return 'abandoned';
+      if (assignment.run?.machine !== undefined) {
+        reporting = true;
+        return await report(WORKER_EXIT.machine, 'Worker has no executor for machine jobs', 'worker');
+      }
       const repositoryInput=await control.repositoryInput?.(assignment.id,abort.signal);
       stage = 'build';
       try {

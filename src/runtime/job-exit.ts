@@ -61,6 +61,8 @@ export const WORKER_EXIT = {
   /** The house's fetch and build did not finish within the build limit (`buildTimeoutMs`). The worker
    * reported on the job all the while; nothing was lost. (31 is loom's.) */
   buildTime: 32,
+  /** The worker cannot serve this machine assignment. */
+  machine: 33,
   /** The body did not end by itself: a signal ended its process (the system's memory killer, an operator's
    * kill). The body reported nothing, so this is the worker's word for it. (28 is the body's.) */
   killed: 29,
