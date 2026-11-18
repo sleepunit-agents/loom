@@ -50,7 +50,7 @@ it('runs agy in a private workspace that holds the tools file, with the words on
   expect(f.seen.mode).toBe(0o600); expect(statSync(f.seen.workspace!).mode & 0o777).toBe(0o700);
   expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL'); expect(JSON.stringify(f.launch.mock.calls)).not.toContain('local_secret_');
   f.finish(good());
-  expect(await result).toEqual({ text: 'Answer é', model: 'gemini-fictional', actions: [{ model: 'gemini-fictional' }] });
+  expect(await result).toMatchObject({ text: 'Answer é', model: 'gemini-fictional', actions: [{ model: 'gemini-fictional' }] });
   expect(JSON.parse(f.words())).toEqual({ event: 'user', message: { content: 'PRIVATE ACCEPTED MAIL' } });
   // The workspace with the bearer is gone, and so is what agy saved for this conversation; its sign-in is untouched.
   expect(existsSync(f.seen.workspace!)).toBe(false); expect(existsSync(join(f.data, 'brain', id))).toBe(false); expect(existsSync(join(f.data, 'conversations', id + '.db'))).toBe(false);
@@ -103,4 +103,18 @@ it('forgets only a well-formed conversation id from the note, never a path', () 
   agyLeftovers(scratch, { HOME: f.home });
   expect(readFileSync(join(f.data, 'antigravity-oauth-token'), 'utf8')).toBe('KEEP'); expect(existsSync(join(f.data, 'brain', id))).toBe(true);
   agyLeftovers(join(scratch, 'missing'), { HOME: f.home });
+});
+
+it('reports the end counters and the names of completed tool steps',async()=>{
+ const f=fixture(),answer=f.run(job,'mail',f.abort.signal);
+ f.finish(good());
+ expect(await answer).toMatchObject({usage:{source:'report',tokensIn:1,tokensOut:null,toolCalls:1,tools:{call_mcp_tool:1}}});
+});
+
+it('retains explicit zero counters from the authentication error seen on agy 1.5.11',async()=>{
+ const failedUsage=vi.fn(), f=fixture({failedUsage});
+ const answer=f.run(job,'mail',f.abort.signal);
+ f.finish([JSON.parse(readFileSync(new URL('../../test/fixtures/usage/agy-error.json',import.meta.url),'utf8'))],1);
+ await expect(answer).rejects.toThrow('Native execution unavailable');
+ expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'report',tokensIn:0,tokensOut:0,cacheRead:0,cacheWritten:null,modelCalls:null}));
 });

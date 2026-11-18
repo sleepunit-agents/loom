@@ -23,6 +23,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { agyUsage, failedReport } from './harness-usage.js';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
 import { BODY_SCRATCH, BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
@@ -53,6 +54,7 @@ export const agyBody: BodyHarness = input => {
   if (input.mcpTools && !tools) throw harnessUnavailable();
   const names = harnessToolNames(input.mcpTools ?? []);
   let used = false;
+  const onFailedOutput=failedReport(agyUsage,input.failedUsage);
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
     if (signal.aborted || !harnessModel.test(job.model)
@@ -81,7 +83,7 @@ export const agyBody: BodyHarness = input => {
       const args = ['-p', '', '--input-format', 'stream-json', '--output-format', 'stream-json', '--model', job.model,
         '--dangerously-skip-permissions', '--add-dir', input.cwd];
       const line = JSON.stringify({ event: 'user', message: { content: words } }) + '\n';
-      const output = await runHarnessChild({ command: input.command, args, cwd: workspace, env: input.env, words: line, signal, spawn: input.spawn, onOutput: note });
+      const output = await runHarnessChild({ command: input.command, args, cwd: workspace, env: input.env, words: line, signal, spawn: input.spawn, onFailedOutput, onOutput: note });
       try {
         const rows = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(text => text.trim()).map(text => row.parse(JSON.parse(text)));
         let started = 0, finished = 0, model: string | undefined, text: string | undefined;
@@ -93,8 +95,8 @@ export const agyBody: BodyHarness = input => {
         }
         // One start on the model asked for, one successful result last, and words in it: anything else is not a reply.
         if (started !== 1 || finished !== 1 || rows.at(-1)?.event !== 'result' || model !== job.model || !text) throw harnessUnavailable();
-        return { text, model, actions };
-      } finally { output.fill(0); }
+        return { text, model, actions, usage:agyUsage(rows) };
+      } catch(error){onFailedOutput?.(output);throw error;} finally { output.fill(0); }
     } catch { throw harnessUnavailable(); }
     finally {
       head = '';

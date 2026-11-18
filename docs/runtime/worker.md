@@ -1576,10 +1576,10 @@ in place; ordinary work-source records keep their own scope.
 
 ### Job usage
 
-The body sends usage on its own job credential as soon as its harness returns. The request runs alongside ordinary settlement and ends when the body exits. A missing or unresponsive receiver cannot hold up the reply.
+The body sends usage on its own job credential as soon as its harness returns. The request runs alongside ordinary settlement and ends when the body exits. A missing or unresponsive receiver cannot hold up the reply. A killed, interrupted, or unsuccessful harness may leave no readable usage report. A complete, bounded end report from a failed process still counts. The body ignores any individual end-usage object over 64 KiB. Without a readable report or transcript the attempt ends with source `none` and unknown counters.
 
 Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separately. Loom adds the three for inclusive input tokens. The result supplies aggregate counters. Usage iterations and distinct assistant message IDs supply model-call counts and the largest input sent to one call. Repeated assistant events for a message or tool use count once.
 
-Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. The agy harness supplies no measured counters.
+Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. agy 1.5.11 reports input, output, and cache read tokens on its result. Its completed tool steps supply the tool names and counts. Its turn count does not establish a model-call count. A prompt run with an isolated, unsigned-in home returned an authentication error with explicit zero token counts.
 
 For the GraphQL queries, count definitions and observations, see [Reading job usage](job-usage.md).

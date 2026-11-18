@@ -186,3 +186,11 @@ it('knows the model spoke when the marker of its event is cut across two pieces 
   f.child.emit('close', 1);
   expect(await result.catch((error: unknown) => error)).not.toBeInstanceOf(HarnessResumeUnavailable);
 });
+
+it('delivers the reply when the result contains an oversized usage report',async()=>{
+ const f=fixture(),answer=f.run(job,'mail',f.abort.signal);
+ const rows=f.rows();
+ Object.assign(rows.at(-1)!,{usage:{input_tokens:1,iterations:Array(80_000).fill({})}});
+ f.finish(rows);
+ expect(await answer).toMatchObject({text:'Answer é',usage:{source:'none'}});
+});

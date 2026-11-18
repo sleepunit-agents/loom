@@ -31,6 +31,7 @@ export type HarnessSpawn = (command: string, args: readonly string[], options: {
   cwd: string; env: NodeJS.ProcessEnv; shell: false; detached: false; stdio: 'pipe' | ['pipe', 'pipe', 'pipe', 'pipe'];
 }) => ChildProcessWithoutNullStreams;
 export interface HarnessInput {
+  failedUsage?: (usage:UsageReport)=>void;
   /** The harness's own program, from the machine's body file. */
   command: string; cwd: string; env: NodeJS.ProcessEnv; spawn?: HarnessSpawn;
   /** Where loom's tools for this body are served: {"mcpServers":{"loom":{type:"http",url,headers:{Authorization}}}}.
@@ -119,6 +120,7 @@ export async function runHarnessChild(input: {
   control?: Buffer;
   /** Sees each piece of output as it arrives, for a harness that must note something before the process ends. */
   onOutput?: (chunk: Buffer) => void;
+  onFailedOutput?: (output: Buffer) => void;
 }): Promise<Buffer> {
   const control = input.control;
   const command = control ? '/bin/bash' : input.command;
@@ -137,7 +139,15 @@ export async function runHarnessChild(input: {
       child.once('error', () => { stop(); reject(harnessUnavailable()); });
       // A leader may leave a descendant holding the pipes; end it so the worker can reap the group.
       child.once('exit', () => { drain = setTimeout(stop, 1_000); });
-      child.once('close', code => code === 0 && !failed && !input.signal.aborted ? resolve() : reject(harnessUnavailable()));
+      child.once('close', code => {
+        if(failed||input.signal.aborted||code===null){reject(harnessUnavailable());return;}
+        if(code===0){resolve();return;}
+        if(input.onFailedOutput){
+          const output=Buffer.concat(chunks);
+          try{input.onFailedOutput(output);}catch{/* best effort */}finally{output.fill(0);}
+        }
+        reject(harnessUnavailable());
+      });
       for (const stream of [child.stdin, child.stdout, child.stderr, ...(pipe ? [pipe] : [])]) stream.on('error', stop);
       child.stdout.on('data', (data: Buffer | string) => {
         const chunk = Buffer.from(data);

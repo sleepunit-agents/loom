@@ -20,6 +20,7 @@ import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
 import {bodyFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
+import type { UsageReport } from './usage-report.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -210,7 +211,8 @@ export async function bodyProgram(input: {
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    let failureReport:UsageReport|undefined;
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: input.env, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
@@ -233,7 +235,7 @@ export async function bodyProgram(input: {
     finally {
       // Start the bounded, job-authenticated request while the ordinary settlement is still
       // under way. A stalled receiver can never hold up this body or change its outcome.
-      void client.usage({...(answer?.usage??{source:'none'}),harness:job.harness,model:answer?.model??job.model,
+      void client.usage({...(answer?.usage??failureReport??{source:'none'}),harness:job.harness,model:answer?.model??job.model,
         wallMs:Math.round(performance.now()-harnessStarted)}).catch(()=>{});
       await retire();
     }

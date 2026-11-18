@@ -21,3 +21,15 @@ it('discards malformed end reports without changing the harness reply',()=>{
  expect(codexUsage([{type:'turn.completed',usage:{input_tokens:-10,output_tokens:4}}])).toEqual({source:'none'});
  expect(claudeUsage([{type:'result',usage:'malformed'}])).toEqual({source:'none'});
 });
+
+it('uses each distinct call when the result lists only the last iteration',()=>{
+ const [assistant,result]=rows('claude');
+ const second={...assistant,message:{...assistant.message,id:'second',usage:{...assistant.message.usage,input_tokens:1}}};
+ expect(claudeUsage([assistant,second,result])).toMatchObject({modelCalls:2,largestContext:4288});
+});
+
+it('keeps valid transcript calls when the end report contains malformed iteration detail',()=>{
+ const [assistant,result]=rows('claude');
+ result.usage.iterations=[null,null];
+ expect(claudeUsage([assistant,result])).toMatchObject({source:'report',modelCalls:1,largestContext:4288});
+});

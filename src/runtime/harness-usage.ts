@@ -8,6 +8,9 @@ const count=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value
 function malformedUsage(raw:unknown, keys:string[]):boolean {
  if(raw==null)return false;
  if(typeof raw!=='object'||Array.isArray(raw))return true;
+ // Bound optional measurement separately even when the whole event stream fits in
+ // the harness's ordinary output limit. Deeply nested unknown fields may not serialize.
+ try { if(Buffer.byteLength(JSON.stringify(raw))>64*1024)return true; } catch { return true; }
  const usage=object(raw);
  return keys.some(key=>usage[key]!=null&&count(usage[key])===null);
 }
@@ -47,7 +50,8 @@ export function claudeUsage(rows:unknown[]):UsageReport{
  const usage=object(rawUsage);
  const transcript=allMessages?[...messages.values()]:[];
  const reported=fields.some(key=>count(usage[key])!==null);
- const iterations=Array.isArray(usage.iterations)?usage.iterations.map(object):[];
+ const iterations=Array.isArray(usage.iterations)&&usage.iterations.every(iteration=>
+  inputSize(object(iteration))!==null)?usage.iterations.map(object):[];
  // Some releases attach the last response's iterations to the aggregate. A stream
  // with more distinct messages is better evidence of the calls that actually ran.
  const turns=iterations.length>=transcript.length?iterations:transcript;
@@ -57,13 +61,13 @@ export function claudeUsage(rows:unknown[]):UsageReport{
  return {source:reported?'report':'transcript',
   tokensIn:inputSize(usage)??sum(transcript.map(inputSize)),tokensOut:measure('output_tokens'),
   cacheRead:measure('cache_read_input_tokens'),cacheWritten:measure('cache_creation_input_tokens'),
-  modelCalls:turns.length||null,largestContext:contexts.length&&contexts.every(n=>n!==null)?Math.max(...contexts):null,
+  modelCalls:turns.length||null,largestContext:contexts.length&&contexts.every(n=>n!==null)?contexts.reduce((maximum,size)=>Math.max(maximum,size),0):null,
   ...(allTools?toolCounts([...tools.values()]):{tools:null,toolCalls:null})};
 }
 
 export function codexUsage(rows:unknown[]):UsageReport{
  const events=rows.map(object);
- const rawUsage=events.find(row=>row.type==='turn.completed')?.usage;
+ const rawUsage=events.find(row=>row.type==='turn.completed'||row.type==='turn.failed')?.usage;
  const fields=['input_tokens','output_tokens','cached_input_tokens','cache_write_input_tokens'];
  if(malformedUsage(rawUsage,fields))return {source:'none'};
  const usage=object(rawUsage);
@@ -85,4 +89,32 @@ export function codexUsage(rows:unknown[]):UsageReport{
  return {source:reported?'report':'transcript',tokensIn:count(usage.input_tokens),
   tokensOut:count(usage.output_tokens),cacheRead:count(usage.cached_input_tokens),cacheWritten:count(usage.cache_write_input_tokens),
   modelCalls:null,largestContext:null,...(complete&&seenItem?toolCounts(names):{tools:null,toolCalls:null})};
+}
+
+export function agyUsage(rows:unknown[]):UsageReport{
+ const events=rows.map(object);
+ const result=object(events.find(row=>row.event==='result')?.result);
+ const fields=['input_tokens','output_tokens','cache_read_tokens'];
+ if(malformedUsage(result.usage,fields))return {source:'none'};
+ const usage=object(result.usage);
+ const reported=fields.some(key=>count(usage[key])!==null);
+ const steps=events.filter(row=>row.event==='step_update').map(row=>object(row.step_update));
+ const tools=steps.filter(step=>step.state==='DONE'&&step.step_type==='tool').map(step=>step.tool_name);
+ if(!reported&&!steps.length)return {source:'none'};
+ return {source:reported?'report':'transcript',tokensIn:count(usage.input_tokens),tokensOut:count(usage.output_tokens),
+  cacheRead:count(usage.cache_read_tokens),cacheWritten:null,modelCalls:null,largestContext:null,
+  ...(steps.length?toolCounts(tools):{toolCalls:null,tools:null})};
+}
+
+/** Even a nonzero exit may carry its measured end report. Read only the ordinary
+ * bounded stream; no reply, diagnostic or unchecked object can escape here. */
+export function failedReport(read:(rows:unknown[])=>UsageReport,sink?: (usage:UsageReport)=>void){
+ if(!sink)return undefined;
+ return (output:Buffer)=>{
+  try{
+   const rows=new TextDecoder('utf-8',{fatal:true}).decode(output).split(/\r?\n/).filter(line=>line.trim()).map(line=>JSON.parse(line));
+   const usage=read(rows);
+   if(usage.source==='report')sink(usage);
+  }catch{/* An unreadable failure leaves unknown usage. */}
+ };
 }

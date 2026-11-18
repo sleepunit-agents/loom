@@ -11,7 +11,7 @@
  * No Root credential enters argv, environment or model input. The outer worker owns the process group,
  * including this child. */
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
-import { claudeUsage } from './harness-usage.js';
+import { claudeUsage, failedReport } from './harness-usage.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -53,6 +53,7 @@ export const claudeBody: BodyHarness = input => {
   const allowed=[...(input.mcpTools??['request_secret','use_secret'].map(name=>harnessToolPrefix+name))];
   try{if(input.mcpTools&&!control)throw harnessUnavailable();harnessToolNames(allowed);}catch(error){control?.fill(0);throw error;}
   if(control)for(const [name,value] of Object.entries(claudeToolSettings))env[name]??=value;
+  const onFailedOutput=failedReport(claudeUsage,input.failedUsage);
   return async (job, words, signal, keep) => {
     if(control&&used)throw harnessUnavailable();used=true;
     if (signal.aborted || !harnessModel.test(job.model)
@@ -82,7 +83,7 @@ export const claudeBody: BodyHarness = input => {
       ...(control&&reach!=='all'?['--allowedTools',...allowed]:[]),
       ...(withheld.length ? ['--disallowedTools', ...withheld] : [])];
     let output: Buffer;
-    try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
+    try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput, control,
       // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
       onOutput: chunk => { const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
     // A session that cannot be continued ends the program before the model is asked anything.
@@ -112,7 +113,7 @@ export const claudeBody: BodyHarness = input => {
       // A configured/requested/init model is never evidence of a response.
       if (!last || result !== last.text) throw harnessUnavailable();
       return { ...last, actions, usage: claudeUsage(rows), ...(keep && session ? { session } : {}) };
-    } catch { throw harnessUnavailable(); }
+    } catch { onFailedOutput?.(output);throw harnessUnavailable(); }
     finally { output.fill(0); }
   };
 };

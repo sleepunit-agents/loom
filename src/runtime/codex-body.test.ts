@@ -85,3 +85,12 @@ it('is given every tool a body serves, the named ones too, by Codex\'s own list 
   expect(served).toEqual(expect.arrayContaining(['remember', 'task_claim', 'note_read']));
   f.finish(good); await result;
 });
+
+it('keeps bounded usage from an unsuccessful process without accepting its reply',async()=>{
+ const failedUsage=vi.fn(),f=fixture({failedUsage});
+ const answer=f.run(job,'mail',f.abort.signal);
+ f.finish(good,1);
+ await expect(answer).rejects.toThrow('Native execution unavailable');
+ expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({source:'report',tokensIn:1,tools:{recall:1}}));
+ expect(JSON.stringify(failedUsage.mock.calls)).not.toContain('Answer é');
+});

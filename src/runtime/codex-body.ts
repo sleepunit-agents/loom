@@ -11,7 +11,7 @@
  *   reach cannot run a Codex body, and a body with denied tools cannot either: Codex has no way to honour them.
  * - Codex's events do not name the model that answered. The reply carries the model the job asked for.
  */
-import { codexUsage } from './harness-usage.js';
+import { codexUsage, failedReport } from './harness-usage.js';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
 import { BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
@@ -27,6 +27,7 @@ export const codexBody: BodyHarness = input => {
   if (input.mcpTools && !tools) throw harnessUnavailable();
   const names = harnessToolNames(input.mcpTools ?? []);
   let used = false;
+  const onFailedOutput=failedReport(codexUsage,input.failedUsage);
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
     if (signal.aborted || !harnessModel.test(job.model)
@@ -39,7 +40,7 @@ export const codexBody: BodyHarness = input => {
         '-c', `${server}tool_timeout_sec=86400`, '-c', `shell_environment_policy.exclude=[${quote(tokenVariable)}]`] : []),
       '-'];
     const env = { ...input.env, ...(tools ? { [tokenVariable]: tools.authorization.slice('Bearer '.length) } : {}) };
-    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn });
+    const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, onFailedOutput });
     try {
       const rows = new TextDecoder('utf-8', { fatal: true }).decode(output).split(/\r?\n/).filter(line => line.trim()).map(line => event.parse(JSON.parse(line)));
       let started = 0, completed = 0, last: string | undefined;
@@ -57,7 +58,7 @@ export const codexBody: BodyHarness = input => {
       // One thread, one finished turn, and words after it: anything else is not a reply.
       if (started !== 1 || completed !== 1 || rows.at(-1)?.type !== 'turn.completed' || !last) throw harnessUnavailable();
       return { text: last, model: job.model, actions, usage: codexUsage(rows) };
-    } catch { throw harnessUnavailable(); }
+    } catch { onFailedOutput?.(output);throw harnessUnavailable(); }
     finally { output.fill(0); }
   };
 };
