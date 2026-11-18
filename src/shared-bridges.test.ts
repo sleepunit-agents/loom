@@ -194,6 +194,19 @@ it('tells the body of a bridge conversation the brief its channel\'s rule names,
  // Another brief for the same channel is another thing to be told of.
  f.root.writes.run(()=>{f.db.update(bridgeChannels).set({brief:'field'}).run();});
  expect((await f.call('bridges','briefMissing',{})).status).toBe(200);expect(notices()).toHaveLength(2);
+ // A conversation nobody has spoken in (a note or a firing opened it) has its channel's brief all the same:
+ // the rule is looked up by the place, as every rule about a place is (ruleChannel).
+ const pond=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null]),label:'pond'}).id;
+ f.root.writes.run(()=>{f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CPOND',answers:'art',botsMayTalk:false,brief:'pond'}).run();f.db.update(jobs).set({conversation:pond}).where(eq(jobs.id,'other')).run();});
+ expect(await f.call('bridges','brief',{},token.other)).toMatchObject({status:200,body:{value:{brief:'pond'}}});
+ // A thread's brief is its parent channel's: its messages say which channel that is.
+ const thread=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CTHREAD',null]),label:'thread'}).id;
+ f.root.writes.run(()=>{f.db.insert(bridgeIncoming).values({...incoming,id:'bi:thread',channel:'CTHREAD',parent:'CPOND',conversation:thread}).run();f.db.update(jobs).set({conversation:thread}).where(eq(jobs.id,'other')).run();});
+ expect(await f.call('bridges','brief',{},token.other)).toMatchObject({status:200,body:{value:{brief:'pond'}}});
+ // A direct conversation has none, whatever rule its channel id might match.
+ const direct=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CPOND',null,['member',null]]),label:'dm',direct:true}).id;
+ f.root.writes.run(()=>f.db.update(jobs).set({conversation:direct}).where(eq(jobs.id,'other')).run());
+ expect(await f.call('bridges','brief',{},token.other)).toMatchObject({status:200,body:{value:{brief:null}}});
 });
 it('takes a file on bridges.say as a name and bytes, and refuses it for Slack with the reason',async()=>{
  const f=fixture();const incoming=await f.receive();

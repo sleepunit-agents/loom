@@ -4,7 +4,7 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
-import { isBridgeVenue,jobWord,placeAddress,placeClosed,ruled } from './shared-place-mail.js';
+import { isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel,ruled } from './shared-place-mail.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { channelTarget } from './core/conversations/handoff.js';
 import { z } from 'zod';
@@ -71,17 +71,17 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   },
  });
  // The brief the channel's rule names for the bodies of its conversations (settings.ts): the name of a role
- // page of the agent's. The body reads the page from its own Memory. A direct conversation, and a channel
- // with no rule or no brief, has none.
+ // page of the agent's. The body reads the page from its own Memory. The rule is found as every rule about
+ // a place is, by the conversation's place and its ruleChannel (shared-place-mail.ts), so a conversation
+ // nobody has spoken in (a note or a firing opened it) has its channel's brief too. A direct conversation,
+ // and a channel with no rule or no brief, has none.
  const briefOf=(viewer:Viewer)=>{
-  const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||(found.cv.venue!=='discord'&&found.cv.venue!=='slack'))return;
-  const message=db.select({channel:bridgeIncoming.channel,parent:bridgeIncoming.parent,isDm:bridgeIncoming.isDm,platform:bridgeConnections.platform,workspace:bridgeConnections.workspace})
-   .from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeConnections.id,bridgeIncoming.connection))
-   .where(and(eq(bridgeIncoming.conversation,found.cv.id),eq(bridgeIncoming.state,'delivered'),eq(bridgeConnections.agent,found.cv.agent))).get();
-  if(!message)return{agent:found.cv.agent,brief:null,channel:null};
-  const channel=message.parent??message.channel;
-  const rule=message.isDm?undefined:db.select({brief:bridgeChannels.brief}).from(bridgeChannels).where(and(eq(bridgeChannels.platform,message.platform),eq(bridgeChannels.workspace,message.workspace),eq(bridgeChannels.channel,channel))).get();
-  return{agent:found.cv.agent,brief:rule?.brief??null,channel,platform:message.platform,workspace:message.workspace};
+  const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||!isBridgeVenue(found.cv.venue))return;
+  const at=placeAddress(db,found.cv);
+  if(!at)return{agent:found.cv.agent,brief:null,channel:null};
+  const channel=ruleChannel(db,found.cv,at.channel),platform=found.cv.venue;
+  const rule=at.direct?undefined:db.select({brief:bridgeChannels.brief}).from(bridgeChannels).where(and(eq(bridgeChannels.platform,platform),eq(bridgeChannels.workspace,at.workspace),eq(bridgeChannels.channel,channel))).get();
+  return{agent:found.cv.agent,brief:rule?.brief??null,channel,platform,workspace:at.workspace};
  };
  operations.register({name:'bridges.brief',write:false,doors:['http'],input:z.object({}).strict(),output:z.object({brief:z.string().nullable()}).strict(),
   may:viewer=>!!briefOf(viewer),
