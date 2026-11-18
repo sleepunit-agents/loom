@@ -53,6 +53,15 @@ export function deniedTools(policy: WorkerRunPolicy | undefined): string[] {
   const guest = hasGuest(policy);
   return [...new Set((policy?.deniedTools ?? []).filter(rule => !rule.guestsOnly || guest).flatMap(rule => denialEntries(rule.pattern)))];
 }
+/** Whether a body has file tools of its own to read a file with: the machine gives its bodies the
+ * harness's own tools (`reach: 'all'`), and reading files is not among the tools this job's body is not
+ * given. The one rule for everything loom does with a body's files: writing what was sent to it where it
+ * can open it (body-attachments.ts) and reading a file it names for a post (body-files.ts). A body held to
+ * loom's tools, or one whose file tools a guest in the room takes away, gets neither: loom's own doors are
+ * not a way around a denial. */
+export function hasFileTools(reach: 'loom' | 'all', policy: WorkerRunPolicy | undefined): boolean {
+  return reach === 'all' && !deniedTools(policy).some(pattern => /^Read(\(|$)/.test(pattern.trim()));
+}
 /** The policy with one more sender nobody vouched for. The body uses it for outside mail that arrived
  * after loom read the room at claim: such a sender's tier was never looked up, so they count as a guest. */
 export function withUnknownSender(policy: WorkerRunPolicy): WorkerRunPolicy {

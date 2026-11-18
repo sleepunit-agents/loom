@@ -47,9 +47,9 @@ async function fixture(){
   return db.select().from(s.bridgeIncoming).all().at(-1)!;
  };
  /** One body's whole run for the conversation's waiting mail. */
- const run=async(id:string,conversation:string,native:HarnessRun,sessions:BodySessions,more:{reach?:'loom'|'all';saveAttachments?:Parameters<typeof bodyProgram>[0]['saveAttachments']}={})=>{
+ const run=async(id:string,conversation:string,native:HarnessRun,sessions:BodySessions,more:{reach?:'loom'|'all';saveAttachments?:Parameters<typeof bodyProgram>[0]['saveAttachments'];policy?:NonNullable<WorkerAssignment['run']>['policy']}={})=>{
   const token='body_'+createHash('sha256').update(id).digest('hex');
-  const job:WorkerAssignment={id,agent:'art',box:'box',conversation,venue:'slack',thread:null,model:'claude-opus-5-5',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
+  const job:WorkerAssignment={id,agent:'art',box:'box',conversation,venue:'slack',thread:null,model:'claude-opus-5-5',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},...(more.policy?{run:{nestedContainers:false,gpu:false,ports:[],policy:more.policy}}:{})};
   root.writes.run(()=>{
    db.insert(s.jobs).values({id,agent:'art',box:'box',conversation,title:'',brief:'',model:job.model,harness:'claude',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:now()}).run();
    db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Synthetic body '+id,kind:'agent',agent:'art',job:id,createdAt:now()}).run();
@@ -133,4 +133,13 @@ it('writes what was sent with a message only for a body that has file tools to o
  // The one message this job took, by the id loom keeps its files under.
  expect(asked[0].incoming).toEqual([f.db.select().from(s.bridgeIncoming).all().find(row=>row.text==='And this one')!.id]);
  expect(seen[2].endsWith('saved here for you to open:\n- /scratch-of-this-body/attachments-x/1-cat.png (cat.png, 3 bytes)')).toBe(true);
+ // A body on such a machine whose file tools are among those it is not given (a guest is in the room, and
+ // the owner denies guests' bodies Read) is given none either: loom's doors are no way around a denial.
+ asked.length=0;
+ const denied={people:[{kind:'outside' as const,person:'someone',tier:2 as const}],deniedTools:[{pattern:'Read',guestsOnly:true}],mail:[]};
+ expect(await f.run('four',(await f.hear('With a guest')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:denied})).toBe(0);
+ expect(asked).toEqual([]);
+ // The same denial for guests only, with no guest in the room, takes nothing away.
+ expect(await f.run('five',(await f.hear('Without one')).conversation!,native,keeper().sessions,{reach:'all',saveAttachments,policy:{...denied,people:[{kind:'person',person:'owner',tier:null}]}})).toBe(0);
+ expect(asked).toHaveLength(1);
 });

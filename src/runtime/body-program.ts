@@ -23,7 +23,7 @@ import {bodySessions,type BodySessions} from './body-session.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
-import { withUnknownSender } from './harness-traits.js';
+import { hasFileTools, withUnknownSender } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
 import { BODY_TOKEN } from './body-token.js';
 import { BODY_START_BYTES } from './body-input-limit.js';
@@ -154,7 +154,12 @@ export async function bodyProgram(input: {
     const brief=bridge?await (input.loadBrief??bodyChannelBrief)(memoryClient,job.agent):null;
     if(signal.aborted)throw new Error();
     // What was sent with the messages, written where a body with file tools can open it (body-attachments.ts).
-    const sent=bridge&&plan.reach==='all'?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
+    // The room as it is now: a sender nobody looked up, who wrote after loom read the room, counts as a guest.
+    const policy=lateStranger&&job.run?.policy?withUnknownSender(job.run.policy):job.run?.policy;
+    // Files are for a body that has file tools of its own (harness-traits.ts, hasFileTools): what was sent with
+    // the messages is written where it can open it, and it may name a file of its own for a post.
+    const files=bridge&&hasFileTools(plan.reach,policy);
+    const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
     if(signal.aborted)throw new Error();
     if(sent){context.push(sent);continued.push(sent);}
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
@@ -170,7 +175,7 @@ export async function bodyProgram(input: {
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
-        readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])});
+        ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
@@ -180,7 +185,7 @@ export async function bodyProgram(input: {
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
-    const room=lateStranger&&job.run?.policy?{...job,run:{...job.run,policy:withUnknownSender(job.run.policy)}}:job;
+    const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
     try {
       if(!keeper)answer = await native(room, context.join('\n\n'), signal);
       else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
