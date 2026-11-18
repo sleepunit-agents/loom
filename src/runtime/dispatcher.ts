@@ -11,7 +11,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
-import { selectPlacement, type ModelRole } from './placement.js';
+import { decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
 /** What loom records on a job on anybody else's word that no harness the agent has can run. */
@@ -37,8 +37,8 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[]) {
-    this.machines.heartbeat(box, facts);
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number) {
+    this.machines.heartbeat(box, facts, slots);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       if (machine.reportOnly) return;
@@ -53,7 +53,7 @@ export class Dispatcher {
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
         const policy = jobRoom(this.db, job);
-        const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
+        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
@@ -67,7 +67,7 @@ export class Dispatcher {
         // Placement is decided here and nowhere else. The model a queued job carries is only what the
         // column needs before that (the agent's first model, also on a retry); this records the model,
         // account and harness the worker is actually asked for.
-        this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
+        this.db.update(jobs).set({ placementDecision: decision, model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();

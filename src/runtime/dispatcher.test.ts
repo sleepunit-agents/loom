@@ -350,3 +350,37 @@ it('names to its caller each job a poll ended as one no harness can hold', () =>
   expect(f.runtime.next('first', undefined, ended)).toBeUndefined();
   expect(ended).toEqual([job.id]); expect(f.runtime.jobs.get(job.id).endedNote).toBe(UNHELD_NOTE);
 });
+
+it('records the facts and ordering behind the claim even after machine facts change', () => {
+  const f = fixture();
+  f.db.update(jobs).set({ prefers: ['large'] }).where(eq(jobs.id, f.job.id)).run();
+  f.db.insert(boxFacts).values({ box: 'second', fact: 'large', fromOwner: true }).run();
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.next('second')?.id).toBe(f.job.id);
+  f.db.delete(boxFacts).run();
+  expect(f.runtime.jobs.get(f.job.id).placementDecision).toEqual([
+    { box: 'first', outcome: 'passed', reason: expect.stringContaining('large') },
+    { box: 'second', outcome: 'taken', reason: expect.stringContaining('large') },
+  ]);
+});
+
+it('passes a preferred machine whose reported slots are occupied', () => {
+  const f = fixture();
+  f.db.update(boxes).set({ slots: 1 }).where(eq(boxes.id, 'first')).run();
+  f.db.insert(jobs).values({ ...f.job, id: 'occupying', conversation: null, state: 'starting', box: 'first' }).run();
+  expect(f.runtime.next('second')?.id).toBe(f.job.id);
+  expect(f.runtime.jobs.get(f.job.id).placementDecision).toContainEqual({
+    box: 'first', outcome: 'passed', reason: expect.stringContaining('1/1'),
+  });
+});
+
+
+it('worker slots are free after completion and terminal sessions do not occupy them', () => {
+  const f = fixture();
+  f.db.insert(jobs).values([
+    { ...f.job, id: 'ended', conversation: null, state: 'done', box: 'first' },
+    { ...f.job, id: 'terminal', conversation: null, state: 'running', box: 'first', startedByKind: 'terminal' },
+  ]).run();
+  expect(f.runtime.next('first', undefined, undefined, 1)?.id).toBe(f.job.id);
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.slots).toBe(1);
+});
