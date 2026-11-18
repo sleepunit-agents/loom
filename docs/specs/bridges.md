@@ -79,10 +79,15 @@ may use.
   person: one job holds one such person's mail, never two guests' together. Mail on anybody else's word
   that names nobody (a sender loom cannot name, a member who has left, an agent's mail on nobody's word)
   shares one key of its own, at the floor.
-- **Oldest first.** At admission the oldest mail no job has been formed for decides whose job is formed.
-  Everything waiting on that key goes with it. The rest waits; when that job has ended, admission is asked
-  again and the next oldest decides. Jobs in one conversation run one at a time, in order. So an owner who
-  writes after a guest waits for the guest's job to end.
+- **Owners first.** At admission, when mail on the owners' key waits (the agent's own work with it), that
+  job is formed. Otherwise the oldest mail no job has been formed for decides. Everything waiting on the
+  chosen key goes with it. The rest waits; when that job has ended, admission is asked again. Jobs in one
+  conversation run one at a time.
+- **A guest's job no machine has taken holds no owner behind it.** When an owner's mail comes to wait while
+  a job on anybody else's key is still queued, loom sets that job aside (`stopped`, with the note
+  `SET_ASIDE_NOTE`; nothing ran and nothing failed), gives its mail back as fresh mail, and forms the
+  owners' job in the same write. The guest's mail gets its job again afterwards. A job a machine has
+  claimed is not interrupted: an owner then waits for that one job to end, and no longer.
 - **Late mail.** A message that arrives while a job is queued or running joins it only when it is on the
   same key: an owner's message joins an owners' job, and that same guest's message joins that guest's job.
   Anything else waits for a job of its own. An owner's message is never answered by a guest's job at the
@@ -143,9 +148,18 @@ household change; asking for an approval, or using, reporting on or withdrawing 
 the agent; changing the volume of mail. The one way out is `conversation.digest` with a `question`. The
 question a person then reads begins with loom's own line saying on whose word the body was working, so a
 question a guest steered is never read as the agent's own, and the owner's answer, which quotes the
-question, tells the next job the same. The agent's memory, notes, people cards and the household's
-knowledge are left to it (`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's
-tools only").
+question, tells the next job the same. The question goes only to the people who direct the agent (the
+members who have it, or the household's owners when nobody has), and carries no link: one with a link is
+refused.
+
+Of what the agent and the household keep, such a body only adds. It may remember (`memory.remember`) and
+write a note at a path no note has (`memory.noteWrite`). loom stamps each: a memory's first line, its
+source and its `written_on_word` metadata say on whose word and in which conversation it was written, and
+a note's writer (`by`) says the same. The body sets none of that and can change none of it afterwards.
+Refused: `memory.update`, `.archive`, `.restore`, `.forget`, `.restoreRevision`, `.propose`, `.ratify`,
+`.personWrite`, `.personRestoreRevision`, `.projectWrite`; overwriting a note; `mind.knowledgeAdd`,
+`.knowledgeEdit`, `.knowledgeRecheck`, `.knowledgeRestore`, `.knowledgeVerify`, `mind.personAdd`
+(`docs/accepted-tradeoffs.md`, "A job on anybody else's word runs with loom's tools only").
 
 While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
 channel (`presence.ts`). Both are best effort.

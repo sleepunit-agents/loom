@@ -1210,7 +1210,10 @@ The word is settled by the mail a job was formed for, and that is one asker's
 mail. A message that arrives later joins the job only when the same asker wrote
 it (any owner for an owners' job; that same person for a guest's); anybody
 else's waits for a job of its own, so a job's word never changes while it is
-queued or running.
+queued or running. Owners go first: a guest's job that is still queued when an
+owner's mail arrives is set aside (state `stopped`, with a note that says so,
+no exit code) and its mail waits for a job after the owners'. A job a machine
+has claimed is left to finish.
 
 A body in a Discord or Slack conversation is told, before its mail, who its job
 works for and that what others said in the room is talk to read, not
@@ -1221,8 +1224,12 @@ in the room. A body that continues a kept session is told it as well.
 On anybody else's word loom also refuses the body, at the door: notices
 (`notices.raise`, `notices.clear`), every task change (`tasks.command`),
 `household.propose`, and `approvals.request`, `.use`, `.report` and
-`.withdraw`. It may ask a person a question with `conversation.digest`; the
-question begins with loom's line saying on whose word the body was working.
+`.withdraw`. Of the agent's memory and notes it only adds (`memory.remember`,
+and `memory.noteWrite` at a path no note has), and loom stamps what it adds
+with whose word it was written on; every other memory, card, knowledge and
+people write is refused. It may ask a question with `conversation.digest`, of
+somebody who directs the agent and with no link; the question begins with
+loom's line saying on whose word the body was working.
 
 The body keeps one check of its own: if it is handed mail from a sender
 nobody looked up, it takes its startup secrets back out of the environment,

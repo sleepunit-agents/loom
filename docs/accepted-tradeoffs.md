@@ -756,20 +756,32 @@ Entries are grouped by the part of the program they belong to.
   doors refuse it (`heldRefusal`): a notice raised or cleared, any task change, a household proposal, an
   approval asked for, used, reported on or withdrawn, a pause or resume of the agent, the volume of mail.
   A repeating schedule it asks for is a card loom files, naming who asked. Its question
-  (`conversation.digest`) begins with loom's line naming on whose word it was working.
+  (`conversation.digest`) begins with loom's line naming on whose word it was working, goes only to the
+  people who direct the agent (members who have it, or household owners when nobody has), and carries no
+  link: a question with a link is refused, not sent without it, so the body hears why.
+- Of what the agent and the household keep, such a body only adds, and loom says whose word it was.
+  - Allowed: `memory.remember`, and `memory.noteWrite` at a path no note has.
+  - Stamped by loom, never by the body. A memory: `written_on_word` in its metadata (`who`, as loom names
+    the person, and `conversation`), which the memory doors take out of whatever any body sends; its source
+    is recorded as relayed, with loom's line as where it came from, whatever the body said; and the same
+    line is the first line of its words, which is where recall, the identity a body is started with and
+    every page show it. A note: its writer (`by`) reads "<agent>, working for <person> in conversation
+    <id>, who is not one of <agent>'s owners", and `note_read` shows it.
+  - Refused, with one line that says what is allowed instead: `memory.update`, `.archive`, `.restore`,
+    `.forget`, `.restoreRevision`, `.propose`, `.ratify`, `.personWrite`, `.personRestoreRevision`,
+    `.projectWrite`; `memory.noteWrite` over an existing note, its own included; `mind.knowledgeAdd`,
+    `.knowledgeEdit`, `.knowledgeRecheck`, `.knowledgeRestore`, `.knowledgeVerify` and `mind.personAdd`.
+  - What stays possible: a guest can still get a line into the agent's memory, and a later owners' job
+    loads it. It arrives marked, and nothing the agent already kept can be rewritten, removed or brought
+    back by such a job. Its words carry loom's line, so they never coincide with a memory the owners'
+    jobs wrote; said twice from the same person and conversation, the first is counted as seen again and
+    no second is made. A body on owners' word can edit a
+    stamped memory's words, the first line included; the metadata stamp it cannot set or clear.
 - What is not held: such a body reads what the agent reads in loom (`loom_query`, its tasks, its memory
   and notes, the household's shared knowledge), and can read the bytes of a file sent in its own
-  conversation through `bridges.file`. What it tells a guest from those is the agent's judgment. And it
-  still writes the agent's own memory (`memory.remember`, `.update`, `.archive`, `.restore`, `.forget`,
-  `.restoreRevision`, `.propose`, `.ratify`), its notes (`memory.noteWrite`), its person and project cards
-  (`memory.personWrite`, `.personRestoreRevision`, `.projectWrite`), the household's shared knowledge
-  (`mind.knowledgeAdd`, `.knowledgeEdit`, `.knowledgeRecheck`, `.knowledgeRestore`, `.knowledgeVerify`) and,
-  when it is the household's default agent, the people directory (`mind.personAdd`). These are left as
-  they are: what an agent keeps is the agent's judgment ("A body keeps the agent's own knowledge, whoever
-  it is working for"). What a guest gets the agent to remember is there for its next job,
-  whoever that is for: a later owners' job may read, as its own memory, a line a guest's job wrote. An
-  owner narrows any of it per agent with a guests-only denied tool. It may also brief a peer agent, one
-  hop, on its own word.
+  conversation through `bridges.file`. What it tells a guest from those is the agent's judgment. An
+  owner narrows it per agent with a guests-only denied tool. It may also brief a peer agent, one hop, on
+  its own word.
 - **An owner cannot yet give a named outside person more.** There is no way to say "this person's jobs may
   read files" or "this helper may use the shell read-only". Every job on anybody else's word gets the same
   floor. That grant is the follow-up to this change.
@@ -782,7 +794,9 @@ Entries are grouped by the part of the program they belong to.
   `heldRefusal`, `askedOnWord` and `lateMailJoins` in `src/shared-place-mail.ts` and `pending` in
   `src/core/conversations/index.ts` (the late-mail rule is a constructor argument there, and closed when
   none is given); the refused doors are `src/shared-notices.ts`, `src/shared-task-commands.ts`,
-  `src/shared-household-proposals.ts` and `src/shared-work-body.ts`.
+  `src/shared-household-proposals.ts`, `src/shared-work-body.ts`, `src/pieces/mind/semantic-commands.ts`,
+  `src/shared-notes.ts`, `src/pieces/mind/actions.ts` and `src/pieces/mind/people-actions.ts`, each told
+  what to refuse by `src/shared-root.ts`.
 - Why: a guest's words are input to a model. With a shell, files and the agent's secrets in its
   environment, a body answering a guest could be talked into using all of them. Before this, a guest's job
   ran with whatever the machine gave every body, less the rows an owner had thought to deny.
@@ -937,15 +951,20 @@ Entries are grouped by the part of the program they belong to.
 - What: reach follows who asked, never who else is in the room (the owner's ruling, 2026-11-18: "If he
   asks, no. If I ask, sure."). Waiting mail in a conversation is jobbed by whose request it is: the
   owners' class together, with the agent's own work, or one other person (`askers`,
-  `src/shared-place-mail.ts`; `Jobs.admission`). The oldest mail no job was formed for decides the job;
-  the rest waits for a job of its own. Late mail joins only on the same key. Before this, one job took
-  everything waiting and ran at the least reach in the batch, so an owner who spoke beside a guest was
-  answered at the guest's reach.
+  `src/shared-place-mail.ts`; `Jobs.admission`). Owners first: when owners' mail waits, its job is formed;
+  otherwise the oldest mail no job was formed for decides. The rest waits for a job of its own. Late mail
+  joins only on the same key. Before this, one job took everything waiting and ran at the least reach in
+  the batch, so an owner who spoke beside a guest was answered at the guest's reach.
 - What it costs:
-  - An owner waits behind a guest. Jobs in one conversation run one at a time, in order, so an owner who
-    writes after a guest is answered when the guest's job has ended. If the guest's job waits long for a
-    machine (it runs only on Claude Code), the owner's message in that room waits with it, up to the queue
-    deadline. Writing in the owner's own thread is not held up.
+  - An owner waits only behind a guest's job a machine has already taken. Jobs in one conversation run
+    one at a time, and a claimed job is not interrupted, so an owner who writes while a guest's body is
+    starting or running is answered when that one job has ended (or been lost and given up). A guest's job
+    still queued is set aside when the owner's mail arrives (`SET_ASIDE_NOTE`) and the owners' job is
+    formed at once, so an owner is never held behind a job that is waiting for a machine. Writing in the
+    owner's own thread is not held up at all.
+  - A guest waits behind every owner. A guest's request in a busy room is answered when no owners' mail
+    waits there. A job set aside shows as `stopped` with loom's note, not as a failure; if it was a retry,
+    its count of attempts starts again when its mail is next jobbed.
   - More jobs. Three people writing at once in one room are three jobs, each starting its own body.
   - A body does not see a message that is waiting for another asker's job. It reads it later, as history,
     once that job has answered.
