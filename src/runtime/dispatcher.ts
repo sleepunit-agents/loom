@@ -8,7 +8,7 @@ import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agentHousePorts, inbox, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
@@ -45,12 +45,12 @@ export class Dispatcher {
       const at = this.now(), roles = this.roles();
       const queued = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
       for (const job of queued) {
-        if (job.retryAt && job.retryAt > at) continue;
-        if (job.machine) {
-          const held = this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.job, job.id)).all().map(item => item.id);
-          if (this.jobs.unplaceable(job.id, 'Machine execution is unavailable', held)) ended?.push(job.id);
+        if (job.machine !== null) {
+          this.jobs.failMachine(job);
+          ended?.push(job.id);
           continue;
         }
+        if (job.retryAt && job.retryAt > at) continue;
         const needs = this.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all().map(row => row.need);
         const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
         // Settings may gain GPU after admission; never claim an incapable box.
@@ -129,7 +129,7 @@ export class Dispatcher {
     return this.db.transaction(() => {
       this.liveMachine(box);
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
-      if (!job || job.startedByKind === 'terminal' || job.box !== box || job.state !== state) return { active: false };
+      if (!job || job.machine !== null || job.startedByKind === 'terminal' || job.box !== box || job.state !== state) return { active: false };
       if (state === 'starting') {
         // Nothing is running yet, so a Comms Stop ends the job here. Once a body runs, the Stop is the body's
         // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.

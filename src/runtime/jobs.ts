@@ -3,7 +3,7 @@ import {keepJobText} from './job-text.js';
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, messages, threads } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
@@ -13,7 +13,7 @@ import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
-import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
+import { claimedJobStates, endedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
 import { LOG_TAIL_MAX } from './log-tail.js';
 
@@ -35,6 +35,7 @@ const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120
  * again: a next attempt would only wait as long. One number for every reason: docs/accepted-tradeoffs.md,
  * "A queued job has one deadline, whatever keeps it queued". */
 export const QUEUE_DEADLINE_MS = 24 * 3_600_000;
+const MACHINE_UNAVAILABLE = 'Machine execution is unavailable';
 /** What loom records on a job that reported success with mail of its own still unconfirmed. */
 const UNSETTLED_NOTE = 'Finished without settling its mail';
 /** What loom records on a job of somebody who is not an owner that it set aside, before any machine took it, because
@@ -159,6 +160,11 @@ export class Jobs {
       if (conversation.venue === 'terminal') return { declined: 'This conversation runs on its terminal' };
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
       const waits = () => this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+      // A historic machine job can still own waiting mail after an upgrade.
+      const oldMachineMail = this.db.select({ id: inbox.id }).from(inbox).innerJoin(jobs, eq(inbox.job, jobs.id))
+        .where(and(eq(inbox.conversation, conversationId), eq(inbox.state, 'waiting'), isNotNull(jobs.machine),
+          inArray(jobs.state, endedJobStates))).all();
+      for (const item of oldMachineMail) this.mail.resolveItem(item.id, MACHINE_UNAVAILABLE);
       const waiting = waits();
       // The jobs loom set aside for an owner whose mail still waits: that mail starts a job again, with nobody writing.
       const aside = () => { const bound = [...new Set(waiting.flatMap(item => item.job ? [item.job] : []))];
@@ -169,12 +175,12 @@ export class Jobs {
       if (existing) {
         const behind = waiting.filter(item => item.job !== existing.id && fresh(item)), held = waiting.filter(item => item.job === existing.id);
         // Owners first: a queued job nobody has claimed, on anybody else's key, with owners' mail behind it, is set aside.
-        const key = existing.state === 'queued' && held.length && behind.length ? askers(this.db, { agent: conversation.agent, conversation: conversationId }) : undefined;
+        const key = existing.machine === null && existing.state === 'queued' && held.length && behind.length ? askers(this.db, { agent: conversation.agent, conversation: conversationId }) : undefined;
         if (!key || key(held[0].id) === OWNERS_KEY || !behind.some(item => key(item.id) === OWNERS_KEY)) return { job: existing, behind: behind.length > 0 };
         this.end(existing, 'stopped', { endedAt: this.now(), endedNote: SET_ASIDE_NOTE });
         setAside = aside();
       }
-      if (!waiting.length) return {};
+      if (!waiting.length) return oldMachineMail.length ? { noticed: true } : {};
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
       if (!waiting.some(fresh)) return {};
@@ -245,7 +251,7 @@ export class Jobs {
   claim(id: string, box: string): Job | undefined {
     return this.db.transaction(() => {
       const job = this.get(id), at = this.now();
-      if (job.startedByKind === 'terminal' || job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
+      if (job.machine !== null || job.startedByKind === 'terminal' || job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
       const claimed = this.db.update(jobs).set({ box, state: 'starting', claimedAt: at, heardAt: at })
         .where(and(eq(jobs.id, id), eq(jobs.state, 'queued'))).returning().get();
       if(claimed)this.delivery(id,'sending');
@@ -255,7 +261,7 @@ export class Jobs {
 
   private assigned(id: string, box: string, states: readonly Job['state'][]): Job {
     const job = this.get(id);
-    if (job.startedByKind === 'terminal' || job.box !== box || !states.includes(job.state)) throw new Error('Job is not assigned in this state');
+    if (job.machine !== null || job.startedByKind === 'terminal' || job.box !== box || !states.includes(job.state)) throw new Error('Job is not assigned in this state');
     return job;
   }
 
@@ -408,6 +414,8 @@ export class Jobs {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0 || !Number.isFinite(queueMs) || queueMs <= 0) throw new Error('Invalid silence interval');
     return this.db.transaction(() => {
       const at = this.now(), now = Date.parse(at);
+      const unavailable = this.db.select().from(jobs).where(and(isNotNull(jobs.machine), inArray(jobs.state, unendedJobStates))).all()
+        .map(job => this.failMachine(job));
       // Only a clock that has since been set back leaves a report stamped later than now. Its true age is
       // unknown; counting from now delays noticing a dead job by one interval and never loses a live one.
       this.db.update(jobs).set({ heardAt: at }).where(and(ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates), gt(jobs.heardAt, at))).run();
@@ -424,7 +432,7 @@ export class Jobs {
         .filter(job => now - Math.max(Date.parse(job.queuedAt), job.retryAt ? Date.parse(job.retryAt) : 0) > queueMs)
         .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced, exitBy: 'loom',
           endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
-      return [...lost, ...unplaced];
+      return [...unavailable, ...lost, ...unplaced];
     }, { behavior: 'immediate' });
   }
 
@@ -446,6 +454,12 @@ export class Jobs {
     }, { behavior: 'immediate' });
   }
 
+  /** Caller holds the admission, placement or sweep transaction. */
+  failMachine(job: Job): Job {
+    if (job.machine === null || !jobUnended(job.state)) throw new Error('Expected an active machine job');
+    return this.end(job, 'failed', { endedAt: this.now(), exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: MACHINE_UNAVAILABLE });
+  }
+
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     const wallMs = job.claimedAt && ended.endedAt ? Math.max(0, Date.parse(ended.endedAt) - Date.parse(job.claimedAt)) : null;
@@ -456,6 +470,10 @@ export class Jobs {
     // mail stays with this job and is never handed back as fresh: retry() gives it to a successor within
     // the bounded chain, or it waits for fresh mail.
     this.mail.returnTaken(job.id);
+    if (job.machine !== null) {
+      const waiting = this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).all();
+      for (const item of waiting) this.mail.resolveItem(item.id, MACHINE_UNAVAILABLE);
+    }
     // The job working in a conversation is its one job that has not ended, so ending that job is what
     // leaves the conversation with none. Clear its working indicator in the same transaction, and with it a
     // Stop that was pressed on this job and never taken: the next job there is not the one it was meant for.

@@ -32,8 +32,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, options.runner(viewer));
   const assigned = (viewer: Viewer, id: string, states?: readonly string[]) => {
     if (!machine(viewer)) return false;
-    const job = db.select({ box: jobs.box, state: jobs.state }).from(jobs).where(eq(jobs.id, id)).get();
-    return job?.box === viewer.id && (!states || states.includes(job.state));
+    const job = db.select({ box: jobs.box, state: jobs.state, machine: jobs.machine }).from(jobs).where(eq(jobs.id, id)).get();
+    return job?.machine === null && job.box === viewer.id && (!states || states.includes(job.state));
   };
   const runner = (viewer: Viewer) => {
     const box = liveWorker(db, viewer, options.runner(viewer));

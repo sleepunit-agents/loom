@@ -4,7 +4,7 @@ import { eq, notInArray, sql } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
-import { Jobs, QUEUE_DEADLINE_MS, agentMailAdmission } from './jobs.js';
+import { Jobs, QUEUE_DEADLINE_MS, SET_ASIDE_NOTE, agentMailAdmission } from './jobs.js';
 import { BODY_EXIT, LOOM_EXIT, exitStage } from './job-exit.js';
 import { FakeClock } from '../core/clock.js';
 import { SettledInbox } from '../core/tempo/settle.js';
@@ -542,4 +542,30 @@ it('rolls back a standalone unplaceable transition when its usage row cannot be 
   f.db.$client.exec("CREATE TRIGGER reject_usage BEFORE INSERT ON job_usage BEGIN SELECT RAISE(ABORT, 'fixture'); END");
   expect(() => f.runtime.unplaceable(job.id, 'fixture')).toThrow('fixture');
   expect(f.runtime.get(job.id).state).toBe('queued');
+});
+
+it('sweeps machine jobs without waiting for placement or retrying, settling their mail', () => {
+  const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
+  f.db.update(jobs).set({ machine: 'worker' }).where(eq(jobs.id, job.id)).run();
+  expect(f.runtime.sweep()).toMatchObject([{ id: job.id, state: 'failed' }]);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, mail.id)).get()?.state).toBe('resolved');
+});
+
+it('refuses a started report for an old machine assignment', () => {
+  const f = fixture();
+  f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker');
+  f.db.update(jobs).set({ machine: 'worker' }).where(eq(jobs.id, job.id)).run();
+  expect(() => f.runtime.started(job.id, 'worker', 'image')).toThrow();
+  expect(f.runtime.sweep()).toMatchObject([{ id: job.id, state: 'failed' }]);
+  expect(working(f)).toEqual([]);
+});
+
+it.each(['failed', 'stopped'] as const)('keeps old %s machine mail out of an ordinary admission on the same key', state => {
+  const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
+  f.db.update(jobs).set({ machine: 'worker', state, endedNote: state === 'stopped' ? SET_ASIDE_NOTE : null }).where(eq(jobs.id, job.id)).run();
+  const fresh = f.send(), ordinary = f.runtime.admit(f.conversation.id)!;
+  expect(f.db.select().from(inbox).where(eq(inbox.id, mail.id)).get()).toMatchObject({ job: job.id, state: 'resolved' });
+  expect(f.db.select().from(inbox).where(eq(inbox.id, fresh.id)).get()?.job).toBe(ordinary.id);
 });
