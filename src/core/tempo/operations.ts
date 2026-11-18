@@ -28,9 +28,10 @@ export interface TempoOperationOptions {
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
   wordRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null; instructions?: string | null; note?: string }): string | undefined;
-  /** Why this caller may not pause or resume an agent, or set the volume of mail, because of whose word its job works
-   * on, in words for the caller, or nothing. Asked after `authorize`: who the caller is does not answer it. */
-  heldRefusal?(viewer: Viewer, action: 'pause' | 'resume' | 'volume'): string | undefined;
+  /** Why this caller may not do this at all because of whose word its job works on, in words for the caller, or
+   * nothing: pause or resume an agent, set the volume of mail, or set, change, start, run or stop any schedule.
+   * Asked first in every door here, after `authorize`: who the caller is does not answer it. */
+  heldRefusal?(viewer: Viewer, action: 'pause' | 'resume' | 'volume' | 'set' | 'edit' | 'stop' | 'start' | 'runNow'): string | undefined;
   /** When what this caller asks is an owner's to allow first (src/shared-place-triggers.ts, ownersFirst): the
    * composition has asked them, and nothing is set or changed here. `waits` is what the caller is told, and `card`
    * the approval that waits. Asked after `wordRefusal`. Nothing for anything the caller may do itself. */
@@ -63,6 +64,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string(), waits }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
     run(ctx, trigger) {
+      const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { id: first.id, waits: first.waits }; }
@@ -75,6 +77,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     run(ctx, input) {
       // On whose word the caller works matters for these as for setting: a body working for anybody but owners starts,
       // runs and stops nothing of its agent's that fires outside its own conversation (policy.ts, maySchedule).
+      const held = options.heldRefusal?.(ctx.viewer, action); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
       tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
@@ -85,6 +88,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
     run(ctx, { id: target, ...change }) {
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
+      const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);
       if (refused) throw new OperationError('denied', refused);
       const first = stored && options.ownersFirst?.(ctx.viewer, { action: 'edit', trigger: stored, change });

@@ -92,20 +92,27 @@ const asked = { agent: z.string().min(1), conversation: z.string().min(1), place
  * so the asker on it is loom's reading of the job's mail and never a caller's claim. */
 export const placeScheduleAsk = z.discriminatedUnion('action', [
   z.object({ action: z.literal('set'), ...asked, trigger: triggerInput.extend({ id: z.string().min(1), sourceKind: z.literal('time'), targetKind: z.literal('inbox'), toKind: z.literal('agent'), file: z.null().optional() }).strict() }).strict(),
-  z.object({ action: z.literal('edit'), ...asked, id: z.string().min(1), change: triggerEdit.extend({ file: z.null().optional() }).strict() }).strict(),
+  // `standing`: the note, words and times as they stood when it was asked, for the card to show beside the change.
+  z.object({ action: z.literal('edit'), ...asked, id: z.string().min(1), change: triggerEdit.extend({ file: z.null().optional() }).strict(),
+    standing: z.object({ note: z.string(), instructions: z.string().nullable(), times: z.string().nullable(), days: z.string().nullable() }).strict().optional() }).strict(),
 ]);
 export type PlaceScheduleAsk = z.infer<typeof placeScheduleAsk>;
 /** The card's words, for everyone who may read it: who asked, where, the times, and the note and words in full. The
  * note and the words are a body's, written for somebody who is not an owner, and are quoted as such. */
+/** A trigger's id as loom's own lines show it: quoted, and cut at a length, like any text a caller chose. An id is any
+ * text (core/tempo/triggers.ts), so unquoted it could read as loom's words, or as somebody speaking. */
+export const shownId = (id: string): string => JSON.stringify(id.length > 80 ? id.slice(0, 80) + '…' : id);
 export function placeScheduleWords(ask: PlaceScheduleAsk): string {
   const quoted = (value: string | null | undefined) => value == null ? 'none' : JSON.stringify(value);
   const who = `asked for there by ${named(ask.asker)}, who is not one of ${ask.agent}'s owners`, where = `conversation ${ask.conversation} (${ask.place})`;
   if (ask.action === 'set') { const t = ask.trigger;
     return `Set a repeating schedule for ${ask.agent} in ${where}, ${who}. Times: ${t.times}${t.days ? `, on ${t.days}` : ', every day'}, ${t.lifespan === 'today' ? 'today only' : 'until it is stopped'}. `
-      + `Its note, in the words of the body that asked and not loom's: ${quoted(t.note)}. What each firing tells the body, in the same body's words: ${quoted(t.instructions)}.${t.wantsModel ? ` Model wanted: ${t.wantsModel}.` : ''}`; }
+      + `Its note, in the words of the body that asked and not loom's: ${quoted(t.note)}. What each firing tells the body, in the same body's words: ${quoted(t.instructions)}.${t.wantsModel ? ` Model wanted: ${quoted(t.wantsModel)}.` : ''}`; }
   const c = ask.change, parts = [c.times !== undefined ? `times ${c.times}` : '', c.days !== undefined ? `days ${c.days ?? 'every day'}` : '', c.note !== undefined ? `its note ${quoted(c.note)}` : '',
-    c.instructions !== undefined ? `what each firing tells the body ${quoted(c.instructions)}` : '', c.wantsModel !== undefined ? `model wanted ${c.wantsModel ?? 'none'}` : ''].filter(Boolean);
-  return `Change schedule ${ask.id} of ${ask.agent} in ${where}, ${who}. It repeats once changed. Changed, with the note and words in the words of the body that asked and not loom's: ${parts.join('; ')}.`;
+    c.instructions !== undefined ? `what each firing tells the body ${quoted(c.instructions)}` : '', c.wantsModel !== undefined ? `model wanted ${quoted(c.wantsModel)}` : ''].filter(Boolean);
+  // What stands is shown with what changes: an owner who allows a change of times allows the words that will then repeat.
+  const s = ask.standing, stands = s ? ` As it stands: times ${s.times ?? 'none'}${s.days ? `, on ${s.days}` : ''}; its note ${quoted(s.note)}; what each firing tells the body ${quoted(s.instructions)}.` : '';
+  return `Change schedule ${shownId(ask.id)} of ${ask.agent} in ${where}, ${who}. It repeats once changed. Changed, with the note and words in the words of the body that asked and not loom's: ${parts.join('; ')}.${stands}`;
 }
 /** What the owner is asked, and told the answer does. None of it is a body's words: the answer is mail to the agent
  * on the owner's word, and carries these lines. */
@@ -113,7 +120,7 @@ export function placeScheduleCard(ask: PlaceScheduleAsk): { ask: string; ifYes: 
   const where = `conversation ${ask.conversation}`, who = named(ask.asker);
   return ask.action === 'set'
     ? { ask: `Set a repeating schedule for ${ask.agent} in ${where}, asked for by ${who}?`, ifYes: `The schedule is set as the card shows, on the word of ${who}: each firing starts a job in that conversation with loom's tools only.`, ifNo: 'Nothing is set.' }
-    : { ask: `Change schedule ${ask.id} in ${where} so that it repeats, asked for by ${who}?`, ifYes: `The schedule is changed as the card shows, and stays on the word of ${who}.`, ifNo: 'The schedule stays as it is.' };
+    : { ask: `Change schedule ${shownId(ask.id)} in ${where} so that it repeats, asked for by ${who}?`, ifYes: `The schedule is changed as the card shows, and stays on the word of ${who}.`, ifNo: 'The schedule stays as it is.' };
 }
 /** When what a body asks needs an owner's answer first, the card to file: a job on anybody else's word sets no
  * repeating trigger and changes none that repeats once changed (the owner's ruling, 2026-11-18: a body coming back
@@ -131,7 +138,7 @@ export function ownersFirst(db: DataDatabase, now: number, work: Work | undefine
   if (!who || who.kind === 'agent') throw new OperationError('denied', 'Nobody loom knows asked for this');
   const base = { agent: work.cv.agent, conversation: work.cv.id, place, asker: who as OnWord };
   // Only what was sent goes on the card: JSON drops what is not there.
-  return placeScheduleAsk.parse(JSON.parse(JSON.stringify(ask.action === 'set' ? { action: 'set', ...base, trigger: ask.trigger } : { action: 'edit', ...base, id: ask.trigger.id, change: ask.change })));
+  return placeScheduleAsk.parse(JSON.parse(JSON.stringify(ask.action === 'set' ? { action: 'set', ...base, trigger: ask.trigger } : { action: 'edit', ...base, id: ask.trigger.id, change: ask.change, standing: { note: ask.trigger.note, instructions: ask.trigger.instructions ?? null, times: ask.trigger.times ?? null, days: ask.trigger.days ?? null } })));
 }
 /** Why an allowed card can no longer be carried out, in words for the owner who allowed it, or nothing: asked on
  * what is there when they answer. The conversation is still a shared place of the agent that can be posted to,

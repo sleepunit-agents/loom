@@ -123,6 +123,9 @@ const ASK_INSTEAD = 'If an owner should decide it, ask them a question with conv
  * proposal and an approval card are the household's records, and an allowed card is an allowance to act. */
 export const HELD_REFUSALS = {
   pause: WORD_PAUSE_REFUSAL, resume: WORD_PAUSE_REFUSAL, volume: WORD_VOLUME_REFUSAL,
+  // Switched off until an owner can grant a person or a project tools of their own: with loom's tools only such a
+  // body has nothing long-running to come back to.
+  schedule: 'A job that is not working for the agent\'s owners sets and changes no schedule yet. Ask the owners a question instead.',
   notice: `This job is not working for the agent's owners: it raises and clears no notice. ${ASK_INSTEAD}`,
   task: `This job is not working for the agent's owners: it makes and changes no task. ${ASK_INSTEAD}`,
   propose: `This job is not working for the agent's owners: it proposes no change to the household. ${ASK_INSTEAD}`,

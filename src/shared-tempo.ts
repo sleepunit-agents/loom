@@ -39,6 +39,9 @@ export interface SharedTempoOptions {
   /** The caller's job and the conversation it is in, when the caller is the body of a job: what it may
    * schedule follows the word that job works on (policy.ts, maySchedule). Nothing for a person or an agent's own session. */
   bodyWork?(viewer: Viewer): { cv: typeof conversationRows.$inferSelect; job: { id: string; agent: string; conversation: string | null } } | undefined;
+  /** The job the caller's credential is bound to, whatever state it or its conversation is in: what the held question
+   * is asked of (shared-place-mail.ts, heldRefusal), so it cannot fail open where `bodyWork` answers nothing. */
+  bodyJob?(viewer: Viewer): { job: { id: string; agent: string; conversation: string | null } } | undefined;
   /** File the card that asks the household's owners for a repeating schedule somebody who is not an owner asked a
    * body for, and answer its id. Without it such a request is refused, never carried out unasked. */
   askOwners?(agent: string, ask: PlaceScheduleAsk, why: string, where: { conversation: string; member: string | null; project: string | null }): string;
@@ -92,8 +95,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       recorded, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember),
       wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change)
         ?? (action === 'edit' ? partRewordRefusal(db, viewer, work, trigger, change) : undefined); },
+      // On anybody else's word a body has no schedule door at all, and neither pauses its agent nor changes any mail's volume.
+      heldRefusal: (viewer, action) => heldRefusal(db, options.bodyJob?.(viewer) ?? options.bodyWork?.(viewer), action === 'pause' || action === 'resume' || action === 'volume' ? action : 'schedule'),
       // A come-back set or moved by a job a firing woke, on anybody else's word, is recorded as following that firing.
-      heldRefusal: (viewer, action) => heldRefusal(db, options.bodyWork?.(viewer), action),
       stood: (viewer, action, trigger) => { if (action !== 'edit') stood(trigger);
         if (action !== 'start' && trigger.conversation) continueComeBack(db, new Date(clock.now()).toISOString(), options.bodyWork?.(viewer), trigger.id); },
       // A repeating schedule on anybody else's word is an owner's to allow: the card is filed here, with the trigger as
