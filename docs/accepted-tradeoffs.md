@@ -765,7 +765,7 @@ Entries are grouped by the part of the program they belong to.
   delivered message, each up to 8 MB, are also fetched and kept as a Slack message's files are
   (`bridge_files`, fourteen days, or the keep time for a direct conversation). A link is used only when it
   is on `cdn.discordapp.com` or `media.discordapp.net`; an HTML page is never kept. Before its harness
-  starts, a body with file tools writes the kept files of the messages it took into its own scratch
+  starts, a body with file tools of its own (`hasFileTools`) writes the kept files of the messages it took into its own scratch
   directory (at most ten files and 32 MB a run, any type that was kept) and its input names each path.
   A file that could not be fetched, or was not fetched yet when the body started, is only its link.
 - Where: `discordWords` in `src/pieces/bridges/normalize.ts`; `discord-files.ts` and the pump in
@@ -820,7 +820,9 @@ Entries are grouped by the part of the program they belong to.
   uses, so it is split, receipted, held while effects are off and reviewed like a reply. It settles no mail
   and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
   for the mail one job took, the reply among them.
-  On Discord such a post may carry files: at most four, 600 KB together. The model names each by a path.
+  On Discord such a post may carry files: at most four, 600 KB together, and only from a body that has
+  file tools of its own (`hasFileTools`: the machine gives its bodies the harness's own tools, and
+  reading files is not among those this job's body is not given). The model names each by a path.
   The body program opens it once, never following a link at its last step, and asks the rest of the open
   file: it must be a regular file with one name, and the kernel must place it inside the body's working
   directory or its scratch directory. A hard link is refused by its second name, since one made inside
@@ -869,18 +871,22 @@ Entries are grouped by the part of the program they belong to.
   alone for that one job. A restored session is the conversation's words in plain files. In a house that
   place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in
   `src/runtime/house-layout.ts` states the places once), thrown away with the body, and the account's
-  sign-in is mounted elsewhere (`/run/loom/login/<harness>`), so the two do not meet. The worker tells the
-  body the place is its own (`LOOM_BODY_OWN_HARNESS=1`) unless a mount is, holds, or is inside it: an
-  agent's own mount at `.claude` or under it turns resume off for that agent. The body also checks that
-  its harness really keeps its sessions at that place, and never makes the directory: the house's image
-  does. A body run as a plain process is never told so, whatever its configuration says: its harness's
+  sign-in is mounted elsewhere (`/run/loom/login/<harness>`), so the two do not meet. The worker always
+  tells the body, `LOOM_BODY_OWN_HARNESS=1` or `=0`, so an image's own value never stands: 1 unless a
+  mount is, holds, or is inside the place. An agent's own mount at `.claude` or under it turns resume off
+  for that agent. The body also checks that its harness really keeps its sessions at that place, and
+  that the place and every step from the home down to it is a real directory and not a link; it never
+  makes the directory: the house's image does. A body run as a plain process is never told so, whatever its configuration says: its harness's
   directory is the machine's, shared with every other body and left behind. Wherever the place is not the
   body's own, no session is kept or restored and the body starts fresh with the kept history.
 - Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
   700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is handed on
-  only within one family of models. It is erased when the household's keep time for words has passed
-  since the session was STARTED, however often it has been saved since (`conversation_sessions.started_at`
-  is that start), so no word in it outlives the keep time; the next body then starts fresh.
+  only within one family of models. Its keep time is the household's for words, counted from the oldest
+  erasable word it holds (`conversation_sessions.started_at`): when it was first saved, or earlier when
+  its first body started fresh and was handed older words of a direct conversation, whose time the body
+  tells loom. A save within the keep time leaves that start as it is. So no erasable word in a session
+  outlives its keep time, and the next body then starts fresh. A room's words are kept without limit and
+  do not move the start.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also
   removes the one kept before); a conversation answered after the session was last saved (its body died
@@ -891,9 +897,11 @@ Entries are grouped by the part of the program they belong to.
 - Who can read it: nobody but the body holding the conversation's job. The table is not served by the
   query door and no page shows it, to an owner either: a session is the model's own record of the
   conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
-  that body, and the body program keeps both from the model's own tools, so a model cannot store a
-  session of its own making for the next body to continue. A pack is put back without following a link
-  at any step of its path and without writing over a file that is there. A conversation has one unended job at a time, so two bodies cannot each continue and save one
+  that body, of a bridge conversation, and the body program keeps both from the model's own tools, so a
+  model cannot store a session of its own making for the next body to continue. A session's files are
+  found, read, put back and removed without following a link at any step (`src/runtime/unfollowed.ts`);
+  a pack that is refused leaves no file or directory it made. Where a harness keeps a session is said
+  once, by its adapter (`sessions` in `claude-body.ts`). A conversation has one unended job at a time, so two bodies cannot each continue and save one
   session.
 - Where: `src/core/conversations/sessions.ts` and `shared-conversation-sessions.ts`; the body's side is
   `src/runtime/body-session.ts`, `body-program.ts` and the adapter (`claude-body.ts`, `sessionFiles`).
