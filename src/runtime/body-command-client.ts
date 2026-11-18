@@ -1,5 +1,5 @@
 import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
-import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus} from './body-contact.js';
+import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,temporaryUnavailableReply} from './body-contact.js';
 /** Current-body consumer of ordinary Root HTTP commands and generated reads.
  * No transport/issuer, unreceipted writes, or caller-selected authority. */
 import { z } from 'zod';
@@ -60,10 +60,7 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
    joined=Buffer.concat(chunks);const text=new TextDecoder('utf-8',{fatal:true}).decode(joined),value=json.parse(JSON.parse(text));
    // Root credentials never become native tool output, including an echoed error.
    if(!valid()||echoesCredential(text,token))throw unavailable();
-   if(response.status===503){
-    const outcome=result.safeParse(value);
-    if(!outcome.success||outcome.data.ok||outcome.data.code!=='unavailable'||/^(?:loom is )?(?:starting|closing)\.?$/i.test(outcome.data.message))throw new BodyTransportFailure();
-   }
+   if(response.status===503&&temporaryUnavailableReply(value))throw new BodyTransportFailure();
    return {status:response.status,value};
   })(),stopped]);if(!valid())throw unavailable();return reply;}catch(error){if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();throw unavailable();}finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectStopped);active.delete(abort);abort.abort();erase();

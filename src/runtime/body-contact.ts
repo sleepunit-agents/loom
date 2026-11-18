@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Clock } from '../core/clock.js';
 import { CONTACT_PROBE_MS, SILENCE_MS } from './silence.js';
 
@@ -8,6 +9,14 @@ export class BodyContactExpired extends Error {
   constructor() { super(BODY_CONTACT_MESSAGE); }
 }
 export const temporaryStatus = (status: number) => status === 408 || status === 429 || (status >= 500 && status <= 599);
+
+const unavailableReply = z.object({ok:z.literal(false),code:z.literal('unavailable'),message:z.string()}).strict();
+/** An operation can itself fail with 503 while Loom is reachable. Respect that
+ * answer, including a refusal to consume mail that changed during pickup. */
+export function temporaryUnavailableReply(value: unknown): boolean {
+  const reply = unavailableReply.safeParse(value);
+  return !reply.success || /^(?:loom is )?(?:starting|closing)\.?$/i.test(reply.data.message);
+}
 
 // Used only by reads, same-job mail pickup, and commands with stable receipts.
 // Each attempt keeps its own tighter deadline, including time spent reading bytes.

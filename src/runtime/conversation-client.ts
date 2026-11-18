@@ -1,5 +1,5 @@
 import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
-import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,BODY_CONTACT_MS} from './body-contact.js';
+import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,temporaryUnavailableReply,BODY_CONTACT_MS} from './body-contact.js';
 /** Current-body client. The parent supplies its existing enrolled body bearer.
  * Words travel only through a bounded response and the body's acceptance sink.
  * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
@@ -64,14 +64,16 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     const flight=request(new URL('/api/'+namespace+'/'+name,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body});
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
     response=await flight.catch(()=>{throw new BodyTransportFailure();});
-    if(!response.redirected&&temporaryStatus(response.status))throw new BodyTransportFailure();
-    if(!valid()||response.redirected||(!response.ok&&response.status!==401&&response.status!==403)||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
+    const structuredUnavailable=response.status===503&&/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'');
+    if(!response.redirected&&temporaryStatus(response.status)&&!structuredUnavailable)throw new BodyTransportFailure();
+    if(!valid()||response.redirected||(!response.ok&&response.status!==401&&response.status!==403&&!structuredUnavailable)||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
     for(;;){const part=await reader.read().catch(()=>{throw new BodyTransportFailure();});if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
     if(!response.ok&&length!==null&&size!==Number(length))throw unavailable();
     joined=Buffer.concat(chunks);const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(joined));
     if(!valid())throw unavailable();
+    if(structuredUnavailable&&temporaryUnavailableReply(value))throw new BodyTransportFailure();
     if(bodyJobEnded(response.status,value,name==='take'?'take':'command'))throw new BodyJobEnded();
     if(!response.ok)throw unavailable();
     const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(value);if(!valid())throw unavailable();return parsed.value;
