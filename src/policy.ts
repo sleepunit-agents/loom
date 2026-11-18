@@ -448,7 +448,7 @@ export const OWN_WORK = 'agent:';
  *  - work for a member (their own thread, their trigger): that member;
  *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
  *    member). Written `agent:<id>`, which no member's id can be;
- *  - anything else for no member (a room on a bridge, a handoff with no member): `unknown`. People outside
+ *  - anything else for no member (a shared place on a bridge, a handoff with no member): `unknown`. People outside
  *    the household talk to an agent in a shared place; what is asked there is nobody's account.
  * A handoff carries the member it was opened for (core/conversations/handoff.ts), so work handed on for a
  * person is still that person's: the first case.

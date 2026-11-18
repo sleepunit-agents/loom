@@ -53,7 +53,7 @@ connection received, delivered and held in the last day.
    - **the stop word** ("stop" or "cancel" alone) from a linked member who may end the agent's jobs, where
      a job of the agent's is working, ends that job and is not delivered;
    - in a shared place, a person's message is the agent's when it addresses the agent, or addresses nobody and the
-     room's rule names the agent.
+     place's rule names the agent.
 3. **Addressed** means: a written mention of the bot; on Discord a written ping of the role Discord manages
    for the bot; a reply to one of the bot's messages; a message in a thread that hangs under one of the
    bot's messages. Nothing looser: a bot that has only spoken in a thread, or spoke last, is not addressed.
@@ -102,7 +102,7 @@ channel (`presence.ts`). Both are best effort.
   conversation's place (`bridge_sends.conversation`, with no `incoming`).
 - Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
   conversation are given to the stopped job, and neither they nor one that arrives later start any work
-  until a person speaks there. A person speaking is mail from a member, or a delivered message from an
+  until a person speaks there. (Only in a bridge's conversation: a stop elsewhere parks nothing.) A person speaking is mail from a member, or a delivered message from an
   account that is no bot and no webhook.
 
 ## Between conversations
@@ -116,6 +116,14 @@ channel (`presence.ts`). Both are best effort.
   owners or members who have the agent, anywhere; any other body only to its channel rule's `reportsTo`
   (set on the `channel` card as `reportsTo: {platform, workspace, channel}`).
 - The receiving job counts the person the sending body worked for as in the room.
+- Into one member's private conversation only that member's word goes, and the agent's own work. This is
+  asked where a note is admitted and where a firing is made, not only at the doors: a note or a firing on
+  anybody else's word is not delivered there; the note is dropped, or the trigger stopped, with a notice.
+- A guest's word goes one hop. A job on anybody else's word that a note started hands nowhere; one a
+  person's message or a firing started may hand to its own channel's report target. Such a job hands at
+  most 5 notes (`NOTES_PER_JOB`): a flood guard on one job, not a limit on an exchange.
+- A report target is read from the rule of the agent that answers the channel, and the `channel` card
+  takes one only on a bridge of that agent's.
 - A note on the word of somebody no longer known (a member who left, an outside account with no tier
   now) starts no job. Admission closes it with that reason and tells the members who have the agent, or
   the household's owners. A firing still waiting when its asker stops being known goes the same way. A

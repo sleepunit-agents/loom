@@ -69,10 +69,11 @@ conversation as a new message. Words limit, time zone and occurrence ids are
 those of every trigger. The rules are in `src/shared-place-triggers.ts`.
 
 - **Who asked** is recorded with it (`asked_by_kind`, `asked_by`, `asked_at`).
-  Set by a shared place's body, it is the person whose message started the job that
-  set it; when the job's mail is from several people, the one of least reach.
-  Set by a person, it is that member. Set by the agent anywhere else, it is
-  the agent. Nobody loom cannot name is ever the asker.
+  Set by a person, it is that member. Set by a body, it is the person on whose
+  word its job works, wherever the job sits: the member it works for, or the
+  person behind its mail, and of several the one of least reach. The agent is
+  the asker only when the work is its own, with nobody behind it. Nobody loom
+  cannot name is ever the asker.
 - **A firing runs on the asker's word.** The mail carries the asker
   (`inbox.on_word_kind`, `on_word`), and the job counts them as in the room at
   the tier they have when it is claimed (`src/runtime/body-policy.ts`): a guest
@@ -88,6 +89,17 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   when nobody has it. The notice is written each time the trigger is stopped
   this way: turned back on and stopped again, they are told again. **A channel rule that was removed does not
   by itself stop a firing: a mention there would still wake the agent.**
+- **Held at the firing itself.** Two rules are asked where a firing is made,
+  whatever door set or changed the trigger. Into one member's private
+  conversation a trigger fires only on that member's word or as the agent's
+  own work; otherwise it is stopped with the notice. And firings on the word
+  of anybody but owners into one conversation come at least an hour apart
+  (`WORD_REPEAT_MIN_MS`, the hour the door's check uses): one that comes sooner
+  is not delivered and not lost, it is put off to the hour mark, once (log
+  `put off`). A stopped trigger's log says `stopped`, then `fired`.
+- **A job a firing or a note woke, on anybody else's word, schedules nothing.**
+  It sets, edits, starts and runs no trigger; it may stop one the same person
+  asked for.
 - **A trigger keeps to its asker.** A body working for anybody but owners may
   reword, stop and start only a trigger the same person asked for. Whoever
   changes a trigger's words becomes its asker; a change of times alone leaves
@@ -102,7 +114,7 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   (`tempo.runNow`): it is awake and does the work now. Its trigger carries its
   own words: naming a `file` of the household's repository is refused on
   `tempo.set` and `tempo.edit`. A repeating one lists times at least an hour
-  apart (`WORD_REPEAT_MIN_MS`) and watches no event; that is asked
+  apart (`WORD_REPEAT_MIN_MS`); one that watches an event is refused with a line of its own; the times are asked
   when it is set and when its times change, never to stop, start or reword one.
 - An owner, and the agent in its own thread, see, reword and stop these like
   any trigger. A body working for anybody but owners reads its agent's triggers
