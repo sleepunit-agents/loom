@@ -166,4 +166,4 @@ expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKin
  expect(tokenCopy).toBeDefined();const token=tokenCopy!.toString();expect(f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,hash(token))).get()).toMatchObject({job:job.id,madeFrom:hash(raw.runner)});
  const denied=await fetch(url+'/api/conversation/status',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{state:'working',work:''},id:'ended'})});expect(denied.status).toBe(401);
  const durable=f.db.$client.serialize();for(const value of [token,'PRIVATE WORKER INPUT','PRIVATE WORKER REPLY','PRIVATE NATIVE DIAGNOSTIC'])expect(durable.includes(Buffer.from(value))).toBe(false);
-},20000);
+});

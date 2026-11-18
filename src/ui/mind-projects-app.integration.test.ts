@@ -53,4 +53,4 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
   await b.getByRole('searchbox',{name:'Search projects',exact:true}).fill('');await b.getByRole('button',{name:/^Paused and done/}).click();await expect.poll(()=>row(b,'Hocket').count()).toBe(1);await row(b,'Hocket').click();await expect.poll(()=>b.getByRole('heading',{name:'Hocket',exact:true}).count()).toBe(1);
   cards.archive({slug:'pond',actor:'owner',reason:'Fixture complete'});await expect.poll(()=>row(a,'Pond').count()).toBe(0);
  }finally{await browser.close();await fixture.close();people.close();cards.close();other.close();rmSync(home,{recursive:true,force:true});}
-},60000);
+});

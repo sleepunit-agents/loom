@@ -101,4 +101,4 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
   } finally {
     if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); try{await browser?.close();}finally{await program.close();}
   }
-}, 60_000);
+});

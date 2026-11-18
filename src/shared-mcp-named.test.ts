@@ -40,7 +40,7 @@ it('lists the names a terminal session already calls',async()=>{
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
     'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('remembers, recalls with words, updates and forgets',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -56,7 +56,7 @@ it('remembers, recalls with words, updates and forgets',async()=>{
   expect((await art.call('recall',{query:'pump'})).text).toBe('No memories matched.');
   expect((await art.call('recall',{query:''})).error).toBe(true);
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('writes, reads and lists notes, and keeps them from another agent',async()=>{
  const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
@@ -76,7 +76,7 @@ it('writes, reads and lists notes, and keeps them from another agent',async()=>{
   const foreign=JSON.parse((await mark.call('loom_query',{query:'{memoryNotes(agent:"art"){path} memoryNote(agent:"art",path:"fictional/first"){body}}'})).text);
   expect(foreign.data).toEqual({memoryNotes:null,memoryNote:null});
  }finally{await art.client.close();await mark.client.close();await p.close();}
-},30_000);
+});
 
 it('writes and searches knowledge by every word',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -92,7 +92,7 @@ it('writes and searches knowledge by every word',async()=>{
   expect((await art.call('knowledge_recall',{query:'100%_literal'})).text).toContain('shed hinges');
   expect((await art.call('knowledge_recall',{query:'1%l'})).text).toBe('No knowledge pages matched.');
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('lists recent episodes',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -102,7 +102,7 @@ it('lists recent episodes',async()=>{
   const episodes=await art.call('episodes');
   expect(episodes.error,episodes.text).toBe(false);expect(episodes.text).toContain('Fictional episode title');
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('loads identity as a core with an index, and further pieces by name',async()=>{
  const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
@@ -130,7 +130,7 @@ it('loads identity as a core with an index, and further pieces by name',async()=
   const escape=JSON.parse((await art.call('loom_query',{query:'{memoryIdentity(agent:"art"){a:page(kind:"harness",name:"..") b:page(kind:"__proto__",name:"x") c:page(kind:"role",name:"tend")}}'})).text);
   expect(escape.data).toEqual({memoryIdentity:{a:null,b:null,c:'FICTIONAL_ROLE'}});
  }finally{await art.client.close();await mark.client.close();await p.close();}
-},30_000);
+});
 
 it('writes, reads and lists person and project cards, and keeps them from another agent',async()=>{
  const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
@@ -153,7 +153,7 @@ it('writes, reads and lists person and project cards, and keeps them from anothe
   expect((await mark.call('person',{})).text).not.toContain('fictional-pat');
   expect((await mark.call('project',{slug:'fictional-pond'})).text).toBe('No project card for fictional-pond');
  }finally{await art.client.close();await mark.client.close();await p.close();}
-},30_000);
+});
 
 it('files, reads, claims, comments on and closes a task through the named tools',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -191,7 +191,7 @@ it('files, reads, claims, comments on and closes a task through the named tools'
   expect((await art.call('task',{id})).text).not.toContain('shelved');
   expect((await art.call('task_move_to_project',{ids:[id],project:null})).text).toBe('Moved '+id+' out of every project.');
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('drafts, ratifies, archives and restores a memory, and reads its earlier versions',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -216,7 +216,7 @@ it('drafts, ratifies, archives and restores a memory, and reads its earlier vers
   expect((await art.call('memory_restore',{id})).text).toBe('Restored '+id);
   expect((await art.call('recall',{query:'Fictional draft'})).text).toContain('FICTIONAL_DRAFT_BODY');
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('reads, edits, checks and restores a knowledge page',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -244,7 +244,7 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
   expect((await art.call('knowledge_edit',{slug:'fictional-hose'})).error).toBe(true);
   expect((await art.call('knowledge_read',{slug:'no-such-page'})).text).toBe('No knowledge page no-such-page');
  }finally{await art.client.close();await p.close();}
-},30_000);
+});
 
 it('lists the current attributed approval answer after an owner answers through MCP',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -267,7 +267,7 @@ it('lists the current attributed approval answer after an owner answers through 
   expect(listed.text).toContain('Hold the fixture');
   expect(listed.text).not.toContain('Proceed with the fixture');
  }finally{await owner.close();await art.client.close();await p.close();}
-},30_000);
+});
 
 it('proposes a change, sees the approval waiting, and reads its own inbox',async()=>{
  const {p,connect}=await program(),art=await connect('art');
@@ -300,4 +300,4 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-pond',agent:'art'},why:'x'})).text).toBe('art is already on project fictional-pond (invalid)');
   expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});
  }finally{await art.client.close();await p.close();}
-},30_000);
+});

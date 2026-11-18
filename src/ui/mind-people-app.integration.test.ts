@@ -136,4 +136,4 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       console.error('People fixture diagnostics',diagnostics);throw error;
     }
   } finally {await browser.close();await fixture.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+});

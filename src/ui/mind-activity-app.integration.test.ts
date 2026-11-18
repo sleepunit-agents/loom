@@ -62,4 +62,4 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await b.getByRole('link',{name:'The memory',exact:true}).click();await expect.poll(()=>b.url().includes('/memory/art%3Am-new')).toBe(true);expect(await b.getByText('The field team has the release. Work continues on t-2207.',{exact:true}).count()).toBe(1);
   db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-new');app.changed();await expect.poll(()=>b.getByText('This entry is no longer available',{exact:true}).count()).toBe(1);expect(errors).toEqual([]);
  }finally{await browser.close();await fixture.close();db.close();rmSync(home,{recursive:true,force:true});}
-},60000);
+});

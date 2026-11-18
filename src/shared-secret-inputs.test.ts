@@ -150,7 +150,7 @@ it('bounds unconfirmed handoffs and frees capacity only after confirmation or ex
  for(let i=0;i<4096;i++){const id=await engine.dispatch({job:'body',secret:'TOKEN',attempt:'capacity-'+i,standing:()=>true},()=>true,id=>id);if(!i)first=id;}
  await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'over-cap',standing:()=>true},()=>true,id=>id)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledTimes(4096);
  engine.confirm('body',first,()=>true);await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'freed',standing:()=>true},()=>true,id=>id)).resolves.toMatch(/^use-input-/);
-},30000);
+});
 
 it.each([true,false])('startup waits for its configured pending consent before any value read (allow=%s)',async allow=>{
  const f=fixture();f.rule();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'REPO_ALIAS',secret:'REPO'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
