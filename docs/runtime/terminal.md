@@ -151,3 +151,11 @@ clones. Existing precious source files are not upgraded by startup. An existing
 Notes file remains readable under its ordinary policy; native writes require
 retry metadata prepared by the separate data move. Fresh source files are
 prepared at creation.
+
+### Answering an approval on the owner's word
+
+An owner can call `approvals.answer` with the card ID, an `answer` of `allow` or `deny`, and optional `onWord: {venue: "terminal", through: "art", quote: "..."}`. The terminal attribution is unverified. Omitting it gives the ordinary owner answer.
+
+A body working on its owners' word uses `onWord: {item, quote}`. The item must belong to its credential's job. Loom checks a human bridge message against the venue link or reads the signed-in member's Comms message. The writer must still be a household owner and able to answer the card. The quote is 1–500 characters, copied exactly. One message can support multiple cards, including cards filed by the same agent. Card-specific checks, such as a merge head still matching, apply.
+
+A quoted instruction supplies the confirmation for a dangerous card. The owner receives the decision and quote in their Inbox. Dangerous cards and household proposals that always ask produce a full-volume item. Other quoted decisions produce a dim item. The permanent approval record includes the attribution and timestamp.

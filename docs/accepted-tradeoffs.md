@@ -1493,3 +1493,7 @@ Entries are grouped by the part of the program they belong to.
   the stored number went stale whenever its refresh was missed, which is why nothing reads it.
 - **What would change the answer.** A read that must rank many memories in SQL. Then store heat again, and
   refresh it where memories are written and recalled.
+
+### A body can answer a card on a household owner's quoted word
+
+The bound job, its admitted mail, current household role and venue account link establish the writer. A stolen linked chat account is a stolen approval. Loom verifies the quoted substring. The agent interprets assent, scope and which cards the words cover. A mistaken or compromised agent with eligible mail could misattribute the decision. Each quote survives message retention on the card's permanent record and is visible to readers of that card. The owner gets an Inbox item with the quote. A terminal attribution rests entirely on the owner's credential and is marked unverified.
