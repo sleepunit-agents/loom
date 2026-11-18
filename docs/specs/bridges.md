@@ -93,6 +93,10 @@ channel (`presence.ts`). Both are best effort.
   Discord a `bridges.say` post may carry up to four files, 600 KB together, each named by a path inside
   the body's working or scratch directory; they are kept with the post (`bridge_send_files`) until it is
   settled.
+- What a body may schedule follows whose word its job works on, not the place (`docs/runtime/tempo.md`):
+  working for owners, or as the agent's own work, it schedules from a shared place what it could from the
+  owner's own thread; working for anybody else, only into the shared place it is in, at listed times an
+  hour apart, with its own words.
 - A job whose mail is no message from the bridge (a trigger's firing in the conversation, a note from
   another body of the agent) answers by a post in the conversation itself, addressed from the
   conversation's place (`bridge_sends.conversation`, with no `incoming`).

@@ -537,22 +537,23 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
   if (!authored || t.project && !(Object.hasOwn(s.projects, t.project) && holds(rules.project, v, { id: t.project }, s))) return false;
   return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : owner || own;
 }
-/** Where a body works limits what it may schedule. A **shared place** is a Discord or Slack conversation
- * that is not one member's own: a channel, a thread, a group direct message, a direct message from
- * somebody who is no member. Its body works with whoever is in the room: the people behind its mail, and
- * the tools a body is not given when one of them is a guest. A trigger it set for its agent's own wake
- * would later run words chosen there without any of that. So a shared place's body may set, reword, stop,
- * start and run only a trigger whose firing comes back into that same conversation (`triggers.conversation`),
- * as a job on its asker's word (src/shared-place-triggers.ts). A body in one member's own thread or direct
- * message is not in a shared place: maySetTrigger decides for it, as for a person and for an agent's own
- * session. Beside where it works, on whose word a job works limits it everywhere (sharedPlaceRefusal): a
- * job with anybody but owners behind it schedules only into its own bridge conversation. */
+/** On whose word a body works limits what it may schedule; where it sits does not. A **shared place** is a
+ * Discord or Slack conversation that is not one member's own: a channel, a thread, a group direct message,
+ * a direct message from somebody who is no member. Its body works with whoever is in the room: the people
+ * behind its mail, and the tools a body is not given when one of them is a guest. A trigger set on the
+ * word of anybody but owners for the agent's own wake would later run words chosen there without any of
+ * that. So a job on such a word sets, rewords, stops, starts and runs only a trigger whose firing comes
+ * back into the shared place it is working in (`triggers.conversation`), as a job on its asker's word and
+ * under the bounds in src/shared-place-triggers.ts. A job working for owners, or the agent's own work, is
+ * held to none of this wherever it sits, a shared place included: maySetTrigger decides for it, as for a
+ * person and for an agent's own session. Least reach wins in a mixed batch (jobWord). */
 export const isSharedPlace = (conversation: { venue: string; member: string | null }): boolean =>
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
-export const SHARED_PLACE_SCHEDULE_REFUSAL = 'A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
-/** Whether the body of a job in this conversation may set, reword, stop, start or run this trigger, as far as where it works goes: anywhere but a shared place, and there only a trigger that names its own conversation. */
-export function maySchedule(conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
-  return !isSharedPlace(conversation) || (!!conversation.id && trigger.conversation === conversation.id);
+export const SHARED_PLACE_SCHEDULE_REFUSAL = 'This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.';
+/** Whether a job on this word, working in this conversation, may set, reword, stop, start or run this trigger: any, unless
+ * it works for anybody but owners; then only one naming the shared place it is working in. The one statement. */
+export function maySchedule(woke: Woke, conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
+  return woke !== 'others' || (isSharedPlace(conversation) && !!conversation.id && trigger.conversation === conversation.id);
 }
 /** On whose word a body is working, by least reach (shared-place-mail.ts, jobWord): the agent's own work,
  * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has

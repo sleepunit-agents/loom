@@ -12,11 +12,13 @@ it('calls a bridge conversation that is not one member\'s own a shared place, an
   for (const venue of ['loom', 'wake', 'handoff']) { expect(isSharedPlace({ venue, member: null })).toBe(false); expect(isSharedPlace({ venue, member: 'jonathan' })).toBe(false); }
 });
 
-it('lets a shared place\'s body schedule nothing, whatever the trigger, and leaves every other body to the rule about who it is', () => {
-  const shared = { venue: 'discord', member: null }, own = { venue: 'discord', member: 'jonathan' }, thread = { venue: 'loom', member: 'jonathan' }, wake = { venue: 'wake', member: null };
-  for (const trigger of [{ ownerKind: 'agent', owner: 'art', toKind: 'agent', to: 'art' }, { ownerKind: 'agent', owner: 'art', toKind: null, to: null }, { ownerKind: 'member', owner: 'jonathan', toKind: 'person', to: 'jonathan' }] as const) {
-    expect(maySchedule(shared, trigger)).toBe(false);
-    for (const elsewhere of [own, thread, wake]) expect(maySchedule(elsewhere, trigger)).toBe(true);
-  }
-  expect(SHARED_PLACE_SCHEDULE_REFUSAL).toBe('A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.');
+it('holds a job to triggers naming the shared place it works in only when it works for anybody but owners', () => {
+  const shared = { id: 'cv', venue: 'discord', member: null }, own = { id: 'own', venue: 'discord', member: 'jonathan' }, thread = { id: 'thread', venue: 'loom', member: 'jonathan' }, wake = { id: 'wake', venue: 'wake', member: null };
+  const triggers = [{ conversation: 'cv' }, { conversation: 'another' }, { conversation: null }, {}];
+  // Owners' word and the agent's own work: anything, wherever the body sits.
+  for (const woke of ['owners', 'own'] as const) for (const where of [shared, own, thread, wake]) for (const trigger of triggers) expect(maySchedule(woke, where, trigger)).toBe(true);
+  // Anybody else's word: only the shared place it is working in, and so nothing from anywhere else.
+  expect(triggers.map(trigger => maySchedule('others', shared, trigger))).toEqual([true, false, false, false]);
+  for (const where of [own, thread, wake]) for (const trigger of [...triggers, { conversation: where.id }]) expect(maySchedule('others', where, trigger)).toBe(false);
+  expect(SHARED_PLACE_SCHEDULE_REFUSAL).toBe('This job is not working for the agent\'s owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it.');
 });

@@ -24,7 +24,7 @@ export interface TempoOperationOptions {
    * triggerAsSet), and with it the member its work is for, if any. `authorize` judges a `set` by the same
    * reading. Without it, as given and for nobody. */
   recorded?(viewer: Viewer, trigger: NewTrigger): { trigger: NewTrigger; member?: string; asked?: Asker };
-  /** Why this caller may not set, reword, stop, start or run this trigger because of where its job is, in words for the
+  /** Why this caller may not set, reword, stop, start or run this trigger because of whose word its job works on, in words for the
    * caller, or nothing (policy.ts, maySchedule). Asked after `authorize`: of what the caller sent for a new
    * trigger, before it is recorded, and of the stored row for one that exists. */
   placeRefusal?(viewer: Viewer, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null }): string | undefined;
@@ -61,8 +61,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     name: `tempo.${action}`, input: id, output: saved,
     may: (viewer, input) => triggerAccess(viewer, input.id, action),
     run(ctx, input) {
-      // Where the caller works matters for these as for setting: a shared place's body starts, runs and stops nothing
-      // of its agent's that fires outside the conversation (policy.ts, maySchedule).
+      // On whose word the caller works matters for these as for setting: a body working for anybody but owners starts,
+      // runs and stops nothing of its agent's that fires outside its own conversation (policy.ts, maySchedule).
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.placeRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
       const full = action === 'start' && stored ? options.standRefusal?.(stored) : undefined;

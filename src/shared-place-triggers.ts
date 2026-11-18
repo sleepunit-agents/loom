@@ -6,14 +6,14 @@ import type { DataDatabase } from './core/data/database.js';
 import { conversations, inbox, inboxRefs, triggers } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import type { NewTrigger, Trigger, TriggerAsked } from './core/tempo/triggers.js';
-import { SHARED_PLACE_SCHEDULE_REFUSAL, isSharedPlace, membersWithAgent, type Asker, type Viewer } from './policy.js';
+import { SHARED_PLACE_SCHEDULE_REFUSAL, isSharedPlace, maySchedule, membersWithAgent, type Asker, type Viewer } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { PRIVATE_PLACE_REFUSAL, SHARED_PLACE_REPEAT_MIN_MS, PLACE_TRIGGERS_MAX, isBridgeVenue, jobWord, named, placeClosed, stillKnown } from './shared-place-mail.js';
 
 type Work = { cv: typeof conversations.$inferSelect; job: { id: string; agent: string; conversation: string | null } };
-export const SHARED_PLACE_REPEAT_REFUSAL = 'A schedule set from a shared place repeats no more often than once an hour, and only at listed times.';
+export const SHARED_PLACE_REPEAT_REFUSAL = 'A schedule set by a job that is not working for the agent\'s owners repeats no more often than once an hour, and only at listed times.';
 
-/** Whether listed times come closer together than the least a trigger set from a shared place may repeat at. One time, and one date, never do. */
+/** Whether listed times come closer together than the least a trigger set on the word of anybody but owners may repeat at. One time, and one date, never do. */
 export function repeatsTooOften(trigger: { times?: string | null; lifespan?: string; sourceKind?: string }): boolean {
   if (trigger.sourceKind !== undefined && trigger.sourceKind !== 'time') return true;
   const times = trigger.times ?? '';
@@ -22,32 +22,35 @@ export function repeatsTooOften(trigger: { times?: string | null; lifespan?: str
   return minutes.some((at, index) => index > 0 && (at - minutes[index - 1]) * 60_000 < SHARED_PLACE_REPEAT_MIN_MS)
     || (minutes.length > 1 && (minutes[0] + 1440 - minutes[minutes.length - 1]) * 60_000 < SHARED_PLACE_REPEAT_MIN_MS);
 }
-/** Why a shared place's body may not make this change to a trigger it may otherwise touch (one naming its own conversation). */
-export const SHARED_PLACE_FILE_REFUSAL = 'A schedule set or reworded from a shared place carries its own words, never a file.';
+/** Why a body working for anybody but owners may not make this change to a trigger it may otherwise touch (one naming its own conversation). */
+export const SHARED_PLACE_FILE_REFUSAL = 'A schedule set or reworded by a job that is not working for the agent\'s owners carries its own words, never a file.';
 export const SHARED_PLACE_ASKER_REFUSAL = 'Somebody else asked for this schedule: only they, or somebody the agent works for, may change, stop, start or run it.';
 export const RUN_NOW_REFUSAL = 'You are awake: do the work now. Only a body working for the agent\'s owners, or the agent\'s own work, fires a schedule by hand.';
 export const REFIRE_REFUSAL = 'This schedule\'s own firing woke this job: it does not fire or start it again.';
-/** Why this job may not do this to a trigger, by whose word it works on (jobWord) and not by where it is.
- * Asked after maySchedule, which holds a shared place's body to its own conversation's triggers. */
+/** Why this job may not do this to a trigger, by whose word it works on (jobWord) and never by where it sits.
+ * For every job: it does not fire or start again the trigger whose firing is in its mail. A job working for
+ * owners, and the agent's own work, is held to nothing else here, in a shared place as anywhere. A job
+ * on anybody else's word touches only what fires into the shared place it is working in (policy.ts,
+ * maySchedule), fires nothing by hand, keeps to triggers the same person asked for, names no file, and
+ * sets or moves one only to listed times an hour apart. */
 export function sharedPlaceRefusal(db: DataDatabase, work: Work | undefined, action: 'set' | 'edit' | 'stop' | 'start' | 'runNow', trigger: TriggerAsked, change?: { times?: string; file?: string | null }): string | undefined {
   if (!work) return undefined;
   const word = jobWord(db, work.job), stored = action !== 'set';
   // No job fires again the trigger whose firing woke it: that would be a loop nobody is in.
   if ((action === 'runNow' || action === 'start') && trigger.id && db.select({ id: inbox.id }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id))
     .where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'trigger'), eq(inboxRefs.ref, trigger.id))).get()) return REFIRE_REFUSAL;
+  // Reach follows the person: on owners' word, or as the agent's own work, the body does what it could from its own thread.
+  if (word.woke !== 'others') return undefined;
+  // A guest, a member who does not have the agent, nobody loom can name: only what fires into the shared place it
+  // is working in. In a brief's conversation or a wake that is nothing at all.
+  if (!maySchedule(word.woke, work.cv, trigger)) return SHARED_PLACE_SCHEDULE_REFUSAL;
   // A body working for anybody but owners is awake and does its work now.
-  if (action === 'runNow' && word.woke === 'others') return RUN_NOW_REFUSAL;
-  // Anybody but owners is behind this job (a guest, a member who does not have the agent, nobody loom can name):
-  // it sets, rewords, stops and starts only what fires into its own bridge conversation, wherever it is working
-  // (a brief's conversation and a wake included). By the word and not the venue: the same answer a shared place gives.
-  const own = isSharedPlace(work.cv) && trigger.conversation === work.cv.id;
-  if (word.woke === 'others' && !own) return SHARED_PLACE_SCHEDULE_REFUSAL;
-  if (!isSharedPlace(work.cv) || !trigger.conversation) return undefined;
-  // A trigger keeps to its asker: a body working for anybody but owners touches only what the same person asked for.
-  if (stored && word.woke === 'others' && !(word.person && word.person.kind === trigger.askedByKind && word.person.id === trigger.askedBy)) return SHARED_PLACE_ASKER_REFUSAL;
+  if (action === 'runNow') return RUN_NOW_REFUSAL;
+  // A trigger keeps to its asker: such a body touches only what the same person asked for.
+  if (stored && !(word.person && word.person.kind === trigger.askedByKind && word.person.id === trigger.askedBy)) return SHARED_PLACE_ASKER_REFUSAL;
   // Words only: a file is the household repository's, and what it says is not this body's to bring into the conversation.
   if (action === 'edit' ? change?.file != null : action === 'set' && trigger.file != null) return SHARED_PLACE_FILE_REFUSAL;
-  // How often it repeats is asked when it is set and when its times change, and never to stop, start, run or reword one.
+  // How often it repeats is asked when it is set and when its times change, and never to stop, start or reword one.
   if (action === 'set') return repeatsTooOften(trigger) ? SHARED_PLACE_REPEAT_REFUSAL : undefined;
   return action === 'edit' && change?.times !== undefined && repeatsTooOften({ ...trigger, times: change.times }) ? SHARED_PLACE_REPEAT_REFUSAL : undefined;
 }

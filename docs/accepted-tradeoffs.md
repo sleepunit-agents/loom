@@ -947,19 +947,21 @@ Entries are grouped by the part of the program they belong to.
   an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
 - Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
 
-### A shared place's body schedules only into its own conversation
-- What: the body of a job in a shared place (a Discord or Slack conversation that is not one member's own) may
-  set, reword, stop, start and run only a trigger naming its own conversation. Every other Tempo write
-  from a shared place is refused with "A body working in a shared place cannot schedule work: ask in your own thread, or
-  have an owner schedule it." Such a trigger fires as mail in that conversation, on its asker's word.
+### A body working for anybody but owners schedules only into its own shared place
+- What: a job with anybody but owners behind it (a guest, a member who does not have the agent, somebody
+  loom cannot name) may set, reword, stop and start only a trigger naming the shared place it is working
+  in (a Discord or Slack conversation that is not one member's own), with its own words, at listed times
+  an hour apart. Every other Tempo write from it is refused with "This job is not working for the agent's owners, so it schedules only into the Discord or Slack conversation it is working in, if that is a shared place. Ask in your own thread, or have an owner schedule it." Such a trigger fires as mail in
+  that conversation, on its asker's word. A job working for owners, and the agent's own work, is held to
+  none of this in a shared place: reach follows the person, not the venue.
 - Where: `isSharedPlace`, `maySchedule` and `SHARED_PLACE_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
   `docs/runtime/tempo.md`.
-- Why: a shared place's body works under the limits of whoever is in the room. A trigger it set for its agent's
+- Why: such a body works under the limits of whoever is in the room. A trigger it set for its agent's
   own wake would run words chosen there without them. One that comes back into the conversation runs under them.
-- **Open: a shared place's body still reads all of its agent's triggers.** Reads go through the query door, which
-  judges a body by its agent and the member it works for, and does not know what conversation its job is
-  in. So a shared place's body can see its agent's other schedules (their notes, times and instructions) though
-  it can change none. The fix is to carry the caller's conversation on `Viewer`, set where the body's
+- **Open: a body working for a guest still reads all of its agent's triggers.** Reads go through the query door, which
+  judges a body by its agent and the member it works for, and knows neither what conversation its job is
+  in nor on whose word it works. So a guest-woken body can see its agent's other schedules (their notes, times
+  and instructions) though it can change none. The fix is to carry the caller's conversation on `Viewer`, set where the body's
   credential is resolved, and add a clause to the `trigger` read rule. It was left out of this round
   because `Viewer` is the type every rule takes.
 - Would change it: that `Viewer` change.
