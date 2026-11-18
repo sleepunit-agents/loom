@@ -161,7 +161,9 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
 
 ### Machine requests
 
-The database can store a machine request. When the request has a stored digest, Tempo reads the current instructions at each firing, including a manual firing. It compares the SHA-256 digest of the full text, including trailing newlines. For a repository file the digest covers the text returned by the repository reader. A mismatch records a failed firing. Even matching text cannot start a machine body in this version.
+To create a trigger that must wait for owner review from its first firing, include the named machine ID in the top-level `machine` field of `tempo.set`. Loom saves the request and its card before the scheduler can fire the trigger, even when it is already due. If filing fails, neither the trigger nor the card is saved. Only the agent's own inbox work is eligible.
+
+For an existing eligible trigger, select the machine in Tempo. An owner can preview the complete words and allow that exact review. A changed preview requires reading the new review. The permission record includes the deciding owner, the card and the digest. A legacy worker poll clears the previous worker capability report. A missing, future-dated or expired report cannot establish that the machine is available. When the request has a stored digest, Tempo reads the current instructions at each firing, including a manual firing. It compares the SHA-256 digest of the full text, including trailing newlines. For a repository file the digest covers the text returned by the repository reader. A mismatch records a failed firing and asks for review of that version. Repeated firings of the same change share the replacement card. Even matching text cannot start a machine body in this version.
 
 Keep the complete routine in the trigger instructions or in the single repository file. An instruction to read a second file leaves that file outside the digest. Earlier conversation, identity, ledger data and tool results are also outside it.
 
