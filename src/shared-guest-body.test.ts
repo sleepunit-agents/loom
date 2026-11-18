@@ -49,6 +49,9 @@ it('hands a body on anybody else\'s word no file and no secret tool, on a machin
  const policy=jobRoom(db,job);job.run={nestedContainers:false,gpu:false,ports:[],policy};
  expect(policy).toMatchObject({word:'others',deniedTools:[]});
  root.writes.run(()=>{db.insert(s.jobs).values({id:job.id,agent:'art',box:'box',conversation:job.conversation,title:'',brief:'',model:'requested',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:now()}).run();db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Synthetic body',kind:'agent',agent:'art',job:job.id,createdAt:now()}).run();});
+ const usageRead=await root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+  body:JSON.stringify({query:'{jobUsage(id:"guest-job"){id} conversationJobUsage(conversation:null){id} jobUsageRollup(from:"2020-01-01T00:00:00Z",to:"2040-01-01T00:00:00Z",groupBy:"day"){key}}'})});
+ expect(await usageRead.json()).toEqual({data:{jobUsage:null,conversationJobUsage:[],jobUsageRollup:[]}});
  // The fictitious Claude Code: it reads its tools file as the real one does, asks the body's tools server what it
  // is served, tries to post a file by path, and then answers.
  const seen:{allowed:string[];served:string[];file?:{isError:boolean;text:string}}={allowed:[],served:[]};
@@ -66,7 +69,7 @@ it('hands a body on anybody else\'s word no file and no secret tool, on a machin
     seen.file={isError:said.isError===true,text:said.content[0].text};
    }finally{await client.close();}
    const session=list[list.indexOf('--session-id')+1];
-   child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'I cannot open files here.'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'I cannot open files here.'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
+   child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{id:'guest-response',model:'observed',content:[{type:'text',text:'I cannot open files here.'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'I cannot open files here.'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
   })().catch(()=>child.emit('close',1));});
   return child;
  });
