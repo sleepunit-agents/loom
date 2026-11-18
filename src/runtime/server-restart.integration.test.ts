@@ -42,7 +42,12 @@ function seed(file: string, old: boolean, pendingMail: boolean) {
     db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Runner',kind:'runner',box:'box',createdAt:at}).run();
     db.insert(s.conversations).values({id:'cv', agent:'art', member:'alice', venue:'loom',place:'thread', label:'Fixture', direct:true, startedAt:at,lastAt:at, turnCount:0}).run();
     db.insert(s.threads).values({id:'thread',conversation:'cv',title:'Fixture',titledBy:'member',pinned:false,openedAt:at,lastAt:at,readSeq:0,working:false,stopRequested:false}).run();
-    db.insert(s.jobs).values({id:'job',agent:'art',member:'alice',conversation:'cv',title:'Fixture',state:'queued',brief:'',model:'fixture',startedByKind:'member',startedBy:'alice',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:at}).run();
+    // Use the common columns: the pre-upgrade fixture has no machine column.
+    sqlite.prepare(`INSERT INTO jobs
+      (id, agent, member, conversation, title, state, brief, model, started_by_kind, started_by,
+       house_repository, house_file, house_branch, queued_at)
+      VALUES ('job','art','alice','cv','Fixture','queued','','fixture','member','alice',
+       'fixture','Housefile','next',?)`).run(at);
     if (pendingMail) db.insert(s.inbox).values({id:'mail',toKind:'agent',to:'art',conversation:'cv',source:'thread',sourceId:'thread',fromKind:'person',fromId:'alice',at,state:'waiting',job:'job',changedAt:at}).run();
   } finally { sqlite.close(); }
 }

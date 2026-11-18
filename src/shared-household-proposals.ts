@@ -434,12 +434,14 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
   const cardTarget=replacement?target(value)+':review:'+parts.digest(JSON.stringify([replacement.prior,replacement.words])):target(value);
   const existing=db.select().from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,cardTarget),
-   replacement?undefined:eq(approvals.state,'pending'))).get();
+   replacement?undefined:eq(approvals.state,'pending'))).orderBy(desc(eq(approvals.state,'pending'))).get();
   if(existing){
-   if(replacement)return existing;
+   if(replacement && existing.state !== 'pending')return existing;
    if(value.change!=='triggerMachine')throw new OperationError('conflict','A card for this is already waiting for an answer');
    const {kept} = read(existing);
-   if (seal(value,kept.seal.nonce,before(value)) === kept.seal.digest) {
+   const current = replacement && value.change === 'triggerMachine' ? machineReview(value.input,replacement.words) : undefined;
+   if (seal(value,kept.seal.nonce,before(value,current)) === kept.seal.digest) {
+    if (replacement) return existing;
     throw new OperationError('conflict','A card for this is already waiting for an answer');
    }
    service.withdraw(existing.id,agent);

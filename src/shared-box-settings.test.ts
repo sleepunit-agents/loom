@@ -118,7 +118,8 @@ it('holds a renamed machine to the name rule enrolment has, and lets a name stor
 
 it('reserves loom facts for worker reports, including when an owner edits a reported label', async () => {
   const f = fixture();
-  const fact = 'loom:machine-bodies';
+  const fact = 'loom:hardware-gpu';
+  expect((await f.call('health', { facts: ['loom:machine-bodies'] }, 'generic-machine-label')).status).toBe(400);
   expect((await f.call('health', { facts: [fact] }, 'machine-report')).status).toBe(200);
   expect((await f.settings({ facts: [fact] })).status).toBe(400);
   expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact, fromOwner: false }]);
