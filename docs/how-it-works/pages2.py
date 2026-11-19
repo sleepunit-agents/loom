@@ -292,7 +292,7 @@ def tempo():
     }
     uday = "".join(f'<div>{meter_chip(n, pct, word)}<span>{line}</span></div>' for n, pct, word, line in [
         ("Claude subscription", 22, "plenty", "92% of the 5-hour window at its fullest today, at 02:40 · 22% now · 38% of the week"),
-        ("Codex subscription", 4, "plenty", "31% of the 5-hour window at its fullest today · 4% now · 9% of the week")])
+        ("Codex subscription", 71, "getting full", "74% of the 5-hour window at its fullest today, at 13:30 · 71% now · 64% of the week")])
     later = ('<div class="cal__sec"><span class="lbl">Not this week</span>'
              + ev("agent", "Dec 1", "monthly identity review", "art · on the 1st of each month") + '</div>')
     runs = "".join(f'<li{st_attr(st)}><time>{t}</time><span>{how_}</span><em>{cost}</em><u>conversation ›</u></li>' for t, how_, cost, st in [
@@ -397,7 +397,7 @@ def tempo():
         [("What it carries.", "A trigger names who set it, the agent or person it is for, and its project."),
          ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them."),
          ("Checked at the door.", DOOR)],
-        [("", ["triggers", "trigger_log", "trigger_edits", "agent_pauses", "tempo_settings"])], hero=hero, extra=extra)
+        [("", ["triggers", "trigger_log", "program_firings", "trigger_edits", "agent_pauses", "tempo_settings"])], hero=hero, extra=extra)
 
 # ───────────────────────── 5 Changes
 def changes():
@@ -495,7 +495,7 @@ def machines():
         <div class="sec"><span class="lbl">The worker runs</span><span>Reply in Pond pump <span class="chip">running</span></span></div></div>
       <div class="panel"><span class="lbl">Several computers</span><h4>Workers spread out</h4>
         <div class="sec"><span class="lbl">Machine: attic</span><span><span class="chip">loom</span></span></div>
-        <div class="sec"><span class="lbl">Machine: workshop</span><span><span class="chip">worker</span> gpu:5090 {signin_mark("Claude sign-in ends in 2 days")}</span><span class="meta">may run art</span></div>
+        <div class="sec"><span class="lbl">Machine: workshop</span><span><span class="chip">worker</span> gpu:5090</span>{signin_mark("Claude sign-in ends in 2 days")}<span class="meta">may run art</span></div>
         <div class="sec"><span class="lbl">Machine: den</span><span><span class="chip">worker</span></span><span class="meta">may run art · mark</span></div></div>
       <div class="panel"><div class="agent" style="border:0;padding:0;background:none">{FACE_A}<div><b>Art</b><i>working</i></div></div>
         <div class="sec"><span class="lbl">Runtime jobs · 2</span><span><b>Reply in Pond pump</b><br><span class="meta">running · Box attic</span><br><span class="meta">Queued 9:14 AM</span></span>
@@ -532,7 +532,7 @@ def machines():
          ("Who sees it.", f"{OWNER} Anyone else sees jobs in their projects and jobs of agents they own. {PRIVATE}"),
          ("Boxes.", "A box belongs to the member who owns it, and lists the agents allowed to run there."),
          ("Checked at the door.", DOOR)],
-        [("Machines", ["boxes", "box_agents", "box_facts"]), ("Jobs", ["jobs", "job_needs"]),
+        [("Machines", ["boxes", "box_agents", "box_facts"]), ("Jobs", ["jobs", "job_needs", "job_usage"]),
          ("How each agent runs", ["agent_run_settings", "agent_boxes", "agent_house_secrets", "agent_house_ports", "agent_people", "agent_denied_tools"])])
 
 # ───────────────────────── 8 Discord and Slack
@@ -865,7 +865,7 @@ def models():
 
     nav = ('<div class="sp__search">Search subscriptions</div>' + f("Subscriptions", 8, True) + f("Where it all went") + f("Models")
            + '<span class="lbl">Show</span>' + f("Needs attention", 3))
-    lst = ('<div class="cal__top"><b>Subscriptions</b><em>8 across 4 services</em><span class="cal__go"><span class="mbtn mbtn--on">Add a subscription</span></span></div>'
+    lst = ('<div class="cal__top"><b>Subscriptions</b><em>8 across 4 services · Sat, Nov 14, 2026</em><span class="cal__go"><span class="mbtn mbtn--on">Add a subscription</span></span></div>'
            + service("Claude", "2 subscriptions",
                      subc("Claude subscription", "jonathan's", 38, "plenty", "3 sign-ins", signin_mark("one ends in 2 days"), on=True)
                      + subc("Mark's Claude", "mark's own · added today", 0, "plenty", "1 sign-in", signin_mark("not signed in yet", "out")))
@@ -873,27 +873,27 @@ def models():
            + service("Gemini", "1 subscription", subc("Gemini subscription", "jonathan's", 12, "plenty", "1 sign-in", signin_mark("signed out", "out")))
            + service("Mistral", "4 subscriptions", rollup="fullest: getting full"))
     read = ('<span class="meta">Claude · jonathan\'s</span><h4>Claude subscription</h4>'
-            '<div class="sec"><span class="lbl">Usage</span><span><span class="chip">plenty</span> read 2:45 PM</span>'
+            '<div class="sec"><span class="lbl">Usage</span><span><span class="chip">plenty</span> read Nov 14, 2026, 2:45 PM CT</span>'
             + meter("5-hour window", 22, "plenty", "22% · resets 4:10 PM") + meter("Week", 38, "plenty", "38% · resets Thu")
             + '<span class="lbl">Where it went this week</span>' + switch("By trigger", "By agent", "By conversation")
             + bars([("plan-night <small>night shift</small>", 41, True), ("knowledge-verify", 14, True), ("reflect", 11, True), ("knowledge-expand", 9, True),
                     ("no trigger <small>chats a person started</small>", 9, False), ("plan", 6, True), ("everything else", 10, False)], "Tempo ›")
             + f'<span class="meta">{EST_LINE}</span></div>'
             '<div class="sec"><span class="lbl">Sign-ins · 3</span>'
-            + signins([("ok", "loom", "Claude Code · in houses", "signed in · ends Dec 17", False),
-                       ("soon", "loom", "Claude Code · on the machine itself", "signed in · ends Dec 14, in 2 days", True),
-                       ("old", "one", "Claude Code · in houses", "last known: signed in · ends Dec 15", False)])
-            + '<span class="meta">Machine one is not reporting. Its sign-in shows what loom last knew.</span></div>'
+            + signins([("ok", "workshop", "Claude Code · in houses", "signed in · ends Nov 19", False),
+                       ("soon", "workshop", "Claude Code · on the machine itself", "signed in · ends Nov 16, in 2 days", True),
+                       ("old", "den", "Claude Code · in houses", "last known: signed in · ends Nov 17", False)])
+            + '<span class="meta">Machine den is not reporting. Its sign-in shows what loom last knew.</span></div>'
             '<div class="sec"><span class="lbl">Settings</span><dl class="kv">'
-            + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in [("Label", "Claude subscription"), ("Whose", "jonathan"), ("Machines", "loom · one"), ("Agents", "art · mark"),
+            + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in [("Label", "Claude subscription"), ("Whose", "jonathan"), ("Machines", "workshop · den"), ("Agents", "art · mark"),
                                                               ("Keep free", "5% of each window, for jonathan"), ("Tell me", "3 days before a sign-in ends")])
             + '</dl></div><div class="sp__acts"><span class="mbtn mbtn--on">Ask art to change it</span><span class="mbtn">Remove</span></div>')
     home = (f'<div class="tile__body sp cal subs"><div class="sp__nav">{nav}</div><div class="sp__list">{lst}</div><div class="sp__read">{read}</div></div>')
     add = ('<div class="tile__body"><div class="cal__top"><b>Add a subscription</b><em>four steps</em></div><div class="use__pad">'
            + c_step("1 · Choose the service", '<span class="sp__acts"><span class="mbtn mbtn--on">Claude</span><span class="mbtn">Codex</span><span class="mbtn">Gemini</span><span class="mbtn">Mistral</span></span>')
            + c_step("2 · Label it and say whose it is", '<span class="field">Mark\'s Claude</span><span class="field">mark</span>')
-           + c_step("3 · Choose its machines", '<span class="checks"><span data-on>one</span><span>loom</span></span>')
-           + c_step("4 · Sign in on each", "<span>one · Claude Code · in houses: not signed in yet</span>"
+           + c_step("3 · Choose its machines", '<span class="checks"><span data-on>den</span><span>workshop</span><span>attic</span></span>')
+           + c_step("4 · Sign in on each", "<span>den · Claude Code · in houses: not signed in yet</span>"
                     '<span class="sp__acts"><span class="mbtn mbtn--on">Sign in</span></span><span class="meta">Loom gives a page to open and, where the service shows one, a code to paste.</span>')
            + '</div></div>')
     schat = chat("Subscriptions", c_me("Keep 10% of the Claude subscription free for me.") + c_art("I can do that. Here is exactly what would change.")
@@ -930,11 +930,11 @@ def models():
          "Add a subscription is at the top of the list. Choose the service from the ones loom knows how to use. Give it a label and say whose it is. Choose the machines it should be signed in on. Then sign in on each: loom gives a page to open and, where the service shows one, a code to paste. The subscription is in the list as soon as it is added, with each sign-in marked not signed in yet until it is done. The same thing can be asked for in chat. The agent proposes it and loom shows a card to allow. Signing in stays on the screen, because it needs a person at a page."),
         ("Usage", "cyan", meter("5-hour window", 22, "plenty", "22% · resets 4:10 PM") + meter("Week", 71, "getting full", "71% · resets Mon") + meter("Week", 93, "almost full", "93% · resets Thu"),
          "The first part of an open subscription. Its windows are meters, each with when it resets. Loom reads how full each window is every five minutes, from the provider. The level is the fullest window in words: plenty, getting full or almost full. Under the meters is where the week went, by trigger, by agent or by conversation, biggest first. Opening a row goes to that trigger in " + plink("Tempo") + " or to that conversation. The shares are estimates. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens. Usage is shown once for each subscription, never for each sign-in, because every sign-in of a subscription draws on the same windows."),
-        ("Sign-ins", "pink", signins([("ok", "loom", "Claude Code · in houses", "signed in · ends Dec 17", False), ("soon", "loom", "Claude Code · on the machine itself", "ends in 2 days", False),
-                                      ("out", "loom", "Gemini CLI · in houses", "signed out", False), ("old", "one", "Codex · in houses", "last known: signed in", False)]),
+        ("Sign-ins", "pink", signins([("ok", "workshop", "Claude Code · in houses", "signed in · ends Nov 19", False), ("soon", "workshop", "Claude Code · on the machine itself", "ends in 2 days", False),
+                                      ("out", "workshop", "Gemini CLI · in houses", "signed out", False), ("old", "den", "Codex · in houses", "last known: signed in", False)]),
          "The second part. One line for each sign-in: the machine, the harness, the place, its state and when it ends. In houses is the sign-in the houses on a machine use. On the machine itself is the machine user's own. A sign-in that is signed out, or ends in three days or less, has a Sign in action. A harness whose files give no end date, such as Codex, shows none. A machine that is not reporting shows its sign-ins in grey as last known, with no warning, because loom cannot tell."),
         ("Settings", "amber", opts(("label", "the name people see"), ("whose", "the member who owns it"), ("machines", "where it is enabled"), ("agents", "who may use it"), ("keep free", "a share of each window, for the person"), ("tell me", "days before a sign-in ends")),
-         "The third part: how the subscription is set up. Its label, whose it is, which machines it is enabled on, which agents may use it, how much of each window to keep free for the person, and how many days ahead to tell its owner that a sign-in is ending. To change one, ask an agent in chat: it proposes the change, and loom shows a card with before and after. Removing a subscription is a dangerous action, so it takes a second, explicit yes."),
+         "The third part: how the subscription is set up. Its label, whose it is, which machines it is enabled on, which agents may use it, how much of each window to keep free for the person, which is that window's reserve, and how many days ahead to tell its owner that a sign-in is ending. To change one, ask an agent in chat: it proposes the change, and loom shows a card with before and after. Removing a subscription is a dangerous action, so it takes a second, explicit yes."),
         ("Where it all went", "violet", bars([("art", 78, False), ("mark", 13, False), ("no agent", 9, False)]),
          "The household's whole week, from the side list: every subscription together, by trigger, by agent or by conversation. Each bar says which subscription it drew on and its share of that subscription's week. These are the same estimates."),
         ("Models", "amber", opts(("1", "its preferred model"), ("2", "the next it may use")),
@@ -943,9 +943,9 @@ def models():
     pieces = [
         ("A meter chip", "cyan", '<div class="pieces">' + meter_chip("Codex subscription", 71, "getting full") + meter_chip("Mark's Claude", 93, "almost full") + "</div>",
          "One subscription's fullest window, as a tiny bar and a word, with the subscription's label so two with one service are told apart. It is in the desk's ticker only when a window is getting full or almost full. It is on a job's detail, and at the top of Tempo's day."),
-        ("A sign-in mark", "pink", '<div class="pieces">' + signin_mark("workshop · Claude sign-in ends in 2 days") + signin_mark("loom · Gemini CLI signed out", "out") + "</div>",
+        ("A sign-in mark", "pink", '<div class="pieces">' + signin_mark("workshop · Claude sign-in ends in 2 days") + signin_mark("workshop · Gemini CLI signed out", "out") + "</div>",
          "A dot beside a machine or a harness. It shows only when a sign-in is signed out or ends in three days or less. It is on the " + plink("Machines and jobs") + " page beside a machine, and on a job that could not be placed because its machine is signed out."),
-        ("An inbox item", "violet", signin_item("Claude subscription on loom, on the machine itself, ends in 2 days", "from Subscriptions · a sign-in"),
+        ("An inbox item", "violet", signin_item("Claude subscription on workshop, on the machine itself, ends in 2 days", "from Subscriptions · a sign-in"),
          "The notice the owner gets when a sign-in is gone or about to end. Sign in starts the provider's own sign-in on that machine, and loom shows the page to open and the code. There is one item for each sign-in. It closes itself when the sign-in is good again."),
     ]
     extra = f"""
@@ -970,7 +970,7 @@ def models():
         ("Per agent, per account", "cyan", opts(("model", "chosen per agent"), ("capacity", "shared per account and window")),
          "The primary conversational model is per agent. Capacity is shared per actual subscription, account and window, so two agents on one account draw down the same allowance."),
         ("Quota", "amber", card("amber", "Fuel", "58% of the week", "resets Thu"),
-         "An account's use is counted in windows that reset, such as five hours and seven days. A reserve of about five percent is the starting point. It can be lent near a reset when the forecast is safe, and is not a rigid floor."),
+         "An account's use is counted in windows that reset, such as five hours and seven days. Each window keeps a share free for the person: its reserve, five percent unless it is changed. The reserve can be lent near a reset when the forecast is safe, and is not a rigid floor."),
         ("Harnesses", "violet", opts(("claude", ""), ("codex", "")),
          "A harness is the program a model runs in, such as Claude Code or Codex. A worker starts each body in the harness its model needs; in a house, loom's own body program starts it. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration."),
         ("Signing in to an account", "pink", card("pink", "Kept apart", "A separate private program", "The runtime calls it as a configured command."),
@@ -983,7 +983,7 @@ def models():
         [("The owner and household owners.", "They see everything about an account: usage, when it resets, and where it is signed in."),
          ("Anyone else.", "They see only the account's label and a coarse level: plenty, getting full, or almost full."),
          ("Checked at the door.", DOOR)],
-        [("", ["model_accounts", "model_account_boxes", "account_signins", "agent_models"])], hero=hero, extra=extra)
+        [("Subscriptions", ["model_accounts", "model_account_windows"]), ("Sign-ins", ["model_account_boxes", "model_account_logins", "account_signins"]), ("Models and what a run used", ["agent_models", "job_usage"])], hero=hero, extra=extra)
 
 # ───────────────────────── Outside programs
 def outside():

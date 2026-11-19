@@ -2,7 +2,7 @@
   "page": "tempo",
   "title": "Tempo",
   "ownerTask": "t-2238",
-  "sourceSha256": "d164a999bbf7ad662fa9696fb975d8d62d6517b60c94ed168b73567a01bc6555",
+  "sourceSha256": "857cb6063cc9f5b97c00bfef15d36c2429936c3e1eb0e7f5ec5f1c5ca6a3887f",
   "promises": [
     {
       "id": "tempo-001",
@@ -217,6 +217,7 @@
   "modelTables": [
     "triggers",
     "trigger_log",
+    "program_firings",
     "trigger_edits",
     "agent_pauses",
     "tempo_settings"

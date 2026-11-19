@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "2358e61c5a2d717caae441062e8829bcbe3b9ce88efd24ee82efd6082326bef7",
+  "sourceSha256": "e436c91fa494aa50ff1477580dd045055209817872b7e70f874a7a0f04e7815e",
   "promises": [
     {
       "id": "data-001",
@@ -173,26 +173,16 @@
     },
     {
       "id": "data-029",
-      "promise": "program_firings Program occurrences with the frozen assignment, period, execution job and reported outcome.",
-      "source": "docs/how-it-works/site/data.html"
-    },
-    {
-      "id": "data-030",
-      "promise": "job_usage Usage counters for one job attempt. Missing counters stay unknown. The source identifies a report, transcript, program, or unknown counts.",
-      "source": "docs/how-it-works/site/data.html"
-    },
-    {
-      "id": "data-031",
       "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-032",
+      "id": "data-030",
       "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-033",
+      "id": "data-031",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {
