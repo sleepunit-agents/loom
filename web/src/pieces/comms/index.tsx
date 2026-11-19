@@ -14,7 +14,7 @@ import type { CommsActions } from '../comms-view/model';
 import { commsSelection, commsThreadSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
 import { useDeskAgentDirectory } from '../attention/agent-directory';
 import { inboxRefPath } from '../attention/inbox-query';
-import { useHouseholdZone } from './zone';
+import { useHouseholdZone } from '../../data/zone';
 const base = '/p/comms-preview';
 /** The page of a thread's messages before `before`, read on its own request and drawn by the view above the ones
  * already shown. Nothing is kept here: it is a live reading like the thread's own, its words expire on their

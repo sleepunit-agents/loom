@@ -3,7 +3,8 @@ import { expect, it } from 'vitest';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
-import { Actions, Button, Empty, Fact, Facts, Head, Meta, Pager, Reader, Row, Search, Section, Split, Title } from './index';
+import { Actions, Button, Clamp, Disclosure, Empty, Fact, Facts, Field, Fields, Head, Menu, Meta, Pager, Reader, RefCard, Row, Search, Section, Split, Title } from './index';
+import { displayName } from './words';
 
 const draw = renderToStaticMarkup;
 const split = (extra: object = {}) => draw(h(Split, { label: 'Tasks', folders: [{ id: 'open', label: 'Open', count: 3 }], folder: 'open', onFolder() {}, listTitle: 'Open', list: null, reader: null, open: false, onBack() {}, backLabel: 'Back', ...extra }));
@@ -80,4 +81,21 @@ it('heads an item that scrolls under it: something small at the left, the title 
   const html = draw(h(Head, { leading: h('i', null), actions: h(Actions, null, h(Button, null, 'More')) }, h(Title, null, 'Pond pump'), h(Meta, null, 'with Art')));
   expect(html).toMatch(/^<header class="loom-reader__head "><i><\/i><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Pond pump<\/h2><p class="loom-reader__meta ">with Art<\/p><\/div><div class="loom-kit-actions "><button/);
   expect(draw(h(Head, null, h(Title, null, 'Bare')))).toBe('<header class="loom-reader__head "><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Bare</h2></div></header>');
+});
+
+it('draws a form field as its words over its control with the hint outside the label, and a closed section as a button', () => {
+  // The hint is beside the label, not in it, so the control's name is its label alone.
+  expect(draw(h(Field, { label: 'Reason', hint: 'One word.' }, h('textarea')))).toBe('<div class="loom-kit-field"><label><span class="loom-kit-field__label">Reason</span><textarea></textarea></label><p class="loom-kit-field__hint">One word.</p></div>');
+  expect(draw(h(Fields, { disabled: true }))).toBe('<fieldset disabled="" class="loom-kit-fields "></fieldset>');
+  const closed = draw(h(Disclosure, { label: 'Details' }, 'facts'));
+  expect(closed).toMatch(/^<section aria-label="Details" class="loom-reader__section"><h3 class="loom-reader__label"><button type="button" class="loom-reader__toggle" aria-expanded="false">Details<\/button><\/h3><\/section>$/);
+  expect(draw(h(Disclosure, { label: 'Details', defaultOpen: true }, 'facts'))).toContain('class="loom-reader__more">facts</div>');
+});
+it('clamps only what is long, cards a reference, keeps a menu closed until asked, and names a person without a kind word', () => {
+  expect(draw(h(Clamp, { long: false }, 'short'))).toBe('short');
+  expect(draw(h(Clamp, { long: true }, 'long'))).toBe('<div class="loom-reader__clamp">long</div><button type="button" aria-expanded="false" class="loom-kit-link ">Show all</button>');
+  expect(draw(h(RefCard, { label: 'Pull request a/b#1', note: 'Made here' }, 'card'))).toBe('<div class="loom-kit-refc" role="group" aria-label="Pull request a/b#1"><p class="loom-kit-refc__note">Made here</p>card</div>');
+  const menu = draw(h(Menu, { label: 'More', name: 'More for this task', children: () => h('i') }));
+  expect(menu).toMatch(/^<span class="loom-kit-menu"><button[^>]*aria-label="More for this task"[^>]*aria-expanded="false"[^>]*>More<\/button><\/span>$/);
+  expect(displayName('art', { art: 'Art the agent' })).toBe('Art the agent'); expect(displayName('jonathan')).toBe('Jonathan'); expect(displayName(null)).toBe('');
 });

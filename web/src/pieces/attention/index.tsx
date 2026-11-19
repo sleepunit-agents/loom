@@ -4,6 +4,7 @@ import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
 import { useAnswered } from '../../data/graphql/selection';
 import { InboxView, type InboxActions } from '../inbox-view';
+import { useHouseholdZone } from '../../data/zone';
 import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
 export { stamp } from './time';
 const inboxBase = '/p/inbox-preview';
@@ -18,7 +19,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   // Two readings, so opening an item cannot disturb the list: the folder, search and page select the rows,
   // counts and outcomes; the open item is read by its id alone.
   const selection = useMemo(() => inboxSelection(folder, search, offset), [folder, search, offset]);
-  const reading = useInboxSelection(selection), live = reading.status === 'live';
+  const reading = useInboxSelection(selection), live = reading.status === 'live', zone = useHouseholdZone();
   const opened = useInboxItem(selected);
   const drawnFolder = useAnswered(reading, folder);
   const status = reading.status;
@@ -58,7 +59,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
     openRef: ref => { const target = inboxRefPath(ref); return target ? () => navigate(target) : undefined; },
   } : undefined;
-  return <InboxView snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
+  return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
     sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}

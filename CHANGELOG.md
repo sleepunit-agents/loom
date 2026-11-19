@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Changes is drawn as its page on the how-it-works site: every state is said in plain words ("Checks passing", "No review needed", "Waiting on the checks", "Waiting on Art"), a row keeps to its title, its number and one short state, Refresh sits in the list's head over a short "Last read" time, the description is drawn as markdown and held to a readable height with Show all, linked tasks are chips that open them, and whether it can be merged and its commit are behind Details.
+- Times in Inbox, Tasks, Approvals and Changes are said in the household's zone, in one shared format, and never name a zone. Knowledge's dates are no longer fixed to one zone.
 - Household setup's icon is a table with its seats, and Bridges' is a plug meeting its socket.
 - Home has loom's own icon, a doorway with light on the floor: every key on the dock is now the household's own.
 - Fourteen more apps have loom's own icon: Agents, Knowledge, People, Projects, Activity, Sharing, Bridges, Settings, Appearance, Job usage, Household setup, Your account and the All apps key, with Approvals' redrawn clean. Home keeps its line icon for now.

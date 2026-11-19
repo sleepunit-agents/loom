@@ -21,13 +21,15 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Re
   return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {taskQuestions:((f.data.taskQuestions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11),approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { conversationMadeChanges:((f.data.sourceMembership ?? f.data.madeChanges ?? []) as {id:string}[]).filter(row=>row.id===variables.id),changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
-vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Head','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
+// The kit's Menu is the real one (over the mocked Button), so what is behind More is still seen.
+vi.mock('../../components/ui/button', () => ({ Button: (props: { children?: ReactNode }) => h('Button', props, props.children) }));
+vi.mock('../../kit', async () => ({ Menu: (await vi.importActual<typeof import('../../kit/menu')>('../../kit/menu')).Menu, ...Object.fromEntries(['RefCard','Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Head','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
   (props: { children?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown; listBusy?: boolean; icon?: ReactNode }) => name === 'Split'
     ? h(name, { folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy }, props.listAction, props.listTop, props.list, props.reader, props.search)
     // (A row's icon is an element: drawn as a child, so the tree still prints.)
     : name === 'Row' ? h(name, { ...props, icon: undefined }, props.icon)
     // (So is what a head carries at its sides.)
-    : name === 'Head' ? h('header', null, (props as { leading?: ReactNode }).leading, props.children, (props as { actions?: ReactNode }).actions) : h(name, props, props.children)])));
+    : name === 'Head' ? h('header', null, (props as { leading?: ReactNode }).leading, props.children, (props as { actions?: ReactNode }).actions) : h(name, props, props.children)])) }));
 import CommsApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -194,11 +196,11 @@ it('keeps replies unread while scrolled into earlier messages and reads them on 
 it('shows a current mentioned pull request card, updates it and withdraws denied metadata', async () => {
   setup(); const id='github:house/loom#7'; f.data.commsRefs=[{ref:id,messageSeq:1}];
   f.data.mentionedChanges = {[id]:[{id,title:'CURRENT PR TITLE',state:'open',checks:'running',review:'required',waitingOn:'ci',draft:false}]};
-  const go=await draw(); expect(text()).toContain('CURRENT PR TITLE'); expect(text()).toContain('CI running');
+  const go=await draw(); expect(text()).toContain('CURRENT PR TITLE'); expect(text()).toContain('Checks running');
   await act(async()=>{named('Open').props.onClick();}); expect(go).toHaveBeenCalledWith('/p/changes-preview/change/github%3Ahouse%2Floom%237');
   f.data.mentionedChanges = {[id]:[{id,title:'UPDATED PR TITLE',state:'merged',checks:'passing',review:'approved',waitingOn:'done',draft:false}]};
   await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));});
-  expect(text()).toContain('UPDATED PR TITLE'); expect(text()).toContain('merged'); expect(text()).not.toContain('CURRENT PR TITLE');
+  expect(text()).toContain('UPDATED PR TITLE'); expect(text()).toContain('Merged'); expect(text()).not.toContain('CURRENT PR TITLE');
   f.data.mentionedChanges = {[id]:[]};
   await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));}); expect(text()).not.toContain('UPDATED PR TITLE');
 });
@@ -262,7 +264,7 @@ it('labels source tasks as Made here and pages a change-only source list without
  f.data.commsRefs=[{ref:'github:house/loom#51',messageSeq:1}];
  await draw();
  expect(work('SOURCE TASK LABEL').props.status).toBe('t-90 · open · Made here');
- expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');expect(JSON.stringify(tree.root.findByProps({'aria-label':'Conversation change github:house/loom#51'}).findAllByType('p').map((node:{props:{children:ReactNode}})=>node.props.children))).toContain('Made here');
+ expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');expect(tree.root.findAllByProps({label:'Conversation change github:house/loom#51'}).some((node:{props:{note?:string}})=>node.props.note==='Made here')).toBe(true);
  expect(pager('Conversation work pages').props).toMatchObject({hasNext:true,disabled:false});
  f.data.sourceTasks=[];f.data.madeChanges=[{id:'github:house/loom#51'}];
  await act(async()=>{pager('Conversation work pages').props.next();});

@@ -11,7 +11,7 @@ export interface InboxResultsSnapshot {
 
 /** The outcome of something this person did, as a quiet row among the list's rows: what happened, when, a link to
  * the page it happened on, and one way to dismiss it. */
-export function InboxNotice({ result, dismiss }: { result: InboxActionResult; dismiss?(id: string): Promise<void> }) {
+export function InboxNotice({ result, dismiss, zone }: { result: InboxActionResult; dismiss?(id: string): Promise<void>; zone?: string }) {
   const locked = useRef(false);
   const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   async function read() {
@@ -22,7 +22,7 @@ export function InboxNotice({ result, dismiss }: { result: InboxActionResult; di
     finally { locked.current = false; setBusy(false); }
   }
   const page = result.page && !result.page.includes('\\') && !/[\u0000-\u0020]/.test(result.page) && /^\/(?!\/)/.test(result.page) ? result.page : undefined;
-  return <NoteRow role="status" title={result.text} status={[result.ok ? 'Saved' : 'Error', when(result.at)].filter(Boolean).join(' · ')}
+  return <NoteRow role="status" title={result.text} status={[result.ok ? 'Saved' : 'Error', when(result.at, zone)].filter(Boolean).join(' · ')}
     actions={<>
       {page && <a className="loom-kit-link" href={page} aria-label={`Open the page for: ${result.text}`}>Open</a>}
       {dismiss && <LinkButton disabled={busy} aria-label={`Dismiss notice: ${result.text}`} onClick={() => void read()}>Dismiss</LinkButton>}
@@ -38,9 +38,9 @@ export function currentNotices(snapshot: InboxResultsSnapshot | undefined, error
 
 /** Query status withdraws retained outcomes immediately. Dismissal is acknowledged
  * only by the next query result, so a failed write never hides the notice. */
-export function InboxActionNotices({ snapshot, errorsOnly, dismiss }: {
-  snapshot: InboxResultsSnapshot; errorsOnly?: boolean; dismiss?(id: string): Promise<void>;
+export function InboxActionNotices({ snapshot, errorsOnly, dismiss, zone }: {
+  snapshot: InboxResultsSnapshot; errorsOnly?: boolean; dismiss?(id: string): Promise<void>; zone?: string;
 }) {
   const results = currentNotices(snapshot, errorsOnly);
-  return results.length ? <section aria-label="Recent actions">{results.map(row => <InboxNotice key={row.id} result={row} dismiss={dismiss} />)}</section> : null;
+  return results.length ? <section aria-label="Recent actions">{results.map(row => <InboxNotice key={row.id} result={row} dismiss={dismiss} zone={zone} />)}</section> : null;
 }

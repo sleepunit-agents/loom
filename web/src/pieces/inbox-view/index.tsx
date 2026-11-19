@@ -41,7 +41,7 @@ function useItemActions(item: InboxItem, actions?: InboxActions) {
 /** A question where it was asked, in a conversation (the how-it-works site's `.msg--ask`): the question, one small
  * line of what Yes and No do, and the answer with the words the Inbox puts on it for the same ask: Yes and No for a
  * plain question (an approval is answered on its own card, which says Allow and Deny in both places). Why, what it is about, an answer in words to a yes-or-no question, Mark done, Dismiss and Notify are the Inbox's: one link there. */
-function ChatQuestion({ item, actions, sourceCard, openInbox }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; openInbox?(): void }) {
+function ChatQuestion({ item, actions, sourceCard, openInbox, zone }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; openInbox?(): void; zone?: string }) {
   const { busy, error, answer } = useItemActions(item, actions);
   const outcomes = [item.body?.ifYes && `Yes: ${item.body.ifYes}`, item.body?.ifNo && `No: ${item.body.ifNo}`].filter(Boolean).join(' ');
   return <Reader aria-label="Question" data-inline="">
@@ -50,7 +50,7 @@ function ChatQuestion({ item, actions, sourceCard, openInbox }: { item: InboxIte
     {item.state === 'waiting' && item.answers && item.body && !managed(item) && actions?.answer && <AnswerSection key={`${item.id}:${item.body.words}`} compact answers={item.answers} busy={busy}
       onAnswer={(verdict, words) => void answer(verdict, words)} />}
     {sourceCard}
-    {item.answer && <Meta>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt)].filter(Boolean).join(' · ')}</Meta>}
+    {item.answer && <Meta>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt, zone)].filter(Boolean).join(' · ')}</Meta>}
     {item.answerText && <Body>{item.answerText}</Body>}
     {item.resolution && <Body quiet>{item.resolution}</Body>}
     {error && <Error text="Could not save. Try again." />}
@@ -62,13 +62,13 @@ function ChatQuestion({ item, actions, sourceCard, openInbox }: { item: InboxIte
 }
 
 /** The open item in the Inbox tile. */
-function QuestionReader({ item, actions, sourceCard }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode }) {
+function QuestionReader({ item, actions, sourceCard, zone }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; zone?: string }) {
   const { busy, error, answer, volume } = useItemActions(item, actions);
   const waiting = item.state === 'waiting', link = safeLink(item.body?.link);
   return <Reader aria-label="Inbox item">
     <Meta>{`${from(item)} · ${stateWord(item)}`}</Meta>
     <Title>{item.body?.words ?? 'Message words are unavailable'}</Title>
-    <Meta><time dateTime={item.at}>{when(item.at)}</time>{item.project && ` · ${item.project}`}</Meta>
+    <Meta><time dateTime={item.at}>{when(item.at, zone)}</time>{item.project && ` · ${item.project}`}</Meta>
     {(item.body?.why || item.body?.ifYes || item.body?.ifNo || item.refs.length > 0) && <Facts>
       <Fact label="Why">{item.body?.why}</Fact>
       <Fact label="If yes">{item.body?.ifYes}</Fact>
@@ -81,7 +81,7 @@ function QuestionReader({ item, actions, sourceCard }: { item: InboxItem; action
       settle onAnswer={(verdict, words) => void answer(verdict, words)} />}
     {sourceCard}
     {item.answer && <Section label="Answer">
-      <Meta>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt)].filter(Boolean).join(' · ')}</Meta>
+      <Meta>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt, zone)].filter(Boolean).join(' · ')}</Meta>
       {item.answerText && <Body>{item.answerText}</Body>}
     </Section>}
     {item.resolution && <Section label="Settled"><Body>{item.resolution}</Body></Section>}
@@ -90,19 +90,23 @@ function QuestionReader({ item, actions, sourceCard }: { item: InboxItem; action
       <label>Notify <select aria-label="Notify" value={item.volume} disabled={busy} onChange={event => void volume(event.target.value as InboxItem['volume'])}>
         {(['full', 'dim', 'mute'] as const).map(value => <option key={value} value={value}>{volumeWords[value]}</option>)}
       </select></label>
-      {item.volume !== 'full' && <span>{volumeNote[item.volume]}{item.quietUntil && <> · back to normal <time dateTime={item.quietUntil}>{when(item.quietUntil)}</time></>}</span>}
+      {item.volume !== 'full' && <span>{volumeNote[item.volume]}{item.quietUntil && <> · back to normal <time dateTime={item.quietUntil}>{when(item.quietUntil, zone)}</time></>}</span>}
     </Foot>}
   </Reader>;
 }
 
 /** `inline`: drawn in a conversation as a compact card (`openInbox` is its way to the whole item); otherwise the Inbox's reader. */
-export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard, openInbox }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode; openInbox?(): void }) {
+export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard, openInbox, zone }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode; openInbox?(): void;
+  /** The zone times are said in (the household's); the device's own without one. */
+  zone?: string }) {
   const item = snapshot.status === 'live' ? snapshot.items.find(row => row.id === id) : undefined;
   if (!item) return inline ? <Body quiet>This question is unavailable.</Body> : <Empty title="Item is unavailable" />;
-  return inline ? <ChatQuestion key={item.id} item={item} actions={actions} sourceCard={sourceCard} openInbox={openInbox} /> : <QuestionReader key={item.id} item={item} actions={actions} sourceCard={sourceCard} />;
+  return inline ? <ChatQuestion key={item.id} item={item} actions={actions} sourceCard={sourceCard} openInbox={openInbox} zone={zone} /> : <QuestionReader key={item.id} item={item} actions={actions} sourceCard={sourceCard} zone={zone} />;
 }
 
-export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation, sourceCard }: {
+export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation, sourceCard, zone }: {
+  /** The zone times are said in (the household's); the device's own without one. */
+  zone?: string;
   sourceCard?(item: InboxItem): ReactNode;
   navigation?: { folder: string; query: string; offset: number; hasNext: boolean; onFolder(id: string): void; onQuery(value: string): void; previous(): void; next(): void };
   results?: InboxResultsSnapshot; dismissResult?(id: string): Promise<void>;
@@ -135,9 +139,9 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
     listTitle={current?.label ?? 'Inbox'} listCount={live ? current?.count : undefined} listBusy={snapshot.settling} listKey={JSON.stringify([folder, navigation?.query, navigation?.offset])}
     listTop={navigation && folder !== 'errors' && <Pager label="Inbox pages" disabled={!live} hasPrevious={navigation.offset > 0} hasNext={navigation.hasNext} previous={navigation.previous} next={navigation.next} />}
     search={<Search label="Search asks" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.onQuery(value) : setQuery(value)} />}
-    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} />
+    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} zone={zone} />
       : <Row key={id} title={row.body?.words ?? `Item from ${from(row)}`} className={row.volume === 'dim' ? '[&_.loom-kit-title]:line-clamp-1' : undefined} meta={row.volume === 'dim' ? undefined : row.body?.why ?? undefined}
         status={row.volume === 'dim' ? undefined : `${from(row)} · ${stateWord(row)} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : <Empty title="No items here" />}
-    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }

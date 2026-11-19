@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react';
 import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approval-view';
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
 import { useDataQuery } from './graphql';
+import { useAgentNames } from './names';
+import { displayName } from '../kit/words';
+import { useHouseholdZone } from './zone';
 import { refreshChanges } from './work-refresh';
 import { alwaysInput, alwaysLabel, sendWorkAlways, type WorkAlwaysInput, type RulePerson, type MergeRequest } from './work-always';
 import { sendApprovalRule } from './work-rule';
@@ -40,14 +43,16 @@ function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owne
   return { ...snapshot, approvals: snapshot.approvals.map(row => row.id === card.id ? { ...row, changeSummary: now.summary, problem: now.problem } : row) };
 }
 
-// The root may supply household time. The browser's own timezone is a display
-// default, requiring no broader read of household/private settings.
+// Times are said in the household's zone (the desk's own clock reading, data/zone.ts) unless the root supplies
+// one; until that is read, and where it cannot be, in the browser's own.
 function localTimezone() { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
-export function useApprovalSnapshot(timezone = localTimezone()) {
-  return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone);
+export function useApprovalSnapshot(timezone?: string) {
+  const zone = useHouseholdZone();
+  return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone ?? zone ?? localTimezone());
 }
-export function useChangeSnapshot(timezone = localTimezone()) {
-  return changeSnapshot(useDataQuery<ChangesResult>(changesQuery), timezone);
+export function useChangeSnapshot(timezone?: string) {
+  const zone = useHouseholdZone();
+  return changeSnapshot(useDataQuery<ChangesResult>(changesQuery), timezone ?? zone ?? localTimezone());
 }
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
@@ -85,7 +90,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
 export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
-  const snapshot = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner;
+  const snapshot = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner, names = useAgentNames();
   const requests = useDataQuery<{approvals:MergeRequest[]}>(mergeRequestsQuery);
   const findRequest = (id:string,head:string) => {
     const row = snapshot.changes.find(row => row.id === id && row.headCommit === head);
@@ -132,7 +137,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
       await sendWorkAnswer({piece:'changes',id,head,approval:request.id,answer});
     },
   } : undefined;
-  return <Changes snapshot={snapshot} actions={actions ?? defaultActions}
+  return <Changes snapshot={snapshot} actions={actions ?? defaultActions} names={names}
     navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
     openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
@@ -144,5 +149,6 @@ export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezo
   return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
-  return <ChangeCard id={id} snapshot={useChangeSnapshot(timezone)} open={open} />;
+  const names = useAgentNames();
+  return <ChangeCard id={id} snapshot={useChangeSnapshot(timezone)} open={open} name={id => displayName(id, names)} />;
 }

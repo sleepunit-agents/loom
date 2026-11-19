@@ -85,12 +85,6 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 /* (The plate under it is this box's, so the words behind never show through the kit's quiet button.) */
 .comms__jump { position: absolute; left: 50%; bottom: 8px; z-index: 2; translate: -50% 0; max-width: calc(100% - 28px); border-radius: var(--r-sm); background: var(--v-paper); }
 
-/* ---- a small menu (menu.tsx): More in the head, New over the list ---- */
-.loom-menu { position: relative; display: inline-flex; }
-.loom-menu__box { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; display: grid; gap: 4px; width: max-content; min-width: 148px; max-width: min(260px, 80vw); padding: 6px;
-  border: 1px solid var(--v-edge); border-radius: var(--r-md); background: var(--v-paper); font-family: var(--font-sans); letter-spacing: 0; }
-.loom-menu .loom-menu__box > .v-btn[data-slot="button"]:not(.-card) { width: 100%; justify-content: flex-start; text-align: left; }
-
 /* ---- a thread's row: the agent's initial, as the site's .letter ---- */
 .comms-letter { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--v-border); border-radius: 7px; background: color-mix(in srgb, var(--v-text) 5%, transparent);
   font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 12px; font-weight: 600; color: var(--v-text-2); }
@@ -110,15 +104,6 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 .comms-work .loom-kit-title { display: block; overflow: visible; -webkit-line-clamp: unset; font-size: 13px; }
 .comms-work__rest { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; padding: 10px 14px; }
 .comms-work__rest:empty { display: none; }
-.comms-work__made { margin: 0; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; line-height: 1.5; color: var(--v-text-3); overflow-wrap: anywhere; }
-/* A pull request: a bordered card (the site's .refc) around the Changes app's reference. */
-.comms-refc { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--comms-line); border-radius: 8px; background: color-mix(in srgb, var(--v-text) 4%, transparent); }
-.comms-refc article { display: grid; gap: 4px; min-width: 0; padding: 0; }
-.comms-refc article > p:first-child { font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3); }
-.comms-refc article > h3 { font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1.35; letter-spacing: 0; text-transform: none; color: var(--v-text); overflow-wrap: anywhere; }
-.comms-refc article > p { font-size: 12px; color: var(--v-text-2); overflow-wrap: anywhere; }
-.comms-refc article > .v-btn { justify-self: start; margin-top: 3px; }
-
 /* Wide enough: Work is a column on the right, always open, under its own small heading. */
 @container loom-reader (min-width: 500px) {
   .comms__body:has(> .comms__work:not(:empty)) { grid-template-columns: minmax(0, 1fr) minmax(170px, 30%); }
@@ -131,7 +116,7 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 
 @media (prefers-contrast: more) {
   .loom-comms { --comms-line: var(--v-edge); }
-  .comms-group__who, .comms-delivery, .comms-quiet, .comms-work__made { color: var(--v-text-2); }
+  .comms-group__who, .comms-delivery, .comms-quiet { color: var(--v-text-2); }
   .comms-group[data-side="me"] .comms-bubble { border-color: var(--comms-tint); }
   .comms-bubble { border-color: var(--v-edge); }
 }

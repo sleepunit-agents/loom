@@ -2,7 +2,7 @@ import {useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {Button,Empty,Error,Loading} from '../../kit';
 import {conversationActivityQuery,type ConversationActivityData,type ConversationTurn} from './conversation-query';
-import {briefTime,fullTime} from './time';
+import {briefTime,fullTime} from '../../kit/time';
 
 /** A step's stored kind, who it was from and how it ended, in plain words (the schema's own values: turns.kind,
  * turns.from_kind, turns.outcome). One that is not listed is said as stored, with spaces for its underscores. */

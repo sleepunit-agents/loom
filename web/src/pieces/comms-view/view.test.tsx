@@ -4,14 +4,16 @@ import { Children, createElement as h, useEffect, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
 // The kit as plain elements named for its parts, so a test can find a part and call what it was given.
-vi.mock('../../kit', () => Object.fromEntries(['Split', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Input', 'Textarea', 'Actions', 'Search', 'Pager', 'Head', 'Title', 'Meta', 'Chips', 'Chip'].map(name => [name, (props: { children?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; listTitle?: ReactNode; listCount?: number }) => name === 'Split'
+// The kit's Menu is the real one (over the mocked Button), so what is behind More is still seen.
+vi.mock('../../components/ui/button', () => ({ Button: (props: { children?: ReactNode }) => h('Button', props, props.children) }));
+vi.mock('../../kit', async () => ({ Menu: (await vi.importActual<typeof import('../../kit/menu')>('../../kit/menu')).Menu, ...Object.fromEntries(['RefCard','Split', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Input', 'Textarea', 'Actions', 'Search', 'Pager', 'Head', 'Title', 'Meta', 'Chips', 'Chip'].map(name => [name, (props: { children?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; listTitle?: ReactNode; listCount?: number }) => name === 'Split'
   ? h(name, { label: 'Comms', listTitle: props.listTitle, listCount: props.listCount }, h('ListAction', null, props.listAction), props.listTop, props.search, props.list, props.reader)
   // (A row's icon is an element: drawn as a child, so the tree still prints.)
   : name === 'Row' ? h(name, { ...props, icon: undefined }, (props as { icon?: ReactNode }).icon)
   // (So is what a head carries at its sides.)
-  : name === 'Head' ? h('header', null, (props as { leading?: ReactNode }).leading, props.children, (props as { actions?: ReactNode }).actions) : h(name, props, props.children)])));
+  : name === 'Head' ? h('header', null, (props as { leading?: ReactNode }).leading, props.children, (props as { actions?: ReactNode }).actions) : h(name, props, props.children)])) }));
 import { CommsView } from './index';
-import { briefTime, fullTime } from '../comms/time';
+import { briefTime, fullTime } from '../../kit/time';
 import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot } from './model';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -236,12 +238,12 @@ it('keeps Pin, Archive, Rename and Delete behind one More menu, Stop beside it, 
   expect(named('Stop')).toBeDefined(); expect(named('More').props).toMatchObject({ 'aria-expanded': false });
   await press('More');
   expect(named('More').props['aria-expanded']).toBe(true);
-  const menu = tree.root.findByProps({ className: 'loom-menu__box' });
+  const menu = tree.root.findByProps({ className: 'loom-kit-menu__box' });
   expect(menu.findAllByType('Button').map((button: { props: { children: string } }) => button.props.children)).toEqual(['Pin', 'Archive', 'Rename', 'Delete']);
   expect(named('Delete').props.variant).toBe('danger-quiet');
   // Escape closes it without choosing, and the surrounding reader never hears that Escape.
   const escape = { key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() };
-  await act(async () => { tree.root.findByProps({ className: 'loom-menu' }).props.onKeyDown(escape); });
+  await act(async () => { tree.root.findByProps({ className: 'loom-kit-menu' }).props.onKeyDown(escape); });
   expect(named('Pin')).toBeUndefined(); expect(escape.preventDefault).toHaveBeenCalled(); expect(escape.stopPropagation).toHaveBeenCalled();
   await press('More'); await press('Delete');
   expect(named('Pin')).toBeUndefined(); expect(a.change).not.toHaveBeenCalled();

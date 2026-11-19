@@ -4,12 +4,11 @@
 // bar pinned under it; and the conversation's work in a column on its right where there is room. Built on the kit;
 // what the kit has no part for is in comms.css. This file owns no store and no transport.
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Split, Row, Empty, Error, Loading, Button, Input, Actions, Search, Pager, Head, Title, Meta, Chip } from '../../kit';
+import { Split, Row, Empty, Error, Loading, Button, Input, Actions, Search, Pager, Head, Title, Meta, Chip, Menu } from '../../kit';
 import { useCommsDraft } from '../comms/drafts';
 import { useReplyFollow } from '../comms/use-follow';
 import { MessageBar, ComposerOff } from '../comms/composer';
-import { briefTime, fullTime } from '../comms/time';
-import { Menu } from './menu';
+import { briefTime, fullTime } from '../../kit/time';
 import { withRefs } from './refs';
 import { threadRows, type CommsActions, type CommsDetail, type CommsMessage, type CommsSnapshot, type Status, type ThreadChange } from './model';
 import './comms.css';

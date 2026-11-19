@@ -1,3 +1,4 @@
+import { fullTime } from '../../kit/time';
 /** Presentation of shared Inbox query rows; no store, policy or transport. */
 export type InboxBody = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export interface InboxItem {
@@ -57,9 +58,6 @@ export function sourceLabel(item: InboxItem): string {
   const kind = item.waitsOnKind ?? item.source;
   return kind === 'task' ? 'Open the task' : kind === 'approval' ? 'Open in Approvals' : kind === 'secret-request' ? 'Open in Secrets' : 'Open where this is answered';
 }
-/** "Nov 14, 2026, 9:20 AM CT": the household's zone, named by its short letters and never by its id. */
-const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', dateStyle: 'medium', timeStyle: 'short' });
-export function when(at: string): string {
-  const date = new Date(at);
-  return Number.isFinite(date.getTime()) ? `${clock.format(date).replace(/\u202f/g, ' ')} CT` : '';
-}
+/** "Nov 14, 2026, 9:20 AM": the whole date and time, in the shared format (kit/time.ts) and the household's zone
+ * where the caller has read it; the device's own without one. Never a zone's id or letters. */
+export const when = (at: string, zone?: string): string => fullTime(at, zone);

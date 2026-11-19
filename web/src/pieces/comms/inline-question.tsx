@@ -1,6 +1,7 @@
 import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { useEffect, useMemo } from 'react';
 import { useDeadline } from './use-deadline';
+import { useHouseholdZone } from '../../data/zone';
 import { conversationOperation as mutate } from './operations';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import { LiveApprovalCard } from '../../data/work-views';
@@ -17,7 +18,7 @@ export function inlineQuestionSelection(id: string): QuerySelection<InboxItem | 
  * has (the question, what Yes and No do, the answer); everything else about the item is one link away, in the Inbox.
  * `onWaiting` hears whether this is an open question this person can answer, so the thread can say it waits on them. */
 export function InlineQuestion({ id, go, writable, readVisible, onWaiting }: { id: string; go(path: string): void; writable: boolean; readVisible: boolean; onWaiting?(id: string, waiting: boolean): void }) {
-  const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id]));
+  const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id])), zone = useHouseholdZone();
   const item = reading.status === 'live' ? reading.data : null;
   const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
 
@@ -32,6 +33,6 @@ export function InlineQuestion({ id, go, writable, readVisible, onWaiting }: { i
   const approval = writable && retained?.body && retained.waitsOnKind === 'approval' ? retained.waitsOnId : undefined;
   const open = writable && !!retained && retained.state === 'waiting' && !!retained.answers;
   useEffect(() => { onWaiting?.(id, open); return () => onWaiting?.(id, false); }, [id, open]);
-  return <InboxQuestionCard sourceCard={approval ? <LiveApprovalCard id={approval} /> : writable && retained?.body && retained.source==='task' && retained.waitsOnKind==='task' ? <TaskQuestionAnswer key={retained.id} item={retained} compact/> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
+  return <InboxQuestionCard zone={zone} sourceCard={approval ? <LiveApprovalCard id={approval} /> : writable && retained?.body && retained.source==='task' && retained.waitsOnKind==='task' ? <TaskQuestionAnswer key={retained.id} item={retained} compact/> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
     items: retained ? [retained] : [] }} openInbox={retained ? () => go(waitingPath(retained.id)) : undefined} />;
 }

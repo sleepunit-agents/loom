@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { RefCard } from '../../kit';
 
 /** Work in a conversation (the how-it-works site's `.cm__work`): a column on the right of the thread where the reader
  * is wide enough, and below that one line over the composer, "Work · 3", that opens in place. Which of the two it is
@@ -12,7 +13,7 @@ export function WorkPanel({ count, children }: { count: number; children: ReactN
     <div id={id} className="comms-work__body">{children}</div>
   </section>;
 }
-/** A pull request: the bordered card (the site's `.refc`) around the Changes app's own reference card. */
+/** A pull request: the kit's bordered card (the site's `.refc`) around the Changes app's own reference card. */
 export function WorkCard({ label, made, children }: { label: string; made?: boolean; children: ReactNode }) {
-  return <div className="comms-refc" role="group" aria-label={label}>{made && <p className="comms-work__made">Made here</p>}{children}</div>;
+  return <RefCard label={label} note={made ? 'Made here' : undefined}>{children}</RefCard>;
 }

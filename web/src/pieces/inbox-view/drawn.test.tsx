@@ -20,9 +20,9 @@ it('says the folder and its count over the list, searches from a compact field, 
   expect(view({ hasNext: true })).toContain('Next page'); expect(view({ offset: 50 })).toContain('Previous page');
 });
 it('draws the reader as the site does: one filled button, quiet ones in rows, facts with labels, references as chips', () => {
-  const html = renderToStaticMarkup(h(InboxQuestionCard, { id: item.id, snapshot, actions: { answer: async () => {}, volume: async () => {}, openRef: ref => ref.startsWith('t-') ? () => {} : undefined } }));
+  const html = renderToStaticMarkup(h(InboxQuestionCard, { id: item.id, snapshot, zone: 'America/Chicago', actions: { answer: async () => {}, volume: async () => {}, openRef: ref => ref.startsWith('t-') ? () => {} : undefined } }));
   expect(html).toContain('<p class="loom-reader__meta ">art · open</p><h2 class="loom-reader__title ">Spend up to $180 on the pump Art picked?</h2>');
-  expect(html).toContain('Nov 14, 2026, 9:20 AM CT</time> · pond');
+  expect(html).toContain('Nov 14, 2026, 9:20 AM</time> · pond');
   expect(html.match(/<dt class="loom-reader__label">([^<]+)</g)).toEqual(['Why', 'If yes', 'If no', 'About'].map(label => `<dt class="loom-reader__label">${label}<`));
   expect(html).toContain('<button type="button" class="loom-kit-chip" aria-label="Open t-2190">t-2190</button><span class="loom-kit-chip">github:owner/repo#12</span>');
   expect(html.match(/ -primary /g)).toHaveLength(1);
