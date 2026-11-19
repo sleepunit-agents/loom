@@ -1,6 +1,7 @@
 import { Duplex } from 'node:stream';
 import { expect, it, vi } from 'vitest';
 import type { DockerEngine } from './docker-engine.js';
+import { PROGRAM_OUTPUT_BYTES } from './house-program.js';
 import { runKitContainer } from './kit-container.js';
 
 const image = 'sha256:' + 'e'.repeat(64);
@@ -52,4 +53,11 @@ it('accepts a bare inspect digest only when it identifies the approved image',as
   const other=fixture('private','1'.repeat(64));
   await expect(runKitContainer(other.engine,input)).rejects.toThrow('immutable');
   expect(other.calls.some(call=>call.path.includes('/create'))).toBe(false);
+});
+
+it('applies the same stdout budget and credential checks without any bound secrets', async()=>{
+  for (const [output,reason] of [['x'.repeat(PROGRAM_OUTPUT_BYTES + 1),'limit'],['Bearer example-token','withheld']]) {
+    const {engine}=fixture(output);
+    await expect(runKitContainer(engine,{...input,secrets:{}})).rejects.toThrow(reason);
+  }
 });

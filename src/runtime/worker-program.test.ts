@@ -172,6 +172,7 @@ it('selects the actual container executor when configured, without invoking a ho
   const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(f.control.mock.calls[0][0]).not.toHaveProperty('programs');
   expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} });
   expect(f.executor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
