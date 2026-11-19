@@ -88,7 +88,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -181,7 +181,7 @@ export function sharedRoot(options: {
   const programQueries=programSetupQueries(db,programSetup);
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
-  const kitQueries=kitCatalogQueries(db,viewer=>{const work=bodyJob(viewer);return !!work && jobHeld(db,work.job);});
+  const kitQueries=kitCatalogQueries(db,viewer=>{const work=bodyJob(viewer);return !!work && kitRoom(db,work.job).word.woke==='others';});
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
   // Every outside door authenticates here. A body's viewer already says which member its work is for:
