@@ -2,6 +2,7 @@
 export const agentModelsSelection='agentModels(orderBy:{agent:{direction:asc,priority:2},position:{direction:asc,priority:1},model:{direction:asc,priority:0}}){agent model position}';
 export const runtimeAccountsQuery=`query RuntimeModelAccounts {
  deskTime { timezone }
+ agents { id removedAt }
  ${agentModelsSelection}
  modelAccounts {
   __typename

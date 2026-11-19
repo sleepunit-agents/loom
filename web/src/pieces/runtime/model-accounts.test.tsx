@@ -4,7 +4,7 @@ import {createElement as h} from 'react';
 import {act,create} from 'react-test-renderer';
 import type {DataQuerySnapshot} from '../../data/graphql';
 import type {RuntimeAccount,AgentModel} from './model-accounts';
-const f=vi.hoisted(()=>({snapshot:{} as DataQuerySnapshot<{modelAccounts:RuntimeAccount[];agentModels?:AgentModel[];deskTime?:{timezone:string}}>,query:vi.fn()}));
+const f=vi.hoisted(()=>({snapshot:{} as DataQuerySnapshot<{modelAccounts:RuntimeAccount[];agentModels?:AgentModel[];agents?:{id:string;removedAt:string|null}[];deskTime?:{timezone:string}}>,query:vi.fn()}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>{f.query(query);return f.snapshot;}}));
 import {RuntimeAccounts,runtimeAccountsQuery} from './model-accounts';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -34,18 +34,18 @@ it('hides retained details whenever the live selection becomes unavailable and d
 });
 
 it('orders each visible agents models and uses household time for account timestamps',async()=>{
- f.snapshot={status:'live',data:{modelAccounts:[detail],deskTime:{timezone:'America/Chicago'},agentModels:[{agent:'art',model:'preferred',position:0},{agent:'art',model:'fallback',position:1},{agent:'mark',model:'mark-only',position:0}]}};
+ f.snapshot={status:'live',data:{modelAccounts:[detail],agents:[{id:'art',removedAt:null},{id:'mark',removedAt:'2026-11-19'}],deskTime:{timezone:'America/Chicago'},agentModels:[{agent:'art',model:'preferred',position:0},{agent:'art',model:'fallback',position:1},{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
- expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['preferred','fallback','mark-only']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['preferred','fallback']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('America/Chicago');expect(text).toContain('6:00:00 AM');
- f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'almost full'}],agentModels:[{agent:'mark',model:'mark-only',position:0}]}};
+ f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'almost full'}],agents:[{id:'mark',removedAt:null}],agentModels:[{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>tree.update(h(RuntimeAccounts)));
  expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['mark-only']);
  expect(JSON.stringify(tree.toJSON())).not.toContain('preferred');expect(JSON.stringify(tree.toJSON())).not.toContain('private-provider');
 });
 
 it('keeps server tie order and reports a missing household zone honestly',async()=>{
- f.snapshot={status:'live',data:{modelAccounts:[detail],agentModels:[{agent:'art',model:'Z-order',position:0},{agent:'art',model:'a-order',position:0}]}};
+ f.snapshot={status:'live',data:{modelAccounts:[detail],agents:[{id:'art',removedAt:null}],agentModels:[{agent:'art',model:'Z-order',position:0},{agent:'art',model:'a-order',position:0}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
  expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['Z-order','a-order']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('Time zone unavailable');expect(text).not.toContain(' UTC');

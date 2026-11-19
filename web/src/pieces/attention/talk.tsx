@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import { Body, LinkButton, List, Meta, Row, Section } from '../../kit';
 import { sinceWord } from './doing';
@@ -40,16 +40,17 @@ const opens = (path: string, go: (path: string) => void) => ({ href: path, onCli
 
 /** Home's card: the last answer in three lines, the whole block opening its conversation; then the three most
  * recent conversations as quiet one-line links, and the way to the rest. Nothing is drawn for what there is none of. */
-export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go }: {
-  talk: CardTalk; name: string; unread?: number; firstUnread?: string; all: string; go(path: string): void;
+export function HomeTalk({ talk, name, unread = 0, firstUnread, all, go, composer }: {
+  talk: CardTalk; name: string; unread?: number; firstUnread?: string; all: string; go(path: string): void; composer?: ReactNode;
 }) {
-  if (talk.status !== 'live') return null;
+  if (talk.status !== 'live') return <>{composer}</>;
   const answer = talk.answer, unreadPath = firstUnread ? threadPath(firstUnread) : undefined;
   return <>
     {answer && <a className="desk-home-answer" aria-label={`${name} last answer. Open the conversation`} {...opens(answer.path, go)}>
       <span className="desk-home-kicker">Last answer · <time dateTime={answer.at}>{sinceWord(answer.at)}</time></span>
       <span className="desk-home-answer-words">{answer.words}</span>
     </a>}
+    {composer}
     {talk.recent.length > 0 && <nav className="desk-home-talks" aria-label={`${name} conversations`}>
       <span className="desk-home-kicker">Conversations{unread ? ` · ${unread} unread` : ''}</span>
       <ul>{talk.recent.map(row => <li key={row.id}><a className="desk-home-talk" title={row.title} data-unread={row.path === unreadPath || undefined} {...opens(row.path, go)}>

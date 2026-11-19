@@ -141,3 +141,11 @@ it('finds all current contact and evidence deadlines without querying private co
  expect(reader.nextDeadline()).toBe(now+1001);at=now+1001;expect(reader.nextDeadline()).toBe(now+2000);at=now+2000;expect(reader.nextDeadline()).toBeUndefined();
  reader.close();expect(reader.nextDeadline()).toBeUndefined();
 });
+
+it('offers only live agents in the People filter',async()=>{
+ const h=home(),f=fixture(join(h,'absent.db'),['fiction','other'].map(agent=>({agent,memories:join(h,agent+'.db')})));
+ const query='{ memoryPeopleAccess { allowed agents } }';
+ expect((await f.query(query)).data).toEqual({memoryPeopleAccess:{allowed:true,agents:['fiction','other']}});
+ f.sharing.agents=['fiction'];
+ expect((await f.query(query)).data).toEqual({memoryPeopleAccess:{allowed:true,agents:['fiction']}});
+});

@@ -18,8 +18,9 @@ export interface TasksAppProps {
   /** Display names by id and the household's zone, where the composition has read them. */
   names?: Readonly<Record<string, string>>;
   zone?: string;
+  liveAgentIds?: ReadonlySet<string>;
 }
-export default function TasksApp({ path: shellPath, go, questionFor = '', conversation, openConversation, submit, people = [], projects = [], names, zone }: TasksAppProps = {}) {
+export default function TasksApp({ path: shellPath, go, questionFor = '', conversation, openConversation, submit, people = [], projects = [], names, zone, liveAgentIds }: TasksAppProps = {}) {
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
   const [whole, search = ''] = (shellPath ?? localPath).split('?');
   // The path may ask for a folder and one agent's tasks (Home's "tasks in progress" does):
@@ -66,7 +67,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   } : undefined;
   const open = !!submit && !!action && status === 'live' && (action.action === 'create' || !!target);
   const links = tasks.flatMap(task => task.taskLinksByTask);
-  return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee}
+  return <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee} liveAgentIds={liveAgentIds}
     changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
     links={links} comments={tasks.flatMap(task => task.taskCommentsByTask)}
     ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}

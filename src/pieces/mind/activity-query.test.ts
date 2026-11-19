@@ -68,3 +68,10 @@ it('keeps absent files absent and reports source failure without disclosing path
  const answer=await bad.query(query);expect(answer.data).toEqual({memoryActivityEntry:null});expect(answer.errors?.[0].message).toBe('Activity entry is unavailable');expect(JSON.stringify(answer)).not.toContain(broken);
  expect(await bad.query(query,guest)).toEqual({data:{memoryActivityEntry:null}});
 });
+
+it('offers only live agents in the Activity filter',async()=>{
+ const f=fixture(episodes().path),query='{ memoryActivityAccess { allowed agents } }';
+ expect((await f.query(query)).data).toEqual({memoryActivityAccess:{allowed:true,agents:['fiction']}});
+ f.sharing({members:{owner:{owner:true,agents:['fiction']}},projects:{},agents:[]});
+ expect((await f.query(query)).data).toEqual({memoryActivityAccess:{allowed:true,agents:[]}});
+});

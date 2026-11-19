@@ -36,6 +36,7 @@ export interface SharedTasksProps {
   selected?: string;
   /** What the path asked to open on: a folder's id, and one agent whose tasks alone are listed until the person says otherwise. */
   startFolder?: string; startAssignee?: string;
+  liveAgentIds?: ReadonlySet<string>;
   questionFor: string;
   select(id?: string): void;
   /** The composition acts at once (Claim, Unclaim, Reopen) or opens a form; its authenticated operation supplies the actor. */
@@ -62,7 +63,8 @@ const stateWord = (task: Task) => task.closeReason === 'cancelled' && task.statu
 /** Shared-schema presentation only. Root owns reads, authorization, routing and writes. */
 export function SharedTasks(props: SharedTasksProps) {
   const [folder,setFolder] = useState(props.startFolder ?? 'ready'), [query,setQuery] = useState('');
-  const [assignee,setAssignee] = useState(props.startAssignee);
+  const [requestedAssignee,setAssignee] = useState(props.startAssignee);
+  const assignee = requestedAssignee && (!props.liveAgentIds || props.liveAgentIds.has(requestedAssignee)) ? requestedAssignee : undefined;
   // A later path that asks again (the app was already open) is followed; a path that asks nothing changes nothing.
   useEffect(() => { if (props.startFolder) setFolder(props.startFolder); if (props.startAssignee) setAssignee(props.startAssignee); }, [props.startFolder, props.startAssignee]);
   // A form that closes gives focus back to the button that opened it.

@@ -6,9 +6,9 @@ import { readDraft, writeDraft, editDraft, clearDraft, type Draft } from '../com
 /** The root authorizes both phases; private words occur only in send input.
  * A stable draft ID makes a deliberate retry target the same thread/message.
  * Drawn as the same bar Comms has under a thread (comms/composer.tsx). */
-export function HomeMessageComposer({member,agent,name=agent,onOpened}:{member:string;agent:string;name?:string;onOpened(id:string):void}) {
-  const key=`new:${agent}`;
-  const [draft,setDraft]=useState(()=>readDraft(member,key));
+export function HomeMessageComposer({member,agent,name=agent,suggestedText,onOpened}:{member:string;agent:string;name?:string;suggestedText?:string;onOpened(id:string):void}) {
+  const key=suggestedText ? `suggestion:${agent}:${suggestedText}` : `new:${agent}`;
+  const [draft,setDraft]=useState(()=>{const saved=readDraft(member,key);return saved.text||!suggestedText?saved:editDraft(saved,suggestedText);});
   const current=useRef<Draft>(draft),mounted=useRef(true),locked=useRef(false);
   const [pending,setPending]=useState(false),[message,setMessage]=useState('');
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);

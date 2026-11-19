@@ -1,5 +1,6 @@
 import { ConnectionControl,ChannelControl,PersonControl,SendControl } from './controls';
 import { useState, type ComponentProps } from 'react';
+import { useLiveAgentIds } from '../../data/live-agents';
 import { useDataQuery } from '../../data/graphql';
 import { BridgesView, type BridgeFolder, type BridgeSelection } from '../bridges-view';
 import { bridgesQuery, bridgesSnapshot, type BridgesData } from './data';
@@ -18,6 +19,7 @@ function LiveBridges({ path, go }: { path?: string; go?: (path: string) => void 
   const [local, setLocal] = useState(base);
   const route = selection(path ?? local), navigate = go ?? setLocal;
   const query=useDataQuery<BridgesData>(bridgesQuery),snapshot=bridgesSnapshot(query);
+  const agents = useLiveAgentIds();
   const manage=snapshot.status==='live'&&query.data?.bridgeReader?.manage===true;
   return <BridgesView key={snapshot.member} snapshot={snapshot} member={snapshot.member} {...route}
     select={selected => navigate(selected ? `${base}/item/${selected.folder}/${encodeURIComponent(selected.id)}` : `${base}/${route.folder}`)}
@@ -26,9 +28,9 @@ function LiveBridges({ path, go }: { path?: string; go?: (path: string) => void 
       // is shown to (policy.ts, rules.reviewsReply). The door decides; a reply this person may not review is refused there.
       send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
     }:{
-      create:route.folder==='sends'?null:<details key={route.folder}><summary>New {route.folder==='connections'?'connection':route.folder==='channels'?'channel rule':'person link'}</summary>{route.folder==='connections'?<ConnectionControl/>:route.folder==='channels'?<ChannelControl/>:<PersonControl/>}</details>,
+      create:route.folder==='sends'?null:<details key={route.folder}><summary>New {route.folder==='connections'?'connection':route.folder==='channels'?'channel rule':'person link'}</summary>{route.folder==='connections'?<ConnectionControl agents={agents}/>:route.folder==='channels'?<ChannelControl agents={agents}/>:<PersonControl/>}</details>,
       connection:id=>{const row=snapshot.connections.find(row=>row.id===id);return row&&<ConnectionControl key={JSON.stringify(row)} row={row} filters={snapshot.filters.filter(f=>f.connection===id)}/>;},
-      channel:row=><ChannelControl key={JSON.stringify(row)} row={row}/>,person:row=><PersonControl key={JSON.stringify(row)} row={row}/>,
+      channel:row=><ChannelControl key={JSON.stringify(row)} row={row} agents={agents}/>,person:row=><PersonControl key={JSON.stringify(row)} row={row}/>,
       send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
     }}/>;
 }

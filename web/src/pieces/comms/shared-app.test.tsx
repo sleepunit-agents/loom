@@ -78,6 +78,18 @@ it('creates conversations for owned agents without passing a member identity', a
   expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/) });
   expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/p\/comms-preview\/thread\//));
 });
+it('opens a removed agent’s old conversation under its name while offering New only for live agents', async () => {
+  setup();
+  const previous = thread({ agent: 'mark', title: 'Mark’s pump notes' });
+  f.data.commsThreads = [previous];
+  f.data.commsThread = previous;
+  f.data.commsMessages = [message({ sender: 'mark' })];
+  await draw();
+  expect(named('New').props['aria-label']).toBe('New conversation with Art');
+  expect(text()).toContain('Mark’s pump notes');
+  expect(text()).toContain('Message Mark');
+  expect(text()).toContain('PRIVATE REPLY');
+});
 it('uses server counts, search and thread/message pages without caching old private words', async () => {
   setup(); f.data.commsThreads = Array.from({ length: 51 }, (_, n) => thread({ id: `th:${n}` }));
   f.data.commsMessages = Array.from({ length: 51 }, (_, n) => message({ seq: n+1 }));

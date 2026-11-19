@@ -446,6 +446,12 @@ it('projects per-agent Needs counts separately from all states without opening w
   const read = () => graphql({ schema, source: '{ inboxFolders { needs agents { id count needs } } }', contextValue: { viewer: alice } });
   const result = await read(); expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({ inboxFolders: { needs: 2, agents: [{ id: 'art', count: 4, needs: 2 }] } });
+  f.db.insert(agents).values({ id: 'mark', about: '', markBg: '#000', markFg: '#fff',
+    faceShape: 'pebble', faceEyes: 'dot', removedAt: '2026-11-14T18:00:00.000Z' }).run();
+  const previous = cvs.send({ toKind: 'person', to: 'alice', member: 'alice', agent: 'mark',
+    source: 'notice', fromKind: 'agent', words: 'Question from Mark', answers: 'words' });
+  expect((await read()).data).toEqual({ inboxFolders: { needs: 3, agents: [{ id: 'art', count: 4, needs: 2 }] } });
+  expect(f.service.item(alice, previous.id)?.agent).toBe('mark');
   expect(f.opens()).toBe(0);
   f.revoke();
   expect((await read()).data).toEqual({ inboxFolders: { needs: 0, agents: [] } });

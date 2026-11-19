@@ -93,7 +93,7 @@ it.each(['loading','offline','denied'] as const)('shows %s errors without stale 
 });
 it('handles no owned agents and regaining scope without invented agents',async()=>{
   f.snapshots['attention.ownedAgent']=live([]);await draw();expect(text()).toContain('No agents of your own');
-  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).toContain('Mark card');expect(text()).not.toContain('Art card');
+  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).toContain('Mark’s desk');expect(text()).not.toContain('Art card');
 });
 
 
@@ -261,4 +261,34 @@ it('renders the generated agent reply on Home instead of a human approval receip
  f.snapshots['conversation.summary']=live([{id:'cv-art',agent:'art',lastAnswer:{at:'2026-11-14T11:00:00Z',words:'Actual agent reply'}}]);
  await draw();expect(text()).toContain('Actual agent reply');expect(text()).not.toContain('human-approver');
  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Actual agent reply');
+});
+
+it('keeps the solo desk actions with room for more work and conversations', async () => {
+  f.snapshots['attention.ownedAgent'] = live([{id:'art',name:'Art'}]);
+  f.snapshots['generated.homeComms'] = live([{member:'owner',agents:['art'],summaries:[]}]);
+  f.snapshots['generated.jobs'] = live(Array.from({length:14}, (_, n) => ({
+    id:`job-${n}`, agent:'art', title:`Job ${n}`, href:`/job/${n}`,
+  })));
+  f.snapshots['conversation.summary'] = live(Array.from({length:7}, (_, n) => talk(String(n),
+    n === 0 ? {lastAnswer:{at:'2026-11-14T11:00:00Z',words:'The latest answer'}} : {})));
+  const go = await draw();
+  const desk = tree!.root.findByProps({'aria-label':'Art’s desk'});
+  expect(desk.findAllByProps({className:'desk-doing-pill'})).toHaveLength(12);
+  expect(words(desk.findByProps({className:'desk-doing-more'}))).toBe('+2 more');
+  expect(desk.findAllByProps({className:'desk-home-talk'})).toHaveLength(6);
+  expect(desk.findByType('textarea').props['aria-label']).toBe('Message Art');
+  const click = async (className:string, href:string) => {
+    await act(async()=>desk.findAllByProps({className})[0].props.onClick({button:0,preventDefault(){}}));
+    expect(go).toHaveBeenLastCalledWith(href);
+  };
+  await click('desk-doing-pill','/job/0');
+  await click('desk-home-answer','/p/comms-preview/thread/0');
+  await click('desk-home-talk','/p/comms-preview/thread/0');
+  await click('desk-home-all','/p/agents-preview/agent/art');
+  await publish('generated.jobs',live([]));
+  await publish('conversation.summary',live([]));
+  expect(text()).toContain('Nothing right now.');
+  expect(text()).toContain('Message Art');
+  expect(desk.findAllByProps({className:'desk-home-answer'})).toHaveLength(0);
+  expect(desk.findAllByProps({className:'desk-home-talk'})).toHaveLength(0);
 });

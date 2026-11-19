@@ -3,8 +3,9 @@ import { sql } from 'drizzle-orm';
 import { graphql } from 'graphql/index.js';
 import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
+import { boxVisibility } from './box-visibility';
 import { dataQueries } from './queries';
-import { boxes, members } from './schema';
+import { agents, boxAgents, boxes, members } from './schema';
 import { deskBoxesQuery } from '../../../web/src/pieces/attention/bar-stats';
 
 it('executes the minimal enrollment selection and reapplies current visibility without exposing machine details', async () => {
@@ -35,5 +36,24 @@ it('executes the minimal enrollment selection and reapplies current visibility w
     expect((await read()).data?.boxes).toEqual(expect.arrayContaining([{id:'live',revokedAt:at}]));
     visible = false;
     expect((await read()).data).toEqual({boxes:[]});
+  } finally { client.close(); }
+});
+
+
+it('lists only live agents on a machine and keeps removed placement grants stored', async () => {
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client), at = '2026-11-19T00:00:00Z';
+    db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: at }).run();
+    const appearance = { about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' } as const;
+    db.insert(agents).values([{ ...appearance, id: 'art' }, { ...appearance, id: 'mark', removedAt: at }]).run();
+    db.insert(boxes).values({ id: 'desk', name: 'Desk', owner: 'owner', sameMachineAsLoom: false,
+      hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+    db.insert(boxAgents).values([{ box: 'desk', agent: 'art', lent: false }, { box: 'desk', agent: 'mark', lent: false }]).run();
+    const schema = dataQueries(client, { tables: ['boxes', 'boxAgents'], visibility: boxVisibility({kind:'member',id:'owner'}) });
+    const result = await graphql({schema, source:'{ boxes { id boxAgentsByBox { agent } } }'});
+    expect(result.errors).toBeUndefined();
+    expect(result.data?.boxes).toEqual([{ id: 'desk', boxAgentsByBox: [{ agent: 'art' }] }]);
+    expect(db.select().from(boxAgents).all()).toHaveLength(2);
   } finally { client.close(); }
 });
