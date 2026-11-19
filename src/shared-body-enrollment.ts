@@ -22,7 +22,7 @@ export function registerSharedBodyEnrollment(operations:Operations,db:DataDataba
  const target=(viewer:Viewer,value:z.infer<typeof input>)=>{
   const proof=options.runnerEnrollment(viewer);if(!proof||!liveWorker(db,viewer,proof))return;
   const job=db.select().from(jobs).where(eq(jobs.id,value.job)).get();
-  if(!job||job.state!=='starting'||job.box!==proof.box)return;
+  if(!job||job.startedByKind==='program'||job.state!=='starting'||job.box!==proof.box)return;
   const old=db.select().from(tokens).where(eq(tokens.fingerprint,value.fingerprint)).get();
   const at=Date.parse(options.now());
   if(old&&(old.kind!=='agent'||old.agent!==job.agent||old.job!==job.id||old.member!==null||old.box!==null

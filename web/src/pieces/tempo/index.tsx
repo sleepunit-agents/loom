@@ -1,3 +1,4 @@
+import { useDataQuery } from '../../data/graphql';
 import type { TempoActions } from './actions';
 import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
@@ -53,6 +54,10 @@ export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSna
 }
 
 function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
+  const detail = useDataQuery<{tempoProgram: {program: {name:string}; programState:unknown; lastResult:string|null}|null}>(
+    'query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
+  const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
+  const lastDecision = program?.lastResult ?? history(snapshot.events, trigger.id).find(event => event.event === 'program')?.note;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(at));
@@ -65,7 +70,13 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       {!!trigger.needs?.length && <div><dt>Machine needs</dt><dd>{trigger.needs.join(', ')}</dd></div>}
       {trigger.prefers != null && <div><dt>Machine preferences</dt><dd>{trigger.prefers.join(', ') || 'None'}</dd></div>}
-      <div><dt>Target</dt><dd>{target(trigger)}</dd></div>
+      <div><dt>Target</dt><dd>{program ? program.program.name : target(trigger)}</dd></div>
+      {program && <div>
+        <dt>House program definition</dt>
+        <dd><pre className="whitespace-pre-wrap break-all">{JSON.stringify(program.program, null, 2)}</pre></dd>
+      </div>}
+      {lastDecision && <div><dt>Last program result</dt><dd>{lastDecision}</dd></div>}
+      {program?.programState != null && <div><dt>Program state</dt><dd><pre>{JSON.stringify(program.programState, null, 2)}</pre></dd></div>}
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
     </dl>

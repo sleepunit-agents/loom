@@ -4,7 +4,7 @@ import type { DockerEngine } from './docker-engine.js';
 import { runKitContainer } from './kit-container.js';
 
 const image = 'sha256:' + 'e'.repeat(64);
-const input = { job:'test-job', box:'test-box', image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ POND_TOKEN:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
+const input = { job:'test-job', box:'test-box', image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ KIT_POND:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
 function fixture(output:string, inspectedImage=image) {
   const calls: {method:string; path:string; body:unknown}[] = [];
   const socket = new Duplex({read(){},write(_chunk, _encoding, done){done();}});
@@ -13,6 +13,7 @@ function fixture(output:string, inspectedImage=image) {
     async json(method,path,body) {
       calls.push({method,path,body});
       if (path.startsWith('/images/')) return {Id:inspectedImage,Config:{Volumes:null}};
+      if (path.startsWith('/containers/') && path.endsWith('/json')) return {Mounts:[]};
       if (path.includes('/create')) return {Id:'a'.repeat(64)};
       if (path.endsWith('/start')) {
         const data = Buffer.from(output), header = Buffer.alloc(8);
@@ -34,7 +35,7 @@ it('uses the approved image without body mounts, host privileges or credentials 
   });
   expect(calls.at(-1)?.method).toBe('DELETE');
 });
-it.each(['fixture-secret', Buffer.from('fixture-secret').toString('base64')])('withholds a secret-bearing result', async(output)=>{
+it.each(['fixture-secret', '{"text":"fixture-\\u0073ecret"}', Buffer.from('fixture-secret').toString('base64')])('withholds a secret-bearing result', async(output)=>{
   const {engine,calls}=fixture(output);
   await expect(runKitContainer(engine,input)).rejects.toThrow('Kit result withheld');
   expect(calls.at(-1)?.method).toBe('DELETE');

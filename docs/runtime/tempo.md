@@ -181,3 +181,42 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   any trigger. A body working for anybody but owners reads its agent's triggers
   as before, all of them, and can change only its own conversation's (see the
   accepted trade-offs).
+
+## Scheduled house programs
+
+A program firing belongs to the agent and has its own attempt in the trigger's conversation.
+The trigger records the reviewed repository, commit, image, house-relative executable, literal arguments, time limit and named credentials. A program-capable worker checks those pins and uses the same isolated container as a kit invocation. If the configured house moves, attempts fail until an owner replaces the schedule with one carrying matching pins. Stop the old trigger to end its failed attempts. Machine sharing, liveness, available slots, needs and preferences still apply. Model availability and account sign-in play no part in choosing a machine.
+
+The version 1 result is one UTF-8 JSON object on stdout. Zero exit requests application of that
+result. A nonzero exit fails the attempt and discards its output. The required fields are
+`version: 1` and boolean `wake`. Optional fields are `line` (a short human-readable summary),
+`payload` (JSON data for the wake), `state` (JSON for a later firing), and
+`post: {channel, text}` (one delivery through a ruled bridge channel). A wake and a post may
+occur together. A successful quiet watch returns `{"version":1,"wake":false}`.
+Granting a program name does not grant a secret. The worker needs the intersection of the
+frozen alias list, the agent's configured house aliases and the current startup grants.
+
+Set an agent-owned time trigger targeting its own inbox. Supply `program: {name, repository, commit, image, program, args, timeoutMs, secrets}`. The inner `program` is the house-relative executable path. Use the usual scheduling fields and wake instructions. In `secrets`, map each `KIT_` environment alias to its configured secret name. Changing that mapping in the house settings invalidates the binding.
+An owner, or a job acting on a verified household owner's word, can set the program definition. A firing snapshots the descriptor
+and the last state. Set `readStateFrom` to read another program trigger in the same agent and
+project. A result always updates its own trigger. Omitting state keeps the previous value.
+Use a dated draft in state when an older producer result should expire.
+
+Stdout accepts 16 KiB including whitespace. Payload and state each accept 8 KiB of serialized
+JSON, up to 32 levels deep. A line accepts 1,024 characters on one line. A post has a channel
+ID of 1–200 characters and text of 1–4,000 characters. The channel must resolve to one ruled
+Slack or Discord destination for the agent. Extra fields, extra stdout, malformed UTF-8,
+credentials found in the result, or a nonzero exit fail the attempt. The worker discards stderr.
+The payload reaches the wake as explicitly labeled, JSON-encoded program data.
+
+Tempo records start, elapsed running time, the outcome and the supplied line. Each program job
+has zero model calls and tokens. Its wake uses ordinary inbox admission in the same conversation.
+A run requesting a post queues it through the bridge. Delivery then follows the bridge's normal
+held, sent and uncertain-delivery handling. Replay of the finish receipt cannot enqueue a second
+post or wake. Invalid results apply no effects. Loom reports a failed or lost job and waits for
+the next firing. It never re-executes an uncertain program attempt automatically.
+
+Overlapping firings are skipped. Set `programPeriod: "day"` to admit at most one attempt per
+household calendar date, including failed or quiet attempts. Leave it unset for a frequent
+watch. The trigger details show the latest outcome and its retained state. The scoped query
+`tempoProgram(id: String!)` returns the descriptor and state to the owner or the agent.

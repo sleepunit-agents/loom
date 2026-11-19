@@ -10,6 +10,8 @@ import {canonicalKitImage} from './kit-manifest.js';
 import {kitBroker} from './kit-broker.js';
 import {kitSocket} from './kit-socket.js';
 import {kitPrivateClient} from './kit-private-client.js';
+import {houseProgramSchema} from './house-program.js';
+import {scheduledContainer} from './scheduled-container.js';
 import {runKitContainer} from './kit-container.js';
 import {KIT_SOCKET} from './body-kit-tools.js';
 import {deniedTools} from './harness-traits.js';
@@ -242,6 +244,13 @@ export function containerWorkerExecutor(config: {
    * job cannot be held to the account loom placed it on, and is refused (WORKER_EXIT.runner). A nested
    * job on a machine with no nested socket still fails when its body is started, as before. */
   const serves = (job: WorkerAssignment) => {
+    if (job.program) {
+      const plan = houseProgramSchema.parse(job.program);
+      if (job.house.repository !== plan.repository) throw new Error('Program repository does not match its pin');
+      if (fixed.container.nestedSocket)
+        throw new UnservedJobError('Programs need a machine with a private engine');
+      return;
+    }
     if (fixed.accountLogins === undefined && (job.accountChoices ?? 1) > 1) throw new UnservedJobError('Several accounts need a sign-in directory each');
     mountsFor({ agent: job.agent, account: job.account, harness: job.harness });
   };
@@ -374,6 +383,7 @@ export function containerWorkerExecutor(config: {
           if (limit.signal.aborted) throw new Error('Worker build cancelled');
           await alone();
           const commit = await Promise.race([source.fetch(house, repositoryInput, limit.signal), ended]);
+          if (job.program && commit !== job.program.commit) throw new Error('Program commit does not match its pin');
           // Built on the core house of the week this job came in: a job under way when a week turns keeps the
           // image it has, and the next job's house is built on the new core.
           const image = houseImage(house, commit, coreImage(definition.digest, coreWeek(now())));
@@ -408,6 +418,9 @@ export function containerWorkerExecutor(config: {
         if (!houseImageName(image)) throw new Error('Invalid container image');
         // Told to the body as it is: only an address the worker fetches, which holds no credential.
         if (!(source.fetches ?? houseRepository)(assignment.house.repository)) throw new Error('Invalid house repository');
+        if (assignment.program) return scheduledContainer(engine, assignment, image, assignment.program, signal, {
+          runtime:fixed.container.runtime, setupTimeoutMs:setupMs, cleanupTimeoutMs:cleanupMs,
+        },letGo);
         mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');

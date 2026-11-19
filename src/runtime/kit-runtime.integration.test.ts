@@ -32,6 +32,7 @@ function fixtureEngine(image:string,helper:string,finished:()=>void):DockerEngin
   const socket=new Duplex({read(){},write(chunk,_encoding,done){input.push(Buffer.from(chunk));done();}});
   return {build:vi.fn(),attach:async()=>socket,async json(method,path,body){
     if(path.startsWith('/images/'))return {Id:image,Config:{}};
+    if(path.startsWith('/containers/')&&path.endsWith('/json'))return {Mounts:[]};
     if(path.includes('/create')){
       const spec=body as {Entrypoint:string[];Cmd:string[]};
       expect(spec.Cmd).toEqual(['/home/agent/repo/fixtures/lookup']);launcher=spec.Entrypoint.slice(1);
@@ -43,7 +44,7 @@ function fixtureEngine(image:string,helper:string,finished:()=>void):DockerEngin
       child.stdout.on('data',(chunk:Buffer)=>{const frame=Buffer.alloc(8);frame[0]=1;frame.writeUInt32BE(chunk.length,4);socket.push(Buffer.concat([frame,chunk]));});
       child.once('close',code=>{socket.push(null);ended({StatusCode:code});});
     }
-    if(path.endsWith('/wait'))return waited;
+    if(path.includes('/wait?'))return waited;
     if(method==='DELETE')finished();
   }};
 }

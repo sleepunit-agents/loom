@@ -332,6 +332,20 @@ const upgrades: readonly (readonly string[])[] = [
     "CREATE TABLE `project_outside_people` (\n\t`project` text NOT NULL,\n\t`platform` text NOT NULL,\n\t`workspace` text NOT NULL,\n\t`user` text NOT NULL,\n\tPRIMARY KEY(`project`, `platform`, `workspace`, `user`),\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action\n);",
     "CREATE TABLE `kit_uses` (\n\t`agent` text NOT NULL,\n\t`conversation` text,\n\t`person_kind` text,\n\t`person` text,\n\t`id` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`tool` text NOT NULL,\n\t`at` text NOT NULL,\n\t`outcome` text NOT NULL,\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action\n);",
   ],
+  // 16: program schedules and their durable attempts. Existing schedules keep the ordinary firing path.
+  ["ALTER TABLE triggers ADD COLUMN program text",
+   "ALTER TABLE triggers ADD COLUMN program_period text",
+   "ALTER TABLE triggers ADD COLUMN read_state_from text REFERENCES triggers(id)",
+   "ALTER TABLE triggers ADD COLUMN program_state text",
+   "CREATE TABLE `program_firings` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`trigger` text NOT NULL,\n\t`at` text NOT NULL,\n\t`period` text,\n\t`job` text NOT NULL,\n\t`program` text NOT NULL,\n\t`status` text NOT NULL,\n\t`line` text,\n\tFOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action\n);",
+   "CREATE UNIQUE INDEX `program_firings_job` ON `program_firings` (`job`);",
+   "CREATE UNIQUE INDEX `program_firings_pending` ON `program_firings` (`trigger`) WHERE \"program_firings\".\"status\" = 'pending';",
+   "CREATE UNIQUE INDEX `program_firings_period` ON `program_firings` (`trigger`,`period`);",
+   "ALTER TABLE job_usage RENAME TO old_job_usage",
+   "CREATE TABLE `job_usage` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`source` text NOT NULL,\n\t`tokens_in` integer,\n\t`tokens_out` integer,\n\t`cache_read` integer,\n\t`cache_written` integer,\n\t`model_calls` integer,\n\t`tool_calls` integer,\n\t`tools` text,\n\t`largest_context` integer,\n\t`wall_ms` integer,\n\t`harness` text,\n\t`model` text,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"job_usage_source_choice\" CHECK(\"job_usage\".\"source\" in ('report','transcript','none','program'))\n);",
+   "INSERT INTO job_usage (job, source, tokens_in, tokens_out, cache_read, cache_written, model_calls, tool_calls, tools, largest_context, wall_ms, harness, model) SELECT job, source, tokens_in, tokens_out, cache_read, cache_written, model_calls, tool_calls, tools, largest_context, wall_ms, harness, model FROM old_job_usage",
+   "DROP TABLE old_job_usage"],
+
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

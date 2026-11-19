@@ -21,7 +21,7 @@ import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
+import {jobs,programFirings,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
 import {secretName,houseSecretAlias} from './pieces/secrets/input.js';
@@ -32,6 +32,7 @@ type Credentials=ReturnType<typeof sharedCredentials>;
 const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('request'),id:z.uuid(),secret:secretName}).strict(),
  z.object({kind:z.literal('startup'),alias:houseSecretAlias}).strict(),
+ z.object({kind:z.literal('program'),job:z.string().min(1).max(200),alias:houseSecretAlias}).strict(),
  z.object({kind:z.literal('repository'),job:z.string().min(1).max(200)}).strict(),
 ]);
 const confirmInput=z.object({use:z.string().regex(SECRET_USE_ID),job:z.string().min(1).max(200).optional()}).strict();
@@ -77,11 +78,26 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   const caller=actor(c.req.raw),parsed=readInput.safeParse(await json(c.req.raw,c.get('shutdown')));
   if(!parsed.success)return c.json({ok:false,message:'Private secret input unavailable'},400);
   const input=parsed.data;
-  if(input.kind==='repository'?!caller.runner:!caller.body)throw new PrivateInputError('denied');
-  const selected=target(caller,input.kind==='repository'?input.job:undefined),job=selected.job;
+  const forWorker = input.kind==='program' || input.kind==='repository';
+  if(forWorker?!caller.runner:!caller.body)throw new PrivateInputError('denied');
+  const selected=target(caller,forWorker?input.job:undefined),job=selected.job;
   let secret:string,attempt:string,request:string|undefined,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
-  else if(input.kind==='startup'){
+  else if(input.kind==='program'){
+   const allowed = () => {
+    if(job.startedByKind!=='program')return false;
+    const firing=db.select().from(programFirings).where(eq(programFirings.job,job.id)).get();
+    const house=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
+    return firing?.status==='pending' && Object.hasOwn(firing.program.secrets,input.alias) && firing.program.secrets[input.alias]===aliasRow()?.secret && firing.program.repository===job.houseRepository
+     && house?.houseRepository===job.houseRepository && house?.houseFile===job.houseFile && house?.houseBranch===job.houseBranch;
+   };
+   const aliasRow=()=>db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();
+   const alias=aliasRow();
+   if(!alias||!allowed())throw new PrivateInputError('denied');
+   secret=alias.secret;attempt='program:'+input.alias;request=startupRequestId(job.id,secret);
+   inputs.programGrant(job.id,secret);
+   current=()=>selected.current()&&allowed()&&aliasRow()?.secret===secret;
+  }else if(input.kind==='startup'){
    if(!inputs.startup(job.id,standing(caller)).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
    secret=row.secret;attempt='startup:'+input.alias;request=startupRequestId(job.id,secret);

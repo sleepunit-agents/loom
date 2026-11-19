@@ -58,6 +58,8 @@ export function dropSettledFiles(db: Pick<DataDatabase, 'delete' | 'select'>): v
  * request can be built for it; `uncertain` when that part may have arrived. Nothing
  * confirmed is posted twice, and nothing in doubt is posted again.
  */
+export class BridgeQueueRefusal extends Error {}
+
 export class BridgeSends {
   private draining?: Promise<void>;
   private again=false;
@@ -87,22 +89,22 @@ export class BridgeSends {
    * was not delivered, addressed like any other to where that message was said. */
   queue(input: { id: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
-    if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');
+    if (!input.id.trim() || !input.text.trim()) throw new BridgeQueueRefusal('Reply needs an id and text');
     const queued: (typeof bridgeSendFiles.$inferInsert)[] = [];
     const result = this.commit(()=>this.db.transaction(tx => {
       queued.length = 0;
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
-        if (old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new Error('Reply id reused');
+        if (old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new BridgeQueueRefusal('Reply id reused');
         // The same id is the same post, files and all. While the post still has its files they are compared;
         // once it is settled they are gone, and a repeat that names files cannot be told from the first.
         const kept = tx.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, old.id)).orderBy(asc(bridgeSendFiles.position)).all();
         const given = input.files ?? [], settled = ['sent', 'uncertain', 'dismissed'].includes(old.state);
-        if (!(settled && !kept.length) && (kept.length !== given.length || kept.some((file, at) => file.name !== sendFileName(given[at].name) || !file.contents.equals(given[at].contents)))) throw new Error('Reply id reused');
+        if (!(settled && !kept.length) && (kept.length !== given.length || kept.some((file, at) => file.name !== sendFileName(given[at].name) || !file.contents.equals(given[at].contents)))) throw new BridgeQueueRefusal('Reply id reused');
         return old;
       }
       const answered = input.at ? undefined : tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
-      if (input.at ? input.stopped : !answered || !(input.stopped ? answered.state === 'dropped' && answered.reason === STOP_WORD && input.text === STOPPED_LINE : answered.state === 'delivered')) throw new Error('No delivered message for reply');
+      if (input.at ? input.stopped : !answered || !(input.stopped ? answered.state === 'dropped' && answered.reason === STOP_WORD && input.text === STOPPED_LINE : answered.state === 'delivered')) throw new BridgeQueueRefusal('No delivered message for reply');
       const incoming = input.at ? { id: null, ...input.at } : answered!;
       // The reply carries its own address, copied from the message it answers (place.ts): a message's
       // channel and thread never change, and the queue then needs no join to send.
@@ -110,7 +112,7 @@ export class BridgeSends {
       const files = input.files ?? [];
       const platform = tx.select({ platform: bridgeConnections.platform }).from(bridgeConnections).where(eq(bridgeConnections.id, incoming.connection)).get()?.platform;
       if (files.length && (platform !== 'discord' || files.length > SEND_FILES || files.some(file => !file.contents.byteLength)
-        || files.reduce((sum, file) => sum + file.contents.byteLength, 0) > SEND_FILES_BYTES)) throw new Error('Files cannot be posted');
+        || files.reduce((sum, file) => sum + file.contents.byteLength, 0) > SEND_FILES_BYTES)) throw new BridgeQueueRefusal('Files cannot be posted');
       files.forEach((file, position) => { queued.push({ send: input.id, position, name: sendFileName(file.name), contents: Buffer.from(file.contents) }); });
       const row = tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread, conversation: input.at?.conversation ?? null,

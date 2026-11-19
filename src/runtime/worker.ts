@@ -1,3 +1,4 @@
+import type { HouseProgram, ProgramResult } from './house-program.js';
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
 import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
@@ -42,6 +43,7 @@ export interface WorkerAssignment {
   accountChoices?: number;
   harness: string;
   brief: string;
+  program?: HouseProgram;
   /** Current agent configuration at claim; absent means no extra capabilities. */
   run?: WorkerRunOptions;
   house: { repository: string; file: string; branch: string };
@@ -52,10 +54,11 @@ export interface WorkerBody {
   /** `own` is true when the body ended by itself with this code, and not because it was killed. An
    * executor that cannot tell leaves it out. `signalled` is true when a signal ended it, so the code is
    * the executor's word for that (WORKER_EXIT.killed) and not the body's. */
-  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean }>;
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; programResult?: ProgramResult }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
+  releaseProgram?(secrets: Record<string, string>): Promise<void>;
   release(bootstrap?: BodyBootstrap): Promise<void>;
   /** Must stop and reap every child belonging to this attempt. Idempotent. `exited` settles once this has. */
   stop(): Promise<void>;
@@ -83,12 +86,13 @@ export interface WorkerControl {
   /** Private one-attempt input, never part of the assignment/receipt. */
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   /** Parent generates raw bytes locally; the server receives only a fingerprint. */
+  programInputs?(id: string, aliases: readonly string[], signal: AbortSignal): Promise<Map<string, Buffer>>;
   enrollBody?(id: string, signal: AbortSignal): Promise<BodyBootstrap>;
   started(id: string, build: string, signal?: AbortSignal): Promise<void>;
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running', signal?: AbortSignal): Promise<boolean>;
   /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
-  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy): Promise<void>;
+  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult): Promise<void>;
 }
 export interface WorkerSchedule {
   every(ms: number, callback: () => void): () => void;
@@ -150,7 +154,9 @@ export async function workOnce(input: {
   const assignment = structuredClone(job);
   const abort = new AbortController();
   let bootstrap: BodyBootstrap | undefined;
-  const cancel = () => { eraseBootstrap(bootstrap); abort.abort(); };
+  let programInputs: Map<string, Buffer> | undefined;
+  const eraseProgramInputs = () => { for (const bytes of programInputs?.values() ?? []) bytes.fill(0); programInputs?.clear(); };
+  const cancel = () => { eraseBootstrap(bootstrap); eraseProgramInputs(); abort.abort(); };
   input.signal.addEventListener('abort', cancel, { once: true });
   if (input.signal.aborted) cancel();
   let state: 'starting' | 'running' = 'starting';
@@ -211,8 +217,12 @@ export async function workOnce(input: {
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
-  const report = async (exitCode: number, logTail: string, by: WorkerExitBy): Promise<WorkerResult> => {
-    try { await control.finish(assignment.id, exitCode, logTail, by); return 'finished'; }
+  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult): Promise<WorkerResult> => {
+    try {
+      if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
+      else await control.finish(assignment.id, exitCode, logTail, by);
+      return 'finished';
+    }
     catch { return 'abandoned'; }
   };
   try {
@@ -232,7 +242,7 @@ export async function workOnce(input: {
       if (!build.trim()) throw new Error('Build returned no artifact');
       stage = 'launch';
       // Built: now the job waits its turn, reported as starting all the while. A Stop or a worker stop ends the wait.
-      if (input.turns) giveUp = await input.turns.take(turnsOf(assignment), abort.signal);
+      if (input.turns && !assignment.program) giveUp = await input.turns.take(turnsOf(assignment), abort.signal);
       if (abort.signal.aborted) return 'abandoned';
       // From here the build is the executor's again, whether or not the start works.
       unused = undefined;
@@ -240,7 +250,15 @@ export async function workOnce(input: {
       // Attach a handler immediately: a fast exit may precede spawned/started.
       void body.exited.catch(() => {});
       await body.spawned;
-      if (body.acceptsBootstrap) {
+      if (assignment.program && !body.releaseProgram) throw new UnservedJobError('Worker cannot serve program');
+      if (assignment.program && Object.keys(assignment.program.secrets).length) {
+        const aliases = Object.keys(assignment.program.secrets);
+        stage = 'input';
+        programInputs = await control.programInputs?.(assignment.id, aliases, abort.signal);
+        if (!programInputs || programInputs.size !== aliases.length ||
+            !aliases.every(name => programInputs!.has(name))) throw new Error('Program secrets unavailable');
+      }
+      if (!assignment.program && body.acceptsBootstrap) {
         stage = 'enroll';
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');
         bootstrap = await control.enrollBody(assignment.id, abort.signal);
@@ -282,10 +300,16 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string; signalled?: boolean }, failed: 'release' | 'reap' | undefined = 'release';
+    let result: { exitCode: number; logTail: string; signalled?: boolean; programResult?: ProgramResult }, failed: 'release' | 'reap' | undefined = 'release';
     try {
-      try { if (bootstrap) await body.release(bootstrap); else await body.release(); }
-      finally { eraseBootstrap(bootstrap); }
+      try {
+        if (assignment.program) {
+          const secrets = Object.fromEntries(Array.from(programInputs ?? [], ([key, bytes]) => [key, new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)]));
+          await body.releaseProgram!(secrets);
+        } else if (bootstrap) await body.release(bootstrap);
+        else await body.release();
+      }
+      finally { eraseBootstrap(bootstrap); eraseProgramInputs(); }
       failed = 'reap';
       result = await body.exited;
       failed = undefined;
@@ -312,9 +336,10 @@ export async function workOnce(input: {
     // Whose code it is: the worker's own when it lost the body or a signal ended it. Otherwise the program's:
     // loom's body program is the one given a body's credential, anything else is the machine's own runner.
     const by = failed || result.signalled ? 'worker' : bootstrap ? 'body' : 'runner';
+    if (assignment.program) return await report(result.exitCode, failed ? logTail(result.logTail) : '', by, result.exitCode === 0 ? result.programResult : undefined);
     return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by);
   } finally {
-    eraseBootstrap(bootstrap);
+    eraseBootstrap(bootstrap); eraseProgramInputs();
     clearTimeout(probeTimer!); clearTimeout(expiryTimer!);
     dispose();
     input.signal.removeEventListener('abort', cancel);

@@ -90,6 +90,18 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
  }
 
  return {
+  async program(job:string, selected:readonly string[]):Promise<Map<string,Buffer>>{
+   const result=new Map<string,Buffer>();let total=0;
+   try{
+    for(const alias of selected){
+     const value=await read({kind:'program',job,alias},job);
+     if(!value)throw unavailable();
+     result.set(alias,value);total+=value.length;
+     if(total>1048576)throw unavailable();
+    }
+    return result;
+   }catch(error){for(const bytes of result.values())bytes.fill(0);throw error;}
+  },
   granted(secret:string,id:string=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
   async repository(job:string):Promise<Buffer|undefined>{
    for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){

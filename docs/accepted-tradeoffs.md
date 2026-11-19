@@ -1513,3 +1513,17 @@ The bound job, its admitted mail, current household role and venue account link 
 A kit pins the repository, commit and image id. Even rebuilding the same commit with a changed interpreter or dependency can require a new approval. This makes the owner's approval reproducible and can leave a tool unavailable on another worker. Helpers execute with network access for their service. An exact byte scan rejects a returned credential in raw or base64 form. It cannot protect against an approved program that deliberately transforms a credential or sends it elsewhere. Review the whole image and use narrowly scoped service credentials. The worker and its local container engine are trusted with the values.
 
 A project grant includes future members. A named tool can return information to a shared room on a member's request. An organization-wide credential can see more than that room should see. The service or pinned helper must impose the actual resource scope independently of the model. See [kits](runtime/kits.md).
+
+### Programs on the clock
+
+The trusted unit is a reviewed executable in the pinned repository, commit and image. The clock fixes its arguments
+and allowed aliases. Only the container worker implements this protocol. Reusing the normal job,
+machine and bridge records lets operators trace a firing from claim through an optional wake or
+post. A lost completion can replay the committed receipt. Automatically running the executable
+again could repeat an external action that Loom cannot observe. The next scheduled firing is the
+next opportunity to run. The at-most-once guarantee covers Loom's queued effects. A bridge that
+loses a downstream delivery acknowledgement keeps its existing uncertain-delivery semantics.
+
+Program code can access its granted inputs and the container network. Output scanning guards
+against accidental credential disclosure. A house author trusted to receive a secret remains
+responsible for how the executable uses it.

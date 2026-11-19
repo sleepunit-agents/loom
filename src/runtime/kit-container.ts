@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
-import { isHouseSecretAlias, secretValueSize } from '../pieces/secrets/input.js';
-import { canonicalKitImage, KIT_IMAGE } from './kit-manifest.js';
-import { saysNoSecret } from './body-secrets.js';
+import { secretValueSize } from '../pieces/secrets/input.js';
+import { canonicalKitImage, KIT_IMAGE, programPath, programSecretAlias } from './pinned-program.js';
+import { assertSafeProgramOutput, PROGRAM_OUTPUT_BYTES } from './house-program.js';
+import { DockerResponseError } from './docker-engine.js';
 import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
 
@@ -21,21 +22,25 @@ const MAX_OUTPUT = 65_536;
 // in container config. The pinned image supplies node, the program and all of the program's dependencies.
 const bootstrap = `
 const {spawn} = require('node:child_process');
-setTimeout(() => process.exit(1), 30_000).unref();
+// If the worker disappears before or during execution, PID 1 still ends the container.
+const awaitingInput = setTimeout(() => process.exit(1), 30_000).unref();
 (async () => {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  const {bindings,argv} = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const {bindings,argv,input,timeoutMs} = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  clearTimeout(awaitingInput);
+  setTimeout(() => process.exit(1), timeoutMs).unref();
   const env = {PATH:'/usr/local/bin:/usr/bin:/bin', LANG:'C.UTF-8'};
   for (const [name, value] of Object.entries(bindings)) env[name] = Buffer.from(value,'base64').toString('utf8');
-  const child = spawn(process.argv[1], argv, {env, stdio:['ignore','inherit','ignore']});
+  const child = spawn(process.argv[1], argv, {env, stdio:[input === undefined ? 'ignore' : 'pipe','inherit','ignore']});
+  if (child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify(input)+'\\n'); }
   child.once('error', () => process.exitCode = 1);
   child.once('exit', code => process.exitCode = code ?? 1);
 })().catch(() => process.exitCode = 1);`;
 
 async function stdout(socket:Duplex):Promise<Buffer> {
   const chunks:Buffer[] = [];
-  let size = 0;
+  let size = 0, stdoutBytes = 0;
   for await (const chunk of socket) {
     size += chunk.length;
     if (size > MAX_OUTPUT) throw new Error('Kit output exceeded its limit');
@@ -47,57 +52,109 @@ async function stdout(socket:Duplex):Promise<Buffer> {
       throw new Error('Kit output unavailable');
     const end = offset + 8 + bytes.readUInt32BE(offset+4);
     if (end > bytes.length) throw new Error('Kit output unavailable');
-    if (bytes[offset] === 1) output.push(bytes.subarray(offset+8,end));
+    if (bytes[offset] === 1) {
+      stdoutBytes += end - offset - 8;
+      if (stdoutBytes > PROGRAM_OUTPUT_BYTES) throw new Error('Kit output exceeded its limit');
+      output.push(bytes.subarray(offset+8,end));
+    }
     offset = end;
   }
   return Buffer.concat(output);
 }
 
-export async function runKitContainer(engine:DockerEngine,input:Invocation):Promise<Buffer> {
-  if (!KIT_IMAGE.test(input.image)) throw new Error('Kit needs an immutable house image');
-  const path = input.entrypoint;
-  if (!path.startsWith(HOUSE_REPOSITORY + '/') || path.slice(1).split('/').some(part=>!part || !/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$/.test(part)))
-    throw new Error('Kit program must be inside its house');
-  const envelope = Object.create(null) as Record<string,string>;
-  for (const [alias,value] of Object.entries(input.secrets)) {
-    if (!isHouseSecretAlias(alias) || !secretValueSize(value.length) || value.includes(0) || !Buffer.from(value.toString('utf8')).equals(value))
-      throw new Error('Kit secret unavailable');
-    envelope[alias] = value.toString('base64');
-  }
-  const signal = AbortSignal.any([input.signal,AbortSignal.timeout(30_000)]);
-  const inspect = await engine.json('GET','/images/'+input.image+'/json',undefined,signal) as {Id?:string;Config?:{Volumes?:object|null}};
-  if (canonicalKitImage(inspect?.Id) !== input.image || !inspect.Config || Object.keys(inspect.Config.Volumes ?? {}).length)
-    throw new Error('Kit needs an immutable house image without volumes');
-  const name = 'loom-kit-'+randomUUID(), container = '/containers/'+name;
-  let socket:Duplex|undefined;
-  const stop = () => socket?.destroy(new Error('Kit execution cancelled'));
-  try {
-    await engine.json('POST','/containers/create?name='+name,{
-      Image:input.image, User:'65534:65534', WorkingDir:HOUSE_REPOSITORY,
-      Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path], Labels:{'loom.job':input.job,'loom.box':input.box},
-      Healthcheck:{Test:['NONE']}, OpenStdin:true, AttachStdin:true, StdinOnce:true,
-      AttachStdout:true, AttachStderr:true, Tty:false,
-      HostConfig:{ReadonlyRootfs:true, Privileged:false, Mounts:[], CapDrop:['ALL'],
-        SecurityOpt:['no-new-privileges'], LogConfig:{Type:'none'}, PidsLimit:32, Memory:128*1024*1024,
-        NanoCpus:500_000_000, PublishAllPorts:false, NetworkMode:'bridge'},
-    },signal);
-    socket = await engine.attach(name,signal);
-    signal.addEventListener('abort',stop,{once:true});
-    const result = stdout(socket);
+type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'> & {
+  runtime?:string;
+  setupTimeoutMs?:number;
+  cleanupTimeoutMs?:number;
+};
+type PrivateInput = Pick<Invocation,'argv'|'secrets'|'onStarted'> & {input?:object;timeoutMs:number};
+
+/** Both callers prepare a pinned, mount-free container, release private input once and reap it. */
+export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
+  const abort = new AbortController();
+  const signal = AbortSignal.any([plan.signal,abort.signal]);
+  const name = 'loom-kit-'+randomUUID();
+  let id:string|undefined, remove=false, socket:Duplex|undefined, released=false;
+  const prepared = (async()=>{
+    const setup = AbortSignal.any([signal,AbortSignal.timeout(plan.setupTimeoutMs ?? 30_000)]);
+    if (!KIT_IMAGE.test(plan.image)) throw new Error('Kit needs an immutable house image');
+    const path = plan.entrypoint;
+    if (!path.startsWith(HOUSE_REPOSITORY + '/') || !programPath.safeParse(path.slice(HOUSE_REPOSITORY.length + 1)).success)
+      throw new Error('Kit program must be inside its house');
+    const inspect = await engine.json('GET','/images/'+plan.image+'/json',undefined,setup) as {Id?:string;Config?:{Volumes?:object|null}};
+    if (canonicalKitImage(inspect?.Id) !== plan.image || !inspect.Config || Object.keys(inspect.Config.Volumes ?? {}).length)
+      throw new Error('Kit needs an immutable house image without volumes');
+    remove=true;
+    let created:unknown;
+    try {
+      created=await engine.json('POST','/containers/create?name='+name,{
+        Image:plan.image, User:'65534:65534', WorkingDir:HOUSE_REPOSITORY,
+        Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path], Labels:{'loom.job':plan.job,'loom.box':plan.box},
+        Healthcheck:{Test:['NONE']}, OpenStdin:true, AttachStdin:true, StdinOnce:true,
+        AttachStdout:true, AttachStderr:true, Tty:false,
+        HostConfig:{ReadonlyRootfs:true, Privileged:false, Mounts:[], CapDrop:['ALL'],
+          SecurityOpt:['no-new-privileges'], LogConfig:{Type:'none'}, PidsLimit:32, Memory:128*1024*1024,
+          Runtime:plan.runtime, NanoCpus:500_000_000, PublishAllPorts:false, NetworkMode:'bridge'},
+      },setup);
+    } catch(error) {
+      if(error instanceof DockerResponseError && error.status>=400 && error.status<500)remove=false;
+      throw error;
+    }
+    const identity=(created as {Id?:unknown})?.Id;
+    if(typeof identity!=='string'||!/^[a-f0-9]{12,64}$/.test(identity))throw new Error('Invalid container identity');
+    id=identity;
+    const actual=await engine.json('GET','/containers/'+id+'/json',undefined,setup) as {Mounts?:unknown[]};
+    if(!Array.isArray(actual?.Mounts)||actual.Mounts.length)throw new Error('Unexpected container storage');
+    socket=await engine.attach(id,setup);
+    setup.throwIfAborted();
+  })();
+  let stopping:Promise<void>|undefined;
+  async function run(input:PrivateInput){
+    await prepared;
+    if(!socket||signal.aborted||released)throw new Error('Kit input unavailable');
+    released=true;
+    const bindings=Object.create(null) as Record<string,string>;
+    for(const [alias,value] of Object.entries(input.secrets)){
+      if(!programSecretAlias.safeParse(alias).success||!secretValueSize(value.length)||value.includes(0)||!Buffer.from(value.toString('utf8')).equals(value))
+        throw new Error('Kit secret unavailable');
+      bindings[alias]=value.toString('base64');
+    }
+    const timer=setTimeout(()=>abort.abort(),input.timeoutMs);
+    const cancel=()=>socket?.destroy(new Error('Kit execution cancelled'));
+    signal.addEventListener('abort',cancel,{once:true});
+    const result=stdout(socket);
     void result.catch(()=>{});
-    signal.throwIfAborted();
-    await engine.json('POST',container+'/start',undefined,signal);
-    input.onStarted?.();
-    socket.end(JSON.stringify({bindings:envelope,argv:input.argv}));
-    const [status,bytes] = await Promise.all([engine.json('POST',container+'/wait',undefined,signal),result]);
-    if ((status as {StatusCode?:number})?.StatusCode !== 0) throw new Error('Kit helper failed');
-    const text = new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-    const secrets = [...Object.values(input.secrets), ...Object.values(envelope).map(encoded=>Buffer.from(encoded))];
-    if (!saysNoSecret(text,secrets) || secrets.some(value=>bytes.includes(value))) throw new Error('Kit result withheld');
-    return bytes;
-  } finally {
-    signal.removeEventListener('abort',stop);
-    socket?.destroy();
-    await engine.json('DELETE',container+'?force=1&v=1',undefined,AbortSignal.timeout(10_000));
+    try {
+      await engine.json('POST','/containers/'+id+'/start',undefined,signal);
+      input.onStarted?.();
+      socket.end(JSON.stringify({bindings,argv:input.argv,input:input.input,timeoutMs:input.timeoutMs}));
+      const [status,bytes]=await Promise.all([engine.json('POST','/containers/'+id+'/wait?condition=not-running',undefined,signal),result]);
+      signal.throwIfAborted();
+      const exit=(status as {StatusCode?:unknown})?.StatusCode;
+      if(typeof exit!=='number'||!Number.isSafeInteger(exit)||(status as {Error?:unknown}).Error)throw new Error('Invalid container exit');
+      if(exit===0){
+        try { assertSafeProgramOutput(new TextDecoder('utf-8',{fatal:true}).decode(bytes),Object.values(input.secrets).map(value=>value.toString())); }
+        catch { bytes.fill(0);throw new Error('Kit result withheld'); }
+      }else bytes.fill(0);
+      return {exit,bytes};
+    } finally {clearTimeout(timer);signal.removeEventListener('abort',cancel);}
   }
+  function stop(){
+    return stopping??=(async()=>{
+      abort.abort();
+      await prepared.catch(()=>{});
+      socket?.destroy();
+      if(remove)await engine.json('DELETE','/containers/'+(id??name)+'?force=1&v=1',undefined,AbortSignal.timeout(plan.cleanupTimeoutMs??10_000));
+    })();
+  }
+  return {prepared,run,stop};
+}
+
+export async function runKitContainer(engine:DockerEngine,input:Invocation):Promise<Buffer> {
+  const container=isolatedContainer(engine,input);
+  try{
+    const {exit,bytes}=await container.run({...input,timeoutMs:30_000});
+    if(exit!==0)throw new Error('Kit helper failed');
+    return bytes;
+  }finally{await container.stop();}
 }
