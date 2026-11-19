@@ -171,7 +171,7 @@ before it runs any step, and refuses one it does not recognise without writing t
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings`, `conversation_sessions` |
 | Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `thread_refs`, `deleted_threads` |
 | Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
-| Tempo | `triggers`, `trigger_log`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
+| Tempo | `triggers`, `trigger_log`, `program_firings`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync` |
 | Observed terminals | `terminal_credentials`, `terminal_sessions`, `terminal_runs` |
 | Runtime | `boxes`, `box_agents`, `box_facts`, `jobs`, `job_usage`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `model_account_boxes`, `agent_models`, `account_signins` |
