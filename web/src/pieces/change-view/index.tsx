@@ -31,7 +31,7 @@ function MergeAnswer({ change: c, actions }: { change: Change; actions?: ChangeA
   const canAlways = c.state === 'open' && always?.change === c.id && always.head === c.headCommit && always.project === c.project;
   return <section><h3>Merge answer</h3>
     {canAnswer || canAlways ? <div role="group" aria-label="Merge answer" className="flex flex-wrap gap-2">
-      {canAnswer && <><Button disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'yes'))}>Yes, merge it</Button>
+      {canAnswer && <><Button variant="primary" disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'yes'))}>Yes, merge it</Button>
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'no'))}>Not yet</Button></>}
       {canAlways && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => always.run(c.id, c.headCommit))}>{always.label ?? `Always for ${c.project}`}</Button>}
     </div> : <p>{c.state === 'open' ? `Waiting on ${c.waitingOn}` : c.state}</p>}

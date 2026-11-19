@@ -8,7 +8,7 @@
 //
 // Keys: ↑ and ↓ move through the list (and open the next item where the reader is beside it); Enter opens one; Escape
 // in a one-pane reader goes back to the list, and focus comes back to the row it opened from.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 import './split.css';
 
@@ -38,9 +38,11 @@ export function useSplitMode(): [React.RefObject<HTMLDivElement | null>, SplitMo
   return [box, mode];
 }
 
+/** Whether a slot was given anything to draw (a fragment of nothing but false and null is not). */
+const hasContent = (node: ReactNode): boolean => Children.toArray(isValidElement<{ children?: ReactNode }>(node) && node.type === Fragment ? node.props.children : node).length > 0;
 const isFolder = (f: SplitFolder): f is Extract<SplitFolder, { id: string }> => 'id' in f;
 
-export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop, search, listTitle, listMeta, list, reader, open, onBack, backLabel, blank, className, showZeroCounts = false }: {
+export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop, search, listTitle, listCount, listMeta, listAction, list, reader, open, onBack, backLabel, blank, className, showZeroCounts = false }: {
   /** The app's name: the landmarks say it ("Inbox folders", "Inbox list"). */
   label: string;
   showZeroCounts?: boolean;
@@ -56,7 +58,11 @@ export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop,
   /** A search field (or any control) over the folders. */
   search?: ReactNode;
   listTitle: ReactNode;
+  /** How many are in the list, beside its title ("Needs you 2"). */
+  listCount?: number;
   listMeta?: ReactNode;
+  /** The one list action ("Create task", "Add a fact", "Refresh"), at the right of the list's head. */
+  listAction?: ReactNode;
   /** The rows: buttons carrying `data-split-row` (and `aria-current` on the open one), so the keys can move through them. */
   list: ReactNode;
   /** The open item, drawn whole; null when nothing is open. */
@@ -133,8 +139,12 @@ export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop,
   const listPane = (
     <section className="loom-split__list" aria-label={`${label} list`} inert={over || undefined}>
       {mode !== 'three' && <div className="loom-split__top">{search}{narrow ?? chips}</div>}
-      <header className="loom-split__list-head"><h2>{listTitle}</h2>{listMeta !== undefined && <span>{listMeta}</span>}</header>
-      {listTop}
+      <header className="loom-split__list-head">
+        <h2>{listTitle}</h2>{listCount !== undefined && <span className="loom-split__list-count">{listCount}</span>}
+        {listMeta !== undefined && <span className="loom-split__list-meta">{listMeta}</span>}
+        {listAction && <span className="loom-split__list-action">{listAction}</span>}
+      </header>
+      {hasContent(listTop) && <div className="loom-split__list-top">{listTop}</div>}
       <div className="loom-split__rows" ref={listRef} onKeyDown={onListKey} onClickCapture={onListClick}>{list}</div>
     </section>
   );

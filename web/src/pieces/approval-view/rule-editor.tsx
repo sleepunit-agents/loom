@@ -34,7 +34,7 @@ export function RuleEditor({rules,save}:{rules:readonly Rule[];save:SaveRule}){
    <label>Person (optional)<Input aria-label="Person (optional)" value={person} onChange={event=>{change();setPerson(event.target.value);}} /></label>
    <p>Leave the person blank for work for a household owner. Naming a person grants only their work.</p>
    <label>Answer<select aria-label="Answer" className="w-full" value={tier} onChange={event=>{change();setTier(event.target.value as Rule['tier']);}}><option value="ask">Ask me</option><option value="tell">Tell me after</option><option value="do">Just do it</option></select></label>
-   <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!scope.trim()||pendingRemoval}>Save rule</Button>{(existing||pendingRemoval)&&<Button type="button" variant="outline" disabled={busy} onClick={()=>void send(true)}>{pendingRemoval?'Retry removal':'Remove rule'}</Button>}</div>
+   <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!scope.trim()||pendingRemoval}>Save rule</Button>{(existing||pendingRemoval)&&<Button type="button" variant="danger-quiet" disabled={busy} onClick={()=>void send(true)}>{pendingRemoval?'Retry removal':'Remove rule'}</Button>}</div>
   </fieldset>
   {busy&&<p role="status">Saving rule…</p>}{saved&&<p role="status">{saved}</p>}{error&&<Error text={error}/>}
  </form>;

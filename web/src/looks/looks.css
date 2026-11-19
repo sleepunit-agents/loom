@@ -113,7 +113,8 @@ color-scheme:dark;
   background:color-mix(in srgb,var(--v-pink) 8%,var(--v-paper));color:var(--v-pink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 70%,transparent),var(--glow-key) var(--v-pink)}
 
 /* ---- the primary button: solid neon with a halo (the one thing on a screen it asks you to do); the focus ring is cyan ---- */
-:root[data-look] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]){box-shadow:var(--glow-btn) var(--v-pink)}
+/* (Not inside an app's page: there the kit draws buttons quiet, and the one filled action flat; kit/controls.css.) */
+:root[data-look] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]):not(:where(.next-page) *){box-shadow:var(--glow-btn) var(--v-pink)}
 :root[data-look] :focus-visible{outline-color:var(--v-blue);box-shadow:var(--glow-focus) var(--v-blue)}
 
 /* ---- an agent's card: a 45° cut corner, its edge lit in the agent's colour, and a lit tick on its top edge ---- */
