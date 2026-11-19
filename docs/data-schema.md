@@ -1,9 +1,7 @@
 # Shared data schema
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
-schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their named
-columns, `model_account_windows`, the ten internal bookkeeping tables listed there
-and three internal programme restriction/grant tables: 99 tables. The programme
+schema is `src/core/data/schema.ts`: the application tables and internal bookkeeping, including the three programme restriction/grant tables: 100 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
@@ -85,6 +83,7 @@ Step 12 adds `job_usage` and backfills each ended job with its model, harness an
 
 Step 13 adds the terminal conversation venue and tables for machine-bound credential grants, observed sessions and their individual runs. Existing conversations retain their IDs and contents. Existing agent credentials receive no machine grant.
 
+Step 15 adds the nullable explicit reader list on each machine and an empty diagnostic history table. Existing machines keep their hosting settings. No diagnostic answer text is stored in the household database.
 
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).
