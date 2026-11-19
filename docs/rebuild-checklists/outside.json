@@ -2,7 +2,7 @@
   "page": "outside",
   "title": "Outside programs",
   "ownerTask": "t-2236",
-  "sourceSha256": "23941fcf8a20b025611e71693e46be9ab0e5a8d3f1e1e122ba02f649441c5ba7",
+  "sourceSha256": "ca4bb7d76002b4d104a659fda0168c458912cf84bd463e3a7aaabb0a52b33136",
   "promises": [
     {
       "id": "outside-001",

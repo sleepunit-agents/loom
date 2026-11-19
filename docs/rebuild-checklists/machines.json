@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "69a52983b010c45a06977e7e27eeed200cf80e14f3b176a308e82bef4a8879c5",
+  "sourceSha256": "0381a5fee986bda648fb54e13822c6c16bddd935850c528655a773fe12a81b23",
   "promises": [
     {
       "id": "machines-001",
@@ -101,6 +101,7 @@
     "box_facts",
     "jobs",
     "job_needs",
+    "job_usage",
     "agent_run_settings",
     "agent_boxes",
     "agent_house_secrets",

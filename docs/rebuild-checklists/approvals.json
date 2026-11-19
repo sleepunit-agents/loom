@@ -2,7 +2,7 @@
   "page": "approvals",
   "title": "Approvals",
   "ownerTask": "t-2239",
-  "sourceSha256": "71a8dcd91be67dcd23851882785919ae9c6c1dcbf20bb3b10118ff444023c95b",
+  "sourceSha256": "690ef82fdb78a05c35b3dfe96c266e089d788c91f9d26cb3c7651510217c9472",
   "promises": [
     {
       "id": "approvals-001",

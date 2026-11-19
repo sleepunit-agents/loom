@@ -30,18 +30,17 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(81);
-    const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton')]));
-    // Runtime placement and per-provider windows fill in details the approved
-    // summary is silent on; preserve exact coverage for all approved columns.
-    expect(actual.model_account_windows).toEqual(['account', 'window', 'usage', 'usage_read_at', 'resets_at', 'duration_ms', 'reserve']);
-    delete actual.model_account_windows;
+    expect(Object.keys(expected)).toHaveLength(85);
+    const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton');
+    const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), columnsOf(table)]));
+    // The schema keeps these three with its plumbing; the approved model describes each column by column.
+    const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
+    for (const table of described) actual[getTableName(table)] = columnsOf(table);
     // Take-time volume is internal delivery proof, not an additional approved-page field.
     actual.inbox = actual.inbox.filter(n => n !== 'taken_volume');
-    actual.jobs = actual.jobs.filter(n => !['account', 'harness'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
-    expect(Object.values(plumbing).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','model_account_logins','program_tokens','program_record_grants','program_operation_grants'].sort());
+    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
     const { client } = fresh();
     for (const table of [...Object.values(tables), ...Object.values(plumbing)]) {
       const columns = client.prepare(`PRAGMA table_info("${getTableName(table)}")`).all() as { name: string }[];

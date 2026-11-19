@@ -22,7 +22,7 @@ PATH = [
     ("inbox.html", "Inbox", "One inbox for everything sent to anyone, person or agent.", "cyan"),
     ("memory.html", "Memory", "What an agent remembers and knows. The one thing loom treats as precious.", "cyan"),
     ("machines.html", "Machines and jobs", "Where agents run and what they are running.", "cyan"),
-    ("models.html", "Models and accounts", "Which model a body runs on, and the accounts it draws from.", "cyan"),
+    ("models.html", "Subscriptions", "Every subscription to a model service: its usage, its sign-ins and its settings. Models live here too.", "cyan"),
     ("bridges.html", "Discord and Slack", "How agents talk to people in other apps.", "amber"),
     ("secrets.html", "Secrets", "Credentials agents need, and who may use each one.", "amber"),
     ("people.html", "People and projects", "Who is in the household, which agents they own, which projects they share.", "amber"),
@@ -300,7 +300,7 @@ def index():
         <li class="node">{key("Outside programs")}<div class="node__body"><b>{plink("Outside programs")}</b><span>One API with a token, for anything outside loom.</span></div></li>
         <li class="node">{key("Tools for agents")}<div class="node__body"><b>{plink("Tools for agents")}</b><span>What an agent can do through the door, part by part.</span></div></li>
         <li class="node">{key("Secrets")}<div class="node__body"><b>{plink("Secrets")}</b><span>Credentials an agent may be handed, and a record of each use.</span></div></li>
-        <li class="node">{key("Models and accounts")}<div class="node__body"><b>{plink("Models and accounts")}</b><span>Which model a body runs on, and the account it draws from.</span></div></li>
+        <li class="node">{key("Subscriptions")}<div class="node__body"><b>{plink("Subscriptions")}</b><span>Each subscription to a model service: how full, where signed in, which model a body runs on.</span></div></li>
         <li class="node">{key("How a tile gets its data")}<div class="node__body"><b>{plink("How a tile gets its data")}</b><span>One live connection feeds every tile on the desk.</span></div></li>
         <li class="node">{key("Measuring")}<div class="node__body"><b>{plink("Measuring")}</b><span>How long things take, counted when you turn it on.</span></div></li>
         <li class="node">{key("What we decided")}<div class="node__body"><b>{plink("What we decided")}</b><span>Every decision, with the page where it shows up.</span></div></li>

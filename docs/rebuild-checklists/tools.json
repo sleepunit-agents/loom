@@ -2,7 +2,7 @@
   "page": "tools",
   "title": "Tools for agents",
   "ownerTask": "t-2190",
-  "sourceSha256": "266a382f00a252a71c7dbbf92f7997cf40828b1b68303937dff656960cdb6da7",
+  "sourceSha256": "c01b6ee11754602cb0348b8171b346cd5758ebd3ed2dbb6a3992bd3da8ad11f9",
   "promises": [
     {
       "id": "tools-001",
