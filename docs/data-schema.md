@@ -88,7 +88,13 @@ Step 12 adds `job_usage` and backfills each ended job with its model, harness an
 
 Step 13 adds the terminal conversation venue and tables for machine-bound credential grants, observed sessions and their individual runs. Existing conversations retain their IDs and contents. Existing agent credentials receive no machine grant.
 
-Step 15 adds the nullable explicit reader list on each machine and an empty diagnostic history table. Existing machines keep their hosting settings. No diagnostic answer text is stored in the household database.
+Step 14 records worker capacity and job placement requirements, preferences and decisions. Existing workers begin with unknown capacity.
+
+Step 15 adds kit definitions, direct and project grants, outside project members and kit use records. Existing households begin with empty kit tables.
+
+Step 16 adds scheduled programs and their firing ledger. Existing time triggers retain their ordinary firing behavior. The upgrade copies job usage counters by column name.
+
+Step 17 adds the nullable explicit reader list on each machine and an empty diagnostic history table. Existing machines keep their hosting settings. No diagnostic answer text is stored in the household database.
 
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).
