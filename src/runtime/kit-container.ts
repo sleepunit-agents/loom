@@ -17,7 +17,6 @@ type Invocation = {
   signal:AbortSignal;
   onStarted?:()=>void;
 };
-const MAX_OUTPUT = 65_536;
 // A fixed bootstrap, never assembled from tool arguments. Docker sees neither the envelope nor its values
 // in container config. The pinned image supplies node, the program and all of the program's dependencies.
 const bootstrap = `
@@ -38,28 +37,39 @@ const awaitingInput = setTimeout(() => process.exit(1), 30_000).unref();
   child.once('exit', code => process.exitCode = code ?? 1);
 })().catch(() => process.exitCode = 1);`;
 
-async function stdout(socket:Duplex):Promise<Buffer> {
-  const chunks:Buffer[] = [];
-  let size = 0, stdoutBytes = 0;
+/** Docker may frame each byte separately. Keep only stdout and a partial frame header. */
+async function stdout(socket: Duplex): Promise<Buffer> {
+  const header = Buffer.alloc(8);
+  const output = Buffer.alloc(PROGRAM_OUTPUT_BYTES);
+  let headerSize = 0, remaining = 0, stream = 0, written = 0;
   for await (const chunk of socket) {
-    size += chunk.length;
-    if (size > MAX_OUTPUT) throw new Error('Kit output exceeded its limit');
-    chunks.push(Buffer.from(chunk));
-  }
-  const bytes = Buffer.concat(chunks), output:Buffer[] = [];
-  for (let offset = 0; offset < bytes.length;) {
-    if (bytes.length - offset < 8 || ![1,2].includes(bytes[offset]) || bytes.readUIntBE(offset+1,3) !== 0)
-      throw new Error('Kit output unavailable');
-    const end = offset + 8 + bytes.readUInt32BE(offset+4);
-    if (end > bytes.length) throw new Error('Kit output unavailable');
-    if (bytes[offset] === 1) {
-      stdoutBytes += end - offset - 8;
-      if (stdoutBytes > PROGRAM_OUTPUT_BYTES) throw new Error('Kit output exceeded its limit');
-      output.push(bytes.subarray(offset+8,end));
+    let offset = 0;
+    while (offset < chunk.length) {
+      if (remaining === 0) {
+        const count = Math.min(header.length - headerSize, chunk.length - offset);
+        chunk.copy(header, headerSize, offset, offset + count);
+        offset += count;
+        headerSize += count;
+        if (headerSize < header.length) continue;
+        headerSize = 0;
+        stream = header[0];
+        if ((stream !== 1 && stream !== 2) || header.readUIntBE(1, 3) !== 0)
+          throw new Error('Kit output unavailable');
+        remaining = header.readUInt32BE(4);
+        if (stream === 1 && remaining > PROGRAM_OUTPUT_BYTES - written)
+          throw new Error('Kit output exceeded its limit');
+      }
+      const count = Math.min(remaining, chunk.length - offset);
+      if (stream === 1) {
+        chunk.copy(output, written, offset, offset + count);
+        written += count;
+      }
+      offset += count;
+      remaining -= count;
     }
-    offset = end;
   }
-  return Buffer.concat(output);
+  if (remaining || headerSize) throw new Error('Incomplete kit output');
+  return output.subarray(0, written);
 }
 
 type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'> & {
