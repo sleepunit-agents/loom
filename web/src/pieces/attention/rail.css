@@ -29,8 +29,3 @@
 .desk-rail-card[data-companion]{border-bottom:2px solid var(--v-blue)}
 .desk-rail-with{color:var(--v-blue);padding-bottom:8px;border-bottom:1px solid var(--v-border)}
 
-.desk-rail-jobs{display:grid;gap:6px;color:var(--v-text-2)}
-.desk-rail-jobs ul{display:grid;gap:6px;list-style:none;padding:0;margin:0}
-.desk-rail-jobs li{display:grid;gap:2px}
-.desk-rail-jobs li span{font-size:11px;color:var(--v-text-3)}
-@container rail (max-width:100px){.desk-rail-jobs{display:none}}

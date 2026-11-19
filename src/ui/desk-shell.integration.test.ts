@@ -145,7 +145,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
    for(const width of [390,1280,1440]){
     await b.setViewportSize({width,height:900});await b.goto(app.url);
     await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
-    await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+    await expect.poll(()=>b.getByRole('region',{name:'Needs you',exact:true}).locator('.desk-needs-label').textContent()).toBe('Needs you · 1');
     await expect.poll(()=>b.locator('.desk-home-card').count()).toBe(width<1024?1:5);
     expect(await b.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -154,8 +154,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.getByRole('button',{name:'Close Appearance',exact:true}).click();
     await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
     await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
-    const first=b.getByRole('group',{name:'First waiting item',exact:true});
-    await first.getByRole('button').click();
+    await b.getByRole('region',{name:'Needs you',exact:true}).locator('.desk-need-open').first().click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/inbox-preview/ask/'+encodeURIComponent(question.inboxItem!));
     await expect.poll(()=>b.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBeGreaterThan(0);
     await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});

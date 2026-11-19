@@ -3,12 +3,12 @@ import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskAgentStatuses } from './agent-status';
-import { CurrentJobs } from './current-jobs';
+import { Doing, WithDoing } from './doing';
 import { useDeskRoster } from './roster';
 import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState } from './agent-face';
 import { Row } from '../../kit';
-import { latestStatus, namedAgents, orderedAgents } from './home-model';
+import { agentStateWord, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
 import './rail.css';
 import { RailContext } from '../../desk-rail';
 import { reducedMotion } from '../../access';
@@ -27,6 +27,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const waiting = useDeskWaitingCounts();
   const {reading, status:threadStatus}=useHomeComms();
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
+  const names = new Map(agents.map(agent=>[agent.id,agent.name]));
   const rail = useContext(RailContext);
   const companion = rail?.shown?agents.find(a=>a.id===rail.selected):undefined;
   const box = useRef<HTMLDivElement>(null);
@@ -64,7 +65,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const summary=reading?.summaries.find(s=>s.agent===agent.id);
       const unread=summary?.unread??0,thread=summary?.first??summary?.last;
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
-      const word = status?.state==='offline'?'Unavailable':ask?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
+      const said=(doing=0)=>status?.state!=='offline'&&ask?'Needs you':agentStateWord(status?.state,doing), word=said();
       if(fold&&agent.id!==opened)return <section key={agent.id} className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
         <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
           icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>}
@@ -73,17 +74,17 @@ export default function AgentRail({ go }: { go(path: string): void }) {
             <span className="desk-rail-unread" aria-label={threadStatus!=='live'?'Conversations unavailable':`${unread} unread threads`}>{threadStatus!=='live'?'?':unread||''}</span>
           </span>}/>
       </section>;
-      return <section key={agent.id} className="desk-rail-card" data-companion={agent.id===companion?.id||undefined} data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={status?.state}>
+      return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=><section className="desk-rail-card" data-companion={agent.id===companion?.id||undefined} data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={shownState(status?.state,doing.items.length)}>
         {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
         {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
-          <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!ask)} size={40} />
-          <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
+          <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,doing.items.length), !!ask)} size={40} />
+          <span><strong>{agent.name}</strong><span className="desk-rail-state">{said(doing.items.length)}</span></span>
         </button>}
         <p className="desk-rail-work">{statuses.status==='live'?(status?.work||'Nothing right now'):'Agent status unavailable'}</p>
-        <CurrentJobs agent={agent.id} name={agent.name} compact onChange={jobsChanged} />
+        <Doing doing={doing} name={agent.name} names={names} go={go} compact />
         {ask&&<div className="desk-rail-ask"><span className="desk-rail-kicker">Needs you</span><WaitingRow agent={agent.id} go={go} onChange={waitingChanged}/>{(needs??0)>1&&<span className="desk-rail-kicker">{`${(needs??0)-1} more · Inbox`}</span>}</div>}
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
-      </section>;
+      </section>}</WithDoing>;
   };
   return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
     {companion&&card(companion)}

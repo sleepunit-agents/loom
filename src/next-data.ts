@@ -73,7 +73,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer)), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
-    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), () => canReadUsage(viewer)),
+    ...jobSummaryFields(new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), () => canReadUsage(viewer)),
   });};
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));

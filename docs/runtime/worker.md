@@ -1018,6 +1018,16 @@ freshness fence as other shared selections. This field is available to the Home
 UI; its rendering is a separate consumer.
 The projection does not grant write or worker authority.
 
+`agentDoing(agent: String!, limit: Int)` is the card's lead: what the agent is doing
+now, as the parts of a short phrase (a kind, a title, who it is with, a channel, a
+task's id, a machine's name, since when, a state, and the in-app path that opens it).
+It lists the same current jobs, each said by its conversation's venue, and the tasks
+the agent has in progress. Every part is read under its own table's rule: the job by
+the jobs rule, its conversation's venue, label and member by the conversations rule,
+a machine's name by the machines rule, a trigger's note by the triggers rule, a task
+by the tasks rule. A job whose conversation the viewer may not read is returned as
+kind `private` with none of those parts. It reads three statements at most.
+
 ## Machine-reported facts
 
 An optional `facts` array in the worker configuration reports capability labels,
