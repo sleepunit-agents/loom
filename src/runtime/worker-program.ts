@@ -165,7 +165,7 @@ export async function workerProgram(input: {
     const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     const remote = { url: config.url, token, signal: abort.signal };
     const wait = input.pause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, {signal}); });
-    const reportHealth = () => (input.health ?? reportWorkerHealth)({
+    const reportHealth = async () => (input.health ?? reportWorkerHealth)({
       ...remote, facts: config.facts, slots: config.reportOnly ? 0 : slots,
     });
     async function poll(intervalMs: number, failure: string, check: () => Promise<void>) {
