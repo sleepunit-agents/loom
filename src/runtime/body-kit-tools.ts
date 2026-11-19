@@ -10,6 +10,8 @@ function post(socketPath:string,path:'/list'|'/call',input:object,signal:AbortSi
   return new Promise((resolve,reject)=>{
     const req=request({socketPath,path,method:'POST',signal:AbortSignal.any([signal,AbortSignal.timeout(60_000)]),agent:false},res=>{
       res.on('error',reject);
+      res.once('aborted',()=>reject(Error('Kit response interrupted')));
+      res.once('close',()=>{if(!res.complete)reject(Error('Kit response interrupted'));});
       if(res.statusCode!==200){res.resume();reject(res.statusCode===409?new KitRefused():res.statusCode===422?new KitCapacity():Error('Kit unavailable'));return;}
       const chunks:Buffer[]=[];let size=0;
       res.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>1024*1024)res.destroy(Error('Kit response too large'));else chunks.push(chunk);});
