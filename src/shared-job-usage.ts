@@ -22,9 +22,11 @@ export function registerJobUsage(operations: Operations, db: DataDatabase, proof
       const result = db.insert(jobUsage).values({ ...report, job: job.id, harness: report.harness ?? job.harness, model: report.model ?? job.model })
         .onConflictDoNothing().run();
       if (result.changes) ctx.changed('job', job.id);
-      // A model that answered proves the sign-in the job ran under, with no check of its own. A terminal
-      // session is not placed by loom and uses the machine's own sign-in, which this says nothing about.
-      if (result.changes && job.startedByKind !== 'terminal' && job.account && ((report.tokensOut ?? 0) > 0 || (report.modelCalls ?? 0) > 0)
+      // A model that answered proves the sign-in the job ran under, with no check of its own. Words that came
+      // back are the proof: a call is counted when it is made, also one the provider refused. A terminal
+      // session uses the machine's own sign-in, which this says nothing about; its usage is recorded by
+      // TerminalSessions and does not come through here, and the kind is checked all the same.
+      if (result.changes && job.startedByKind !== 'terminal' && job.account && (report.tokensOut ?? 0) > 0
         && logins.replied(job)) ctx.changed('modelAccount', job.account);
       return { saved: !!result.changes };
     },

@@ -33,20 +33,28 @@ it('rejects contradictory or empty reports and ends normally with unknown counte
   expect(f.db.select().from(jobUsage).all()).toMatchObject([{ job: 'job', source: 'none', modelCalls: null, toolCalls: null, tools: null }]);
 });
 
-it('takes a report of a model that answered as proof of the house sign-in the job ran under, and nothing less', async () => {
+it('takes words back from the model as proof that the watched house sign-in still works, and nothing less', async () => {
+  const at = '2026-11-01T00:00:00.000Z';
   const place = (f: Awaited<ReturnType<typeof bodyFixture>>) => {
     f.db.insert(modelAccounts).values({ id: 'sub', owner: 'alice', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
     f.db.insert(modelAccountBoxes).values({ account: 'sub', box: 'box' }).run();
+    // What the machine's worker last read: signed in, with an end.
+    f.db.insert(modelAccountLogins).values({ account: 'sub', box: 'box', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z', checkedAt: at, since: at, learnedFrom: 'check' }).run();
     f.db.update(jobs).set({ account: 'sub', harness: 'claude' }).where(eq(jobs.id, 'job')).run();
+    return f;
   };
-  const quiet = await bodyFixture(clean); place(quiet);
-  expect(await (await quiet.call('usage', { source: 'transcript', tokensIn: 40, tokensOut: 0, modelCalls: 0 }, 'no-answer')).json()).toMatchObject({ value: { saved: true } });
-  expect(quiet.db.select().from(modelAccountLogins).all()).toEqual([]);
-  // A job loom did not place under an account proves nothing about one.
+  const record = (f: Awaited<ReturnType<typeof bodyFixture>>) => f.db.select().from(modelAccountLogins).all();
+  const untouched = [{ learnedFrom: 'check', checkedAt: at, expiresAt: '2026-12-14T12:30:00.000Z' }];
+  // A call that was made and got no words back proves nothing: a provider's refusal is counted as a call too.
+  const refused = place(await bodyFixture(clean));
+  expect(await (await refused.call('usage', { source: 'transcript', tokensIn: 40, tokensOut: 0, modelCalls: 1 }, 'refused')).json()).toMatchObject({ value: { saved: true } });
+  expect(record(refused)).toMatchObject(untouched);
+  // A job loom did not place under an account proves nothing about one, and adds no record.
   const unplaced = await bodyFixture(clean);
   expect(await (await unplaced.call('usage', { source: 'transcript', tokensOut: 12, modelCalls: 1 }, 'unplaced')).json()).toMatchObject({ value: { saved: true } });
-  expect(unplaced.db.select().from(modelAccountLogins).all()).toEqual([]);
-  const f = await bodyFixture(clean); place(f);
+  expect(record(unplaced)).toEqual([]);
+  const f = place(await bodyFixture(clean));
   expect(await (await f.call('usage', { source: 'transcript', tokensIn: 40, tokensOut: 12, modelCalls: 1 }, 'answered')).json()).toMatchObject({ value: { saved: true } });
-  expect(f.db.select().from(modelAccountLogins).all()).toMatchObject([{ account: 'sub', box: 'box', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: null, learnedFrom: 'job' }]);
+  expect(record(f)).toMatchObject([{ account: 'sub', box: 'box', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z', learnedFrom: 'job', since: at }]);
+  expect(record(f)[0].checkedAt).not.toBe(at);
 });

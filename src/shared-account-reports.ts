@@ -12,10 +12,13 @@ import { quotaWindows } from './runtime/account-observation.js';
 import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { recordAccountWindows, readAccountWindows } from './runtime/account-windows.js';
 import { AccountLogins, LOGIN_PLACES } from './runtime/account-logins.js';
+import { LOGIN_REASONS } from './runtime/account-login-check.js';
 
-/** What a worker read about one sign-in on its own machine. Never a credential: a state, an end time and a short reason. */
-export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.string().trim().min(1).max(100), place: z.enum(LOGIN_PLACES),
-  state: z.enum(['signed-in', 'signed-out']), expiresAt: z.iso.datetime({ offset: true }).nullish(), why: z.string().trim().min(1).max(200).nullish() }).strict();
+/** What a worker read about one sign-in on its own machine. Never a credential, and no words of the worker's
+ * own: a state, an end time, and a reason from a fixed list. The harness is a plain name because it is
+ * written into the notice its owner reads. `unknown` names a sign-in the worker watches and could not read. */
+export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,39}$/), place: z.enum(LOGIN_PLACES),
+  state: z.enum(['signed-in', 'signed-out', 'unknown']), expiresAt: z.iso.datetime({ offset: true }).nullish(), why: z.enum(LOGIN_REASONS).nullish() }).strict();
 export function registerSharedAccountReports(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{box: string}> | undefined) {
   const identity = z.object({ account: z.string().min(1), owner: z.string().min(1), provider: z.string().min(1) }).strict();
   // Concurrency witnesses, never credentials or authority. Keep only a random
@@ -79,7 +82,7 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
   // enabled there is left out (AccountLogins.checked), so a worker cannot write about another machine or
   // an account it was never given.
   const logins = new AccountLogins(db, now);
-  operations.register({ name: 'runtime.accountLogins', write: true, recheckPolicy: true, doors: ['http'],
+  operations.register({ name: 'runtime.signInState', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ logins: z.array(loginCheck).max(64) }).strict(), output: z.object({ changed: z.number().int().nonnegative() }).strict(),
     may: viewer => !!liveWorker(db, viewer, runner(viewer)),
     run(ctx, input) {

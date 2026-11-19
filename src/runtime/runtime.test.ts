@@ -5,7 +5,7 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { createTempo } from '../core/tempo/tempo.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, modelAccountLogins, jobs, inbox } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
 import { Dispatcher } from './dispatcher.js';
 import { harnessCannotRun } from './body-harnesses.js';
@@ -155,4 +155,16 @@ it('does not take a jump of the server clock for silence: after one it waits a f
   expect(store.get(retry.id).state).toBe('running');
   fake.advance(300_000);
   expect(store.get(retry.id).state).toBe('lost');
+});
+
+it('tells the owner on its sweep about a sign-in found gone on a machine that is reporting', () => {
+  const f = fixture(), at = f.now();
+  f.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, 'worker')).run();
+  f.db.insert(modelAccountLogins).values({ account: 'account', box: 'worker', harness: 'codex', place: 'containers', state: 'signed-out', checkedAt: at, since: at, learnedFrom: 'check' }).run();
+  f.runtime.start();
+  const notices = f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all();
+  expect(notices.map(row => row.words)).toEqual([expect.stringMatching(/ is signed out on .+ \(codex in houses\)\.$/)]);
+  f.clock.advance(30_000);
+  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all()).toHaveLength(1);
+  expect(f.error).not.toHaveBeenCalled();
 });

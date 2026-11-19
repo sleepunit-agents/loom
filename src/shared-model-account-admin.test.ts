@@ -62,6 +62,12 @@ it('requires access to both the account and a live box for a sign-in report',asy
  expect(f.db.select().from(s.modelAccountBoxes).all()).toHaveLength(2);
  expect((await f.post('accountSignedOut',{account,box:'two'})).status).toBe(200);
  expect(f.db.select().from(s.modelAccountBoxes).all()).toEqual([{account,box:'one'}]);
+ // What was learned about its sign-ins on that machine goes with the binding, and only that machine's.
+ const at='2026-11-19T14:00:00.000Z',login={account,harness:'claude',place:'containers',state:'signed-out',checkedAt:at,since:at,learnedFrom:'check'} as const;
+ f.db.insert(s.modelAccountBoxes).values({account,box:'two'}).run();
+ f.db.insert(s.modelAccountLogins).values([{...login,box:'one'},{...login,box:'two'}]).run();
+ expect((await f.post('accountSignedOut',{account,box:'two'})).status).toBe(200);
+ expect(f.db.select().from(s.modelAccountLogins).all().map(row=>row.box)).toEqual(['one']);
 });
 it('uses the current household role rather than agent ownership or a retained owner label',async()=>{
  const f=fixture(),account=await f.create();

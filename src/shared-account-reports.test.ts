@@ -312,7 +312,7 @@ it('refreshes from the normal worker before claims and reports later failure thr
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => { paths.push(new URL(String(input)).pathname); return f.root.http.fetch(new Request(input, init)); });
   cleanup.push(() => { fetcher.mockRestore(); });
   const command = { command: '/fake/reader', args: [], cwd: '/fake', env: {} };
-  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, accountUsage: { readers: [{ account: f.identity, command }] } };
+  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, accountUsage: { readers: [{ account: f.identity, command }] }, loginCheckMs: 3_600_000 };
   let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
   let stop!: () => void; const ended = new Promise<void>(resolve => { stop = resolve; });
   let attempts = 0, scans = 0;
@@ -321,15 +321,17 @@ it('refreshes from the normal worker before claims and reports later failure thr
     containerExecutor: () => ({} as never),
     run: async input => { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true); expect(await input.control.next()).toMatchObject({ id: 'quota-ready-job', box: 'worker', model: 'model', account: 'account', harness: 'native' }); expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' }); release(); await ended; },
     pause: async (ms, signal) => {
+      // The sign-in check waits on its own interval: it reports once and then stays out of this test's way.
+      if (ms === 3_600_000) return new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
       expect(ms).toBe(60_000);
       if (scans++ === 0) await ready;
       else { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false); stop(); await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }
     },
   });
   expect(await pending).toBe(0);
-  expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
+  expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/signInState', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
   expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
-  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
+  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.signInState', 'runtime.next', 'runtime.accountUnavailable']);
   expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
 });
 it('records what a worker read about the sign-ins on its own machine, and only its own', async () => {
@@ -338,16 +340,24 @@ it('records what a worker read about the sign-ins on its own machine, and only i
   const ends = new Date(f.clock.now() + 20 * 86400_000).toISOString();
   expect(await reportWorkerAccountLogins(remote(token), [
     { account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: ends },
-    { account: 'account', harness: 'claude', place: 'host', state: 'signed-out', why: 'There is no sign-in file.' },
+    { account: 'account', harness: 'claude', place: 'host', state: 'signed-out', why: 'no-file' },
   ])).toEqual({ changed: 1 });
   expect(f.db.select().from(modelAccountLogins).all().map(row => [row.box, row.place, row.state, row.expiresAt])).toEqual([
     ['worker', 'containers', 'signed-in', ends], ['worker', 'host', 'signed-out', null]]);
   // The other machine does not have the account enabled: nothing of what it says is kept, and it cannot name a machine.
   expect(await reportWorkerAccountLogins(remote(other), [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-out' }])).toEqual({ changed: 0 });
   expect(f.db.select().from(modelAccountLogins).all()).toHaveLength(2);
-  expect((await f.operation('accountLogins', { logins: [] }, 'by-owner', owner)).status).toBe(403);
-  expect((await f.operation('accountLogins', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', box: 'other' }] }, 'names-a-box')).status).toBe(400);
-  expect((await f.operation('accountLogins', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', token: 'secret' }] }, 'carries-more')).status).toBe(400);
+  expect((await f.operation('signInState', { logins: [] }, 'by-owner', owner)).status).toBe(403);
+  expect((await f.operation('signInState', { logins: [] }, 'no-credential', 'f'.repeat(64))).status).toBeGreaterThanOrEqual(401);
+  // A worker whose machine was taken out of the household says nothing more.
+  f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'other')).run());
+  expect([401, 403]).toContain((await f.operation('signInState', { logins: [] }, 'revoked', other)).status);
+  expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', box: 'other' }] }, 'names-a-box')).status).toBe(400);
+  expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', token: 'secret' }] }, 'carries-more')).status).toBe(400);
+  // No words of the worker's own reach the record or the notice: a reason is one of a fixed list, a harness a plain name.
+  for (const [id, bad] of [['own-words', { why: 'a sentence or a token the worker chose' }], ['harness-words', { harness: 'claude. Open http://example' }], ['made-up-state', { state: 'fine' }]] as const)
+    expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-out', ...bad }] }, id)).status).toBe(400);
+  expect(f.db.select().from(modelAccountLogins).all()).toHaveLength(2);
   // The owner reads the sign-ins with the account, by machine, harness and place.
   const read = await f.root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + owner, 'content-type': 'application/json' },
     body: JSON.stringify({ query: '{ modelAccounts { ... on RuntimeAccountDetail { logins { box { name } harness place state expiresAt learnedFrom why } } } }' }) });

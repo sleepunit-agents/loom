@@ -6,7 +6,9 @@ columns, `model_account_windows`, the ten internal bookkeeping tables listed the
 and the programme restriction and grant tables. Schema 15 added six tables for kit
 definitions, person and project grants, outside project membership and use history.
 Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
-grants and request history. Total: 107 tables. The programme
+grants and request history. Schema 18 adds `model_account_logins`: what loom last
+learned about each model account sign-in (account, machine, harness and place), never a
+credential. Total: 108 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each

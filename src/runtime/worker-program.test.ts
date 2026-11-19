@@ -14,6 +14,8 @@ function fixture() {
   return { handlers, args: ['/config'], read: vi.fn(async (path: string) => path === '/config' ? JSON.stringify(config) : ' private-token\n'),
     on: (name: string, stop: () => void) => { handlers.set(name, stop); },
     off: (name: string, stop: () => void) => { expect(handlers.get(name)).toBe(stop); handlers.delete(name); },
+    // The sign-in report every hosting worker makes; the tests of that report give their own.
+    reportLogins: vi.fn(async () => ({ changed: 0 })),
     error: vi.fn(), control: vi.fn().mockReturnValue({}), containerExecutor: vi.fn().mockReturnValue({}), run: vi.fn().mockResolvedValue(undefined) };
 }
 const state = defaultWorkerState('b');
@@ -465,18 +467,27 @@ it('tells loom what the sign-in files on its machine say, for houses and for the
   let round = 0;
   const readLogin = vi.fn(async (harness: string, directory: string) => {
     if (directory === '/home/.codex' && round === 1) throw new Error('Sign-in file unreadable');
-    return directory === '/logins/claude' && round >= 3 ? { state: 'signed-out' as const, why: 'There is no sign-in file.' } : { state: 'signed-in' as const, ...(harness === 'claude' && { expiresAt: '2026-12-14T12:30:00.000Z' }) };
+    return directory === '/logins/claude' && round >= 1 ? { state: 'signed-out' as const, why: 'no-file' as const } : { state: 'signed-in' as const, ...(harness === 'claude' && { expiresAt: '2026-12-14T12:30:00.000Z' }) };
   });
   const reportLogins = vi.fn(async (_remote: unknown, logins: unknown) => { sent.push(logins); return { changed: 1 }; });
-  // Five rounds of the check, then the worker is stopped from outside.
-  const pause = vi.fn(async () => { if (++round > 4) throw new Error('stop'); });
-  f.run.mockImplementation(() => new Promise<void>(resolve => { const wait = setInterval(() => { if (round > 4) { clearInterval(wait); resolve(); } }, 1); }));
+  // Four rounds of the check, then the worker is stopped from outside.
+  const pause = vi.fn(async () => { if (++round > 3) throw new Error('stop'); });
+  f.run.mockImplementation(() => new Promise<void>(resolve => { const wait = setInterval(() => { if (round > 3) { clearInterval(wait); resolve(); } }, 1); }));
   expect(await workerProgram({ ...f, readLogin: readLogin as never, reportLogins: reportLogins as never, pause })).toBe(0);
-  const good = [{ account: 'subscription', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z' },
-    { account: 'subscription', harness: 'claude', place: 'host', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z' },
-    { account: 'other', harness: 'codex', place: 'host', state: 'signed-in' }];
-  // Round 0 says it; round 1 cannot read one file and says nothing; round 2 is unchanged; round 3 has changed.
-  expect(sent).toEqual([good, [{ ...good[0], state: 'signed-out', why: 'There is no sign-in file.', expiresAt: undefined }, good[1], good[2]].map(row => JSON.parse(JSON.stringify(row)))]);
+  const houses = { account: 'subscription', harness: 'claude', place: 'containers' }, own = { account: 'subscription', harness: 'claude', place: 'host', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z' };
+  const codex = { account: 'other', harness: 'codex', place: 'host' }, gone = { ...houses, state: 'signed-out', why: 'no-file' };
+  // Round 0 says all three. In round 1 one file cannot be read: it alone is named unknown and the change in
+  // another is still told. Round 2 can read it again, which is a change. Round 3 is the same and is not sent.
+  expect(sent).toEqual([
+    [{ ...houses, state: 'signed-in', expiresAt: own.expiresAt }, own, { ...codex, state: 'signed-in' }],
+    [gone, own, { ...codex, state: 'unknown' }],
+    [gone, own, { ...codex, state: 'signed-in' }]]);
   expect(readLogin.mock.calls.every(([harness]) => harness !== 'gemini')).toBe(true);
-  expect(f.error.mock.calls.flat().filter(line => String(line).includes('sign-in state'))).toEqual(['Worker sign-in state unavailable\n']);
+  expect(f.error).not.toHaveBeenCalled();
+});
+
+it('tells loom it watches no sign-in when none is named, so that loom stops watching what was', async () => {
+  const f = fixture(), reportLogins = vi.fn(async () => ({ changed: 0 }));
+  expect(await workerProgram({ ...f, reportLogins: reportLogins as never, pause: async () => { throw new Error('stop'); } })).toBe(0);
+  expect(reportLogins).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token: 'private-token' }), []);
 });
