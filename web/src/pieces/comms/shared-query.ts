@@ -2,6 +2,8 @@ import type { QuerySelection } from '../../data/graphql/selection';
 import type { CommsMessage, CommsThread } from '../comms-view/model';
 export const threadFields = 'id conversation venue title agent project member pinned archivedAt lastAt readSeq working stopRequested';
 export const messageFields = 'thread seq kind sender at words wordsKeepUntil inboxItem verdict tool cardState delivery';
+/** The list: threads, folder counts and who is asking. Comms no longer asks for the open thread here (`selected`
+ * is false; see `commsThreadQuery`). Those clauses stay because server tests run this exact document with them. */
 export const commsQuery = `query Comms($archived:Boolean!,$search:String!,$offset:Int!,$id:String!,$selected:Boolean!,$before:Int){
  homeComms { member agents }
  commsFolders { threads archived }
@@ -22,6 +24,20 @@ export function commsSelection(archived: boolean, search: string, offset: number
       || !Array.isArray(data.commsThreads) || id && (!Array.isArray(data.commsMessages) || !Array.isArray(data.commsRefs))) throw Error('Invalid Comms selection');
     return { home, folders, threads: data.commsThreads as CommsThread[], thread: data.commsThread as CommsThread | null ?? null,
       messages: data.commsMessages as CommsMessage[] ?? [], refs: data.commsRefs as CommsReading['refs'] ?? [] };
+  } };
+}
+/** The open thread, alone: its row, a page of its messages and what they mention. Opening a thread or paging its
+ * messages changes this request and nothing the list of threads reads. */
+export const commsThreadQuery = `query CommsThread($id:String!,$before:Int){
+ commsThread(id:$id){${threadFields}}
+ commsMessages(thread:$id,beforeSeq:$before,limit:51){${messageFields}}
+ commsRefs(thread:$id){ref messageSeq}
+}`;
+export type CommsThreadReading = Pick<CommsReading, 'thread' | 'messages' | 'refs'>;
+export function commsThreadSelection(id: string, before?: number): QuerySelection<CommsThreadReading> {
+  return { query: commsThreadQuery, variables: { id, before: before ?? null }, decode(data) {
+    if (!Array.isArray(data.commsMessages) || !Array.isArray(data.commsRefs)) throw Error('Invalid Comms thread');
+    return { thread: data.commsThread as CommsThread | null ?? null, messages: data.commsMessages as CommsMessage[], refs: data.commsRefs as CommsReading['refs'] };
   } };
 }
 /** Withhold private wording without waiting for a live refresh at the deadline. */

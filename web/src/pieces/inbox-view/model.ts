@@ -10,7 +10,9 @@ export interface InboxItem {
   answer?: string | null; answerText?: string | null; answeredBy?: string | null; answeredAt?: string | null; resolution?: string | null;
 }
 export interface InboxFolders { needs: number; alerts: number; answered: number; fyi: number; all: number; agents: readonly { id: string; count: number }[] }
-export interface InboxSnapshot { folders?: InboxFolders; status: 'live' | 'loading' | 'offline' | 'denied'; items: readonly InboxItem[] }
+/** `settling`: the rows and counts are the previous folder's, search's or page's, shown while the next loads.
+ * `folder`: the folder the rows were read for, where the reading says; while settling it is still the last one. */
+export interface InboxSnapshot { folders?: InboxFolders; status: 'live' | 'loading' | 'offline' | 'denied'; settling?: boolean; folder?: string; items: readonly InboxItem[] }
 export type InboxAnswer = 'yes' | 'no' | 'words' | 'done' | 'dismiss';
 export interface InboxActions {
   volume?(id: string, volume: InboxItem['volume']): Promise<void>;

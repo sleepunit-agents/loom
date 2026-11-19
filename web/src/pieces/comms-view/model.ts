@@ -12,7 +12,9 @@ export interface CommsMessage {
   delivery?: 'sending' | 'held' | 'failed' | 'delivered' | null;
 }
 export type Status = 'live' | 'loading' | 'offline' | 'denied';
-export interface CommsSnapshot { folders?: { threads: number; archived: number }; status: Status; member: string; threads: readonly CommsThread[]; agents: readonly { id: string; name: string }[] }
+/** `settling`: the rows and counts are the previous folder's, search's or page's, shown while the next loads.
+ * `archived`: the folder the rows were read for, where the reading says; while settling it is still the last one. */
+export interface CommsSnapshot { folders?: { threads: number; archived: number }; status: Status; settling?: boolean; archived?: boolean; member: string; threads: readonly CommsThread[]; agents: readonly { id: string; name: string }[] }
 export interface CommsDetail { status: Status; thread: CommsThread | null; messages: readonly CommsMessage[]; refs: readonly { ref: string; messageSeq: number }[] }
 export type ThreadChange = { change: 'rename'; title: string } | { change: 'pin'; pinned: boolean } | { change: 'archive'; archived: boolean } | { change: 'stop' } | { change: 'delete' };
 export interface CommsActions {

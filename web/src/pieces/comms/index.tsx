@@ -5,13 +5,13 @@ import { useReadingVisible } from '../../data/visibility';
 import { useDeadline } from './use-deadline';
 import { useEffect, useMemo, useState } from 'react';
 import { conversationOperation as mutate } from './operations';
-import { useSelection } from '../../data/graphql/selection';
+import { useAnswered, useSelection } from '../../data/graphql/selection';
 import { InlineQuestion } from './inline-question';
 import { ConversationQuestions } from './conversation-questions';
 import { SharedWork } from './shared-work';
 import { CommsView } from '../comms-view';
 import type { CommsActions } from '../comms-view/model';
-import { commsSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
+import { commsSelection, commsThreadSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
 const base = '/p/comms-preview';
 function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
@@ -22,16 +22,25 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
   let selected: string | undefined;
   try { selected = path.includes('/thread/') ? `th:${decodeURIComponent(path.slice(path.indexOf('/thread/') + 8))}` : undefined; } catch { /* Invalid route selects nothing. */ }
   useEffect(() => { setBefore(undefined); }, [selected]);
-  const reading = useSelection(useMemo(() => commsSelection(archived, search, offset, selected, before), [archived, search, offset, selected, before]));
+  // Two readings, so opening a thread cannot disturb the list: the folder, search and page select the rows and
+  // counts; the open thread and its page of messages are read by the thread's id alone. Each keeps its last
+  // answer on screen while its next one loads.
+  const reading = useSelection(useMemo(() => commsSelection(archived, search, offset), [archived, search, offset]), { keep: true });
+  const opened = useSelection(useMemo(() => commsThreadSelection(selected ?? '', before), [selected, before]), { keep: true, pause: !selected });
+  const drawnArchived = useAnswered(reading, archived);
   const data = reading.status === 'live' ? reading.data : undefined, live = !!data?.home;
   const status = reading.status === 'live' && !live ? 'denied' : reading.status;
+  // Everything the reader draws or acts on comes from `open`, and `open` is only ever the thread the path names.
+  // A kept answer for the thread that was open before is not it: the reader waits for its own.
+  const open = live && opened.status === 'live' && opened.data?.thread?.id === selected ? opened.data : undefined;
+  const detailStatus = !live ? status : !selected ? 'live' : opened.status === 'live' && opened.settling && !open ? 'loading' : opened.status;
   const navigate = (next: string) => { if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null, '', next); setLocalPath(next); } };
   const select = (id?: string) => { setBefore(undefined); navigate(id ? commsThreadPath(id) : base); };
   useEffect(() => {
     if (go || typeof window === 'undefined') return;
     const pop = () => setLocalPath(location.pathname); window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  const now = useDeadline(live ? data.messages.map(row => row.wordsKeepUntil) : []);
+  const now = useDeadline(open ? open.messages.map(row => row.wordsKeepUntil) : []);
 
   const actions: CommsActions | undefined = live ? {
     open: (agent, thread) => mutate('comms.open', { agent, thread }),
@@ -39,16 +48,17 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
     read: (thread, seq) => mutate('comms.change', { thread, change: 'read', seq }),
     change: async (thread, change) => { await mutate('comms.change', { thread, ...change }); if (change.change === 'delete') select(); },
   } : undefined;
-  const messages = live ? data.messages.slice(-50).map(row => retainedCommsMessage(row, now)) : [];
-  return <CommsView snapshot={{ status, member: data?.home?.member ?? '', threads: live ? data.threads.slice(0,50) : [],
+  const messages = open ? open.messages.slice(-50).map(row => retainedCommsMessage(row, now)) : [];
+  const thread = open?.thread ?? null, own = !!thread && thread.member === data?.home?.member;
+  return <CommsView snapshot={{ status, settling: reading.settling, archived: drawnArchived, member: data?.home?.member ?? '', threads: live ? data.threads.slice(0,50) : [],
     agents: live ? data.home!.agents.map(id => ({ id, name: id })) : [], folders: live ? data.folders : undefined }}
-    detail={{ status, thread: live ? data.thread : null, messages, refs: live ? data.refs : [] }} selected={selected} select={select} actions={actions}
+    detail={{ status: detailStatus, thread, messages, refs: open ? open.refs : [] }} selected={selected} select={select} actions={actions}
     readVisible={readingVisible}
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ screen: live&&data.thread?<CommsCompanion agent={data.thread.agent} working={data.thread.working} visible={readingVisible} go={navigate}/>:undefined, question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <div key={conversation}><SharedWork refs={refs} conversation={conversation} go={navigate} />{data?.thread?.member === data?.home?.member && <ConversationQuestions conversation={conversation} go={navigate} readVisible={readingVisible} />}</div> }}
-    messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (data?.messages.length ?? 0) > 50, before }} />;
+    cards={{ screen: thread?<CommsCompanion agent={thread.agent} working={thread.working} visible={readingVisible} go={navigate}/>:undefined, question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={own} />, work: (refs, conversation) => <div key={conversation}><SharedWork refs={refs} conversation={conversation} go={navigate} />{own && <ConversationQuestions conversation={conversation} go={navigate} readVisible={readingVisible} />}</div> }}
+    messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (open?.messages.length ?? 0) > 50, before }} />;
 }
 export { CommsView } from '../comms-view';
 

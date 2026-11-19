@@ -6,6 +6,8 @@ import { InlineQuestion } from './inline-question';
 import { conversationApprovalsQuery as query } from './work-query';
 /** Source questions already belong to the conversation. No copied chat message,
  * answer state or private wording is kept here. The Inbox query scopes recipients. */
+// Another page keeps the last one's cards and the pager on screen until it answers; each card reads its own
+// item by id, and this is mounted per conversation, so nothing here is another conversation's.
 export function ConversationQuestions({ conversation, go, readVisible }: { conversation: string; go(path: string): void; readVisible: boolean }) {
   const [offset, setOffset] = useState(0);
   const reading = useSelection(useMemo<QuerySelection<{questions:{id:string;sourceId?:string}[];ordinary:{id:string}[];hasNext:boolean}>>(() => ({ query, variables: { conversation, offset },
@@ -15,7 +17,7 @@ export function ConversationQuestions({ conversation, go, readVisible }: { conve
       if (!Array.isArray(data.approvals)) throw Error('Invalid conversation approvals');
       return {hasNext:data.inboxItems.length>10||data.taskQuestions.length>10,questions:[...data.inboxItems.slice(0,10),...data.taskQuestions.slice(0,10)] as {id:string;sourceId?:string}[],ordinary:data.approvals as {id:string}[]};
     },
-  }), [conversation, offset]));
+  }), [conversation, offset]), { keep: true });
   if (reading.status !== 'live') return null;
   const items = reading.data?.questions ?? [], ordinary = reading.data?.ordinary ?? [];
   const questionSources = new Set(items.map(item=>item.sourceId));

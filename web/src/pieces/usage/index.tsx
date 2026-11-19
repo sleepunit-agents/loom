@@ -22,9 +22,11 @@ interface Range {from:string;to:string}
 const format=(value:number|null|undefined)=>value==null?'Unknown':value.toLocaleString();
 
 function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
-  const {status,data}=useDataQuery<{conversationJobUsage:Job[]}>(jobsQuery,{...range,conversation});
+  // Another date range keeps this conversation's last table until its own answers. A row is mounted per conversation,
+  // so a kept table is never another conversation's.
+  const {status,data,settling}=useDataQuery<{conversationJobUsage:Job[]}>(jobsQuery,{...range,conversation},{keep:true});
   if(status!=='live'||!data)return <p>{status==='loading'?'Loading jobs…':'Job usage unavailable.'}</p>;
-  return <table><caption>Jobs in this conversation</caption><thead><tr>
+  return <table aria-busy={settling||undefined}><caption>Jobs in this conversation</caption><thead><tr>
     <th>Job</th><th>State</th><th>Harness</th><th>Model</th>{Object.values(metrics).map(label=><th key={label}>{label}</th>)}
     <th>Calls by tool</th><th>Source</th><th>Observations</th>
   </tr></thead><tbody>{data.conversationJobUsage.map(({id,title,runKind,linkedWakeJob,state,usage,observations})=><tr key={id}>
@@ -36,11 +38,12 @@ function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
 }
 function Conversations({range}:{range:Range}) {
   const [open,setOpen]=useState<string|null>();
-  const {status,data}=useDataQuery<{jobUsageRollup:Group[]}>(conversationsQuery,{...range});
+  // Another date range keeps the last table, and the conversation opened in it, until the new one answers.
+  const {status,data,settling}=useDataQuery<{jobUsageRollup:Group[]}>(conversationsQuery,{...range},{keep:true});
   if(status!=='live'||!data)return <p>{status==='loading'?'Loading conversations…':'Conversation usage unavailable.'}</p>;
   if(!data.jobUsageRollup.length)return <p>No jobs in this period.</p>;
   const groups=[...data.jobUsageRollup].sort((a,b)=>(b.totalTokens??-1)-(a.totalTokens??-1)||(a.key??'').localeCompare(b.key??''));
-  return <table><thead><tr><th>Conversation</th><th>Reported tokens</th><th>Jobs</th><th>Retries</th></tr></thead>
+  return <table aria-busy={settling||undefined}><thead><tr><th>Conversation</th><th>Reported tokens</th><th>Jobs</th><th>Retries</th></tr></thead>
     <tbody>{groups.map(g=><Fragment key={JSON.stringify(g.key)}><tr><th scope="row"><button aria-expanded={open===g.key}
       onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key||'Jobs without a conversation'}</button></th>
       <td>{format(g.totalTokens)}</td><td>{format(g.jobCount)}</td><td>{format(g.retryCount)}</td></tr>

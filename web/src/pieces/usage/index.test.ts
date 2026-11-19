@@ -34,3 +34,26 @@ it('uses selections and argument types served by the runtime',async()=>{
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields({} as never)})});
   for(const selection of [conversationsQuery,jobsQuery])expect(validate(schema,parse(selection))).toEqual([]);
 });
+
+it('keeps the table and the opened conversation on screen while another date range loads',async()=>{
+  const day=(n:number)=>`2026-11-${String(n).padStart(2,'0')}`;
+  let changing=false;
+  // As the data hook answers: with `keep`, the last answer again, marked settling; without it, loading.
+  feed.mockImplementation((query:string,_variables:unknown,options?:{keep?:boolean})=>changing&&!options?.keep?{status:'loading'}:{status:'live',settling:changing||undefined,data:query.includes('conversationJobUsage')?
+    {conversationJobUsage:[{id:'j-one',title:'Inspect parser',runKind:'main',observations:[],usage:null}]}:
+    {jobUsageRollup:[{key:'large',title:'Large',totalTokens:999,jobCount:1,retryCount:0}]}});
+  let tree!:ReturnType<typeof create>;
+  await act(async()=>{tree=create(h(Usage));});
+  try {
+    await act(async()=>tree.root.findAllByType('button')[0].props.onClick());
+    const [first,last]=tree.root.findAllByType('input');
+    await act(async()=>last.props.onChange({target:{value:day(20)}}));
+    changing=true;
+    await act(async()=>first.props.onChange({target:{value:day(1)}}));
+    const text=JSON.stringify(tree.toJSON());
+    expect(text).toContain('Large');expect(text).toContain('Inspect parser');expect(text).not.toContain('Loading');
+    expect(tree.root.findAllByType('table').map(table=>table.props['aria-busy'])).toEqual([true,true]);
+    expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(true);
+    expect(feed.mock.calls.at(-1)![1]).toMatchObject({from:new Date(day(1)+'T00:00:00').toISOString(),conversation:'large'});
+  } finally { await act(async()=>tree.unmount()); }
+});

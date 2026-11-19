@@ -3,17 +3,24 @@ import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
 import type { InboxItem } from '../inbox-view/model';
-const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { variables: Record<string, unknown> }[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
-vi.mock('../../data/graphql', () => ({ useDataQuery(_query: string, variables: Record<string, unknown>) {
-  f.requests.push({ variables });
-  return { status: f.status, data: f.status === 'live' ? { ...f.data,
-    inboxItems: variables.onlyErrors ? undefined : f.data.inboxItems,
-    inboxItem: variables.hasItem ? f.data.inboxItem : null } : undefined };
+type Asked = { query: string; variables: Record<string, unknown>; options?: { keep?: boolean; pause?: boolean } };
+// `item` is the state of the open item's own reading; `hold` makes the list answer as the data hook does while
+// the next folder, search or page loads (the last answer again, marked settling); `stray` answers with another item.
+const f = vi.hoisted(() => ({ status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
+vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
+  f.requests.push({ query, variables, options });
+  if (options?.pause) return { status: 'loading' };
+  if (query.includes('query InboxItem(')) {
+    const status = f.status === 'live' ? f.item : f.status, one = f.data.inboxItem as { id: string } | null;
+    return { status, data: status === 'live' ? { inboxItem: f.stray ?? (one?.id === variables.id ? one : (f.data.inboxItems as { id: string }[]).find(row => row.id === variables.id) ?? null) } : undefined };
+  }
+  if (f.status === 'live' && f.hold && options?.keep) return { status: 'live', data: f.last, settling: true };
+  return { status: f.status, data: f.status === 'live' ? f.last = { ...f.data, inboxItems: variables.onlyErrors ? undefined : f.data.inboxItems, inboxItem: null } : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.read(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
-  (props: { children?: ReactNode; title?: ReactNode; status?: ReactNode; actions?: ReactNode; folder?: string; folders?: unknown; onFolder?: (id: string) => void; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode }) => name === 'Split'
-    ? h(name, { folder: props.folder, folders: props.folders, onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search)
+  (props: { children?: ReactNode; title?: ReactNode; status?: ReactNode; actions?: ReactNode; folder?: string; folders?: unknown; onFolder?: (id: string) => void; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listBusy?: boolean; listCount?: number; listKey?: string }) => name === 'Split'
+    ? h(name, { folder: props.folder, folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy, listCount: props.listCount, listKey: props.listKey }, props.listTop, props.list, props.reader, props.search)
     : name === 'NoteRow' ? h(name, { status: props.status }, props.title, props.actions, props.children) : h(name, props, props.children)])));
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,12 +32,14 @@ function row(extra: Partial<InboxItem> = {}): InboxItem {
 function setup(item = row(), items = [item]) {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => { const result = await f.call(url.replace('/api/','').replace('/','.'),JSON.parse(String(init.body)).input).result; return {ok:result.ok,json:async()=>result}; }));
   f.read.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
-  f.status = 'live'; f.requests = []; f.records.mockClear(); f.call.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
+  f.status = 'live'; f.item = 'live'; f.hold = false; f.stray = undefined; f.requests = []; f.records.mockClear(); f.call.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
   f.data = { inboxItems: items, inboxItem: item, inboxFolders: { needs: 130, alerts: 3, answered: 12, fyi: 8, all: 150, agents: [{ id: 'art', count: 149 }, { id: 'mark', count: 1 }] },
     inboxActionResults: [{ id: 'result-1', at: item.at, ok: false, text: 'Action failed', page: '/p/tasks-preview', readAt: null }] };
 }
 const button = (name: string) => tree.root.findAllByType('Button').find((node: { props: { children: unknown } }) => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children) === name);
 const text = () => JSON.stringify(tree.toJSON());
+const listed = () => f.requests.findLast(row => row.query.includes('query Inbox('));
+const opened = () => f.requests.findLast(row => row.query.includes('query InboxItem('));
 const link = (name: string) => tree.root.findAllByType('LinkButton').find((node: { props: { children: unknown } }) => node.props.children === name);
 it('mounts shared Inbox, server folder totals and actual authenticated read/answer operations', async () => {
   setup(); const go = vi.fn();
@@ -42,7 +51,8 @@ it('mounts shared Inbox, server folder totals and actual authenticated read/answ
   expect(f.call).toHaveBeenCalledWith('inbox.read', { item: 'in-1' });
   await act(async () => { button('Yes').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-1', answer: 'yes' });
-  expect(f.requests.at(-1)?.variables).toMatchObject({ folder: 'needs', offset: 0, search: '', id: 'in-1', hasItem: true });
+  expect(listed()?.variables).toMatchObject({ folder: 'needs', offset: 0, search: '', hasItem: false });
+  expect(opened()).toMatchObject({ variables: { id: 'in-1' } });
 });
 it('consumes whole-mailbox search without locally discarding source matches, pages and resets the cursor on search', async () => {
   const selected = row({ read: true, body: { words: 'Different display text' }, sourceId: 'needle' });
@@ -51,10 +61,10 @@ it('consumes whole-mailbox search without locally discarding source matches, pag
   expect(tree.root.findAllByType('Row')).toHaveLength(50);
   expect(tree.root.findByType('Pager').props).toMatchObject({ hasPrevious: false, hasNext: true });
   await act(async () => { tree.root.findByType('Pager').props.next(); });
-  expect(f.requests.at(-1)?.variables.offset).toBe(50);
+  expect(listed()?.variables.offset).toBe(50);
   f.data.inboxItems = [selected];
   await act(async () => { tree.root.findByType('Search').props.onChange('needle'); });
-  expect(f.requests.at(-1)?.variables).toMatchObject({ search: 'needle', offset: 0 });
+  expect(listed()?.variables).toMatchObject({ search: 'needle', offset: 0 });
   expect(text()).toContain('Different display text'); expect(tree.root.findByType('Pager').props).toMatchObject({ hasPrevious: false, hasNext: false });
 });
 it.each([['task','t-1','Open the task','/p/tasks-preview/task/t-1'], ['approval','a-1','Open in Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open in Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
@@ -64,7 +74,7 @@ it.each([['task','t-1','Open the task','/p/tasks-preview/task/t-1'], ['approval'
   await act(async () => { link(label).props.onClick(); });
   expect(go).toHaveBeenCalledWith(path);
   await act(async () => { tree.root.findByType('Split').props.onFolder('errors'); });
-  expect(f.requests.at(-1)?.variables.onlyErrors).toBe(true);
+  expect(listed()?.variables.onlyErrors).toBe(true);
   expect(text()).toContain('Action failed');
   await act(async () => { link('Dismiss').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.dismissResult', { id: 'result-1' });
@@ -108,7 +118,7 @@ it('opens the Alerts folder using the shared notice projection', async () => {
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go: vi.fn() })); });
   expect(tree.root.findByType('Split').props.folders).toContainEqual({ id: 'alerts', label: 'Alerts', count: 3 });
   await act(async () => { tree.root.findByType('Split').props.onFolder('alerts'); });
-  expect(f.requests.at(-1)?.variables).toMatchObject({ folder: 'alerts', offset: 0 });
+  expect(listed()?.variables).toMatchObject({ folder: 'alerts', offset: 0 });
   expect(text()).toContain('Alert from Loom');
 });
 
@@ -151,4 +161,69 @@ it('offers recipient volume independently of managed answers through the current
  f.data.inboxItem=row({canAnswer:false,canSetVolume:false,read:true});
  await act(async()=>{tree.update(h(InboxApp,props));});
  expect(tree.root.findAllByType('select')).toHaveLength(0);
+});
+
+// Only the part that changes is replaced: opening an item is the reader's business, another folder, search or page the list's.
+const page = () => Array.from({ length: 51 }, (_, n) => row({ id: `in-${n}`, read: true, body: { words: `Question ${n}` } }));
+const state = () => ({ rows: tree.root.findAllByType('Row').map((node: { props: { title: string } }) => node.props.title), folders: tree.root.findByType('Split').props.folders,
+  count: tree.root.findByType('Split').props.listCount, search: tree.root.findByType('Search').props.disabled,
+  pager: (({ disabled, hasPrevious, hasNext }: Record<string, unknown>) => ({ disabled, hasPrevious, hasNext }))(tree.root.findByType('Pager').props) });
+it('opening an item leaves the list, counts, search and pager as they were, and the reader alone loads', async () => {
+  setup(row({ id: 'in-elsewhere', read: true, body: { words: 'Not on this page' } }), page()); const go = vi.fn();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go })); });
+  const before = state(), asked = listed();
+  expect(before.rows).toHaveLength(50); expect(before.search).toBe(false); expect(before.pager).toMatchObject({ disabled: false, hasNext: true });
+  expect(opened()?.options).toMatchObject({ pause: true });
+  f.item = 'loading';
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-elsewhere', go })); });
+  expect(state()).toEqual(before); expect(tree.root.findByType('Split').props.listBusy).toBeUndefined();
+  // The list's request did not change, so the hook has nothing to ask again.
+  expect(listed()).toEqual(asked);
+  expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(text()).not.toContain('Not on this page'); expect(button('Yes')).toBeUndefined();
+  f.item = 'live';
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-elsewhere', go })); });
+  expect(state()).toEqual(before); expect(tree.root.findAllByType('Loading')).toHaveLength(0); expect(tree.root.findByType('Title').props.children).toBe('Not on this page');
+});
+it('shows a clicked row at once from what the list already knows, and never offers a control for another item', async () => {
+  setup(row({ id: 'in-3', body: { words: 'Question 3' } }), page()); const go = vi.fn();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go })); });
+  f.item = 'loading';
+  await act(async () => { tree.root.findAllByType('Row').find((node: { props: { title: string } }) => node.props.title === 'Question 3').props.onClick(); });
+  expect(go).toHaveBeenCalledWith('/p/inbox-preview/ask/in-3');
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-3', go })); });
+  expect(tree.root.findAllByType('Row')).toHaveLength(50); expect(tree.root.findAllByType('Loading')).toHaveLength(0);
+  expect(tree.root.findByType('Title').props.children).toBe('Question 3');
+  await act(async () => { button('Yes').props.onClick(); });
+  expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-3', answer: 'yes' });
+  // An answer for some other item is not the open item: nothing is drawn from it and nothing can act on it.
+  f.item = 'live'; f.stray = row({ id: 'in-7', canSetVolume: true, body: { words: 'Stray question' } }); f.call.mockClear();
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-3', go })); });
+  expect(text()).not.toContain('Stray question'); expect(button('Yes')).toBeUndefined(); expect(tree.root.findAllByType('select')).toHaveLength(0);
+  expect(f.call).not.toHaveBeenCalled(); expect(tree.root.findAllByType('Row')).toHaveLength(50);
+});
+it('keeps the folders, counts, rows, search and pager in place while another folder, search or page loads', async () => {
+  setup(row({ id: 'in-3', body: { words: 'Question 3' } }), page()); const go = vi.fn();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go })); });
+  const before = state(), list = tree.root.findByType('Split').props.listKey;
+  f.hold = true;
+  await act(async () => { tree.root.findByType('Pager').props.next(); });
+  expect(listed()).toMatchObject({ variables: { offset: 50 }, options: { keep: true } });
+  expect(state()).toEqual({ ...before, pager: { ...before.pager, hasPrevious: true } });
+  expect(tree.root.findByType('Split').props).toMatchObject({ listBusy: true }); expect(tree.root.findByType('Split').props.listKey).not.toBe(list);
+  expect(tree.root.findAllByType('Loading')).toHaveLength(0);
+  await act(async () => { tree.root.findByType('Search').props.onChange('pump'); });
+  expect(listed()?.variables).toMatchObject({ search: 'pump', offset: 0 });
+  expect(tree.root.findByType('Search').props).toMatchObject({ value: 'pump', disabled: false }); expect(state().rows).toEqual(before.rows); expect(state().folders).toEqual(before.folders);
+  // Another folder: its name and count head the list at once, over the last rows until its own arrive.
+  await act(async () => { tree.root.findByType('Split').props.onFolder('answered'); });
+  expect(listed()?.variables).toMatchObject({ folder: 'answered', offset: 0 });
+  expect(tree.root.findByType('Split').props).toMatchObject({ folder: 'answered', listCount: 12, listBusy: true }); expect(state().rows).toEqual(before.rows);
+  // Rows kept from the last page lend the reader nothing: an item opened now waits for its own reading.
+  f.item = 'loading';
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-3', go })); });
+  expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(button('Yes')).toBeUndefined(); expect(state().rows).toEqual(before.rows);
+  // The moment the feed fails, the kept rows and counts go with it.
+  f.hold = false; f.status = 'offline';
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-3', go })); });
+  expect(tree.root.findAllByType('Row')).toHaveLength(0); expect(text()).not.toContain('Question'); expect(tree.root.findByType('Search').props.disabled).toBe(true);
 });

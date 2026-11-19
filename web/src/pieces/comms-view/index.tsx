@@ -67,8 +67,11 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const archived = navigation?.archived ?? localArchived, query = navigation?.search ?? localQuery;
   const live = snapshot.status === 'live';
-  const display = selected && detail && detail.status !== 'live' ? { ...snapshot, threads: snapshot.threads.filter(thread => thread.id !== selected) } : snapshot;
-  const shown = threadRows(display, archived, navigation ? '' : query);
+  // An open thread whose own reading failed or was refused leaves the list too. One still loading keeps its row:
+  // the row is what was clicked, and it holds the keyboard focus.
+  const display = selected && detail && detail.status !== 'live' && detail.status !== 'loading' ? { ...snapshot, threads: snapshot.threads.filter(thread => thread.id !== selected) } : snapshot;
+  // Rows kept from the last folder are drawn as that folder's until the chosen one answers.
+  const shown = threadRows(display, snapshot.archived ?? archived, navigation ? '' : query);
   const current = live && !!selected && !!detail?.thread && detail.status === 'live' && detail.thread.id === selected ? detail : undefined;
   const open = async (agent: string) => {
     if (openingLock.current || !live || !actions) return;
@@ -84,7 +87,7 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
     catch { if (mounted.current) setFailed(true); }
     finally { openingLock.current = false; if (mounted.current) setOpening(false); }
   };
-  return <Split label="Comms" folders={['Threads', 'Archived'].map((label, index) => ({ id: String(index), label, count: live && snapshot.folders ? index ? snapshot.folders.archived : snapshot.folders.threads : threadRows(display, !!index, '').length }))} folder={archived ? '1' : '0'} onFolder={id => navigation ? navigation.folder(id === '1') : setArchived(id === '1')} listTitle="Threads"
+  return <Split label="Comms" folders={['Threads', 'Archived'].map((label, index) => ({ id: String(index), label, count: live && snapshot.folders ? index ? snapshot.folders.archived : snapshot.folders.threads : threadRows(display, !!index, '').length }))} folder={archived ? '1' : '0'} onFolder={id => navigation ? navigation.folder(id === '1') : setArchived(id === '1')} listTitle="Threads" listBusy={snapshot.settling} listKey={JSON.stringify([archived, navigation?.search, navigation?.offset])}
     search={<Input aria-label="Search conversations" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.query(event.target.value) : setQuery(event.target.value)} />}
     listTop={<>{navigation && <nav aria-label="Conversation pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{live && actions && <div><details><summary>New conversation</summary>{snapshot.agents.map(agent => <Button key={agent.id} disabled={opening} onClick={() => void open(agent.id)}>Chat with {agent.name}</Button>)}</details>{failed && <Error text="Could not start the conversation. Try again." />}</div>}</>}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Conversations are unavailable" /> : shown.length ? shown.map(thread => <Row key={thread.id} title={thread.title} meta={`${thread.agent}${thread.project ? ` · ${thread.project}` : ''}`} status={thread.working ? 'Working' : thread.pinned ? 'Pinned' : 'Ready'} selected={thread.id === selected} onClick={() => select(thread.id)} />) : <Empty title="No conversations here" />}

@@ -23,7 +23,8 @@ function MentionedChange({ id, go, conversation }: { id: string; go(path: string
 }
 export function SharedWork({ conversation, refs, go }: { conversation: string; refs: readonly { ref: string }[]; go(path: string): void }) {
   const [offset, setOffset] = useState(0);
-  const reading = useSelection(useMemo(() => ({query:sourceQuery,variables:{conversation,offset},decode(data){if(!Array.isArray(data.tasks)||!Array.isArray(data.conversationMadeChanges))throw Error('Invalid source work');return {tasks:data.tasks as Task[],changes:data.conversationMadeChanges as {id:string}[]};}}), [conversation, offset]));
+  // Another page keeps the last one's rows and the pager usable until it answers. Mounted per conversation.
+  const reading = useSelection(useMemo(() => ({query:sourceQuery,variables:{conversation,offset},decode(data){if(!Array.isArray(data.tasks)||!Array.isArray(data.conversationMadeChanges))throw Error('Invalid source work');return {tasks:data.tasks as Task[],changes:data.conversationMadeChanges as {id:string}[]};}}), [conversation, offset]), { keep: true });
   const rows = reading.status === 'live' ? reading.data?.tasks ?? [] : [], source = rows.slice(0,50);
   const madeChanges = reading.status === 'live' ? reading.data?.changes ?? [] : [];
   const mentioned = [...new Set(refs.map(row => row.ref))].filter(id => /^t-\d+$/.test(id) && !source.some(task => task.id === id));
