@@ -37,6 +37,7 @@ export function parseMachineRead(input: unknown): MachineReadRequest {
 
 export function machineReadCommand(read: MachineReadRequest, journalText = true): [string, ...string[]] {
   switch (read.kind) {
+    case 'login-expiry':
     case 'mirror-freshness':
     case 'alert-ledger':
     case 'cleanup-receipt':
