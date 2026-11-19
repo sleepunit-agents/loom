@@ -598,7 +598,9 @@ On success the body sends its report alongside settlement. A body with validated
   request), and a timing row (every measured call). Open live selections are read again for these at most
   once in a minute (`STAMP_WAKE_MS` in `src/next-data.ts`), so a window shows such a time up to a minute
   after it was written. The rows themselves are written at once, and placement and the silence sweep
-  read them as before.
+  read them as before. The numbers a worker reads on its own machine every few minutes (a disk's room,
+  the memory available) are kept back the same way while they raise and clear no condition
+  (`MachineConditions.read`, `runtime.machineReadings`); a condition raised or cleared is told at once.
 - **What is enforced.** Only a write that has checked what it wrote may be kept back: a report that left
   the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
   a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and

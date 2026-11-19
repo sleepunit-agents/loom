@@ -11,6 +11,7 @@ import { Dispatcher } from './dispatcher.js';
 import { harnessCannotRun } from './body-harnesses.js';
 import { Jobs } from './jobs.js';
 import { Machines } from './machines.js';
+import { MachineConditions } from './machine-conditions.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0).reverse()) close(); });
@@ -155,6 +156,19 @@ it('does not take a jump of the server clock for silence: after one it waits a f
   expect(store.get(retry.id).state).toBe('running');
   fake.advance(300_000);
   expect(store.get(retry.id).state).toBe('lost');
+});
+
+it('closes on its sweep what was said about the condition of a machine since removed, and leaves a machine that is there alone', () => {
+  const f = fixture(), conditions = new MachineConditions(f.db, f.now);
+  f.db.update(boxes).set({ lastSeenAt: f.now() }).where(eq(boxes.id, 'worker')).run();
+  conditions.read('worker', [{ kind: 'disk', thing: '/', sizeBytes: 100 * 1024 ** 3, freeBytes: 9 * 1024 ** 3 }]);
+  f.runtime.start();
+  f.clock.advance(30_000);
+  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.words])).toEqual([['waiting', 'Workshop: / is 91% full (9 GB free). Alerts at 85%.']]);
+  f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run();
+  f.clock.advance(30_000);
+  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.resolution])).toEqual([['resolved', 'No longer watched']]);
+  expect(f.error).not.toHaveBeenCalled();
 });
 
 it('tells the owner on its sweep about a sign-in found gone on a machine that is reporting', () => {

@@ -319,6 +319,8 @@ it('refreshes from the normal worker before claims and reports later failure thr
   const pending = workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
     on: () => {}, off: () => {}, output, error, usage: () => async () => { if (attempts++ > 0) throw Error('private diagnostic'); return f.observation.windows; },
     containerExecutor: () => ({} as never),
+    // The report of the machine itself has its own tests (shared-machine-readings.test.ts); what this machine's disks hold is no part of this one.
+    reportReadings: async () => ({ changed: false }),
     run: async input => { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true); expect(await input.control.next()).toMatchObject({ id: 'quota-ready-job', box: 'worker', model: 'model', account: 'account', harness: 'native' }); expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' }); release(); await ended; },
     pause: async (ms, signal) => {
       expect(ms).toBe(60_000);

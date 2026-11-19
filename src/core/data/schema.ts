@@ -963,6 +963,50 @@ export const boxFacts = sqliteTable('box_facts', {
   check('box_facts_from_owner_boolean', sql`${t.fromOwner} in (0, 1)`),
 ]);
 
+/** The latest reading of one thing on a machine: a filesystem's room, the memory available, or whether the
+ * container runtime answers. One row per machine, kind and thing, replaced by each reading; no history.
+ * `thing` is the watched path for a disk and empty otherwise. `level` is what loom made of the reading
+ * (runtime/machine-conditions.ts): the worker sends numbers, never a judgement. `since` and `urgent_since`
+ * name the occasion a notice was raised for, and are absent while that level is not held. */
+export const boxReadings = sqliteTable('box_readings', {
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
+  thing: text('thing').notNull(),
+  usedPercent: integer('used_percent'),
+  sizeMib: integer('size_mib'),
+  freeMib: integer('free_mib'),
+  answers: integer('answers', { mode: 'boolean' }),
+  level: text('level', { enum: ["ok", "raised", "urgent"] }).notNull(),
+  since: text('since'),
+  urgentSince: text('urgent_since'),
+  readAt: text('read_at').notNull(),
+}, t => [
+  primaryKey({ columns: [t.box, t.kind, t.thing] }),
+  check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
+  check('box_readings_level', sql`${t.level} in ('ok', 'raised', 'urgent')`),
+  check('box_readings_used_percent_range', sql`${t.usedPercent} is null or ${t.usedPercent} between 0 and 100`),
+  check('box_readings_answers_boolean', sql`${t.answers} is null or ${t.answers} in (0, 1)`),
+  check('box_readings_since_utc', utc(t.since)),
+  check('box_readings_urgent_since_utc', utc(t.urgentSince)),
+  check('box_readings_read_at_utc', utc(t.readAt)),
+]);
+
+/** The lines a machine's readings are held to, for the whole household: one row, and the columns' own
+ * defaults until it is there (runtime/machine-conditions.ts reads both). */
+export const boxAlertSettings = sqliteTable('box_alert_settings', {
+  singleton: integer('singleton').primaryKey().default(1).notNull(),
+  diskPercent: integer('disk_percent').notNull().default(85),
+  diskUrgentPercent: integer('disk_urgent_percent').notNull().default(95),
+  diskFreeMib: integer('disk_free_mib').notNull().default(5120),
+  memoryFreeMib: integer('memory_free_mib').notNull().default(512),
+}, t => [
+  check('box_alert_settings_singleton', sql`${t.singleton} = 1`),
+  check('box_alert_settings_disk_percent_range', sql`${t.diskPercent} between 1 and 100`),
+  check('box_alert_settings_disk_urgent_percent_range', sql`${t.diskUrgentPercent} between ${t.diskPercent} and 100`),
+  check('box_alert_settings_disk_free_mib_range', sql`${t.diskFreeMib} >= 0`),
+  check('box_alert_settings_memory_free_mib_range', sql`${t.memoryFreeMib} >= 0`),
+]);
+
 /** One row per run of an agent. */
 export const jobs = sqliteTable('jobs', {
   id: text('id').primaryKey().notNull(),
@@ -1767,6 +1811,7 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   ownerRow: one(members, { fields: [boxes.owner], references: [members.id], relationName: 'boxes_owner' }),
   boxAgentsByBox: many(boxAgents, { relationName: 'box_agents_box' }),
   boxFactsByBox: many(boxFacts, { relationName: 'box_facts_box' }),
+  boxReadingsByBox: many(boxReadings, { relationName: 'box_readings_box' }),
   jobsByBox: many(jobs, { relationName: 'jobs_box' }),
   agentBoxesByBox: many(agentBoxes, { relationName: 'agent_boxes_box' }),
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
@@ -1781,6 +1826,10 @@ export const boxAgentsRelations = relations(boxAgents, ({ one }) => ({
 
 export const boxFactsRelations = relations(boxFacts, ({ one }) => ({
   boxRow: one(boxes, { fields: [boxFacts.box], references: [boxes.id], relationName: 'box_facts_box' }),
+}));
+
+export const boxReadingsRelations = relations(boxReadings, ({ one }) => ({
+  boxRow: one(boxes, { fields: [boxReadings.box], references: [boxes.id], relationName: 'box_readings_box' }),
 }));
 
 export const jobsRelations = relations(jobs, ({ one, many }) => ({
@@ -2225,6 +2274,8 @@ export const tables = {
   boxes,
   boxAgents,
   boxFacts,
+  boxReadings,
+  boxAlertSettings,
   jobs,
   jobNeeds,
   agentRunSettings,
@@ -2306,6 +2357,7 @@ export const schema = { ...tables, ...plumbing,
   boxesRelations,
   boxAgentsRelations,
   boxFactsRelations,
+  boxReadingsRelations,
   jobsRelations,
   jobNeedsRelations,
   agentRunSettingsRelations,

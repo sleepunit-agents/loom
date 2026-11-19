@@ -1,4 +1,5 @@
 import type { LoginReason } from './account-login-check.js';
+import type { MachineReading } from './machine-check.js';
 import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. Claims are never replayed. */
 import { randomUUID } from 'node:crypto';
@@ -149,6 +150,10 @@ export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: 
 /** What this machine's files say about each sign-in it watches (account-login-check.ts), all of them each time. */
 export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: readonly WorkerLoginCheck[]) {
   return operationCaller(input)('signInState', { logins }, z.object({ changed: z.number().int().nonnegative() }).strict());
+}
+/** What this machine's worker read about the machine itself (machine-check.ts), everything it watches each time. */
+export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[]) {
+  return operationCaller(input)('machineReadings', { readings }, z.object({ changed: z.boolean() }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

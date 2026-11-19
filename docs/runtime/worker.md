@@ -1036,6 +1036,117 @@ session is said from parts (the machine's name under the machines rule, the sess
 its stored label. A job that is unended past the runtime's own limits (no report for the silence interval, or queued
 past the queue deadline) and that no sweep has ended is still listed, last, with `quietSince`.
 
+## What a machine says about itself
+
+A worker reads a small fixed set of things on its own machine and tells loom
+the numbers (`runtime.machineReadings`). loom decides what is a condition,
+tells the machine's owner once, and closes what it said when a later reading is
+back under the line. No model takes part, and the worker sends no words of its
+own: numbers, a yes or no, and for a disk the path watched.
+
+What is read (`src/runtime/machine-check.ts`), with Node's own calls and no
+program run:
+
+- **Disks.** The room on the filesystem under `/`, under the worker's state
+  directory, under the place the container runtime keeps its containers (what
+  the engine answers as `DockerRootDir`), and under each path in `watchPaths`.
+  Two paths on one filesystem are watched once, under the first. A filesystem
+  kept in memory or made up by the kernel, a read-only one and a path that is
+  not there are left out. The size is what a user can fill, so the fullness is
+  the one `df` shows.
+- **Memory.** What is available to start something new with (on Linux,
+  `MemAvailable`), and the total.
+- **The container runtime.** Whether the engine at `container.socket` answers
+  one small question within five seconds. A worker that only reports has no
+  engine and says nothing of one.
+
+System load is not read: no line is drawn on it.
+
+Each read is given five seconds. One that fails or does not come back (a
+network mount whose server is gone) is named as unknown; loom leaves what it
+last learned about that thing as it was, and the rest is still told. A read
+that never came back is not started again on the same path until it has.
+
+```json
+"machineCheckMs": 300000,
+"watchPaths": ["/srv/data"]
+```
+
+Both are optional. Left out, the worker reads every five minutes and watches
+`/`, its state directory and the engine's own directory, so a worker's
+configuration needs no change. `machineCheckMs` is between ten seconds and an
+hour. A watched path is absolute, of letters, digits and `. _ @ + : -`, at most
+200 long; the worker stops on any other as on a file that is not valid. A
+worker that only reports (`reportOnly`) watches its machine as well. A report
+loom does not take prints `Worker machine readings unavailable` and is tried
+again at the next interval.
+
+### The lines, and when a condition is raised and cleared
+
+The lines are the household's (`box_alert_settings`; an owner sets them with
+`machine.setAlertLines`), and the defaults stand until one is set:
+
+| Line | Default | Condition |
+| --- | --- | --- |
+| `diskPercent` | 85 | a disk at or over this is raised |
+| `diskUrgentPercent` | 95 | a disk at or over this is urgent |
+| `diskFreeMib` | 5120 (5 GiB) | a disk with less free than this is raised |
+| `memoryFreeMib` | 512 | memory available under this, twice in a row, is raised |
+| | | the container runtime not answering, twice in a row, is raised |
+
+A condition is raised at its line and cleared only under it by a margin, so a
+reading that hovers at the line raises once and stays raised: a percent line
+clears three points under it (85 clears at 82, 95 at 92), and a floor clears
+with a tenth more than the floor. A disk is raised by the first reading over
+its line. Memory and the container runtime dip for a moment (a build, an engine
+being restarted), so they are raised only by two readings in a row. A floor is
+asked only of something at least twice its size: a smaller disk is held to the
+percent line alone. A machine is held to changed lines by its next reading.
+
+### What the owner is told
+
+One notice per machine, thing and occasion, to the machine's owner, in loom's
+words: `loom: / is 91% full (18 GB free). Alerts at 85%.` The same reading
+again says nothing new. A raised disk that crosses the urgent line adds one
+urgent notice (`Urgent at 95%.`) beside the first. When a later reading clears
+the condition loom closes the notice with what changed: `/ is at 71% (60 GB
+free), under the 85% line.` A notice its reader closed by hand is not sent
+again for the same occasion; a condition that cleared and came back is a new
+occasion with a notice of its own.
+
+A machine that stops reporting keeps its conditions and their notices as they
+were; its silence is its own notice. A machine taken out of the household has
+its readings dropped and their notices closed (`No longer watched`), at the
+next sweep.
+
+`box_readings` keeps the latest reading of each thing and no history. It is
+read with the machine (`boxReadings`, by the machines rule): the machine's own
+member and household owners. A reading that raises and clears nothing moves
+only numbers, and reaches an open window as a last-seen time does
+([accepted trade-offs](../accepted-tradeoffs.md)); a condition raised or
+cleared is shown at once.
+
+### The machine loom itself is on
+
+The server does not read its own disk. A reading belongs to a machine and a
+notice goes to a machine's owner, and the server is neither: the machine it
+runs on is watched by the worker on it, like any other. A household whose loom
+host runs no bodies enrolls a worker there that only reports (`reportOnly`),
+which is what that kind of worker is for. If loom's home is on a filesystem of
+its own, name its path in that worker's `watchPaths`.
+
+### A condition the machine cannot see for itself
+
+Some conditions are only visible from outside (a hypervisor holding a guest
+for want of disk). Nothing reads those yet. The record admits it: what loom
+keeps is a machine, a kind, a thing and a level, and the notices go by the
+level alone (`MachineConditions.settle`). A reader on another host would
+report a fixed word about a named machine through an operation of its own,
+with a credential bound to the machines it may speak for, and loom would write
+the same row with a kind added for it and the level the word stands for. It
+would take a schema step for the new kind and no change to how notices are
+raised and closed.
+
 ## Machine-reported facts
 
 An optional `facts` array in the worker configuration reports capability labels,

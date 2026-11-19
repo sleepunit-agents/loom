@@ -18,6 +18,8 @@ function fixture() {
     reportUsage: vi.fn(async (_remote: unknown, _observation: { basis: string }) => ({ recorded: true })), usageUnavailable: vi.fn(async () => ({ recorded: true })),
     // The sign-in report every worker makes: stubbed, so that these tests reach no network and count only their own lines.
     reportLogins: vi.fn(async () => ({ changed: 0 })),
+    // And the report of the machine itself: the tests of that report give their own reader and report.
+    machineReader: vi.fn(() => async () => []), reportReadings: vi.fn(async () => ({ changed: false })),
     control: vi.fn(() => ({} as never)), containerExecutor: vi.fn(() => ({} as never)),
     run: vi.fn(async ({ signal }: { signal: AbortSignal }) => { signal.addEventListener('abort', () => stopRun.resolve(), { once: true }); await stopRun.promise; }),
     pause: vi.fn(async (_ms: number, signal: AbortSignal) => { await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }) };

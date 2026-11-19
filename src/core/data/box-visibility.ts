@@ -7,7 +7,7 @@ import type { QueryVisibility } from './queries.js';
 /** Read filters for the machines registry. The rules are stated in policy.ts.
  * Installed runtime services continue to use the shared database directly. */
 export function boxVisibility(viewer: Viewer): QueryVisibility {
-  const visibility = sqlVisibility(viewer, ['boxes', 'boxAgents', 'boxFacts']);
+  const visibility = sqlVisibility(viewer, ['boxes', 'boxAgents', 'boxFacts', 'boxReadings', 'boxAlertSettings']);
   return {
     ...visibility,
     // The machine roster shows current placements. The saved grant can take effect again after a restore.

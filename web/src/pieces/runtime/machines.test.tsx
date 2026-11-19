@@ -28,3 +28,32 @@ it('shows owner history and proposes and answers scoped read grants',async()=>{
  await act(async()=>tree.update(h(OwnerMachines,{member:'sam'})));
  expect(JSON.stringify(tree.toJSON())).not.toContain('job-private');
 });
+it('shows what each machine last read on itself quietly, and an open condition plainly',async()=>{
+ const before=f.feed.data;
+ const reading={usedPercent:null,sizeMib:null,freeMib:null,answers:null,level:'ok'};
+ f.feed={status:'live',data:{...before,boxReadings:[
+  {...reading,box:'box',kind:'memory',thing:'',sizeMib:16384,freeMib:1946},
+  {...reading,box:'box',kind:'disk',thing:'/',usedPercent:71,sizeMib:204800,freeMib:61440},
+  {...reading,box:'box',kind:'containers',thing:'',answers:true},
+  {...reading,box:'other',kind:'disk',thing:'/',usedPercent:99,sizeMib:1000,freeMib:10,level:'urgent'},
+ ]}} as never;
+ f.call.mockResolvedValue([]);
+ await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
+ const text=()=>tree.root.findAllByType('p').map((p:{children:unknown[]})=>p.children.map(child=>typeof child==='string'?child:(child as {children:string[]}).children.join('')).join(''));
+ // Shown without opening the machine, and nothing of a machine that is not this member's.
+ expect(text()).toEqual(['Disk 71% · 60 GB free · Memory 1.9 GB available · Container runtime answering']);
+ expect(tree.root.findAllByProps({role:'status'})).toHaveLength(0);
+ f.feed={status:'live',data:{...before,boxReadings:[
+  {...reading,box:'box',kind:'disk',thing:'/',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised'},
+  {...reading,box:'box',kind:'disk',thing:'/srv/data',usedPercent:97,sizeMib:102400,freeMib:3072,level:'urgent'},
+  {...reading,box:'box',kind:'containers',thing:'',answers:false,level:'raised'},
+ ]}} as never;
+ await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
+ expect(text()).toEqual(['/ is running out of room: 91% full, 18 GB free.','/srv/data is almost out of room: 97% full, 3 GB free.','The container runtime is not answering.',
+  'Disk / 91% · 18 GB free · Disk /srv/data 97% · 3 GB free · Container runtime not answering']);
+ expect(tree.root.findAllByProps({role:'status'})).toHaveLength(3);
+ // A machine with no reading yet (an older worker, or none reporting) shows no line at all.
+ f.feed={status:'live',data:before} as never;
+ await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
+ expect(text()).toEqual([]);
+});

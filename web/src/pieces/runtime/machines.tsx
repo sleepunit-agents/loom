@@ -2,11 +2,23 @@ import {useEffect, useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {memberOperation} from '../../data/operation';
 import {Button, Error as ErrorView, Loading} from '../../kit';
+import {conditionLine, readingLine, readingsOf, type Reading} from './machine-readings';
 
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
 type Card = {id:string; ask:string};
-const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } agents { id } }';
+const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } boxReadings { box kind thing usedPercent sizeMib freeMib answers level } agents { id } }';
+
+/** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
+function MachineReadings({readings}: {readings:Reading[]}) {
+ if(!readings.length)return null;
+ const disks=readings.filter(reading=>reading.kind==='disk').length;
+ const open=readings.map(conditionLine).filter((line):line is string=>!!line);
+ return <div className="grid gap-1">
+  {open.map(line=><p key={line} role="status"><strong>{line}</strong></p>)}
+  <p className="text-muted-foreground">{readings.map(reading=>readingLine(reading,disks)).join(' · ')}</p>
+ </div>;
+}
 
 function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
  const [revision, refresh] = useState(0);
@@ -65,13 +77,14 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
 }
 
 export function OwnerMachines({member}:{member:string}) {
- const feed=useDataQuery<{boxes:Machine[]; agents:{id:string}[]}>(query);
+ const feed=useDataQuery<{boxes:Machine[]; boxReadings?:Reading[]; agents:{id:string}[]}>(query);
  const [open, setOpen]=useState('');
  const machines=feed.status==='live'?feed.data?.boxes?.filter(box=>box.owner===member):undefined;
  if(!machines?.length)return null;
  return <section aria-label="Your machines" className="grid gap-3"><h2>Your machines</h2>
   {machines.map(box=><article key={box.id} className="grid gap-3 rounded-xl border p-4"><h3>
    <Button variant="outline" aria-expanded={open===box.id} onClick={()=>setOpen(open===box.id?'':box.id)}>{box.name}{box.revokedAt?' (revoked)':''}</Button></h3>
+   {!box.revokedAt&&<MachineReadings readings={readingsOf(feed.data?.boxReadings,box.id)}/>}
    {open===box.id&&<MachineSettings box={box} agents={(feed.data?.agents??[]).map(agent=>agent.id)}/>}
   </article>)}
  </section>;

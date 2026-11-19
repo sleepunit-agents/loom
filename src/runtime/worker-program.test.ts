@@ -16,6 +16,8 @@ function fixture() {
     off: (name: string, stop: () => void) => { expect(handlers.get(name)).toBe(stop); handlers.delete(name); },
     // The sign-in report every hosting worker makes; the tests of that report give their own.
     reportLogins: vi.fn(async () => ({ changed: 0 })),
+    // And the report of the machine itself: the tests of that report give their own reader and report.
+    machineReader: vi.fn(() => async () => []), reportReadings: vi.fn(async () => ({ changed: false })),
     error: vi.fn(), control: vi.fn().mockReturnValue({}), containerExecutor: vi.fn().mockReturnValue({}), run: vi.fn().mockResolvedValue(undefined) };
 }
 const state = defaultWorkerState('b');
@@ -509,4 +511,53 @@ it('watches the machine\'s own sign-ins from a worker that only reports, and say
 for (const source of ['~/.claude', '.claude', '']) it(`refuses a sign-in directory of the machine's own that is not a whole path (${JSON.stringify(source)})`, async () => {
   const f = fixture(); f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, hostLogins: { subscription: { claude: { source } } } }) : 'private-token');
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.run).not.toHaveBeenCalled();
+});
+
+it('reads its own machine on a slow clock of its own and reports everything it watches each time', async () => {
+  const f = fixture(), sent: unknown[] = [], waits: number[] = [];
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, state: '/var/lib/loom-worker', watchPaths: ['/srv/data'] }) : 'private-token');
+  const readings = [[{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }], [{ kind: 'disk', thing: '/', unknown: true }], [{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }]];
+  let round = 0;
+  const machineReader = vi.fn((_input: { paths: readonly string[]; engine?: unknown; signal?: AbortSignal }) => async () => readings[round]);
+  const reportReadings = vi.fn(async (_remote: unknown, said: unknown) => { sent.push(said); return { changed: false }; });
+  const machinePause = vi.fn(async (ms: number) => { waits.push(ms); if (++round > 2) throw new Error('stop'); });
+  f.run.mockImplementation(() => new Promise<void>(resolve => { const wait = setInterval(() => { if (round > 2) { clearInterval(wait); resolve(); } }, 1); }));
+  expect(await workerProgram({ ...f, machineReader: machineReader as never, reportReadings: reportReadings as never, machinePause })).toBe(0);
+  // Root, its own state directory and what the configuration adds; the container runtime it was given is asked too.
+  expect(machineReader).toHaveBeenCalledExactlyOnceWith({ paths: ['/', '/var/lib/loom-worker', '/srv/data'], engine: expect.any(Function), signal: expect.any(AbortSignal) });
+  // The same reading is said again: loom keeps the time it was read, and the worker keeps no judgement of its own.
+  expect(sent).toEqual(readings);
+  expect(reportReadings).toHaveBeenCalledWith(expect.objectContaining({ url: config.url, token: 'private-token' }), readings[0]);
+  expect(waits).toEqual([300_000, 300_000, 300_000]);
+  expect(f.error).not.toHaveBeenCalled();
+});
+it('goes on working when its machine cannot be read or the report is not taken, and says one fixed line', async () => {
+  const f = fixture();
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, machineCheckMs: 60_000 }) : 'private-token');
+  let round = 0;
+  const reportReadings = vi.fn(async () => { if (round === 0) throw new Error('private-token refused at https://loom.example'); return { changed: true }; });
+  const machinePause = vi.fn(async (_ms: number) => { if (++round > 1) throw new Error('stop'); });
+  f.run.mockImplementation(() => new Promise<void>(resolve => { const wait = setInterval(() => { if (round > 1) { clearInterval(wait); resolve(); } }, 1); }));
+  expect(await workerProgram({ ...f, reportReadings: reportReadings as never, machinePause })).toBe(0);
+  expect(reportReadings).toHaveBeenCalledTimes(2);
+  expect(machinePause).toHaveBeenCalledWith(60_000, expect.any(AbortSignal));
+  expect(f.error.mock.calls.flat()).toEqual(['Worker machine readings unavailable\n']);
+  expect(f.run).toHaveBeenCalledOnce();
+});
+it('watches its machine when it only reports, with no state directory and no container runtime of its own', async () => {
+  const f = fixture();
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, reportOnly: true }) : 'private-token');
+  const machineReader = vi.fn((_input: unknown) => async () => []);
+  const stop = () => { f.handlers.get('SIGTERM')!(); };
+  const reportReadings = vi.fn(async () => { stop(); return { changed: false }; });
+  expect(await workerProgram({ ...f, machineReader: machineReader as never, reportReadings: reportReadings as never, health: vi.fn(async () => ({ ok: true as const })),
+    readRemote: (() => ({ next: async () => null, done: async () => true })) as never, pause: async (_ms, signal) => { if (!signal.aborted) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); throw new Error('stop'); } })).toBe(0);
+  expect(machineReader).toHaveBeenCalledExactlyOnceWith({ paths: ['/'], signal: expect.any(AbortSignal) });
+  expect(reportReadings).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token: 'private-token' }), []);
+});
+it.each([['machineCheckMs', 5_000], ['machineCheckMs', 4_000_000], ['watchPaths', ['relative']], ['watchPaths', ['/has space']], ['watchPaths', ['/up/../etc']]])('refuses a configuration whose %s is %j', async (key, value) => {
+  const f = fixture();
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, [key]: value }) : 'private-token');
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
+  expect(f.run).not.toHaveBeenCalled();
 });

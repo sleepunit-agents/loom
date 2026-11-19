@@ -107,6 +107,7 @@ import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { measuringSettingsService } from './core/measuring/settings.js';
 import { registerSharedAccountReports } from './shared-account-reports.js';
+import { registerSharedMachineReadings } from './shared-machine-readings.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -233,6 +234,7 @@ export function sharedRoot(options: {
   registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer)||currentMember(db,viewer));
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
+  registerSharedMachineReadings(operations, db, now, credentials.runner);
   registerModelAccountAdmin(operations, db, roles, now);
   const stopMachineReads=registerMachineReads(operations,db,now,bodyScope,credentials.runner);
   const accountSignIns = registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);

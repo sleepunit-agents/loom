@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
 import { boxVisibility } from './box-visibility';
 import { dataQueries } from './queries';
-import { agents, boxAgents, boxes, members } from './schema';
+import { agents, boxAgents, boxes, boxReadings, members } from './schema';
 import { deskBoxesQuery } from '../../../web/src/pieces/attention/bar-stats';
 
 it('executes the minimal enrollment selection and reapplies current visibility without exposing machine details', async () => {
@@ -23,7 +23,8 @@ it('executes the minimal enrollment selection and reapplies current visibility w
     db.update(boxes).set({readers:['fern']}).where(sql`${boxes.id} = 'live'`).run();
     let visible = true;
     // Fixture SQL predicate only; production Runtime visibility and root mounting belong to their owner.
-    const schema = dataQueries(client, {tables:['boxes'],visibility:{boxes:f=>visible ? sql`${f.owner} = 'member'` : sql`false`}});
+    const schema = dataQueries(client, {tables:['boxes','boxReadings'],visibility:{boxes:f=>visible ? sql`${f.owner} = 'member'` : sql`false`,
+      boxReadings:f=>visible ? sql`${f.box} in (select id from boxes where owner = 'member')` : sql`false`}});
     const read = () => graphql({schema,source:deskBoxesQuery});
     const settings = await graphql({schema,source:'{ boxes { id readers } }'});
     expect(settings.errors).toBeUndefined();
@@ -32,10 +33,16 @@ it('executes the minimal enrollment selection and reapplies current visibility w
     expect(result.errors).toBeUndefined();
     expect(result.data?.boxes).toEqual(expect.arrayContaining([{id:'live',revokedAt:null},{id:'gone',revokedAt:at}]));
     expect(result.data?.boxes).toHaveLength(2);
+    // Which machines have a condition open, and nothing about it: no path, number or level, and none of a machine not seen.
+    expect(result.data?.boxReadings).toEqual([]);
+    const reading = {kind:'disk' as const,readAt:at};
+    db.insert(boxReadings).values([{...reading,box:'live',thing:'/',usedPercent:91,level:'raised'},{...reading,box:'live',thing:'/srv',usedPercent:40,level:'ok'},
+      {...reading,box:'hidden',thing:'/',usedPercent:99,level:'urgent'}]).run();
+    expect((await read()).data?.boxReadings).toEqual([{box:'live'}]);
     db.update(boxes).set({revokedAt:at}).where(sql`${boxes.id} = 'live'`).run();
     expect((await read()).data?.boxes).toEqual(expect.arrayContaining([{id:'live',revokedAt:at}]));
     visible = false;
-    expect((await read()).data).toEqual({boxes:[]});
+    expect((await read()).data).toEqual({boxes:[],boxReadings:[]});
   } finally { client.close(); }
 });
 

@@ -29,7 +29,7 @@ import { sqlVisibility } from './policy-sql.js';
 import { JobSummaries, jobSummaryFields, nextTerminalDeadline } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
-export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
+export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings', 'boxAlertSettings', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;

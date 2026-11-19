@@ -16,7 +16,7 @@ import { GraphQLInt } from 'graphql/index.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, boxFacts, members, tokens } from './core/data/schema.js';
+import { boxes, boxFacts, boxReadings, inbox, members, tokens } from './core/data/schema.js';
 import { STAMP_WAKE_MS } from './next-data.js';
 import { SILENCE_MS } from './runtime/silence.js';
 import { sharedRoot } from './shared-root.js';
@@ -65,10 +65,16 @@ async function fixture() {
       body: JSON.stringify({ input: { execution: 'container', facts: ['os:linux'], slots: 2, ...input }, id: `poll-${clock.now()}-${Math.random()}` }) });
     expect(await response.json()).toEqual({ ok: true, value: null });
   };
+  /** What the worker read on its own machine: a 200 GiB disk this full, and its memory. */
+  const reading = async (percent: number, freeMemoryMib = 12_288) => {
+    const response = await root.http.request('http://loom/api/runtime/machineReadings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys.worker },
+      body: JSON.stringify({ input: { readings: [{ kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) }, { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
+    return (await response.json() as { value: { changed: boolean } }).value.changed;
+  };
   // Long enough for a selection that was woken to have been read again.
   const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
   const seen = () => db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.lastSeenAt;
-  return { root, db, clock, now, watch, poll, settle, seen, reads: () => reads };
+  return { root, db, clock, now, watch, poll, reading, settle, seen, reads: () => reads };
 }
 
 it('does not read an open selection again for a poll that found no work, and shows the last-seen time within a minute', async () => {
@@ -145,4 +151,40 @@ it('does not read an open selection again for a write that was refused before it
   expect(f.root.operations.call('http', { kind: 'member', id: 'owner' }, 'runtime.next', { execution: 'container' }, 'not-a-worker')).toMatchObject({ ok: false, code: 'denied' });
   await f.settle();
   expect(f.reads()).toBe(before); expect(window.closed()).toBe(false);
+});
+
+it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
+  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
+  // The first reading is a thing watched for the first time: a change, shown at once.
+  f.clock.advance(1000); expect(await f.reading(71)).toBe(true);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 71, level: 'ok' }] }));
+  await f.settle();
+  const after = f.reads(), frames = window.frames();
+  // The same reading again and again, and readings whose numbers move under every line.
+  for (const percent of [71, 71, 71, 72, 74, 71, 80, 84, 71, 71]) { f.clock.advance(1000); expect(await f.reading(percent, 12_288 - percent), String(percent)).toBe(false); await f.settle(); }
+  expect(f.db.select().from(boxReadings).all().map(row => [row.kind, row.usedPercent ?? row.freeMib, row.readAt])).toEqual([['disk', 71, f.now()], ['memory', 12_217, f.now()]]);
+  expect(f.reads()).toBe(after); expect(window.frames()).toBe(frames); expect(window.closed()).toBe(false);
+  // Over the line is a condition: raised, told to the machine's owner and shown at once. Said again, it is nothing new.
+  const quiet = f.reads();
+  f.clock.advance(1000); expect(await f.reading(91)).toBe(true);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 91, level: 'raised' }] }));
+  expect(f.db.select().from(inbox).all().map(item => [item.to, item.words])).toEqual([['sam', 'worker: / is 91% full (18 GB free). Alerts at 85%.']]);
+  // Five seconds after a notice is filed loom reads every selection once more, whether or not anything is
+  // reported meanwhile. That is the notice's cost and not a reading's, and is let pass before the repeats are counted.
+  f.clock.advance(6000); await f.settle();
+  const raised = f.reads();
+  expect(raised).toBeGreaterThan(quiet);
+  for (let i = 0; i < 5; i++) { f.clock.advance(1000); expect(await f.reading(91)).toBe(false); await f.settle(); }
+  expect(f.reads()).toBe(raised);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  // Cleared is shown at once too.
+  f.clock.advance(1000); expect(await f.reading(70)).toBe(true);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 70, level: 'ok' }] }));
+  await f.settle();
+  // The numbers alone still reach the window, late: within a minute, as a last-seen time does. (This test keeps
+  // clear of a whole minute until here: the desk's clock has every selection read at each one.)
+  f.clock.advance(1000); expect(await f.reading(80)).toBe(false); await f.settle();
+  expect(window.data()).toMatchObject({ boxReadings: [{ usedPercent: 70 }] });
+  f.clock.advance(60_000);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 80, level: 'ok' }] }), { timeout: 3000 });
 });

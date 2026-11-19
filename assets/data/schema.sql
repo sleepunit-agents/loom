@@ -881,6 +881,42 @@ CREATE TABLE `box_facts` (
 	CONSTRAINT "box_facts_from_owner_boolean" CHECK("box_facts"."from_owner" in (0, 1))
 );
 
+CREATE TABLE `box_readings` (
+	`box` text NOT NULL,
+	`kind` text NOT NULL,
+	`thing` text NOT NULL,
+	`used_percent` integer,
+	`size_mib` integer,
+	`free_mib` integer,
+	`answers` integer,
+	`level` text NOT NULL,
+	`since` text,
+	`urgent_since` text,
+	`read_at` text NOT NULL,
+	PRIMARY KEY(`box`, `kind`, `thing`),
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "box_readings_kind" CHECK("box_readings"."kind" in ('disk', 'memory', 'containers')),
+	CONSTRAINT "box_readings_level" CHECK("box_readings"."level" in ('ok', 'raised', 'urgent')),
+	CONSTRAINT "box_readings_used_percent_range" CHECK("box_readings"."used_percent" is null or "box_readings"."used_percent" between 0 and 100),
+	CONSTRAINT "box_readings_answers_boolean" CHECK("box_readings"."answers" is null or "box_readings"."answers" in (0, 1)),
+	CONSTRAINT "box_readings_since_utc" CHECK("box_readings"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."since") = "box_readings"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."since") = "box_readings"."since", 0)),
+	CONSTRAINT "box_readings_urgent_since_utc" CHECK("box_readings"."urgent_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."urgent_since") = "box_readings"."urgent_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."urgent_since") = "box_readings"."urgent_since", 0)),
+	CONSTRAINT "box_readings_read_at_utc" CHECK("box_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."read_at") = "box_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."read_at") = "box_readings"."read_at", 0))
+);
+
+CREATE TABLE `box_alert_settings` (
+	`singleton` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`disk_percent` integer DEFAULT 85 NOT NULL,
+	`disk_urgent_percent` integer DEFAULT 95 NOT NULL,
+	`disk_free_mib` integer DEFAULT 5120 NOT NULL,
+	`memory_free_mib` integer DEFAULT 512 NOT NULL,
+	CONSTRAINT "box_alert_settings_singleton" CHECK("box_alert_settings"."singleton" = 1),
+	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK("box_alert_settings"."disk_percent" between 1 and 100),
+	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK("box_alert_settings"."disk_urgent_percent" between "box_alert_settings"."disk_percent" and 100),
+	CONSTRAINT "box_alert_settings_disk_free_mib_range" CHECK("box_alert_settings"."disk_free_mib" >= 0),
+	CONSTRAINT "box_alert_settings_memory_free_mib_range" CHECK("box_alert_settings"."memory_free_mib" >= 0)
+);
+
 CREATE TABLE `jobs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`agent` text NOT NULL,

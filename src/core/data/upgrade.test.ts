@@ -471,3 +471,19 @@ it('adds the maker of a terminal binding as a column nobody is written into, so 
  const column=db.prepare("select \"notnull\" as required, dflt_value as fallback from pragma_table_info('terminal_credentials') where name='issued_by'").get();
  expect(column).toEqual({required:0,fallback:null});
 });
+
+it('starts upgraded households with no machine readings and the default lines for them',()=>{
+ const db=household(19);
+ db.prepare("insert into members(id,role,joined_at) values('sam','owner',?)").run(at);
+ db.prepare("insert into boxes(id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,enrolled_at) values('legacy','Legacy','sam',1,1,0,1,?)").run(at);
+ upgradeDataSchema(db);
+ expect(db.prepare('select * from box_readings').all()).toEqual([]);
+ // No row until an owner sets a line: the columns' defaults are the household's lines meanwhile.
+ expect(db.prepare('select * from box_alert_settings').all()).toEqual([]);
+ db.prepare('insert into box_alert_settings default values').run();
+ expect(db.prepare('select * from box_alert_settings').all()).toEqual([{singleton:1,disk_percent:85,disk_urgent_percent:95,disk_free_mib:5120,memory_free_mib:512}]);
+ db.prepare("insert into box_readings(box,kind,thing,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/',71,204800,59392,'ok',?)").run(at);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('legacy','load','','ok',?)").run(at)).toThrow(/box_readings_kind/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('legacy','memory','','worrying',?)").run(at)).toThrow(/box_readings_level/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('nobody','memory','','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
+});
