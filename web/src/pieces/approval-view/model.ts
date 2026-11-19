@@ -24,6 +24,31 @@ export interface ApprovalSnapshot {
   approvals: readonly Approval[]; rules: readonly Rule[]; notices: readonly Notice[]; record: readonly Record[];
   timezone: string;
 }
+/** Every stored word in plain words, said in this one place. */
+export const kindWord: { [kind in Approval['kind']]: string } = { merge: 'merge', command: 'command', setting: 'setting', dangerous: 'dangerous action' };
+/** What a rule answers, as a choice a person reads. */
+export const kindChoice: { [kind in Approval['kind']]: string } = { merge: 'Merging a pull request', command: 'Running a command on a machine', setting: 'Changing a setting', dangerous: 'Another dangerous action' };
+export const tierWord: { [tier in Rule['tier']]: string } = { ask: 'Ask me', tell: 'Tell me after', do: 'Just do it' };
+/** A rule's scope as a person would say it: everything, a project, or the pattern as it was written. */
+export const scopeWord = (scope: string) => scope === '*' ? 'Everything' : scope.startsWith('project:') ? `Project ${scope.slice(8)}` : scope;
+export const ruleKey = (rule: Pick<Rule, 'kind' | 'scope' | 'person'>) => JSON.stringify([rule.kind, rule.scope, rule.person]);
+/** One line of an approval's permanent record. An answer quoted from a conversation is said in its own words. */
+export function recordWord(row: Record, name: (id: string) => string): string {
+  const quoted = quotedDecision(row);
+  if (quoted) return quoted;
+  const who = /^[\w.-]+$/.test(row.note) ? name(row.note) : '';
+  const note = row.note && !who ? `: ${row.note}` : '';
+  switch (row.event) {
+    case 'request': return `Asked${row.note ? `: ${row.note}` : ''}`;
+    case 'allow': return who ? `Allowed by ${who}` : `Allowed${note}`;
+    case 'deny': return who ? `Denied by ${who}` : `Denied${note}`;
+    case 'use': return row.note.startsWith('Reported step: ') ? `Reported: ${row.note.slice('Reported step: '.length)}` : 'Used';
+    case 'withdraw': return 'Withdrawn';
+    case 'grant': return `Made a standing rule${row.note ? `: ${row.note}` : ''}`;
+    case 'refused-use': return `Use refused${row.note ? `: ${row.note}` : ''}`;
+    default: return row.event;
+  }
+}
 export const folders = [
   { id: 'pending', label: 'Pending' }, { id: 'history', label: 'History' },
   { id: 'rules', label: 'Rules' }, { id: 'notices', label: 'Reported steps' },

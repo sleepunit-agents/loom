@@ -54,10 +54,17 @@ export function useChangeSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
   return changeSnapshot(useDataQuery<ChangesResult>(changesQuery), timezone ?? zone ?? localTimezone());
 }
+/** The signed-in member's id, from the same small reading Comms makes of who is at the desk. It only decides
+ * whether a private request says "for you" or the person's name. */
+const viewerQuery = 'query WorkViewer { homeComms { member } }';
+function useViewer(): string | undefined {
+  const reading = useDataQuery<{ homeComms: { member: string } | null }>(viewerQuery);
+  return reading.status === 'live' ? reading.data?.homeComms?.member ?? undefined : undefined;
+}
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
 export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
-  const access=useWorkAccess(), read=useApprovalSnapshot(timezone), changes=useChangeSnapshot(timezone);
+  const access=useWorkAccess(), read=useApprovalSnapshot(timezone), changes=useChangeSnapshot(timezone), names=useAgentNames(), viewer=useViewer();
   const base = '/p/approvals-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -83,7 +90,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
   };
   const standing=alwaysInput(snapshot.approvals.find(card=>card.id===selected),changes.status==='live'?changes.changes:[],access.members);
   const defaultActions=ownerApprovalActions(access.owner,standing);
-  return <Approvals snapshot={snapshot} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
+  return <Approvals snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
@@ -144,9 +151,9 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const owner=useWorkAccess().owner, snapshot=useProposalNow(useApprovalSnapshot(timezone),id,owner);
+  const owner=useWorkAccess().owner, snapshot=useProposalNow(useApprovalSnapshot(timezone),id,owner), names=useAgentNames(), viewer=useViewer();
   const defaultActions=ownerApprovalActions(owner);
-  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   const names = useAgentNames();

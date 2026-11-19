@@ -1,7 +1,9 @@
 import { RuleEditor, type SaveRule } from './rule-editor';
-import { useRef, useState, type ReactNode } from 'react';
-import { Split, List, Row, Empty, Error, Loading, Button, Input, Reader, Meta, Body } from '../../kit';
-import { quotedDecision, folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Body } from '../../kit';
+import { briefTime, fullTime } from '../../kit/time';
+import { displayName } from '../../kit/words';
+import { quotedDecision, folders, matches, rows, kindWord, kindChoice, tierWord, scopeWord, ruleKey, recordWord, type Approval, type ApprovalSnapshot, type Rule } from './model';
 export type { ApprovalSnapshot } from './model';
 
 export type RenderApprovalChange = (approval: Approval) => ReactNode;
@@ -23,6 +25,11 @@ function Unavailable({ status }: { status: ApprovalSnapshot['status'] }) {
   return status === 'loading' ? <Loading label="Opening Approvals…" />
     : <Error text={status === 'denied' ? 'Sign in with access to see Approvals.' : 'Waiting for connection.'} />;
 }
+type Name = (id: string) => string;
+/** The question is said under the title only when it says more than the title with a question mark. */
+const same = (words: string) => words.trim().replace(/[?.!\s]+$/, '').toLowerCase();
+/** Who a private request is for: "for you" when it is the viewer's own, the person's name otherwise. */
+const forWhom = (a: Approval, viewer: string | undefined, name: Name) => a.member ? a.member === viewer ? 'for you' : `for ${name(a.member)}` : '';
 function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalActions }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
   const dangerous = approval.kind === 'dangerous';
@@ -37,92 +44,125 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
     }
     finally { active.current = false; setBusy(false); }
   }
+  // One filled button: Allow, or (a dangerous request, asked a second time) Yes, allow it. Always and Deny stay quiet.
   return <>
-    {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
-      {dangerous && confirming
-        ? <><p className="basis-full">This cannot be undone.</p>
-          <Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
-          <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
-        : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
-      {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
-      <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
-    </div>}
-    {busy && <p role="status">Saving answer…</p>}
+    {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <>
+      {dangerous && confirming && <Body>This cannot be undone.</Body>}
+      <Actions label="Answer approval">
+        {dangerous && confirming
+          ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
+            <Button disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
+          : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
+        {actions.always?.approval === approval.id && <Button disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
+        <Button disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
+      </Actions></>}
+    {busy && <Body quiet role="status">Saving answer…</Body>}
     {error && <Error text={error} />}
   </>;
 }
-function Details({ approval: a, snapshot, actions, renderChange, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean } & ChangePresentation) {
+function Details({ approval: a, snapshot, actions, renderChange, inline = false, viewer, name }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; viewer?: string; name: Name } & ChangePresentation) {
   const change = renderChange?.(a);
-  const decision = snapshot.record.filter(r => r.approval === a.id && (r.event === 'allow' || r.event === 'deny'))
-    .reduce<(typeof snapshot.record)[number] | undefined>((last, row) => !last || row.seq > last.seq ? row : last, undefined);
-  const attribution = quotedDecision(decision);
-  const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
+  const record = snapshot.record.filter(r => r.approval === a.id).sort((x, y) => x.seq - y.seq);
+  const decision = record.filter(r => r.event === 'allow' || r.event === 'deny').at(-1);
+  const answered = a.decidedBy && <Meta>{quotedDecision(decision) ?? `Answered by ${name(a.decidedBy)}`}</Meta>;
+  const time = (at: string) => <time dateTime={at} title={fullTime(at, snapshot.timezone)}>{briefTime(at, snapshot.timezone)}</time>;
+  const ends = a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)}</Meta>;
+  const whom = forWhom(a, viewer, name);
   // In a conversation: the same request and the same answer controls on a compact card, built from the kit's reader
   // parts like a question's (inbox-view ChatQuestion). The whole card, its details and its record are in Approvals.
   if (inline) return <Reader aria-label={a.ask} data-inline="">
-    <Meta>{a.kind} · {a.state}{a.member && ` · private to ${a.member}`}</Meta>
+    <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}{whom && ` · ${whom}`}</Meta>
     <Body><strong>{a.ask}</strong></Body>
     <Body quiet>{a.why}</Body>
     <Body quiet>Allow: {a.ifYes} Deny: {a.ifNo}</Body>
     {!change && a.changeSummary && <Body>{a.changeSummary}</Body>}
     {change}
     {a.problem && <Body>This cannot be allowed as it stands: {a.problem}</Body>}
-    <Meta>Allows {a.kind}: {a.target}</Meta>
+    <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>
     <Answer key={a.id} approval={a} actions={actions} />
-    {a.decidedBy && <Meta>{attribution ?? 'Answered by '+a.decidedBy}</Meta>}
-    {a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)} · {snapshot.timezone}</Meta>}
+    {answered}{ends}
   </Reader>;
-  return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
-    <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
-    <section><h3>Why</h3><p>{a.why}</p></section>
-    <section><h3>If you allow</h3><p>{a.ifYes}</p></section>
-    <section><h3>If you deny</h3><p>{a.ifNo}</p></section>
-    {!change && a.changeSummary && <section><h3>Exactly what will change</h3><p className="whitespace-pre-wrap">{a.changeSummary}</p></section>}
+  return <Reader aria-label="Approval">
+    <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}</Meta>
+    <Title>{a.what}</Title>
+    <Meta>{[name(a.agent), a.project, whom].filter(Boolean).join(' · ')}</Meta>
+    {a.ask && same(a.ask) !== same(a.what) && <Body>{a.ask}</Body>}
+    <Facts>
+      <Fact label="Why">{a.why}</Fact>
+      <Fact label="If you allow">{a.ifYes}</Fact>
+      <Fact label="If you deny">{a.ifNo}</Fact>
+      {!change && <Fact label="Exactly what will change">{a.changeSummary}</Fact>}
+      <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>
+    </Facts>
     {change}
-    {a.problem && <section><h3>This cannot be allowed as it stands</h3><p>{a.problem}</p></section>}
-    <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
+    {a.problem && <Section label="This cannot be allowed as it stands"><Body>{a.problem}</Body></Section>}
     <Answer key={a.id} approval={a} actions={actions} />
-    {a.decidedBy && <p>{attribution ?? 'Answered by '+a.decidedBy}</p>}
-    {a.expiresAt && <p>Allowance ends {time(a.expiresAt)} · {snapshot.timezone}</p>}
-    {!inline && <>
-      {!change && a.details && <section><h3>Details</h3><p className="whitespace-pre-wrap">{a.details}</p></section>}
-      <section><h3>Permanent record</h3><ol>{snapshot.record.filter(r => r.approval === a.id).sort((x, y) => x.seq - y.seq).map(r => <li key={r.seq}>{time(r.at)} · {r.event}{r.note && ` · ${r.note}`}</li>)}</ol></section>
-    </>}
-  </article>;
+    {!decision && answered}{ends}
+    {!change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
+    {record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
+  </Reader>;
 }
 
 /** Same current request and answer controls as the tile, with before and after. */
-export function ApprovalCard({ id, snapshot, actions, renderChange }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions } & ChangePresentation) {
+export function ApprovalCard({ id, snapshot, actions, renderChange, viewer, names }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; viewer?: string; names?: Readonly<Record<string, string>> } & ChangePresentation) {
   if (snapshot.status !== 'live') return <Unavailable status={snapshot.status} />;
   const approval = snapshot.approvals.find(a => a.id === id);
-  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline /> : <Empty title="Approval unavailable" />;
+  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
+}
+/** A standing rule, opened: what it is, and (for a household owner) its fields. */
+function RuleReader({ rule, rules, save, name, zone }: { rule?: Rule; rules: readonly Rule[]; save?: SaveRule; name: Name; zone: string }) {
+  return <Reader aria-label="Rule">
+    <Meta>{rule ? 'standing rule' : 'new standing rule'}</Meta>
+    <Title>{rule ? scopeWord(rule.scope) : 'New rule'}</Title>
+    {rule && <Meta>{[kindChoice[rule.kind] ?? rule.kind, rule.person && `for ${name(rule.person)}`, tierWord[rule.tier] ?? rule.tier].filter(Boolean).join(' · ')}</Meta>}
+    {rule && !save && <Facts>
+      <Fact label="When asked about">{kindChoice[rule.kind] ?? rule.kind}</Fact>
+      <Fact label="Scope">{rule.scope}</Fact>
+      <Fact label="Person">{rule.person && name(rule.person)}</Fact>
+      <Fact label="Answer">{tierWord[rule.tier] ?? rule.tier}</Fact>
+    </Facts>}
+    {save ? <RuleEditor rules={rules} save={save} rule={rule} /> : <Body quiet>Ask an agent in chat to change a standing rule. Only a household owner can change rules.</Body>}
+    {rule && <Meta>Set by {name(rule.setBy)} · <time dateTime={rule.setAt} title={fullTime(rule.setAt, zone)}>{briefTime(rule.setAt, zone)}</time></Meta>}
+  </Reader>;
 }
 
 /** No transport or cached private records: the generated query client supplies
  * the current visible snapshot, and drops it on disconnect or access loss. */
-export default function Approvals({ snapshot, actions, renderChange, navigation }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions;
+export default function Approvals({ snapshot, actions, renderChange, navigation, viewer, names }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions;
   navigation?: { selected?: string; select(id?: string): void; folder: string; openFolder(id: string): void };
+  /** The signed-in member, and display names by id, where the composition has read them. */
+  viewer?: string; names?: Readonly<Record<string, string>>;
 } & ChangePresentation) {
   const [localFolder, setLocalFolder] = useState('pending'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+  // The rule open in the reader: the one that was chosen (kept as it was then, so its editor stays through a removal
+  // the program has not yet confirmed), or a new one.
+  const [ruleOpen, setRuleOpen] = useState<{ key: string; rule?: Rule }>();
   const folder = navigation ? navigation.folder : localFolder;
   const selected = navigation ? navigation.selected : localSelected;
   const setSelected = navigation ? navigation.select : setLocalSelected;
   const live = snapshot.status === 'live';
+  const name: Name = id => displayName(id, names);
   const shown = rows(snapshot, folder, query);
   const approval = live ? snapshot.approvals.find(a => a.id === selected) : undefined;
   const rules = live ? snapshot.rules.filter(r => matches([r.kind, r.scope, r.person, r.tier], query)) : [];
   const notices = live ? snapshot.notices.filter(n => matches([n.what, n.agent, n.target, n.kind], query)).sort((a,b) => b.at.localeCompare(a.at)) : [];
   const rulesView = folder === 'rules', noticesView = folder === 'notices';
-  return <Split label="Approvals" className="h-full" folders={folders.map(f => ({ ...f, count: live ? f.id === 'rules' ? snapshot.rules.length : f.id === 'notices' ? snapshot.notices.length : rows(snapshot, f.id, '').length : undefined }))}
-    folder={folder} onFolder={id => { if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
-    search={<label>Search approvals<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
-    listTitle={folders.find(f => f.id === folder)?.label}
-    listMeta={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
+  useEffect(() => { if (!rulesView || !live) setRuleOpen(undefined); }, [rulesView, live]);
+  const openRule = live && rulesView && !approval ? ruleOpen : undefined;
+  const counts: Record<string, number> = { rules: snapshot.rules.length, notices: snapshot.notices.length };
+  return <Split label="Approvals" folders={folders.map(f => ({ ...f, count: live ? counts[f.id] ?? rows(snapshot, f.id, '').length : undefined }))}
+    folder={folder} onFolder={id => { setRuleOpen(undefined); if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
+    search={<Search label="Search approvals" value={query} onChange={setQuery} />}
+    listTitle={folders.find(f => f.id === folder)?.label ?? 'Approvals'} listKey={JSON.stringify([folder, query])}
+    listCount={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
+    listAction={live && rulesView && actions?.setRule && <Button onClick={() => setRuleOpen({ key: 'new' })}>New rule</Button>}
     list={!live ? <Unavailable status={snapshot.status} />
-      : rulesView ? <>{rules.length ? <List label="Standing rules">{rules.map(r => <Row key={`${r.kind}:${r.scope}:${r.person}`} title={r.scope} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier === 'do' ? 'Just do it' : r.tier === 'tell' ? 'Tell me after' : 'Ask me'} />)}</List> : <Empty title="No matching rules" />}{actions?.setRule ? <RuleEditor rules={snapshot.rules} save={actions.setRule}/> : <p className="p-3">Ask an agent in chat to change a standing rule. Only a household owner can change rules.</p>}</>
-      : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <Row key={n.id} title={n.what} meta={`${n.agent} · ${n.kind} · ${n.target}`} status={new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(n.at))} />)}</List> : <Empty title="No reported steps" />
-      : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={a.what} meta={a.why} status={`${a.agent} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
-    reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} /> : null}
-    open={!!approval} onBack={() => setSelected(undefined)} backLabel="Approvals"
-    blank={<Empty title={rulesView?"Standing rules":"Open an approval"} text={rulesView?(actions?.setRule?"Choose a scope and the answer it should use.":"Only a household owner can change standing rules."):"Choose a request to read exactly what it allows."} />} />;
+      : rulesView ? rules.length ? <List label="Standing rules">{rules.map(r => <Row key={ruleKey(r)} title={scopeWord(r.scope)} meta={`${kindChoice[r.kind] ?? r.kind}${r.person ? ` · for ${name(r.person)}` : ''}`} status={tierWord[r.tier] ?? r.tier}
+          selected={openRule?.key === ruleKey(r)} onClick={() => setRuleOpen({ key: ruleKey(r), rule: r })} />)}</List> : <Empty title={query ? 'No matching rules' : 'No standing rules'} text={actions?.setRule ? undefined : 'Only a household owner can change standing rules.'} />
+      : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <NoteRow key={n.id} title={n.what} meta={`${name(n.agent)} · ${kindWord[n.kind as Approval['kind']] ?? n.kind} · ${n.target}`} status={briefTime(n.at, snapshot.timezone)} />)}</List> : <Empty title={query ? 'No matching steps' : 'No reported steps'} />
+      : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={a.what} meta={a.why} status={`${name(a.agent)} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
+    reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} viewer={viewer} name={name} />
+      : openRule ? <RuleReader key={openRule.key} rule={openRule.rule} rules={snapshot.rules} save={actions?.setRule} name={name} zone={snapshot.timezone} /> : null}
+    open={!!approval || !!openRule} onBack={() => { setRuleOpen(undefined); if (approval) setSelected(undefined); }} backLabel="Back to Approvals"
+    blank={<Empty title={rulesView ? 'Open a rule' : noticesView ? 'Reported steps' : 'Open an approval'} text={rulesView ? (actions?.setRule ? 'Choose a rule to change it, or start a new one.' : 'Only a household owner can change standing rules.') : noticesView ? 'Each step is shown whole in the list.' : 'Choose a request to read exactly what it allows.'} />} />;
 }

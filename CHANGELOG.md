@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Approvals is drawn as its page on the how-it-works site: the row and the reader carry one title, Why, If you allow, If you deny and Exactly what this allows are labelled facts, a private request says "for you" (or whose it is, by name), and the permanent record is a History in plain words with short times. A standing rule opens in the reader to be read or changed, New rule is the list's one action, the kinds a rule answers are said in plain words, and a reported step is a note in the list. "Always for pond for sam" is now "Always for pond, Sam’s work only".
 - Changes is drawn as its page on the how-it-works site: every state is said in plain words ("Checks passing", "No review needed", "Waiting on the checks", "Waiting on Art"), a row keeps to its title, its number and one short state, Refresh sits in the list's head over a short "Last read" time, the description is drawn as markdown and held to a readable height with Show all, linked tasks are chips that open them, and whether it can be merged and its commit are behind Details.
 - Times in Inbox, Tasks, Approvals and Changes are said in the household's zone, in one shared format, and never name a zone. Knowledge's dates are no longer fixed to one zone.
 - Household setup's icon is a table with its seats, and Bridges' is a plug meeting its socket.

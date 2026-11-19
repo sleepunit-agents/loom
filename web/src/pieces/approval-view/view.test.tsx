@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
-vi.mock('../../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Reader', 'Meta', 'Body'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode }) => h(name, props, props.children, ...(name === 'Split' ? [props.list, props.reader] : []))])));
+vi.mock('../../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; listAction?: ReactNode }) => h(name, props, props.children, ...(name === 'Split' ? [props.listAction, props.list, props.reader] : []))])));
 import Approvals, { ApprovalCard, type ApprovalActions } from './index';
 import { renderMeasuringChange } from '../measuring/settings';
 import { rows, type ApprovalSnapshot } from './model';
@@ -125,4 +125,53 @@ it('shows the quoted decision on the inline approval card', async () => {
  await draw({...snapshot,approvals:[{...approval,state:'allowed',decidedBy:'sam'}],
    record:[{seq:1,at:approval.askedAt,event:'allow',approval:approval.id,agent:'art',note}]});
  expect(JSON.stringify(tree.toJSON())).toContain(note);
+});
+
+it('draws the reader with the kit: one title in the row and the reader, facts, "for you", a plain History and brief times', async () => {
+  const mine = { ...approval, kind: 'merge' as const, member: 'jonathan', project: 'pond', expiresAt: '2026-11-14T21:00:00Z', state: 'used' as const, decidedBy: 'jonathan' };
+  const record = [{ seq: 1, at: approval.askedAt, event: 'request', approval: approval.id, agent: 'art', note: '' }, { seq: 2, at: approval.askedAt, event: 'allow', approval: approval.id, agent: 'art', note: 'jonathan' },
+    { seq: 3, at: approval.askedAt, event: 'use', approval: approval.id, agent: 'art', note: '' }];
+  const live: ApprovalSnapshot = { ...snapshot, approvals: [mine], record };
+  const select = vi.fn(), navigation = { selected: approval.id, select, folder: 'history', openFolder: vi.fn() };
+  await act(async () => { tree = create(h(Approvals, { snapshot: live, navigation, viewer: 'jonathan', names: { art: 'Art' } })); });
+  const reader = () => tree.root.findByType('Reader'), meta = () => reader().findAllByType('Meta').map((node: { props: { children: unknown } }) => [node.props.children].flat().filter(part => typeof part === 'string').join(''));
+  expect(tree.root.findByType('Row').props).toMatchObject({ title: approval.what, status: 'Art · used' });
+  expect(reader().findByType('Title').props.children).toBe(approval.what);
+  expect(meta().slice(0, 2)).toEqual(['merge · used', 'Art · pond · for you']);
+  expect(reader().findAllByType('Fact').map((node: { props: { label: string } }) => node.props.label)).toEqual(['Why', 'If you allow', 'If you deny', 'Exactly what will change', 'Exactly what this allows']);
+  expect(tree.root.findByType('Section').props.label).toBe('History');
+  expect(tree.root.findByType('Section').findAllByType('Body').map((node: { props: { children: unknown[] } }) => node.props.children[0])).toEqual(['Asked', 'Allowed by Jonathan', 'Used']);
+  const said = (node: unknown): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(said).join(' ') : node && typeof node === 'object' ? said((node as { children?: unknown }).children ?? []) : '';
+  const text = said(tree.toJSON());
+  for (const raw of ['America/Chicago', 'private to', 'Permanent record', 'request']) expect(text).not.toContain(raw);
+  expect(text).toContain('Allowance ends '); expect(tree.root.findByType('Split').props).toMatchObject({ listTitle: 'History', listCount: 1, backLabel: 'Back to Approvals' });
+  // Someone else's private request says whose, by name.
+  await act(async () => { tree.update(h(Approvals, { snapshot: live, navigation, viewer: 'sam' })); });
+  expect(meta()[1]).toBe('Art · pond · for Jonathan');
+});
+
+it('opens a rule in the reader, starts a new one from the list\'s action, and lists reported steps as notes that open nothing', async () => {
+  const rule = { kind: 'merge' as const, scope: 'project:pond', person: 'sam', tier: 'tell' as const, setBy: 'pat', setAt: '2026-11-15T00:00:00Z' };
+  const live: ApprovalSnapshot = { ...snapshot, rules: [rule], notices: [{ id: 'n-1', agent: 'art', kind: 'command', target: 'run tests', what: 'Ran the tests', at: '2026-11-14T20:00:00Z' }] };
+  const navigation = (folder: string) => ({ selected: undefined, select: vi.fn(), folder, openFolder: vi.fn() });
+  const setRule = vi.fn(async () => {});
+  await act(async () => { tree = create(h(Approvals, { snapshot: live, navigation: navigation('rules'), actions: { allow: vi.fn(), deny: vi.fn(), setRule } })); });
+  const forms = () => tree.root.findAllByType('form');
+  expect(forms()).toHaveLength(0); expect(tree.root.findByType('Split').props.open).toBe(false);
+  expect(tree.root.findByType('Row').props).toMatchObject({ title: 'Project pond', meta: 'Merging a pull request · for Sam', status: 'Tell me after' });
+  await act(async () => { tree.root.findByType('Row').props.onClick(); });
+  expect(forms()).toHaveLength(1); expect(tree.root.findByType('Split').props.open).toBe(true); expect(tree.root.findByType('Title').props.children).toBe('Project pond');
+  expect(tree.root.findByProps({ 'aria-label': 'Scope' }).props.value).toBe('project:pond');
+  await act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === 'New rule').props.onClick(); });
+  expect(tree.root.findByType('Title').props.children).toBe('New rule'); expect(tree.root.findByProps({ 'aria-label': 'Scope' }).props.value).toBe('');
+  await act(async () => { tree.root.findByType('Split').props.onBack(); });
+  expect(forms()).toHaveLength(0);
+  // Someone who cannot change rules can still open one and read it; nothing offers a new one.
+  await act(async () => { tree.update(h(Approvals, { snapshot: live, navigation: navigation('rules') })); });
+  expect(buttons().some((b: { props: { children: string } }) => b.props.children === 'New rule')).toBe(false);
+  await act(async () => { tree.root.findByType('Row').props.onClick(); });
+  expect(forms()).toHaveLength(0); expect(tree.root.findByType('Reader').findAllByType('Fact').map((node: { props: { label: string } }) => node.props.label)).toEqual(['When asked about', 'Scope', 'Person', 'Answer']);
+  await act(async () => { tree.update(h(Approvals, { snapshot: live, navigation: navigation('notices') })); });
+  expect(tree.root.findAllByType('Row')).toHaveLength(0);
+  expect(tree.root.findByType('NoteRow').props).toMatchObject({ title: 'Ran the tests', meta: 'Art · command · run tests' });
 });
