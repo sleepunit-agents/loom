@@ -80,7 +80,7 @@ it('accepts seven days of one journal under the same line cap', () => {
 
 it('releases only current fixed-shape operator projections', async () => {
   const observedAt = Math.floor(Date.now()/1000);
-  const fact = {observedAt, since:observedAt-604800, started:2, finished:1, kept:3, removed:0, wouldRemove:0, reasons:{dirty:3}};
+  const fact = {observedAt, since:observedAt-604800, started:1, finished:0, kept:3, removed:0, wouldRemove:0, reasons:{dirty:3}, runs:[{at:observedAt,event:"start",count:2,apply:false}],removedHeads:[]};
   const read = (row: object) => runMachineRead({kind:'cleanup-receipt'},token,async()=>({stdout:JSON.stringify(row)}));
   expect(await read(fact)).toEqual({ok:true,output:JSON.stringify(fact)});
   for (const bad of [{kept:4},{observedAt:observedAt-901,since:fact.since-901},{since:1},{path:'/private'}])
