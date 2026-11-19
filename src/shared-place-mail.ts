@@ -125,6 +125,18 @@ export function jobWord(db: DataDatabase, job: { id: string; agent: string; conv
   const offer = offered(db, job);
   return offer.word(offer.room());
 }
+/** Kits grant tools to one asker at a time. A legacy job holding different people's
+ * mail may still use the ordinary held-job doors, but inherits no individual's kit. */
+export function kitRoom(db: DataDatabase, job: {id:string; agent:string; conversation:string|null}) {
+  const offer=offered(db,job), room=offer.room(), word=offer.word(room);
+  if (word.woke==='others' && word.person) {
+    const asker=word.person, kind=asker.kind==='member'?'person':'outside';
+    const member=job.conversation && db.select({member:conversations.member}).from(conversations).where(eq(conversations.id,job.conversation)).get()?.member;
+    if ((member && (asker.kind!=='member' || member!==asker.id)) || room.people.some(who=>who.kind!==kind || who.person!==asker.id))
+      return {room,word:{woke:'others' as const}};
+  }
+  return {room,word};
+}
 /** Whether a job is held to loom's tools: its word is anybody else's (policy.ts, loomToolsOnly). The one
  * question every door asks of the job before it hands over a secret, a file or a kept session. */
 export function jobHeld(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): boolean {
