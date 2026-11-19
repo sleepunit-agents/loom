@@ -5,7 +5,7 @@ import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTab
 import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
 import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
 
 type TableName = keyof typeof tables;
@@ -140,11 +140,19 @@ export function dataQueries(client: Database.Database, options: {
   const generated = buildSchema(db, { mutations: false, relationsDepthLimit: depth }).schema;
   // Relation output types are distinct generated objects. Walk their actual
   // edges rather than guessing type names or defining a second task shape.
+  // A trigger's ordinary read rule is wider than its program's. Hide private values from predicates
+  // and ordering as well as from every relation projection. tempoProgram checks their narrower rule.
+  const programColumns = ['program', 'readStateFrom', 'programState', 'programPeriod'];
+  if (selected.has('triggers')) for (const name of ['TriggersOrderBy', 'TriggersFilters', 'TriggersFiltersOr']) {
+    const type = generated.getType(name);
+    if (isInputObjectType(type)) for (const key of programColumns) delete type.getFields()[key];
+  }
   const visited = new Set<object>();
   function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'triggers') for (const key of programColumns) delete fields[key];
     // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
     if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings') {
       for (const key of name === 'triggers' ? ['needs', 'prefers'] : ['prefers']) {

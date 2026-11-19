@@ -332,6 +332,23 @@ describe('upgrading a household database', () => {
     }
   });
 
+  it('upgrades existing time schedules and preserves named usage counters in a reordered schema 14 table', () => {
+    const old = household(14);
+    const usageSql = (old.prepare("SELECT sql FROM sqlite_schema WHERE name='job_usage'").get() as { sql: string }).sql;
+    const swapped = usageSql.replace('`tokens_in` integer', '`was_in` integer').replace('`tokens_out` integer', '`tokens_in` integer').replace('`was_in` integer', '`tokens_out` integer');
+    expect(swapped).not.toBe(usageSql);
+    old.exec('DROP TABLE job_usage');
+    old.exec(swapped);
+    old.prepare("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('art','','','','pebble','dot')").run();
+    old.prepare("INSERT INTO jobs (id,agent,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES ('old','art','old job','done','','m','agent','art','repo','','main',?)").run(at);
+    old.prepare("INSERT INTO job_usage (job,source,tokens_in,tokens_out,model_calls) VALUES ('old','report',8,19,2)").run();
+    old.prepare("INSERT INTO triggers (id,owner_kind,owner,source_kind,times,lifespan,target_kind,to_kind,[to],note,enabled,state,created_at,changed_at) VALUES ('old','agent','art','time','15:00','until-stopped','inbox','agent','art','look',1,'standing',?,?)").run(at,at);
+    upgradeDataSchema(old, () => at);
+    expect(old.prepare('SELECT tokens_in,tokens_out,model_calls FROM job_usage').get()).toEqual({tokens_in:8,tokens_out:19,model_calls:2});
+    expect(old.prepare('SELECT times,enabled,program,program_state FROM triggers').get()).toEqual({times:'15:00',enabled:1,program:null,program_state:null});
+    expect(old.prepare('SELECT * FROM program_firings').all()).toEqual([]);
+  });
+
   it('refuses a database from a newer program', () => {
     const made = fresh();
     made.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(dataSchemaNumber + 1, at);

@@ -12,7 +12,7 @@ import type { Clock } from './core/clock.js';
 import type { DataWrites } from './core/data/writes.js';
 import type { Operations } from './core/operations/index.js';
 import type { Conversations } from './core/conversations/index.js';
-import type { TempoOptions } from './core/tempo/tempo.js';
+import { wakePlace, type TempoOptions } from './core/tempo/tempo.js';
 import type { TempoOperationOptions } from './core/tempo/operations.js';
 import type { Viewer } from './policy.js';
 import type { Recipient } from './core/tempo/volume.js';
@@ -48,6 +48,14 @@ export interface SharedTempoOptions {
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
+export function mayReadProgramWork(db: DataDatabase, viewer: Viewer, job?: { id: string; agent: string; conversation: string | null }): boolean {
+  const sharing = sharedSharing(db);
+  if (isHouseholdOwner(viewer, sharing)) return true;
+  if (viewer.kind !== 'agent' || viewer.workingFor) return false;
+  if (!job) return true;
+  const word = jobWord(db, job);
+  return word.woke === 'own' || (word.woke === 'owners' && word.person?.kind === 'member' && isHouseholdOwner({kind: 'member', id: word.person.id}, sharing));
+}
 export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataWrites, operations: Operations,
   conversations: Conversations, changed: () => void, options: SharedTempoOptions = {}) {
   /** The caller as it is judged for a trigger: a body that works on the word of a member who has the agent and
@@ -55,12 +63,13 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
    * the job sits. So what she has it schedule is her private work, and the agent's own triggers are not hers
    * to reword. A body already working for a member, and every other caller, is taken as it comes. */
   const judgedAs = (viewer: Viewer): Viewer => {
-    const work = options.bodyWork?.(viewer);
+    const work = options.bodyJob?.(viewer) ?? options.bodyWork?.(viewer);
     if (!work || viewer.kind !== 'agent' || viewer.workingFor !== undefined) return viewer;
     const word = jobWord(db, work.job);
     return word.woke === 'owners' && word.person?.kind === 'member' && !isHouseholdOwner({ kind: 'member', id: word.person.id }, sharedSharing(db)) ? { ...viewer, workingFor: word.person.id } : viewer;
   };
-  const admitAgent = agentMailAdmission(new Jobs(db, () => new Date(clock.now()).toISOString()), changed);
+  const jobStore = new Jobs(db, () => new Date(clock.now()).toISOString());
+  const admitAgent = agentMailAdmission(jobStore, changed);
   // Loud, not a stop: a conversation with many schedules standing is told to the agent's people, and none is refused.
   const stood = (trigger: { id: string; conversation?: string | null }) => { const crowded = trigger.conversation ? placeCrowded(db, trigger.conversation, new Date(clock.now()).toISOString()) : undefined;
     for (const member of crowded?.tell ?? []) conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: crowded!.key, fromKind: 'schedule', words: crowded!.words, refs: [trigger.id] }); };
@@ -72,6 +81,12 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // Whom the work is for is on the trigger (`member`, set with it). How far that reaches is judged now:
       // a household owner's work is the whole agent's, anyone else's is narrowed to them, and for a member
       // who has left, lost the agent or left the trigger's project the firing fails.
+      program(trigger, words) {
+        const agent = trigger.to!;
+        const conversation = conversations.open({ agent, venue: 'wake', place: wakePlace(trigger.id), label: trigger.note, project: trigger.project });
+        if (conversation.member) throw new Error('The conversation at this trigger’s place belongs to other work');
+        return jobStore.admitProgram(trigger, conversation.id, words);
+      },
       placeFiring: trigger => placeFiring(db, trigger),
       worksFor(trigger) {
         if (trigger.member === null || trigger.toKind !== 'agent') return undefined;
@@ -92,7 +107,14 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // chatMember is this door's proof that the caller is the current body of that member's chat.
     commands: { mailboxReceiptScope:options.mailboxReceiptScope,
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
-      recorded, authorize: (viewer, access) => tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember),
+      recorded, authorize: (viewer, access) => {
+        if ('trigger' in access && access.trigger.program && access.action !== 'stop') {
+          const work = options.bodyJob?.(viewer) ?? options.bodyWork?.(viewer);
+          if (!mayReadProgramWork(db, viewer, work?.job)) return false;
+          if (viewer.kind === 'agent' && viewer.id !== access.trigger.to) return false;
+        }
+        return tempoCommandAllowed(db, access.action === 'volume' || access.action === 'pause' || access.action === 'resume' ? viewer : judgedAs(viewer), access, options.chatMember);
+      },
       wordRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return (action === 'edit' ? privateRewordRefusal(db, viewer, work, trigger, change) : undefined) ?? wordRefusal(db, work, action, trigger, change)
         ?? (action === 'edit' ? partRewordRefusal(db, viewer, work, trigger, change) : undefined); },
       // On anybody else's word a body has no schedule door at all, and neither pauses its agent nor changes any mail's volume.

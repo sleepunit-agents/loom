@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
+import { finishProgramFiring } from './core/tempo/triggers.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, bridgeChannels, programFirings, triggers } from './core/data/schema.js';
 import type { Conversations } from './core/conversations/index.js';
@@ -36,7 +37,6 @@ export function applyProgramResult(db: DataDatabase, mail: Conversations, bridge
       fromKind: 'schedule', fromId: schedule.owner, words, refs: [schedule.id], agent: job.agent});
     changed('inbox', item.id);
   }
-  if (result.state !== undefined) db.update(triggers).set({programState: result.state}).where(eq(triggers.id, schedule.id)).run();
-  db.update(programFirings).set({status: 'done', line: result.line ?? null}).where(eq(programFirings.id, firing.id)).run();
+  finishProgramFiring(db, firing, 'done', result.line ?? null, result.state);
   changed('trigger', schedule.id);
 }

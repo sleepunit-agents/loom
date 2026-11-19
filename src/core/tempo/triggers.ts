@@ -1,11 +1,12 @@
+import { houseProgramSchema, type HouseProgram } from '../../runtime/house-program.js';
 import { machineFacts } from '../../runtime/machine-facts.js';
 import type { Asker } from '../../policy.js';
 import { randomUUID } from 'node:crypto';
 import { laneFile } from './lane-file.js';
-import { and, eq, max } from 'drizzle-orm';
+import { and, eq, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
-import { agentPauses, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { agentPauses, programFirings, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import type { Clock } from '../clock.js';
 import { householdTimezone } from '../data/household-settings.js';
 import { localDate, nextTime } from './calendar.js';
@@ -23,6 +24,9 @@ export const triggerInput = z.object({
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX),
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
+  program: houseProgramSchema.omit({ state: true, payload: true }).nullish(),
+  programPeriod: z.literal('day').nullish(),
+  readStateFrom: text.nullish(),
   ...placement,
   /** The Discord or Slack conversation a firing is mail in, instead of a wake of its own. */
   conversation: text.nullable().optional(),
@@ -60,6 +64,8 @@ export interface TriggerEffects {
   /** `stop`: the trigger can no longer fire and is stopped with this firing. */
   inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop';
   operation(name: string, trigger: Trigger, deliveryId: string): void;
+  /** Admit a program job on the shared connection. The firing binds its frozen input to that job. */
+  program?(trigger: Trigger, words: string): string | undefined;
   /** Whether an operation target names something this program can run. Checked when a trigger is set. */
   knows?(name: string): boolean;
   /** Resolve relative household repository files; no runtime home is read here. */
@@ -147,6 +153,16 @@ export class TriggerEngine {
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
     if (!!v.conversation !== !!asked) throw new Error('A trigger that names a conversation records who asked, and no other does');
     if (v.conversation && (v.targetKind !== 'inbox' || v.toKind !== 'agent' || member !== undefined)) throw new Error('A trigger that names a conversation is mail for its agent');
+    if (!v.program && (v.programPeriod || v.readStateFrom)) throw new Error('A program is required for state or period');
+    if (v.program) {
+      if (v.sourceKind !== 'time') throw new Error('Only a time schedule can run a program');
+      if (v.targetKind !== 'inbox' || v.toKind !== 'agent' || v.ownerKind !== 'agent' || v.owner !== v.to || member || v.conversation)
+        throw new Error('A program is scheduled as its agent’s own work');
+      if (v.readStateFrom) {
+        const producer = this.get(v.readStateFrom);
+        if (!producer.program || producer.to !== v.to || producer.project !== (v.project ?? null)) throw new Error('State must come from a program for the same agent and project');
+      }
+    }
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
@@ -365,15 +381,44 @@ export class TriggerEngine {
       this.db.update(triggers).set({ state: standing ? 'standing' : 'stopped', enabled: standing, nextDueAt: standing ? new Date(next!).toISOString() : null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
     });
   }
+  /** Claim one program job and freeze the exact input its worker will receive in this firing's transaction.
+   * An occupied conversation or pending program uses the time without taking the daily allowance. */
+  private admitProgram(t: Trigger, program: NonNullable<Trigger['program']>, delivery: string): 'fired' | 'skipped' {
+    const period = t.programPeriod === 'day' ? localDate(this.clock.now(), this.zone()) : null;
+    const prior = (condition: ReturnType<typeof eq>) => this.db.select({ id: programFirings.id }).from(programFirings)
+      .where(and(eq(programFirings.trigger, t.id), condition)).get();
+    if (prior(eq(programFirings.status, 'pending')) || (period && prior(eq(programFirings.period, period)))) return 'skipped';
+    if (!this.effects.program) throw new Error('No program runner');
+    const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
+    if (words === undefined) throw new Error('No repository instructions reader');
+    const producer = this.db.select({ program: triggers.program, to: triggers.to, project: triggers.project, member: triggers.member,
+      conversation: triggers.conversation, state: triggers.programState, hasState: sql<number>`${triggers.programState} is not null` })
+      .from(triggers).where(eq(triggers.id, t.readStateFrom ?? t.id)).get();
+    if (!producer?.program || producer.to !== t.to || producer.project !== t.project || producer.member || producer.conversation)
+      throw new Error('Program state source is no longer available');
+    const job = this.effects.program(t, words);
+    if (!job) return 'skipped';
+    this.db.insert(programFirings).values({ id: delivery, trigger: t.id, job, at: this.now(), period,
+      program: { ...program, ...(producer.hasState ? { state: producer.state } : {}) }, status: 'pending' }).run();
+    return 'fired';
+  }
   /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
   private fire(t: Trigger, eventId: string, spent: number | null = null) {
     // What the firing was doing, for the log if it fails.
-    let stage: 'operation' | 'instructions' | 'inbox' = 'operation';
+    let stage: 'operation' | 'instructions' | 'inbox' | 'program' = 'operation';
     try {
       this.db.transaction(() => {
+        if (t.program && spent !== null) {
+          const current = this.get(t.id);
+          if (!current.enabled || current.nextDueAt !== t.nextDueAt) return;
+        }
         this.db.update(triggers).set({ state: 'firing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         const delivery = `${t.id}:${eventId}`;
-        if (t.targetKind === 'operation') this.effects.operation(t.target!, t, delivery);
+        let event = 'fired';
+        if (t.program) {
+          stage = 'program';
+          event = this.admitProgram(t, t.program, delivery);
+        } else if (t.targetKind === 'operation') this.effects.operation(t.target!, t, delivery);
         else {
           stage = 'instructions';
           const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
@@ -384,8 +429,8 @@ export class TriggerEngine {
           if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
-        this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
-        this.log(t.id, 'fired', eventId);
+        this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: event === 'fired' ? this.now() : t.lastFiredAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        this.log(t.id, event, eventId);
       });
     } catch (error) {
       // One bad firing must not end a standing trigger: a lane that could not read its
@@ -415,4 +460,12 @@ export function logTrigger(db: DataDatabase, at: string, trigger: string, event:
 /** Every trigger filed under one project is filed under another: for a merge of the two (shared-projects.ts). */
 export function refileTriggers(db: DataDatabase, from: string, into: string): void {
   db.update(triggers).set({ project: into }).where(eq(triggers.project, from)).run();
+}
+
+/** Record a validated worker result or a job that ended without one. A reported JSON null clears a
+ * previous marker and is passed as null on the next firing. Omission leaves the previous marker alone. */
+export function finishProgramFiring(db: DataDatabase, firing: typeof programFirings.$inferSelect, status: 'done' | 'failed', line: string | null, state?: HouseProgram['state']): void {
+  const changed = db.update(programFirings).set({ status, line }).where(and(eq(programFirings.id, firing.id), eq(programFirings.status, 'pending'))).run();
+  if (changed.changes && status === 'done' && state !== undefined)
+    db.update(triggers).set({ programState: state === null ? sql`'null'` : state }).where(eq(triggers.id, firing.trigger)).run();
 }

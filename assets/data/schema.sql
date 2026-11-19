@@ -700,8 +700,13 @@ CREATE TABLE `triggers` (
 	`asked_at` text,
 	`needs` text,
 	`prefers` text,
+	`program` text,
+	`program_period` text,
+	`read_state_from` text,
+	`program_state` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`read_state_from`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "triggers_asked_at_utc" CHECK("triggers"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."asked_at") = "triggers"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."asked_at") = "triggers"."asked_at", 0)),
 	CONSTRAINT "triggers_asked_by_kind_choice" CHECK("triggers"."asked_by_kind" in ('member', 'outside', 'agent')),
 	CONSTRAINT "triggers_asker_with_conversation" CHECK(("triggers"."conversation" is null) = ("triggers"."asked_by_kind" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_by" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_at" is null)),
@@ -1298,6 +1303,22 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `program_firings` (
+	`id` text PRIMARY KEY NOT NULL,
+	`trigger` text NOT NULL,
+	`at` text NOT NULL,
+	`period` text,
+	`job` text NOT NULL,
+	`program` text NOT NULL,
+	`status` text NOT NULL,
+	`line` text,
+	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `program_firings_job` ON `program_firings` (`job`);
+CREATE UNIQUE INDEX `program_firings_pending` ON `program_firings` (`trigger`) WHERE "program_firings"."status" = 'pending';
+CREATE UNIQUE INDEX `program_firings_period` ON `program_firings` (`trigger`,`period`);
 CREATE TABLE `terminal_credentials` (
 	`fingerprint` text PRIMARY KEY NOT NULL,
 	`machine` text NOT NULL,
@@ -1350,7 +1371,7 @@ CREATE TABLE `job_usage` (
 	`harness` text,
 	`model` text,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "job_usage_source_choice" CHECK("job_usage"."source" in ('report','transcript','none'))
+	CONSTRAINT "job_usage_source_choice" CHECK("job_usage"."source" in ('report','transcript','none','program'))
 );
 
 CREATE TABLE `program_tokens` (

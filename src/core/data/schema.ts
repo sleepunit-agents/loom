@@ -2,6 +2,7 @@
  * Times are UTC ISO-8601 text. Words already encrypted by Comms are opaque bytes.
  * This is the only authored database shape; drizzle-kit emits the fresh database DDL.
  */
+import type { HouseProgram } from '../../runtime/house-program.js';
 import { relations, sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, real, blob, primaryKey, check, index, uniqueIndex, foreignKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
@@ -756,6 +757,10 @@ export const triggers = sqliteTable('triggers', {
   askedAt: text('asked_at'),
   needs: text('needs', { mode: 'json' }).$type<string[]>(),
   prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  program: text('program', { mode: 'json' }).$type<Omit<HouseProgram, 'state' | 'payload'>>(),
+  programPeriod: text('program_period', { enum: ['day'] }),
+  readStateFrom: text('read_state_from').references((): AnySQLiteColumn => triggers.id),
+  programState: text('program_state', { mode: 'json' }).$type<HouseProgram['state']>(),
 }, t => [
   check('triggers_asked_at_utc', utc(t.askedAt)),
   check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
@@ -777,6 +782,21 @@ export const triggers = sqliteTable('triggers', {
 ]);
 
 /** What happened to each trigger, in order. */
+export const programFirings = sqliteTable('program_firings', {
+  id: text('id').primaryKey().notNull(),
+  trigger: text('trigger').notNull().references(() => triggers.id),
+  at: text('at').notNull(),
+  period: text('period'),
+  job: text('job').notNull().references(() => jobs.id),
+  program: text('program', { mode: 'json' }).$type<HouseProgram>().notNull(),
+  status: text('status', { enum: ['pending', 'done', 'failed'] }).notNull(),
+  line: text('line'),
+}, t => [
+  uniqueIndex('program_firings_job').on(t.job),
+  uniqueIndex('program_firings_pending').on(t.trigger).where(sql`${t.status} = 'pending'`),
+  uniqueIndex('program_firings_period').on(t.trigger, t.period),
+]);
+
 export const triggerLog = sqliteTable('trigger_log', {
   seq: integer('seq').primaryKey().notNull(),
   trigger: text('trigger').notNull().references((): AnySQLiteColumn => triggers.id),
@@ -997,7 +1017,7 @@ export const jobs = sqliteTable('jobs', {
 /** Counts for one attempt. An absent counter is unknown, including for jobs with no report. */
 export const jobUsage = sqliteTable('job_usage', {
   job: text('job').primaryKey().notNull().references(() => jobs.id),
-  source: text('source', {enum: ['report', 'transcript', 'none']}).notNull(),
+  source: text('source', {enum: ['report', 'transcript', 'none', 'program']}).notNull(),
   tokensIn: integer('tokens_in'),
   tokensOut: integer('tokens_out'),
   cacheRead: integer('cache_read'),
@@ -1009,7 +1029,7 @@ export const jobUsage = sqliteTable('job_usage', {
   wallMs: integer('wall_ms'),
   harness: text('harness'),
   model: text('model'),
-}, t => [check('job_usage_source_choice', sql`${t.source} in ('report','transcript','none')`)]);
+}, t => [check('job_usage_source_choice', sql`${t.source} in ('report','transcript','none','program')`)]);
 
 /** What a job needs from a machine. */
 export const jobNeeds = sqliteTable('job_needs', {
@@ -2026,6 +2046,7 @@ export const terminalRuns = sqliteTable('terminal_runs', {
 }, t => [uniqueIndex('terminal_runs_identity').on(t.parent,t.runId)]);
 
 export const plumbing = {
+  programFirings,
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };

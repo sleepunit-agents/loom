@@ -412,3 +412,10 @@ it('fires a standing time that comes due after the wall clock was stepped forwar
   vi.advanceTimersByTime(STEP_CHECK_MS);
   expect(events()).toEqual(['fired', 'missed']); expect(f.items()).toHaveLength(1);
 });
+
+it('only admits programs for time schedules addressed to an agent', () => {
+  const { engine, base } = fixture();
+  const program = { name: 'forecast', args: [], secrets: [], timeoutMs: 1000 };
+  expect(() => engine.set({ ...base, sourceKind: 'job', watches: 'job:one', program })).toThrow(/time/i);
+  expect(() => engine.set({ ...base, toKind: 'person', to: 'jonathan', program })).toThrow(/agent/i);
+});

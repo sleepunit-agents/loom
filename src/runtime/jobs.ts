@@ -5,12 +5,13 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, triggerLog, turns } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
+import { finishProgramFiring, logTrigger } from '../core/tempo/triggers.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
@@ -87,6 +88,23 @@ export class Jobs {
   workerBrief(id: string): string {
     const job = this.get(id);
     return this.keepText(job) ? job.brief : '';
+  }
+
+  /** Queue a scheduled program in its wake conversation. Tempo records the firing and its frozen input
+   * in the same transaction. A current job in the conversation takes precedence. */
+  admitProgram(trigger: typeof triggers.$inferSelect, conversation: string, words: string): string | undefined {
+    const agent = trigger.to!;
+    const profile = this.db.select().from(agents).where(eq(agents.id, agent)).get();
+    const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, agent)).get();
+    if (!profile || profile.removedAt || !settings) throw new Error('Program needs a current agent with a configured house');
+    const busy = this.db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.conversation, conversation), inArray(jobs.state, unendedJobStates))).get();
+    if (busy) return undefined;
+    const job = this.db.insert(jobs).values({ id: `job-${randomUUID()}`, agent, conversation, project: trigger.project,
+      title: trigger.note, state: 'queued', brief: words, model: '', startedByKind: 'program', startedBy: trigger.id,
+      houseRepository: settings.houseRepository, houseFile: settings.houseFile, houseBranch: settings.houseBranch,
+      prefers: trigger.prefers ?? settings.prefers, queuedAt: this.now() }).returning({ id: jobs.id }).get();
+    if (trigger.needs?.length) this.db.insert(jobNeeds).values(trigger.needs.map(need => ({ job: job.id, need }))).run();
+    return job.id;
   }
 
   /** Called after inbox settling. Repeated admission returns the same active job, whether or not it holds
@@ -490,7 +508,7 @@ export class Jobs {
         const posted = this.db.select({seq: turns.seq}).from(turns).where(and(eq(turns.kind, 'reply'), eq(turns.run, job.id))).get();
         const decision = state === 'done' ? (woke ? 'Woke ' + job.agent : 'Did not wake') : state[0].toUpperCase() + state.slice(1);
         const note = [decision, posted && 'posted', wallMs !== null && wallMs + ' ms', line].filter(Boolean).join(' · ');
-        this.db.insert(triggerLog).values({trigger: firing.trigger, at: ended.endedAt ?? this.now(), event: 'program', note}).run();
+        logTrigger(this.db, ended.endedAt ?? this.now(), firing.trigger, 'program', note);
         if (state === 'failed' || state === 'lost') {
           for (const member of agentsPeople(job.agent, sharedSharing(this.db))) {
             this.mail.send({toKind:'person', to:member, member, agent:job.agent, source:'notice',
@@ -499,8 +517,7 @@ export class Jobs {
           }
         }
       }
-      if (state !== 'done') this.db.update(programFirings).set({ status: 'failed', line: 'Program did not complete.' })
-        .where(and(eq(programFirings.job, job.id), eq(programFirings.status, 'pending'))).run();
+      if (firing && state !== 'done') finishProgramFiring(this.db, firing, 'failed', 'Program did not complete.');
       if (job.conversation) this.mail.turn({ conversation: job.conversation, kind: 'action', fromKind: 'schedule', fromId: job.startedBy,
         run: job.id, model: 'program', outcome: state === 'done' ? 'progressed' : 'failed', latencyMs: wallMs }, ended.endedAt ?? this.now());
     }

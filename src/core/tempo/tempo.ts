@@ -19,6 +19,7 @@ export interface TempoOptions {
   admit: AdmitInbox;
   /** Commit a synchronous built-in operation on this same database. */
   operation(name: string, trigger: Trigger, occurrence: string): void;
+  program?(trigger: Trigger, words: string): string | undefined;
   /** Names of further operations the composition can run, beside tempo.sweep. */
   knows?(name: string): boolean;
   instructions?(file: string): string;
@@ -81,6 +82,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
       options.conversations.send({ toKind: t.toKind!, to: t.to!, conversation, source: 'trigger', sourceId: occurrence,
         fromKind: 'schedule', fromId: t.owner ?? undefined, member: t.toKind === 'person' ? t.to! : member, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });
     },
+    program: options.program,
     operation(name, t, occurrence) {
       // An operation gathers by the agent's whole reach; it is not a member's to fire (policy.ts, "Scheduled work").
       if (options.worksFor?.(t) !== undefined) throw new Error('A member who is not a household owner schedules words for an agent, not an operation');

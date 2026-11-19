@@ -1,11 +1,15 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { ProgramResult } from './runtime/house-program.js';
+import { applyProgramResult } from './shared-program-result.js';
+import { Conversations } from './core/conversations/index.js';
+import { tempoQueryFields } from './core/tempo/queries.js';
 import { createHash } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays, triggers, triggerLog, conversations, boxes } from './core/data/schema.js';
-import type { SharedTempoOptions } from './shared-tempo.js';
+import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays, triggers, triggerLog, programFirings, conversations, boxes } from './core/data/schema.js';
+import { mayReadProgramWork, type SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
@@ -258,4 +262,107 @@ it('keeps a trigger an agent set for itself, and one an owner set, the whole age
  expect(f.db.select().from(triggers).all().filter(t=>t.id.startsWith('lane-')).map(t=>[t.state,t.enabled,t.ownerKind,t.owner])).toEqual(stored.map(()=>['standing',true,'agent','art']));
  // The agent still runs, rewords and restarts its own.
  for(const [name,input] of [['tempo.runNow',{id:'lane-0'}],['tempo.edit',{id:'lane-0',instructions:'Lane 0, again'}],['tempo.stop',{id:'lane-1'}],['tempo.start',{id:'lane-1'}]] as const)expect([name,(await f.as(f.raw.art)(name,input,name)).status]).toEqual([name,200]);
+});
+
+it('prepares a draft, supplies it to a later program and spends each local day once', async () => {
+ const f = fixture();
+ const program = { name: 'planning', args: ['draft'], timeoutMs: 2000, secrets: [] };
+ const producer = { ...f.trigger, id: 'prepare', ownerKind: 'agent', owner: 'art', times: '01:00', lifespan: 'until-stopped', program };
+ const post = { ...producer, id: 'post', times: '01:05', program: { ...program, args: ['post'] }, readStateFrom: producer.id, programPeriod: 'day' };
+ for (const trigger of [producer, post]) expect((await f.call('tempo.set', trigger, trigger.id)).status).toBe(200);
+ f.clock.advance(3_600_000);
+ const prepare = f.db.select().from(jobs).get()!;
+ expect(prepare).toMatchObject({ startedByKind: 'program', startedBy: 'prepare', agent: 'art', brief: 'Check pump', conversation: expect.any(String) });
+ f.db.transaction(() => {
+   applyProgramResult(f.db, new Conversations(f.db, f.now), undefined, () => true, prepare,
+     { version: 1, wake: false, state: { draft: 'today' } }, () => {});
+   f.db.update(jobs).set({ state: 'done', endedAt: f.now() }).where(eq(jobs.id, prepare.id)).run();
+ });
+ const q = { id: producer.id };
+ expect(tempoQueryFields(f.db, { kind: 'member', id: 'owner' }).tempoProgram.resolve(null,q)).toMatchObject({programState:{draft:'today'}});
+ expect(tempoQueryFields(f.db, { kind: 'agent', id: 'art' }).tempoProgram.resolve(null,q)).toMatchObject({program});
+ expect(tempoQueryFields(f.db, { kind: 'agent', id: 'art' }, () => false).tempoProgram.resolve(null,q)).toBeNull();
+ expect(tempoQueryFields(f.db, { kind: 'member', id: 'sam' }).tempoProgram.resolve(null,q)).toBeNull();
+ f.clock.advance(300_000);
+ const row = f.db.select().from(programFirings).where(eq(programFirings.trigger, post.id)).get()!;
+ expect(row).toMatchObject({ status: 'pending', program: { ...post.program, state: { draft: 'today' } } });
+ expect(f.db.select().from(inbox).all()).toEqual([]);
+ f.db.update(programFirings).set({ status: 'done' }).where(eq(programFirings.id, row.id)).run();
+ f.db.update(jobs).set({ state: 'done', endedAt: f.now() }).where(eq(jobs.id, row.job)).run();
+ expect((await f.call('tempo.runNow', { id: post.id }, 'second')).status).toBe(200);
+ expect(f.db.select().from(programFirings).all()).toHaveLength(2);
+ expect(f.db.select().from(triggerLog).all()).toContainEqual(expect.objectContaining({ trigger: post.id, event: 'skipped' }));
+ f.clock.advance(24 * 3_600_000);
+ expect(f.db.select().from(programFirings).where(eq(programFirings.trigger, post.id)).all()).toHaveLength(2);
+});
+
+it('runs the five-minute watch at its offset and skips overlap while the original job is pending', async () => {
+ const f = fixture();
+ const times = Array.from({ length: 288 }, (_, i) => {
+   const minute = 2 + 5 * i;
+   return String(Math.floor(minute / 60)).padStart(2, '0') + ':' + String(minute % 60).padStart(2, '0');
+ }).join(',');
+ const program = { name: 'pond-field', args: ['grant-watch'], timeoutMs: 240000, secrets: [] };
+ const watch = { ...f.trigger, id: 'watch', ownerKind: 'agent', owner: 'art', times, lifespan: 'until-stopped', program };
+ expect((await f.call('tempo.set', watch, 'watch')).status).toBe(200);
+ f.clock.advance(119_999);
+ expect(f.db.select().from(jobs).all()).toEqual([]);
+ f.clock.advance(300_001);
+ expect(f.db.select().from(jobs).all()).toHaveLength(1);
+ expect(f.db.select().from(triggerLog).all()).toContainEqual(expect.objectContaining({ trigger: 'watch', event: 'skipped' }));
+ expect(f.db.select().from(inbox).all()).toEqual([]);
+});
+
+it('lets a nightly miner defer, wake once and use its saved date on another check that night', async () => {
+ const f = fixture();
+ const trigger = { ...f.trigger, id: 'miner', ownerKind: 'agent', owner: 'art', lifespan: 'until-stopped',
+   times: '00:01,00:06,00:11', program: { name: 'miner', args: [], secrets: [], timeoutMs: 5000 } };
+ expect((await f.call('tempo.set', trigger, 'set-miner')).status).toBe(200);
+ const finish = (result: ProgramResult) => f.db.transaction(() => {
+   const firing = f.db.select().from(programFirings).where(eq(programFirings.status, 'pending')).get()!;
+   const job = f.db.select().from(jobs).where(eq(jobs.id, firing.job)).get()!;
+   applyProgramResult(f.db, new Conversations(f.db, f.now), undefined, () => true, job, result, () => {});
+   f.db.update(jobs).set({ state: 'done', endedAt: f.now() }).where(eq(jobs.id, job.id)).run();
+   return firing.program.state;
+ });
+ f.clock.advance(60_000);
+ expect(finish({ version: 1, wake: false, state: null, line: 'Busy; check again.' })).toBeUndefined();
+ f.clock.advance(300_000);
+ const day = f.now().slice(0, 10);
+ expect(finish({ version: 1, wake: true, state: { day }, payload: { date: day } })).toBeNull();
+ // Before the resulting inbox batch settles, another manual firing sees the updated marker.
+ expect((await f.call('tempo.runNow', { id: trigger.id }, 'check-again')).status).toBe(200);
+ expect(finish({ version: 1, wake: false, line: 'Already woke today.' })).toEqual({ day });
+ expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
+it('counts a late pre-midnight slot on the local date its program is actually admitted', async () => {
+ const f = fixture();
+ const trigger = { ...f.trigger, id: 'night', ownerKind: 'agent', owner: 'art', times: '23:59,00:01', lifespan: 'until-stopped',
+   programPeriod: 'day', program: { name: 'night', args: [], secrets: [], timeoutMs: 5000 } };
+ expect((await f.call('tempo.set', trigger, 'night')).status).toBe(200);
+ const late = new Date(f.clock.now() - 60_000).toISOString();
+ f.db.update(triggers).set({nextDueAt:late}).where(eq(triggers.id,trigger.id)).run();
+ f.root.services.tempo.triggers.tick();
+ const firing = f.db.select().from(programFirings).get()!;
+ expect(firing.period).toBe(f.now().slice(0,10));
+ f.db.update(programFirings).set({status:'done'}).where(eq(programFirings.id,firing.id)).run();
+ f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,firing.job)).run();
+ f.clock.advance(60_000);
+ expect(f.db.select().from(programFirings).all()).toHaveLength(1);
+});
+
+it('guards program reads and controls against an unscoped body acting on a non-owner member’s word', async () => {
+ const f = fixture();
+ f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
+ const schedule = { ...f.trigger, ownerKind:'agent', owner:'art', program:{name:'watch', args:[], secrets:[], timeoutMs:5000} };
+ expect((await f.call('tempo.set', schedule, 'watch')).status).toBe(200);
+ const job = f.db.select().from(jobs).get()!;
+ const agent = {kind:'agent' as const,id:'art'};
+ expect(mayReadProgramWork(f.db, agent, job)).toBe(true);
+ f.db.insert(inbox).values({id:'member-mail',toKind:'agent',to:'art',agent:'art',job:job.id,conversation:job.conversation,
+   source:'trigger',sourceId:'member-mail',fromKind:'schedule',words:'from Sam',at:f.now(),changedAt:f.now(),
+   state:'waiting',onWordKind:'member',onWord:'sam'}).run();
+ expect(mayReadProgramWork(f.db, agent, job)).toBe(false);
+ expect(tempoQueryFields(f.db, agent, () => mayReadProgramWork(f.db, agent, job)).tempoProgram.resolve(null,{id:schedule.id})).toBeNull();
 });
