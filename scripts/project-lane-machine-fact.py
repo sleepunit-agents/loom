@@ -77,7 +77,9 @@ def project(kind, stream, now):
         recent = deque(maxlen=100)
         total = 0
         for row in records(stream):
-            if row.get('_SYSTEMD_USER_UNIT') != 'art-worktree-cleanup.service':
+            unit = row.get('_SYSTEMD_USER_UNIT')
+            manager_record = unit == 'init.scope' and row.get('USER_UNIT') == 'art-worktree-cleanup.service'
+            if unit != 'art-worktree-cleanup.service' and not manager_record:
                 raise ValueError()
             at = int(row['__REALTIME_TIMESTAMP']) // 1000000
             priority = int(row['PRIORITY'])

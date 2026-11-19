@@ -39,6 +39,8 @@ class MachineFacts(unittest.TestCase):
         self.assertEqual(result['total'], 101)
         self.assertEqual(len(result['recent']), 100)
         self.assertNotIn('private', str(result))
+        manager = dict(record,_SYSTEMD_USER_UNIT='init.scope',USER_UNIT='art-worktree-cleanup.service')
+        self.assertEqual(project('cleanup-week-journal',rows(manager),NOW)['total'], 1)
         with self.assertRaises(ValueError):
             project('cleanup-week-journal', rows(dict(record,_SYSTEMD_USER_UNIT='other')), NOW)
 
