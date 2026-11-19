@@ -20,3 +20,11 @@ a.desk-doing-pill:focus-visible{outline:2px solid var(--v-blue);outline-offset:2
 @media(pointer:coarse){.desk-doing-pill{min-height:40px;align-items:center}}
 [data-shell="phone"] .desk-doing-pill{min-height:40px;align-items:center}
 @container rail (max-width:100px){.desk-doing,.desk-doing-quiet{display:none}}
+/* The tasks an agent has claimed and is not on now: one quiet line under the pills, opening Tasks on them. */
+.desk-doing-claimed{justify-self:start;padding:2px;font-size:12.5px;text-decoration:none;color:var(--v-text-3)}
+@media(hover:hover){.desk-doing-claimed:hover{color:var(--v-text)}}
+.desk-doing-claimed:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media(pointer:coarse){.desk-doing-claimed{padding-block:10px}}
+/* A job nothing has been heard from: still listed, without the accent. */
+.desk-doing>li[data-quiet] .desk-doing-pill{border-left-color:var(--v-edge);background:none}
+.desk-doing>li[data-quiet] .desk-doing-mark{color:var(--v-text-3)}

@@ -1,5 +1,5 @@
 import type { changes } from '../../../../src/core/data/schema';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
 
 /** Field projection accepted from the shared query client; no runtime schema or record adapter. */
@@ -30,6 +30,8 @@ export interface SharedTasksProps {
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
   selected?: string;
+  /** What the path asked to open on: a folder's id, and one agent whose tasks alone are listed until the person says otherwise. */
+  startFolder?: string; startAssignee?: string;
   questionFor: string;
   select(id?: string): void;
   /** The composition opens a form; its authenticated operation supplies the actor. */
@@ -43,7 +45,10 @@ function actions(task: Task): TaskAction[] {
 }
 /** Shared-schema presentation only. Root owns reads, authorization, routing and writes. */
 export function SharedTasks(props: SharedTasksProps) {
-  const [folder,setFolder] = useState('ready'), [query,setQuery] = useState('');
+  const [folder,setFolder] = useState(props.startFolder ?? 'ready'), [query,setQuery] = useState('');
+  const [assignee,setAssignee] = useState(props.startAssignee);
+  // A later path that asks again (the app was already open) is followed; a path that asks nothing changes nothing.
+  useEffect(() => { if (props.startFolder) setFolder(props.startFolder); if (props.startAssignee) setAssignee(props.startAssignee); }, [props.startFolder, props.startAssignee]);
   // Losing the authorized snapshot also hides selected detail and comments immediately.
   const tasks = props.status === 'live' ? props.tasks : [];
   const links = props.status === 'live' ? props.links : [];
@@ -67,14 +72,15 @@ export function SharedTasks(props: SharedTasksProps) {
     {heading:'Epics'}, ...tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title})),
   ];
   const words = query.toLowerCase().trim().split(/\s+/);
-  const shown = tasks.filter(t => inFolder(t,folder) && words.every(word => [t.id,t.title,t.goal,t.why,t.description,t.project,t.owner,t.assignee].join(' ').toLowerCase().includes(word)))
+  const shown = tasks.filter(t => inFolder(t,folder) && (!assignee || t.assigneeKind === 'agent' && t.assignee === assignee) && words.every(word => [t.id,t.title,t.goal,t.why,t.description,t.project,t.owner,t.assignee].join(' ').toLowerCase().includes(word)))
     .sort((a,b) => a.priority-b.priority || a.position-b.position || a.id.localeCompare(b.id));
   const relations = (title: string, ids: string[]) => <section><h3>{title}</h3>{ids.length ? <List label={title}>{ids.map(id => {
     const task = tasks.find(t => t.id === id);
     return task ? <Row key={id} title={task.title} meta={id} onClick={() => props.select(id)}/> : <li key={id}>{id}</li>;
   })}</List> : <p>None</p>}</section>;
   return <Split label="Tasks" className="h-full" folders={folders} folder={folder} onFolder={setFolder}
-    search={<label>Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)}/></label>}
+    search={<><label>Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)}/></label>
+      {assignee && <Button variant="outline" onClick={() => setAssignee(undefined)}>Only {assignee}’s tasks · show everyone’s</Button>}</>}
     listTitle="Tasks" listMeta={shown.length} listTop={<Button disabled={props.status !== 'live' || !props.act} onClick={() => props.act?.('create')}>Create task</Button>}
     list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : props.status !== 'live' ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : <><List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.closeReason === 'cancelled' && t.status === 'closed' ? 'cancelled' : t.isShelved ? `shelved · was ${t.status.replace('_',' ')}` : t.status.replace('_',' ')}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List>{!shown.length && <Empty title="No tasks here" text="Choose another folder or change your search."/>}</>}
     open={!!props.selected} onBack={() => props.select()} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}

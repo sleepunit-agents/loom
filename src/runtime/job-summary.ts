@@ -5,14 +5,16 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
-import { boxes, conversations, jobs, tasks, terminalRuns, triggers } from '../core/data/schema.js';
+import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { TASK_ID } from '../slug.js';
-import { unendedJobStates } from '../core/data/job-states.js';
+import { jobClaimed, unendedJobStates } from '../core/data/job-states.js';
+import { SILENCE_MS } from './silence.js';
+import { QUEUE_DEADLINE_MS } from './jobs.js';
 import { jobUsageFields } from './job-usage-queries.js';
 import { exitStage } from './job-exit.js';
 
-import { terminalSilenceMs } from '../core/conversations/terminal-sessions.js';
+import { terminalFolder, terminalSilenceMs } from '../core/conversations/terminal-sessions.js';
 export function nextTerminalDeadline(db: DataDatabase, now: number) {
   const cutoff = new Date(now - terminalSilenceMs).toISOString();
   const found = db.select({at: jobs.heardAt}).from(jobs).where(and(eq(jobs.startedByKind, 'terminal'),
@@ -32,7 +34,8 @@ export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 
 export interface Doing {
   /** The job's id, or the task's. */
   id: string; kind: DoingKind;
-  /** The conversation's label, the trigger's note, the task's or the job's title. */
+  /** The conversation's label, the trigger's note, the task's or the job's title; for a terminal session its
+   * harness and folder ("claude · loom"), with the machine apart in `machine`. */
   title: string | null;
   /** Who it is with, as an id: the member of a private conversation, or the agent a hand-off came from. */
   with: string | null;
@@ -44,12 +47,21 @@ export interface Doing {
   ref: string | null;
   /** The name of the machine it runs on, where the viewer may read that machine. */
   machine: string | null;
+  /** For a job paired with a task (the task was filed from the job's conversation): that task's title; its id is `ref`. */
+  task: string | null;
+  /** When a job was last heard from, where that is longer ago than the runtime lets a job go unheard
+   * (silence.ts, SILENCE_MS; for a queued one, jobs.ts, QUEUE_DEADLINE_MS) and nothing has ended it yet. */
+  quietSince: string | null;
   since: string; state: string;
   /** The in-app path that opens it. */
   href: string | null;
 }
 /** How many entries one read returns unless it asks for more (an agent's own page does); the rest are counted in `more`. */
 export const doingCap = 8, doingMost = 100;
+/** A claimed task is not, by that alone, being worked on: agents claim and do not always release. A task has
+ * a pill of its own only while it was touched this recently (its `changedAt`: a claim, a comment, an edit,
+ * a link, a move), and at most this many do; the rest are counted (`claimed`). */
+export const taskRecentMs = 8 * 3_600_000, taskPills = 3;
 /** Things a person is in come first, then what a schedule or another agent started and plain jobs, then tasks. */
 const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2 };
 const threadPath = (place: string) => `/p/comms-preview/thread/${encodeURIComponent(place.replace(/^th:/, ''))}`;
@@ -61,6 +73,8 @@ const taskPath = (id: string) => `/p/tasks-preview/task/${currentTaskId.test(id)
 function bridgePlace(place: string): { group: boolean } {
   try { const parts: unknown = JSON.parse(place); return { group: Array.isArray(parts) && Array.isArray(parts[3]) && parts[3][0] === 'group' }; } catch { return { group: false }; }
 }
+/** A machine's id as the registry makes one (shared-machine-registry.ts): never something to show a person. */
+const machineId = /^box-[0-9a-f]{8}-[0-9a-f-]{27}$/i;
 /** The channel a Discord label names (pieces/bridges/place.ts, discordPlace): a thread is named by itself. */
 const discordChannel = (label: string) => /^Discord (?:channel|thread) (#[^\n]{1,100}?)(?: under #[^\n]{1,100})?$/u.exec(label)?.[1] ?? null;
 
@@ -92,8 +106,10 @@ export class JobSummaries {
       return answer;
     }) as typeof rule;
   }
-  /** What the agent is doing now, for its card: its current jobs, each said by where it runs, and the tasks
-   * it has in progress.
+  /** What the agent is doing now, for its card: its current jobs, each said by where it runs, and the tasks it
+   * is plausibly working on now. A job in a conversation a task was filed from names that task. A task has a
+   * pill of its own only while it was touched within taskRecentMs, and at most taskPills do; every other task
+   * it has in progress is counted in `claimed` and is no pill.
    *
    * Each source is read under its own rule and nothing here states one. A job row is the jobs rule's. Its
    * conversation's venue, place, label and member are joined only where the conversations rule lets this
@@ -101,9 +117,10 @@ export class JobSummaries {
    * machine's name is joined under the machines rule, the agent a hand-off came from under the jobs rule
    * (the job it was handed from), a trigger's note under the triggers rule, a task under the tasks rule.
    *
-   * Three statements at most, whatever the number of rows: jobs with their conversations and machines,
-   * triggers (only when a visible wake names one), tasks. */
-  doing(agent: string, limit = doingCap): { items: Doing[]; more: number } {
+   * Four statements at most, whatever the number of rows: jobs with their conversations and machines,
+   * triggers (only when a visible wake names one), the count of tasks in progress, and (only when there
+   * are any) the few tasks that may be said. */
+  doing(agent: string, limit = doingCap): { items: Doing[]; more: number; claimed: number } {
     if (!Number.isInteger(limit) || limit < 1 || limit > doingMost) throw new Error(`Doing limit must be 1–${doingMost}`);
     const allowed = this.allowed(), from = alias(jobs, 'doing_handed_from');
     const fromRule = this.visibility().jobs!(getTableColumns(from));
@@ -112,11 +129,14 @@ export class JobSummaries {
     this.observed?.();
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     const rows = this.db.select({ id: jobs.id, title: jobs.title, state: jobs.state, startedByKind: jobs.startedByKind, startedBy: jobs.startedBy,
-      queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, inConversation: jobs.conversation,
+      queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, retryAt: jobs.retryAt, inConversation: jobs.conversation,
       conversation: conversations.id, venue: conversations.venue, place: conversations.place, label: conversations.label,
-      direct: conversations.direct, member: conversations.member, machine: boxes.name, handedFrom: from.agent }).from(jobs)
+      direct: conversations.direct, member: conversations.member, machine: boxes.name, handedFrom: from.agent,
+      harness: terminalSessions.harness, cwd: terminalSessions.cwd }).from(jobs)
       .leftJoin(conversations, and(eq(conversations.id, jobs.conversation), seen.conversations(getTableColumns(conversations))))
       .leftJoin(boxes, and(eq(boxes.id, jobs.box), seen.boxes(getTableColumns(boxes))))
+      // A terminal session's own row, by its job: the harness and the folder it began in. Read only for a job whose conversation was joined above.
+      .leftJoin(terminalSessions, and(eq(terminalSessions.job, jobs.id), eq(conversations.venue, 'terminal')))
       .leftJoin(from, and(eq(conversations.venue, 'handoff'), eq(from.id, conversations.place), fromRule))
       .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates),
         or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
@@ -128,18 +148,46 @@ export class JobSummaries {
     const wanted = [...new Set(rows.flatMap(named))];
     const notes = new Map((wanted.length ? this.db.select({ id: triggers.id, note: triggers.note, file: triggers.file }).from(triggers)
       .where(and(seen.triggers(getTableColumns(triggers)), inArray(triggers.id, wanted))).all() : []).map(row => [row.id, row.note || row.file || row.id]));
-    const working = this.db.select({ id: tasks.id, title: tasks.title, startedAt: tasks.startedAt, changedAt: tasks.changedAt }).from(tasks)
-      .where(and(seen.tasks(getTableColumns(tasks)), eq(tasks.assigneeKind, 'agent'), eq(tasks.assignee, agent), eq(tasks.status, 'in_progress'))).all();
-    const none = { title: null, with: null, place: null, direct: null, ref: null, href: null } satisfies Partial<Doing>;
+    // Tasks, under the tasks rule throughout: how many the agent has in progress, and the few that may be said.
+    const mine = and(seen.tasks(getTableColumns(tasks)), eq(tasks.assigneeKind, 'agent'), eq(tasks.assignee, agent), eq(tasks.status, 'in_progress'));
+    const inProgress = this.db.select({ n: sql<number>`count(*)` }).from(tasks).where(mine).get()!.n;
+    // A task filed from a conversation names it (source_kind 'conversation', source_id): the one link from a task to
+    // where a job runs. Only conversations this viewer reads are matched.
+    const talks = [...new Set(rows.flatMap(row => row.conversation ? [row.conversation] : []))];
+    const recent = new Date(this.now() - taskRecentMs).toISOString();
+    const filed = talks.length ? and(eq(tasks.sourceKind, 'conversation'), inArray(tasks.sourceId, talks)) : undefined;
+    const candidates = inProgress ? this.db.select({ id: tasks.id, title: tasks.title, changedAt: tasks.changedAt, sourceKind: tasks.sourceKind, sourceId: tasks.sourceId }).from(tasks)
+      .where(and(mine, or(sql`julianday(${tasks.changedAt}) > julianday(${recent})`, filed)))
+      // Those a current conversation filed come first, so many recently touched ones cannot crowd them out of the read.
+      .orderBy(...(filed ? [desc(filed)] : []), desc(sql`julianday(${tasks.changedAt})`), asc(tasks.id)).limit(doingMost).all() : [];
+    // One task per conversation, the latest touched; a job says it in its own pill.
+    const paired = new Map<string, typeof candidates[number]>();
+    for (const task of candidates) if (task.sourceKind === 'conversation' && task.sourceId && talks.includes(task.sourceId) && !paired.has(task.sourceId)) paired.set(task.sourceId, task);
+    const said = new Set([...paired.values()].map(task => task.id));
+    const working = candidates.filter(task => !said.has(task.id) && Date.parse(task.changedAt) > Date.parse(recent)).slice(0, taskPills);
+    const none = { title: null, with: null, place: null, direct: null, ref: null, task: null, quietSince: null, href: null } satisfies Partial<Doing>;
+    const now = this.now();
     const items: Doing[] = rows.map(row => {
-      const base = { ...none, id: row.id, machine: row.machine, since: row.claimedAt ?? row.queuedAt, state: row.state };
+      // A job the runtime's own sweep should have ended by now and has not (loom was not listening, or no sweep runs
+      // here): still listed, with when it was last heard from. A terminal session is not listed at all once silent.
+      const last = row.heardAt ?? row.claimedAt ?? row.queuedAt;
+      const quiet = row.startedByKind === 'terminal' ? false : jobClaimed(row.state) ? now - Date.parse(last) > SILENCE_MS
+        : now - Math.max(Date.parse(row.queuedAt), row.retryAt ? Date.parse(row.retryAt) : 0) > QUEUE_DEADLINE_MS;
+      const about = row.conversation ? paired.get(row.conversation) : undefined;
+      const base = { ...none, id: row.id, machine: row.machine, since: row.claimedAt ?? row.queuedAt, state: row.state,
+        quietSince: quiet ? last : null, ...(about ? { ref: about.id, task: about.title } : {}) };
       // In a conversation this viewer may not read: the job, and nothing of where it is. Its title is that conversation's label.
       if (row.inConversation && row.conversation === null) return { ...base, kind: 'private' };
       const trigger = named(row).find(id => notes.has(id));
       if (row.conversation === null || row.venue === null) return trigger ? { ...base, kind: 'trigger', title: notes.get(trigger)!, href: '/p/tempo' } : { ...base, kind: 'job', title: row.title };
       const talk = { ...base, title: row.label, href: conversationPath(row.conversation) };
       switch (row.venue) {
-        case 'terminal': return { ...talk, kind: 'terminal', href: threadPath(row.place!) };
+        // Said from parts, never from the stored label: a session opened before labels took the machine's name has
+        // its id there ("box-… · claude"). The machine is the job's, by name and only under the machines rule (base);
+        // the title is the harness and the folder. Without a session row the label's parts stand in, less any id.
+        case 'terminal': return { ...talk, kind: 'terminal', href: threadPath(row.place!),
+          title: (row.harness ? [row.harness, terminalFolder(row.cwd ?? '')] : (row.label ?? '').split(' · ').filter(part => !machineId.test(part.trim()) && part !== row.machine))
+            .filter(Boolean).join(' · ') || null };
         case 'loom': return { ...talk, kind: 'loom', with: row.member, href: threadPath(row.place!) };
         case 'discord': case 'slack': return { ...talk, kind: row.venue, with: row.direct ? row.member : null,
           direct: !row.direct ? null : bridgePlace(row.place!).group ? 'group' : 'person',
@@ -149,9 +197,12 @@ export class JobSummaries {
       }
     });
     for (const task of working) items.push({ ...none, id: task.id, kind: 'task', title: task.title, ref: task.id, machine: null,
-      since: task.startedAt ?? task.changedAt, state: 'in_progress', href: taskPath(task.id) });
-    items.sort((a, b) => doingRank[a.kind] - doingRank[b.kind] || b.since.localeCompare(a.since) || a.id.localeCompare(b.id));
-    return { items: items.slice(0, limit), more: Math.max(0, items.length - limit) };
+      since: task.changedAt, state: 'in_progress', href: taskPath(task.id) });
+    // Jobs nothing has been heard from go last, whatever they are.
+    const rank = (item: Doing) => item.quietSince ? 3 : doingRank[item.kind];
+    items.sort((a, b) => rank(a) - rank(b) || b.since.localeCompare(a.since) || a.id.localeCompare(b.id));
+    // `more` is what the cap cut; `claimed` is the in-progress tasks that are no pill and are named in none.
+    return { items: items.slice(0, limit), more: Math.max(0, items.length - limit), claimed: inProgress - said.size - working.length };
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */
   history(agent: string, first = 20, id?: string) {
@@ -194,11 +245,11 @@ const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {
 } });
 const doingItem = new GraphQLObjectType({ name: 'AgentDoingItem', fields: {
   id: { type: new GraphQLNonNull(GraphQLString) }, kind: { type: new GraphQLNonNull(GraphQLString) },
-  title: text, with: text, place: text, direct: text, ref: text, machine: text,
+  title: text, with: text, place: text, direct: text, ref: text, task: text, quietSince: text, machine: text,
   since: { type: new GraphQLNonNull(GraphQLString) }, state: { type: new GraphQLNonNull(GraphQLString) }, href: text,
 } });
 const doing = new GraphQLObjectType({ name: 'AgentDoing', fields: {
-  items: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(doingItem))) }, more: { type: new GraphQLNonNull(GraphQLInt) },
+  items: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(doingItem))) }, more: { type: new GraphQLNonNull(GraphQLInt) }, claimed: { type: new GraphQLNonNull(GraphQLInt) },
 } });
 /** Add to the existing generated query root. Root owns authentication, current
  * SQL policy and subscriptions; use the same field in subscription selections. */

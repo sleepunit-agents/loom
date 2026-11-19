@@ -31,6 +31,11 @@ export function expireTerminalSessions(db: DataDatabase, now: string): number {
   });
 }
 
+/** The folder a session began in, as its person would call it: the last part of the path, whichever way its
+ * slashes lean, with nothing in it that is not printable. The whole path stays on the session row. */
+export const terminalFolder = (cwd: string): string | undefined =>
+  cwd.split(/[\\/]/).filter(Boolean).pop()?.replace(/[\p{C}\u2028\u2029]/gu, '').trim() || undefined;
+
 export class TerminalSessions {
   private readonly messages: CommsMessages;
   constructor(private readonly db: DataDatabase, private readonly key: WordsKey, private readonly now = () => new Date().toISOString()) {
@@ -94,8 +99,7 @@ export class TerminalSessions {
     // The machine by its name and the folder the session began in: what its person would call it. The
     // machine's id says nothing to them. The whole path is on the session row; the title has its last part.
     const machine = this.db.select({ name: boxes.name }).from(boxes).where(eq(boxes.id, scope.machine)).get()?.name ?? scope.machine;
-    // The last part of the path, whichever way its slashes lean, with nothing in it that is not printable.
-    const folder = event.cwd.split(/[\\/]/).filter(Boolean).pop()?.replace(/[\p{C}\u2028\u2029]/gu, '').trim();
+    const folder = terminalFolder(event.cwd);
     const title = [...([machine, event.harness, ...(folder ? [folder] : [])].join(' · '))].slice(0,60).join('');
     const thread = this.messages.threads.open({agent:scope.agent,member:scope.member,venue:'terminal',title});
     const job = this.db.insert(jobs).values({agent:scope.agent,member:scope.member,box:scope.machine,

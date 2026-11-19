@@ -1026,7 +1026,15 @@ the agent has in progress. Every part is read under its own table's rule: the jo
 the jobs rule, its conversation's venue, label and member by the conversations rule,
 a machine's name by the machines rule, a trigger's note by the triggers rule, a task
 by the tasks rule. A job whose conversation the viewer may not read is returned as
-kind `private` with none of those parts. It reads three statements at most.
+kind `private` with none of those parts. It reads four statements at most.
+
+A claimed task is not, by that alone, something the agent is doing. A task is named in two cases only: in the pill
+of a current job whose conversation the task was filed from (`source_kind` `conversation`, `source_id`), and as a
+pill of its own while its `changed_at` is within the last eight hours, three at most. Every other task the agent has
+in progress is counted in `claimed`, under the tasks rule, and `more` counts only pills the limit cut. A terminal
+session is said from parts (the machine's name under the machines rule, the session's harness and folder), never from
+its stored label. A job that is unended past the runtime's own limits (no report for the silence interval, or queued
+past the queue deadline) and that no sweep has ended is still listed, last, with `quietSince`.
 
 ## Machine-reported facts
 

@@ -37,7 +37,7 @@ function AgentReader({ agent, names, go }: { agent: Agent; names: ReadonlyMap<st
   return <Reader aria-label={`${agent.name} agent window`} className="desk-agent-page">
     <div className="desk-agent-who"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,count),!!needs)} size={96}/>
       <Meta>{agentStateLine(status?.state,count,needs)}</Meta></div>
-    <Section label="Doing now"><Doing doing={doing} name={agent.name} names={names} go={go}/></Section>
+    <Section label="Doing now"><Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go}/></Section>
     {profiles.status==='live'&&(profile?.description||profile?.requestedAt)&&<Section label="About">{profile.description&&<Body>{profile.description}</Body>}{profile.requestedAt&&<Body quiet>A description has been asked for.</Body>}</Section>}
     {statuses.status==='live'&&status?.work&&<Section label="Its own report"><Body>{status.work}</Body><Meta><time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></Meta></Section>}
     <Section label="Needs you">{waiting.status==='loading'?<Body quiet>Checking…</Body>:waiting.status!=='live'?<Body quiet>Can’t tell what is waiting on you right now.</Body>:needs?<><List label={`${agent.name} first waiting item`}><WaitingRow agent={agent.id} go={go}/></List>{needs>1&&<LinkButton onClick={()=>go(waitingPath())}>{`+${needs-1} more in Inbox`}</LinkButton>}</>:<Body quiet>Nothing.</Body>}</Section>
