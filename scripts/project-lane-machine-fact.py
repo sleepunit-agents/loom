@@ -66,6 +66,8 @@ def project(kind, stream, now):
     counts = Counter()
     reasons = Counter()
     entries = []
+    runs = []
+    removed_heads = []
     for row in records(stream):
         at = row['ts' if alerts else 'at']
         if type(at) not in (int, float) or not math.isfinite(at) or at <= 0 or int(at) > now:
@@ -93,6 +95,16 @@ def project(kind, stream, now):
             if action not in ('start', 'finish', 'removed', 'keep', 'would-remove'):
                 raise ValueError()
             counts[action] += 1
+            if action in ('start', 'finish'):
+                if (len(runs) >= 100 or type(row['count']) is not int or row['count'] < 0
+                        or type(row['apply']) is not bool):
+                    raise ValueError()
+                runs.append(dict(at=int(at), event=action, count=row['count'], apply=row['apply']))
+            if action == 'removed':
+                head = row['head']
+                if len(removed_heads) >= 100 or not re.fullmatch(r'[a-f0-9]{40}', head):
+                    raise ValueError()
+                removed_heads.append(head)
             if action == 'keep':
                 if row['reason'] not in REASONS:
                     raise ValueError()
@@ -101,7 +113,7 @@ def project(kind, stream, now):
         return dict(result, entries=entries)
     return dict(result, started=counts['start'], finished=counts['finish'],
                 kept=counts['keep'], removed=counts['removed'],
-                wouldRemove=counts['would-remove'], reasons=dict(reasons))
+                wouldRemove=counts['would-remove'], reasons=dict(reasons), runs=runs, removedHeads=removed_heads)
 
 
 if __name__ == '__main__':

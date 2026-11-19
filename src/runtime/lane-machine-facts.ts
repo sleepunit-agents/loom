@@ -19,6 +19,8 @@ const schemas = {
   'cleanup-receipt': z.strictObject({
     observedAt: stamp, since: stamp, started: count, finished: count, kept: count,
     removed: count, wouldRemove: count, reasons: z.partialRecord(reason, count),
+    runs: z.array(z.strictObject({at:stamp,event:z.enum(['start','finish']),count,apply:z.boolean()})).max(100),
+    removedHeads: z.array(z.string().regex(/^[a-f0-9]{40}$/)).max(100),
   }),
 };
 
@@ -37,5 +39,9 @@ export function laneFactOutput(kind: LaneFact, raw: string, now = Math.floor(Dat
     throw Error('Alert outside observation window');
   if ('kept' in value && Object.values(value.reasons).reduce((sum, n) => sum + n, 0) !== value.kept)
     throw Error('Incomplete cleanup reasons');
+  if ('runs' in value && (value.runs.some(run => run.at < value.since || run.at > value.observedAt)
+      || value.runs.filter(run => run.event === 'start').length !== value.started
+      || value.runs.length !== value.started + value.finished || value.removedHeads.length !== value.removed))
+    throw Error('Incomplete cleanup receipts');
   return JSON.stringify(value);
 }
