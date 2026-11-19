@@ -986,7 +986,9 @@ watched only when named:
 ```
 
 `hostLogins` has the shape of `accountLogins`: by account, then harness, the
-directory that harness keeps its sign-in in. A directory named here is only
+directory that harness keeps its sign-in in, as a whole path (`~` is not
+expanded, and the worker stops on a path that does not start at the root). A
+worker that only reports (`reportOnly`) watches them as well. A directory named here is only
 read; no body is given it. The worker knows the files of `claude`
 (`.credentials.json`) and `codex` (`auth.json`); another harness is not watched.
 It opens that one file and sends a state, an end time and a reason word. No

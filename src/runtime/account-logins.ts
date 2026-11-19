@@ -33,7 +33,9 @@ type Key = Pick<Login, 'account' | 'box' | 'harness' | 'place'>;
 // One notice per time a sign-in is found gone, and one per end date: a notice already closed under an id is
 // never sent again (Conversations.send), so each id names the occasion and not only the sign-in.
 const goneId = (row: Login) => `login-gone:${JSON.stringify([row.account, row.box, row.harness, row.place, row.since])}`;
-const endingId = (row: Login) => `login-ending:${JSON.stringify([row.account, row.box, row.harness, row.place, row.expiresAt])}`;
+// The end date alone would not do for the second: a sign-in found gone and then back with the same end has
+// had that notice closed, and its owner is owed it again.
+const endingId = (row: Login) => `login-ending:${JSON.stringify([row.account, row.box, row.harness, row.place, row.expiresAt, row.since])}`;
 const where = (key: Key) => and(eq(modelAccountLogins.account, key.account), eq(modelAccountLogins.box, key.box),
   eq(modelAccountLogins.harness, key.harness), eq(modelAccountLogins.place, key.place));
 const placeWords = (row: Key) => row.place === 'containers' ? `${row.harness} in houses` : `${row.harness} on the machine itself`;
@@ -52,7 +54,7 @@ export class AccountLogins {
     const notices = new Conversations(this.db, () => at, lateMailWaits);
     if (before.state === 'signed-out' && (!after || after.state === 'signed-in' || after.since !== before.since))
       notices.resolveSource('notice', goneId(before), after ? 'Signed in again' : 'No longer watched');
-    if (before.expiresAt !== null && (!after || after.expiresAt !== before.expiresAt || after.state !== 'signed-in'))
+    if (before.expiresAt !== null && (!after || after.expiresAt !== before.expiresAt || after.state !== 'signed-in' || after.since !== before.since))
       notices.resolveSource('notice', endingId(before), !after ? 'No longer watched' : after.state === 'signed-in' ? 'Signed in again' : 'Signed out');
   }
 
@@ -110,20 +112,22 @@ export class AccountLogins {
     }, { behavior: 'immediate' });
   }
 
-  private drop(rows: readonly Login[], at: string): void {
+  private drop(rows: readonly Login[], at: string): boolean {
     for (const row of rows) { this.db.delete(modelAccountLogins).where(where(row)).run(); this.settle(row, undefined, at); }
+    return rows.length > 0;
   }
 
-  /** The account is no longer enabled on the machine: its sign-ins there are no longer watched. */
-  forget(account: string, box: string): void {
+  /** The account is no longer enabled on the machine: its sign-ins there are no longer watched. Says whether there were any. */
+  forget(account: string, box: string): boolean {
     const at = this.at();
-    this.db.transaction(() => this.drop(this.db.select().from(modelAccountLogins).where(and(eq(modelAccountLogins.account, account), eq(modelAccountLogins.box, box))).all(), at),
+    return this.db.transaction(() => this.drop(this.db.select().from(modelAccountLogins).where(and(eq(modelAccountLogins.account, account), eq(modelAccountLogins.box, box))).all(), at),
       { behavior: 'immediate' });
   }
 
   /** One private notice to the account's owner per sign-in found gone, and one per end date coming up, on
    * machines that are reporting. They close when the sign-in is good again (write, above). */
   sweep(silenceMs = SILENCE_MS, endingMs = LOGIN_ENDING_MS): typeof inbox.$inferSelect[] {
+    if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
     const at = this.at(), now = Date.parse(at);
     return this.db.transaction(() => {
       const notices = new Conversations(this.db, () => at, lateMailWaits);

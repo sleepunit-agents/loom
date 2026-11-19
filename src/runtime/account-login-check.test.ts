@@ -30,6 +30,11 @@ it('says signed in without an end where the file gives none', async () => {
   expect(await readLogin('claude', '/d', { read: files({ '/d/.credentials.json': noEnd }), now })).toEqual({ state: 'signed-in' });
   expect(await readLogin('codex', '/c', { read: files({ '/c/auth.json': JSON.stringify({ tokens: { refresh_token: 'r' }, OPENAI_API_KEY: null }) }), now })).toEqual({ state: 'signed-in' });
   expect(await readLogin('codex', '/c', { read: files({ '/c/auth.json': JSON.stringify({ tokens: {}, OPENAI_API_KEY: null }) }), now })).toEqual({ state: 'signed-out', why: 'no-sign-in' });
+  expect(await readLogin('codex', '/c', { read: files({ '/c/auth.json': JSON.stringify({ tokens: { access_token: 'a' } }) }), now })).toEqual({ state: 'signed-in' });
+  // An end loom could not keep (another unit, a sentinel) is no known end, never a report loom would refuse whole.
+  for (const ends of [1e15, 253_402_300_800_000, -1, '2026-12-14', null])
+    expect(await readLogin('claude', '/d', { read: files({ '/d/.credentials.json': JSON.stringify({ claudeAiOauth: { refreshToken: 'r', refreshTokenExpiresAt: ends } }) }), now })).toEqual({ state: 'signed-in' });
+  expect(await readLogin('claude', '/d', { read: files({ '/d/.credentials.json': JSON.stringify({ claudeAiOauth: { refreshToken: 'r', refreshTokenExpiresAt: 253_402_300_799_999 } }) }), now })).toEqual({ state: 'signed-in', expiresAt: '9999-12-31T23:59:59.999Z' });
 });
 
 it('says signed in for a Claude sign-in that holds only a working token', async () => {
@@ -47,5 +52,5 @@ it('does not call a file it cannot read, or one caught half written, signed out,
     }
   expect(watchesLogin('claude') && watchesLogin('codex')).toBe(true);
   expect(watchesLogin('gemini') || watchesLogin('constructor')).toBe(false);
-  expect(() => readLogin('gemini', '/g')).toThrow('not watched');
+  await expect(readLogin('gemini', '/g')).rejects.toThrow('not watched');
 });

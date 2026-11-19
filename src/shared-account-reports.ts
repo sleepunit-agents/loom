@@ -12,12 +12,12 @@ import { quotaWindows } from './runtime/account-observation.js';
 import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { recordAccountWindows, readAccountWindows } from './runtime/account-windows.js';
 import { AccountLogins, LOGIN_PLACES } from './runtime/account-logins.js';
-import { LOGIN_REASONS } from './runtime/account-login-check.js';
+import { LOGIN_HARNESSES, LOGIN_REASONS } from './runtime/account-login-check.js';
 
 /** What a worker read about one sign-in on its own machine. Never a credential, and no words of the worker's
- * own: a state, an end time, and a reason from a fixed list. The harness is a plain name because it is
- * written into the notice its owner reads. `unknown` names a sign-in the worker watches and could not read. */
-export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,39}$/), place: z.enum(LOGIN_PLACES),
+ * own: a state, an end time, a reason from a fixed list, and a harness from the list of those whose
+ * sign-in a worker can read, because the harness is written into the notice its owner reads. `unknown` names a sign-in the worker watches and could not read. */
+export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.enum(LOGIN_HARNESSES), place: z.enum(LOGIN_PLACES),
   state: z.enum(['signed-in', 'signed-out', 'unknown']), expiresAt: z.iso.datetime({ offset: true }).nullish(), why: z.enum(LOGIN_REASONS).nullish() }).strict();
 export function registerSharedAccountReports(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{box: string}> | undefined) {
   const identity = z.object({ account: z.string().min(1), owner: z.string().min(1), provider: z.string().min(1) }).strict();

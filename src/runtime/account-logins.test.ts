@@ -148,3 +148,22 @@ it('stops watching a sign-in the worker no longer names or whose account is no l
   f.service.checked('one', []);
   expect(f.rows().map(row => row.box)).toEqual(['loom']);
 });
+
+it('says again that a sign-in is ending after it was found gone and came back with the same end', () => {
+  const f = fixture(), ends = f.at(2 * DAY);
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: ends }]);
+  const [first] = f.service.sweep();
+  expect(first.words).toMatch(/ends in /);
+  f.advance(60_000); f.seen('loom');
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-out', why: 'no-file' }]);
+  expect(f.service.sweep().map(row => row.words)).toEqual(['Claude subscription is signed out on loom (claude in houses). There is no sign-in file.']);
+  expect(f.mail().find(row => row.id === first.id)!.state).not.toBe('waiting');
+  f.advance(60_000); f.seen('loom');
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: ends }]);
+  const open = f.service.sweep();
+  expect(open).toHaveLength(1);
+  expect(open[0].id).not.toBe(first.id);
+  expect(open[0]).toMatchObject({ state: 'waiting' });
+  expect(f.mail().filter(row => row.state === 'waiting').map(row => row.id)).toEqual([open[0].id]);
+  expect(() => f.service.sweep(0)).toThrow('Invalid silence interval');
+});

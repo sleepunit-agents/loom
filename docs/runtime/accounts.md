@@ -253,8 +253,11 @@ What is learned, and from where:
   A file that is missing or holds no sign-in is `signed-out` with one of three
   reason words (`no-file`, `no-sign-in`, `ended`); loom writes the sentence. A
   file that cannot be read, or is caught half written, is `unknown`: that
-  sign-in keeps what was last learned. A sign-in the worker no longer names is
-  no longer watched.
+  sign-in keeps what was last learned. A sign-in is said to be gone only when
+  two reads in a row found it gone, so a file being replaced is not a sign-out.
+  A sign-in the worker no longer names is no longer watched, and a worker that
+  only reports says what it watches too. The harness is one of those whose
+  files a worker can read (`claude`, `codex`); loom refuses any other name.
 - A job that got words back from the model confirms the house sign-in it ran
   under. This is the only evidence that a provider still honours a sign-in; the
   files cannot say a sign-in was withdrawn early. It never changes a known end.
@@ -268,7 +271,8 @@ What follows from it:
   account, for that harness, and the job's placement record says so. The
   machine user's own sign-in does not affect placement.
 - The account's owner gets one inbox notice each time a sign-in is found gone,
-  and one for each end date that comes within three days. A notice closes when
+  and one for each end date that comes within three days (again if the sign-in
+  was gone in between and came back with the same end). A notice closes when
   the sign-in is good again, is renewed, is no longer watched, or its machine
   is taken out of the household.
 - Nothing is raised for a machine that has stopped reporting. Its sign-ins keep
