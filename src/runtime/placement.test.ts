@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes } from '../core/data/schema.js';
+import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
 import { decidePlacement, selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
@@ -188,4 +188,20 @@ it('places a clock program by machine capabilities while every account is unavai
   expect(decidePlacement(db, criteria).placement?.box).toBe('remote');
   expect(decidePlacement(db, { ...criteria, needs: ['gpu'] }).placement).toBeUndefined();
   expect(selectPlacement(db, input)).toBeUndefined();
+});
+it('passes over a machine whose houses were last found signed out of the account, and says so', () => {
+  const { db, input } = fixture();
+  const login = { account: 'shared', box: 'local', harness: 'runner', state: 'signed-out', checkedAt: input.now, since: input.now, learnedFrom: 'check' } as const;
+  // The machine's own sign-in being gone says nothing about its houses.
+  db.insert(modelAccountLogins).values({ ...login, place: 'host' }).run();
+  expect(selectPlacement(db, input)?.box).toBe('local');
+  db.insert(modelAccountLogins).values({ ...login, place: 'containers' }).run();
+  // Another harness on the same machine keeps its own sign-in, so the machine still takes work it can run.
+  expect(selectPlacement(db, input)).toMatchObject({ box: 'local', model: 'backup', harness: 'other' });
+  db.insert(modelAccountLogins).values({ ...login, place: 'containers', harness: 'other' }).run();
+  const decided = decidePlacement(db, input);
+  expect(decided.placement).toMatchObject({ box: 'remote', account: 'shared' });
+  expect(decided.decision.find(row => row.box === 'local')).toEqual({ box: 'local', outcome: 'passed', reason: 'An account for an allowed model is signed out on this machine.' });
+  db.update(modelAccountLogins).set({ state: 'signed-in' }).run();
+  expect(selectPlacement(db, input)?.box).toBe('local');
 });

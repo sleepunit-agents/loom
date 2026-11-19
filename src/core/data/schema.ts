@@ -1151,6 +1151,34 @@ export const modelAccountBoxes = sqliteTable('model_account_boxes', {
   primaryKey({ columns: [t.account, t.box] }),
 ]);
 
+/** One sign-in of a model account: which account, on which machine, for which harness, in which place.
+ * A place is where the token lives on that machine: `containers` is the directory every house there mounts,
+ * `host` is the machine user's own sign-in. Tokens are never copied between places, so each is its own
+ * sign-in with its own end. A row is the last thing loom learned about that sign-in; nothing here is a
+ * credential. `expires_at` is absent where the provider's files do not say. */
+export const modelAccountLogins = sqliteTable('model_account_logins', {
+  account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  harness: text('harness').notNull(),
+  place: text('place', { enum: ["containers", "host"] }).notNull(),
+  state: text('state', { enum: ["signed-in", "signed-out"] }).notNull(),
+  expiresAt: text('expires_at'),
+  // When the state last changed: how long a sign-in has been gone, and which time it was found gone.
+  since: text('since').notNull(),
+  checkedAt: text('checked_at').notNull(),
+  learnedFrom: text('learned_from', { enum: ["check", "job"] }).notNull(),
+  why: text('why'),
+}, t => [
+  primaryKey({ columns: [t.account, t.box, t.harness, t.place] }),
+  check('model_account_logins_harness', sql`length(trim(${t.harness})) > 0`),
+  check('model_account_logins_place', sql`${t.place} in ('containers', 'host')`),
+  check('model_account_logins_state', sql`${t.state} in ('signed-in', 'signed-out')`),
+  check('model_account_logins_learned_from', sql`${t.learnedFrom} in ('check', 'job')`),
+  check('model_account_logins_expires_at_utc', utc(t.expiresAt)),
+  check('model_account_logins_checked_at_utc', utc(t.checkedAt)),
+  check('model_account_logins_since_utc', utc(t.since)),
+]);
+
 /** An agent's allowed and preferred models, in order. */
 export const agentModels = sqliteTable('agent_models', {
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
@@ -1742,6 +1770,7 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   jobsByBox: many(jobs, { relationName: 'jobs_box' }),
   agentBoxesByBox: many(agentBoxes, { relationName: 'agent_boxes_box' }),
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
+  modelAccountLoginsByBox: many(modelAccountLogins, { relationName: 'model_account_logins_box' }),
   accountSigninsByBox: many(accountSignins, { relationName: 'account_signins_box' }),
 }));
 
@@ -1808,6 +1837,7 @@ export const modelAccountsRelations = relations(modelAccounts, ({ one, many }) =
   modelAccountWindowsByAccount: many(modelAccountWindows, { relationName: 'model_account_windows_account' }),
   ownerRow: one(members, { fields: [modelAccounts.owner], references: [members.id], relationName: 'model_accounts_owner' }),
   modelAccountBoxesByAccount: many(modelAccountBoxes, { relationName: 'model_account_boxes_account' }),
+  modelAccountLoginsByAccount: many(modelAccountLogins, { relationName: 'model_account_logins_account' }),
   accountSigninsByAccount: many(accountSignins, { relationName: 'account_signins_account' }),
 }));
 
@@ -1823,6 +1853,11 @@ export const accountSigninsRelations = relations(accountSignins, ({ one }) => ({
 export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one }) => ({
   accountRow: one(modelAccounts, { fields: [modelAccountBoxes.account], references: [modelAccounts.id], relationName: 'model_account_boxes_account' }),
   boxRow: one(boxes, { fields: [modelAccountBoxes.box], references: [boxes.id], relationName: 'model_account_boxes_box' }),
+}));
+
+export const modelAccountLoginsRelations = relations(modelAccountLogins, ({ one }) => ({
+  accountRow: one(modelAccounts, { fields: [modelAccountLogins.account], references: [modelAccounts.id], relationName: 'model_account_logins_account' }),
+  boxRow: one(boxes, { fields: [modelAccountLogins.box], references: [boxes.id], relationName: 'model_account_logins_box' }),
 }));
 
 export const agentModelsRelations = relations(agentModels, ({ one }) => ({
@@ -2129,6 +2164,7 @@ export const plumbing = {
   machineReads,
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
+  modelAccountLogins,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {
@@ -2277,6 +2313,7 @@ export const schema = { ...tables, ...plumbing,
   modelAccountsRelations,
   modelAccountWindowsRelations,
   modelAccountBoxesRelations,
+  modelAccountLoginsRelations,
   accountSigninsRelations,
   agentModelsRelations,
   bridgeConnectionsRelations,

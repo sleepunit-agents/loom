@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
-import { jobUsage } from './core/data/schema.js';
+import { eq } from 'drizzle-orm';
+import { jobs, jobUsage, modelAccountBoxes, modelAccountLogins, modelAccounts } from './core/data/schema.js';
 import { Jobs } from './runtime/jobs.js';
 
 const clean: (() => void | Promise<void>)[] = [];
@@ -30,4 +31,22 @@ it('rejects contradictory or empty reports and ends normally with unknown counte
   ]) expect((await f.call('usage', report, 'bad')).ok).toBe(false);
   new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).finish('job', 'box', 0);
   expect(f.db.select().from(jobUsage).all()).toMatchObject([{ job: 'job', source: 'none', modelCalls: null, toolCalls: null, tools: null }]);
+});
+
+it('takes a report of a model that answered as proof of the house sign-in the job ran under, and nothing less', async () => {
+  const place = (f: Awaited<ReturnType<typeof bodyFixture>>) => {
+    f.db.insert(modelAccounts).values({ id: 'sub', owner: 'alice', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
+    f.db.insert(modelAccountBoxes).values({ account: 'sub', box: 'box' }).run();
+    f.db.update(jobs).set({ account: 'sub', harness: 'claude' }).where(eq(jobs.id, 'job')).run();
+  };
+  const quiet = await bodyFixture(clean); place(quiet);
+  expect(await (await quiet.call('usage', { source: 'transcript', tokensIn: 40, tokensOut: 0, modelCalls: 0 }, 'no-answer')).json()).toMatchObject({ value: { saved: true } });
+  expect(quiet.db.select().from(modelAccountLogins).all()).toEqual([]);
+  // A job loom did not place under an account proves nothing about one.
+  const unplaced = await bodyFixture(clean);
+  expect(await (await unplaced.call('usage', { source: 'transcript', tokensOut: 12, modelCalls: 1 }, 'unplaced')).json()).toMatchObject({ value: { saved: true } });
+  expect(unplaced.db.select().from(modelAccountLogins).all()).toEqual([]);
+  const f = await bodyFixture(clean); place(f);
+  expect(await (await f.call('usage', { source: 'transcript', tokensIn: 40, tokensOut: 12, modelCalls: 1 }, 'answered')).json()).toMatchObject({ value: { saved: true } });
+  expect(f.db.select().from(modelAccountLogins).all()).toMatchObject([{ account: 'sub', box: 'box', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: null, learnedFrom: 'job' }]);
 });

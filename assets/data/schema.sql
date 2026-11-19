@@ -1455,6 +1455,29 @@ CREATE TABLE `job_usage` (
 	CONSTRAINT "job_usage_source_choice" CHECK("job_usage"."source" in ('report','transcript','none','program'))
 );
 
+CREATE TABLE `model_account_logins` (
+	`account` text NOT NULL,
+	`box` text NOT NULL,
+	`harness` text NOT NULL,
+	`place` text NOT NULL,
+	`state` text NOT NULL,
+	`expires_at` text,
+	`since` text NOT NULL,
+	`checked_at` text NOT NULL,
+	`learned_from` text NOT NULL,
+	`why` text,
+	PRIMARY KEY(`account`, `box`, `harness`, `place`),
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "model_account_logins_harness" CHECK(length(trim("model_account_logins"."harness")) > 0),
+	CONSTRAINT "model_account_logins_place" CHECK("model_account_logins"."place" in ('containers', 'host')),
+	CONSTRAINT "model_account_logins_state" CHECK("model_account_logins"."state" in ('signed-in', 'signed-out')),
+	CONSTRAINT "model_account_logins_learned_from" CHECK("model_account_logins"."learned_from" in ('check', 'job')),
+	CONSTRAINT "model_account_logins_expires_at_utc" CHECK("model_account_logins"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."expires_at") = "model_account_logins"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."expires_at") = "model_account_logins"."expires_at", 0)),
+	CONSTRAINT "model_account_logins_checked_at_utc" CHECK("model_account_logins"."checked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."checked_at") = "model_account_logins"."checked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."checked_at") = "model_account_logins"."checked_at", 0)),
+	CONSTRAINT "model_account_logins_since_utc" CHECK("model_account_logins"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."since") = "model_account_logins"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."since") = "model_account_logins"."since", 0))
+);
+
 CREATE TABLE `program_tokens` (
 	`token` text PRIMARY KEY NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade

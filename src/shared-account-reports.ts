@@ -11,6 +11,11 @@ import { accountCompletion, accountObservationCommitted } from './runtime/accoun
 import { quotaWindows } from './runtime/account-observation.js';
 import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { recordAccountWindows, readAccountWindows } from './runtime/account-windows.js';
+import { AccountLogins, LOGIN_PLACES } from './runtime/account-logins.js';
+
+/** What a worker read about one sign-in on its own machine. Never a credential: a state, an end time and a short reason. */
+export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.string().trim().min(1).max(100), place: z.enum(LOGIN_PLACES),
+  state: z.enum(['signed-in', 'signed-out']), expiresAt: z.iso.datetime({ offset: true }).nullish(), why: z.string().trim().min(1).max(200).nullish() }).strict();
 export function registerSharedAccountReports(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{box: string}> | undefined) {
   const identity = z.object({ account: z.string().min(1), owner: z.string().min(1), provider: z.string().min(1) }).strict();
   // Concurrency witnesses, never credentials or authority. Keep only a random
@@ -68,6 +73,20 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
     // has a new input object and must not invalidate a newer read witness.
     // A fresh identical provider success still invalidates older failures.
     after(input) { committed(input); },
+  });
+  // The worker names every sign-in it watches each time, so the record of its machine is replaced whole.
+  // Which machine it speaks for comes from its credential alone, and a sign-in of an account that is not
+  // enabled there is left out (AccountLogins.checked), so a worker cannot write about another machine or
+  // an account it was never given.
+  const logins = new AccountLogins(db, now);
+  operations.register({ name: 'runtime.accountLogins', write: true, recheckPolicy: true, doors: ['http'],
+    input: z.object({ logins: z.array(loginCheck).max(64) }).strict(), output: z.object({ changed: z.number().int().nonnegative() }).strict(),
+    may: viewer => !!liveWorker(db, viewer, runner(viewer)),
+    run(ctx, input) {
+      const changed = logins.checked(liveWorker(db, ctx.viewer, runner(ctx.viewer))!, input.logins);
+      for (const account of changed) ctx.changed('modelAccount', account);
+      return { changed: changed.length };
+    },
   });
   return { close() { bases.clear(); } };
 }

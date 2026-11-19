@@ -2,7 +2,7 @@ import { currentAccountCapacity } from './account-windows.js';
 import { SILENCE_MS } from './silence.js';
 import { and, asc, count, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
+import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, jobs, modelAccounts, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
 import { claimedJobStates } from '../core/data/job-states.js';
 import { machineMayHost, namesCurrent } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
@@ -52,6 +52,8 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
   const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
     .filter(account => namesCurrent('member', account.owner, sharing) && currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
+  // An account enabled on a machine whose houses were last found signed out of it (account-logins.ts).
+  const gone = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(and(eq(modelAccountLogins.place, 'containers'), eq(modelAccountLogins.state, 'signed-out'))).all();
   const roles = models.flatMap(model => {
     const role = input.roles.find(role => role.model === model.model);
     return role && !input.cannotRun?.(role.harness) ? [role] : [];
@@ -75,13 +77,15 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     if (input.programBoxes) return { box: id, placement: { box: id, model: '', account: '', harness: 'house-program' },
       missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     if (!roles.length) return { box: id, reason: 'No allowed model and harness can run this job.' };
+    let signedOut = false;
     for (const role of roles) {
       const account = accounts.find(account => account.provider === role.provider
-        && signedIn.some(binding => binding.account === account.id && binding.box === id));
+        && signedIn.some(binding => binding.account === account.id && binding.box === id)
+        && !(gone.some(login => login.account === account.id && login.box === id && login.harness === role.harness) && (signedOut = true)));
       if (account) return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
         missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     }
-    return { box: id, reason: 'No signed-in account with room for an allowed model.' };
+    return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
   const winner = eligible.find(candidate => !candidate.missingPreferred.length) ?? eligible[0];
