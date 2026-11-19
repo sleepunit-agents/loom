@@ -918,9 +918,11 @@ renewal, so two copies of one sign-in cancel each other. There is therefore one
 directory for an account and a harness on a machine, every body on that account
 is given that same directory, and nothing makes a copy:
 
-- The worker mounts the directory whole and read-write. It never reads, lists,
-  cleans, writes or removes anything inside it, at start or between bodies: it
-  asks the system what the directory is, and that is all. A harness's program
+- The worker mounts the directory whole and read-write. It never lists, cleans,
+  writes or removes anything inside it, at start or between bodies. It reads
+  one file there, the harness's sign-in file, to know whether the sign-in is
+  there and when it ends ("Watching the sign-ins on the machine", below), and
+  otherwise asks the system what the directory is, and that is all. A harness's program
   keeps more there than the sign-in (Claude Code keeps the lock it renews
   under), and those files are the program's.
 - The core house points each harness at its place, in place: Claude Code by
@@ -991,7 +993,10 @@ expanded, and the worker stops on a path that does not start at the root). A
 worker that only reports (`reportOnly`) watches them as well. A directory named here is only
 read; no body is given it. The worker knows the files of `claude`
 (`.credentials.json`) and `codex` (`auth.json`); another harness is not watched.
-It opens that one file and sends a state, an end time and a reason word. No
+Bodies can write in a mounted sign-in directory, so the worker opens that one
+name only when it is an ordinary file of at most a megabyte: it does not
+follow a link, wait on a pipe or read a device, and anything else is not
+knowing, never signed out. It sends a state, an end time and a reason word. No
 token and no text of the file leaves the function that reads it, and a failure
 to read is one fixed line (`Worker sign-in state unavailable`) with nothing of
 the error in it.

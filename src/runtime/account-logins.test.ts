@@ -167,3 +167,9 @@ it('says again that a sign-in is ending after it was found gone and came back wi
   expect(f.mail().filter(row => row.state === 'waiting').map(row => row.id)).toEqual([open[0].id]);
   expect(() => f.service.sweep(0)).toThrow('Invalid silence interval');
 });
+
+it('keeps no end for a time outside the years the database holds, and still records the sign-in', () => {
+  const f = fixture();
+  expect(f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: '9999-12-31T23:59:59-01:00' }])).toEqual(['sub']);
+  expect(f.rows()).toMatchObject([{ state: 'signed-in', expiresAt: null }]);
+});
