@@ -72,6 +72,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   for(const repository of value.repositories){const bound=db.select().from(projectRepositories).all().find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
  };
  return {
+  validate,
   save(raw:z.input<typeof projectInput>){const value=projectInput.parse(raw);return db.transaction(()=>{
    validate(value);db.insert(projects).values({id:value.id,name:value.name}).onConflictDoUpdate({target:projects.id,set:{name:value.name}}).run();
    db.delete(projectMembers).where(eq(projectMembers.project,value.id)).run();db.delete(projectAgents).where(eq(projectAgents.project,value.id)).run();db.delete(projectRepositories).where(eq(projectRepositories.project,value.id)).run();

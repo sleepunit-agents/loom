@@ -378,15 +378,22 @@ it('shows private reported steps from the currently visible approval record and 
 it.each(['app','inline'])('shows a household owner what a waiting household card would replace, read for them and never taken from the card (%s)',async surface=>{
  fixture();const card=feed.approvals.approvals[0];
  Object.assign(card,{operation:'household.change',target:'household:member:lee',details:JSON.stringify({change:'member',after:{id:'lee',role:'owner'},seal:{nonce:'n',digest:'d'}}),changeSummary:'member lee: {"id":"lee","role":"owner"}'});
- const request=vi.fn(async(_url:string,_options:RequestInit)=>({ok:true,json:async()=>({ok:true,value:{summary:'member lee: {"id":"lee","role":"member"} → {"id":"lee","role":"owner"}',problem:'That is how it already is'}})}));vi.stubGlobal('fetch',request);
+ const told={summary:'Role: Member → Owner of the household',problem:'That is how it already is',blocked:'This cannot be allowed: it is already so, and nothing would change. Deny it.',
+  card:{title:'Change what Lee is in the household',nothing:false,facts:[{label:'Role',value:'Member → Owner of the household'}],exact:[{label:'id',value:'lee'},{label:'role',value:'owner'}]}};
+ const request=vi.fn(async(_url:string,_options:RequestInit)=>({ok:true,json:async()=>({ok:true,value:told})}));vi.stubGlobal('fetch',request);
  const node=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id});
- // Someone who is not an owner sees the card as filed, and nothing is asked for them.
+ // Someone who is not an owner sees the card in plain words made from what the card itself keeps, and nothing
+ // is asked for them: no name, nothing of what is there now, and no raw JSON.
  await draw(node());await act(async()=>{});
- expect(request).not.toHaveBeenCalled();expect(words()).toContain('member lee: {\\"id\\":\\"lee\\",\\"role\\":\\"owner\\"}');expect(words()).not.toContain('→');
+ expect(request).not.toHaveBeenCalled();expect(words()).toContain('Set Lee as a');expect(words()).not.toContain('→');expect(words()).not.toContain('{\\"');
  await act(async()=>tree.unmount());
  feed.owner=true;await draw(node());await act(async()=>{});
  expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposal',expect.objectContaining({method:'POST',credentials:'same-origin',body:JSON.stringify({input:{id:card.id}})}));
- expect(words()).toContain('\\"role\\":\\"member\\"} → {');expect(words()).toContain('That is how it already is');
+ expect(words()).toContain('Change what Lee is in the household');expect(words()).toContain('Member → Owner of the household');expect(words()).toContain('it is already so, and nothing would change');expect(words()).not.toContain('{\\"');
+ // Allow is off, with the line as its reason; Deny stays.
+ const buttons=tree.root.findAllByType('Button' as never);
+ expect(buttons.find((button:{props:{children:unknown}})=>button.props.children==='Allow')?.props).toMatchObject({disabled:true,title:told.blocked});
+ expect(buttons.find((button:{props:{children:unknown}})=>button.props.children==='Deny')?.props.disabled).toBe(false);
  // A card that is answered, or is not a household change, is shown as it is.
  await act(async()=>tree.unmount());request.mockClear();card.state='used';await draw(node());await act(async()=>{});
  expect(request).not.toHaveBeenCalled();

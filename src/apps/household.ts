@@ -44,20 +44,46 @@ export function householdService(db: DataDatabase, now: () => string) {
   const seed = (defaultAgent: string | null = null) => {
     db.insert(household).values({defaultAgent,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}).onConflictDoNothing().run();
   };
+  const validateMember = (value: z.infer<typeof memberInput>) => {
+    const old = db.select().from(members).where(eq(members.id, value.id)).get();
+    if (old?.role === 'owner' && value.role !== 'owner' && !db.select({ id: members.id }).from(members)
+      .where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${value.id}`).get())
+      throw new HouseholdError('conflict', 'At least one household owner must remain');
+    const owned=value.fullOwner?db.select({id:agents.id}).from(agents).all().map(row=>row.id):value.agents;
+    for (const agent of owned) if (!db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent)).get())
+      throw new HouseholdError('invalid', 'Unknown agent');
+    return { old, owned };
+  };
+  const validateRemoval = (of: Removable, id: string, removed: boolean) => {
+    const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
+    const row = db.select({ id: table.id, removedAt: table.removedAt }).from(table).where(eq(table.id, id)).get();
+    if (!row) throw new HouseholdError('not-found', 'No ' + of + ' has that id');
+    if (!!row.removedAt === removed) throw new HouseholdError('invalid', removed ? 'That is already removed' : 'That is not removed');
+    if (removed && of === 'member' && !db.select({ id: members.id }).from(members).where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${id}`).get())
+      throw new HouseholdError('conflict', 'At least one household owner must remain');
+    if (removed && of === 'agent' && db.select().from(household).get()?.defaultAgent === id) throw new HouseholdError('conflict', 'Choose another default agent first');
+    return table;
+  };
+  const validateSettings = (row: z.infer<typeof settingsInput>) => {
+    if (row.defaultAgent && !db.select({ id: agents.id }).from(agents).where(eq(agents.id, row.defaultAgent)).get())
+      throw new HouseholdError('invalid', 'Unknown agent');
+  };
+  const validateOrder = (of: 'members' | 'agents', ids: readonly string[]) => {
+    const table = of === 'members' ? members : agents;
+    const have = db.select({ id: table.id }).from(table).all().map(row => row.id);
+    if (new Set(ids).size !== ids.length || have.length !== ids.length || have.some(id => !ids.includes(id)))
+      throw new HouseholdError('invalid', 'Name every one of the ' + of + ' exactly once');
+    return table;
+  };
   return {
+    validateMember, validateRemoval, validateSettings, validateOrder,
     /** Initial settings belong to the household, not the first browser's zone. */
     initialize(defaultAgent: string | null = null) { seed(defaultAgent); },
     synchronizeFullOwners(){db.insert(memberAgents).select(db.select({member:members.id,agent:agents.id}).from(members).crossJoin(agents).where(eq(members.fullOwner,true))).onConflictDoNothing().run();},
     setMember(input: z.input<typeof memberInput>) {
       const value = memberInput.parse(input);
       return db.transaction(() => {
-        const old = db.select().from(members).where(eq(members.id, value.id)).get();
-        if (old?.role === 'owner' && value.role !== 'owner' && !db.select({ id: members.id }).from(members)
-          .where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${value.id}`).get())
-          throw new HouseholdError('conflict', 'At least one household owner must remain');
-        const owned=value.fullOwner?db.select({id:agents.id}).from(agents).all().map(row=>row.id):value.agents;
-        for (const agent of owned) if (!db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent)).get())
-          throw new HouseholdError('invalid', 'Unknown agent');
+        const { old, owned } = validateMember(value);
         db.insert(members).values({ id: value.id, role: value.role, fullOwner: value.fullOwner, joinedAt: old?.joinedAt ?? now() })
           .onConflictDoUpdate({ target: members.id, set: { role: value.role, fullOwner: value.fullOwner } }).run();
         db.delete(memberAgents).where(eq(memberAgents.member, value.id)).run();
@@ -83,13 +109,7 @@ export function householdService(db: DataDatabase, now: () => string) {
      * anything (shared-sharing.ts), a removed connection is switched off. Restore puts it back. */
     setRemoved(of: Removable, id: string, removed: boolean) {
       return db.transaction(() => {
-        const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
-        const row = db.select({ id: table.id, removedAt: table.removedAt }).from(table).where(eq(table.id, id)).get();
-        if (!row) throw new HouseholdError('not-found', 'No ' + of + ' has that id');
-        if (!!row.removedAt === removed) throw new HouseholdError('invalid', removed ? 'That is already removed' : 'That is not removed');
-        if (removed && of === 'member' && !db.select({ id: members.id }).from(members).where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${id}`).get())
-          throw new HouseholdError('conflict', 'At least one household owner must remain');
-        if (removed && of === 'agent' && db.select().from(household).get()?.defaultAgent === id) throw new HouseholdError('conflict', 'Choose another default agent first');
+        const table = validateRemoval(of, id, removed);
         db.update(table).set({ removedAt: removed ? now() : null }).where(eq(table.id, id)).run();
         // A removed connection is switched off. Restoring it leaves it off until someone turns it on.
         if (of === 'bridge' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(eq(bridgeConnections.id, id)).run();
@@ -107,8 +127,7 @@ export function householdService(db: DataDatabase, now: () => string) {
     setSettings(input: z.input<typeof settingsInput>) {
       const { backupRecipients: recipients, ...row } = settingsInput.parse(input);
       return db.transaction(() => {
-        if (row.defaultAgent && !db.select({ id: agents.id }).from(agents).where(eq(agents.id, row.defaultAgent)).get())
-          throw new HouseholdError('invalid', 'Unknown agent');
+        validateSettings(row);
         if (Object.keys(row).length) { seed(); db.update(household).set(row).run(); }
         if (recipients) {
           db.delete(backupRecipients).run();
@@ -126,10 +145,7 @@ export function householdService(db: DataDatabase, now: () => string) {
     /** The order members or agents are listed in: every one of them, named exactly once. */
     setOrder(of: 'members' | 'agents', ids: readonly string[]) {
       return db.transaction(() => {
-        const table = of === 'members' ? members : agents;
-        const have = db.select({ id: table.id }).from(table).all().map(row => row.id);
-        if (new Set(ids).size !== ids.length || have.length !== ids.length || have.some(id => !ids.includes(id)))
-          throw new HouseholdError('invalid', 'Name every one of the ' + of + ' exactly once');
+        const table = validateOrder(of, ids);
         ids.forEach((id, position) => db.update(table).set({ position }).where(eq(table.id, id)).run());
         return { saved: true as const };
       });

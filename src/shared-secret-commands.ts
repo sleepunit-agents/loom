@@ -28,12 +28,16 @@ const writeRefusals:Record<string,'conflict'|'not-found'|'denied'>={'Secret valu
 const writeFailure=(error:unknown)=>{const message=error instanceof Error?error.message:'';const code=writeRefusals[message];return code?new OperationError(code,message):new OperationError('unavailable','Secret write awaits recovery');};
 /** What an agent's house is handed when it starts: the secret that fetches its
  * repository, and named secrets under the alias the house knows each by. */
-export function setHouseSecrets(db:DataDatabase,input:z.infer<typeof houseSecretsInput>){
+export function validateHouseSecrets(db:DataDatabase,input:z.infer<typeof houseSecretsInput>){
   if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw Error('Unknown agent');
   for(const name of [input.repository,...input.secrets.map(value=>value.secret)])if(name!==null&&!db.select().from(secrets).where(eq(secrets.name,name)).get())throw Error('Unknown secret');
   const settings=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,input.agent)).get();
   // The repository secret is a column of the run settings; those must exist first.
   if(!settings&&input.repository!==null)throw Error('Agent has no run settings');
+  return settings;
+}
+export function setHouseSecrets(db:DataDatabase,input:z.infer<typeof houseSecretsInput>){
+  const settings=validateHouseSecrets(db,input);
   if(settings)db.update(agentRunSettings).set({repositorySecret:input.repository}).where(eq(agentRunSettings.agent,input.agent)).run();
   db.delete(agentHouseSecrets).where(eq(agentHouseSecrets.agent,input.agent)).run();
   if(input.secrets.length)db.insert(agentHouseSecrets).values(input.secrets.map(value=>({agent:input.agent,...value}))).run();

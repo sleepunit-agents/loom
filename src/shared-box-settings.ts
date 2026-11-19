@@ -36,7 +36,7 @@ export function applyBoxSettings(db:DataDatabase,input:z.infer<typeof boxSetting
 }
 
 
-export function applyMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
+export function validateMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
   const {box, agent, allow} = input;
   const machine = db.select().from(boxes).where(and(eq(boxes.id, box), isNull(boxes.revokedAt))).get();
   if (!machine || machine.owner !== owner) throw new OperationError('denied', 'Only the machine owner may change explicit readers');
@@ -44,6 +44,11 @@ export function applyMachineReader(db: DataDatabase, owner: string, input: {box:
   if (allow && (!sharedSharing(db).agents?.includes(agent) || readers.length >= 128))
     throw new OperationError('invalid', 'Reader unavailable or limit reached');
   if (allow === readers.includes(agent)) throw new OperationError('conflict', 'That is how it already is');
-  const next = allow ? [...readers, agent].sort() : readers.filter(id => id !== agent);
-  db.update(boxes).set({readers:next}).where(eq(boxes.id, box)).run();
+  return readers;
+}
+
+export function applyMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
+  const readers = validateMachineReader(db, owner, input);
+  const next = input.allow ? [...readers, input.agent].sort() : readers.filter(id => id !== input.agent);
+  db.update(boxes).set({readers:next}).where(eq(boxes.id, input.box)).run();
 }

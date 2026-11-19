@@ -1,3 +1,5 @@
+import { proposalCard, storedProposal, type CardFact, type ProposalCard } from '../../../../src/proposal-words';
+export type { CardFact } from '../../../../src/proposal-words';
 // Selected query fields, matching the approved shared schema. The generated
 // browser client will provide its result type when the composition connects it.
 export interface Approval {
@@ -9,7 +11,25 @@ export interface Approval {
   askedAt: string; decidedBy: string | null; expiresAt: string | null;
   /** For a household owner looking at a waiting household card: what already stands against allowing it. Not on the card itself. */
   problem?: string | null;
+  /** For a household owner looking at a waiting household card: the card as the program says it to an owner, with
+   * the names it holds and what the change would replace (household.proposal). Not on the card itself. */
+  card?: { title: string; nothing: boolean; facts: readonly CardFact[]; exact: readonly CardFact[] } | null;
+  /** For the same owner: the plain line saying this cannot be allowed and what would fix it. Allow is then off. */
+  blocked?: string | null;
 }
+/** A household card in plain words: one sentence and a short list of facts (src/proposal-words.ts, the one place
+ * they are written). It is made here, when the card is read, from the change the card itself keeps, so a card
+ * filed before those words existed reads plainly too; an owner's reading from the program (`card`), which has
+ * names and what the change would replace, is laid over it. Nothing when the row is no household card: the
+ * caller then shows the words it stored. */
+export function plainCard(approval: Approval, name?: (id: string) => string): ProposalCard | undefined {
+  const kept = storedProposal(approval);
+  const local = kept && proposalCard(kept.change, kept.input, name ? { name } : {});
+  if (!local) return undefined;
+  return approval.card ? { ...local, title: approval.card.title, nothing: approval.card.nothing, facts: [...approval.card.facts], exact: [...approval.card.exact] } : local;
+}
+/** The one line a row or a title says for an approval. */
+export const approvalTitle = (approval: Approval, name?: (id: string) => string) => plainCard(approval, name)?.title ?? approval.what;
 export interface Rule {
   kind: Approval['kind']; scope: string; person: string; tier: 'do' | 'tell' | 'ask'; setBy: string; setAt: string;
 }
@@ -61,7 +81,7 @@ export function matches(values: readonly (string | null)[], query: string) {
 export function rows(snapshot: ApprovalSnapshot, folder: string, query: string) {
   if (snapshot.status !== 'live') return [];
   return snapshot.approvals.filter(a => (folder === 'pending' ? a.state === 'pending' : a.state !== 'pending')
-    && matches([a.id, a.what, a.ask, a.why, a.target, a.agent, a.project, a.member], query))
+    && matches([a.id, approvalTitle(a), a.what, a.ask, a.why, a.target, a.agent, a.project, a.member], query))
     .sort((a, b) => folder === 'pending' ? a.askedAt.localeCompare(b.askedAt) || a.id.localeCompare(b.id)
       : b.askedAt.localeCompare(a.askedAt) || a.id.localeCompare(b.id));
 }

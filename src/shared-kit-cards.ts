@@ -29,16 +29,6 @@ export function kitCardName(value:Change):string {
   const {agent,kit}=value.input;
   return value.change === 'kit' ? agent+'/'+kit : agent+'/'+kit+' '+JSON.stringify(value.input.to);
 }
-export function kitQuestion(value:Change):string {
-  if(value.change==='kit')return (value.input.tools===null?'Remove':'Define')+' kit '+value.input.kit+' for '+value.input.agent;
-  if(value.change==='projectOutsidePerson'){
-    const {on,platform,workspace,user,project}=value.input;
-    return (on?'Add ':'Remove ')+platform+' user '+user+' in '+workspace+(on?' on ':' from ')+'project '+project;
-  }
-  const {agent,kit,to,grant}=value.input;
-  const who='project' in to?'project '+to.project:'member' in to?'member '+to.member:to.platform+' user '+to.user+' in '+to.workspace;
-  return (grant?'Grant ':'Withdraw ')+agent+' kit '+kit+(grant?' to ':' from ')+who;
-}
 function live(db:DataDatabase,table:typeof agents|typeof members,id:string) {
   const row=db.select({removedAt:table.removedAt}).from(table).where(eq(table.id,id)).get();
   return !!row && row.removedAt===null;
@@ -102,37 +92,29 @@ function rows(db:DataDatabase,value:Change) {
     apply(){if(grant)db.insert(t).values({agent,kit,...to}).run();else db.delete(t).where(where).run();}};
 }
 export const kitBefore=(db:DataDatabase,value:Change)=>rows(db,value).state;
-export function applyKitChange(db:DataDatabase,value:Change) {
-  const {state,apply}=rows(db,value);
+/** Why a kit change cannot be made on what is there now, or nothing when it can. One reading for the two
+ * places that need it: Allow, which refuses in these words (applyKitChange), and an owner's card, which says
+ * the same cause before anyone presses Allow (shared-household-proposals.ts, `blocked`). */
+export type KitRefusal =
+  | {cause:'agent'|'project'|'member'|'unplaced'|'no-kit'|'same';message:string}
+  | {cause:'linked';member:string;message:string};
+export function kitRefusal(db:DataDatabase,value:Change):KitRefusal|undefined {
+  const {state}=rows(db,value);
   const adding=value.change==='kit'?value.input.tools!==null:value.change==='kitGrant'?value.input.grant:value.input.on;
   if(adding){
-    if('agentLive' in state && !state.agentLive)throw new OperationError('invalid','Choose a live agent');
-    if('project' in state && (!state.project || state.project.removed || state.project.retired))throw new OperationError('invalid','Choose a project in use');
-    if('memberLive' in state && !state.memberLive)throw new OperationError('invalid','Choose a live member');
-    if('linked' in state && state.linked)throw new OperationError('invalid','This account is linked to a member. Name the member instead.');
-    if('known' in state && !state.known)throw new OperationError('invalid','Choose an outside account already known to the agent or household');
-    if(value.change==='kitGrant' && 'tools' in state && !state.tools)throw new OperationError('invalid','No such kit');
+    if('agentLive' in state && !state.agentLive)return {cause:'agent',message:'Choose a live agent'};
+    if('project' in state && (!state.project || state.project.removed || state.project.retired))return {cause:'project',message:'Choose a project in use'};
+    if('memberLive' in state && !state.memberLive)return {cause:'member',message:'Choose a live member'};
+    if('linked' in state && state.linked)return {cause:'linked',member:state.linked,message:'This account is linked to a member. Name the member instead.'};
+    if('known' in state && !state.known)return {cause:'unplaced',message:'Choose an outside account already known to the agent or household'};
+    if(value.change==='kitGrant' && 'tools' in state && !state.tools)return {cause:'no-kit',message:'No such kit'};
   }
   if(('on' in state && state.on===adding)||(value.change==='kit' && 'tools' in state && JSON.stringify(state.tools)===JSON.stringify(value.input.tools)))
-    throw new OperationError('conflict','That is how it already is');
-  apply();
+    return {cause:'same',message:'That is how it already is'};
+  return undefined;
 }
-
-/** Text shown above the sealed details on the owner's review page. */
-export function kitReview(value:Change,before:unknown):string {
-  const lines=[kitQuestion(value)+'.'];
-  if (value.change==='kit' && value.input.tools) {
-    for (const tool of value.input.tools) {
-      const argv=tool.args.map(arg=>typeof arg==='string'?JSON.stringify(arg):'{'+arg.parameter+'}').join(' ');
-      lines.push('Run '+tool.name+' with program '+JSON.stringify(tool.program)+(argv?' '+argv:'')+'.');
-      lines.push('Use '+tool.repository+' at '+tool.commit+', image '+tool.image+'.');
-      const secrets=Object.entries(tool.secrets).map(([alias,name])=>name+' as '+alias);
-      lines.push(secrets.length?'Give this program '+secrets.join(', ')+'.':'This program receives no kit credentials.');
-    }
-  }
-  if (value.change==='projectOutsidePerson') {
-    const grants=z.object({grants:z.array(z.object({agent:z.string(),kit:z.string()}))}).parse(before).grants;
-    lines.push(grants.length?'Project kits: '+grants.map(({agent,kit})=>agent+'/'+kit).join(', ')+'.':'This project currently grants no kits.');
-  }
-  return lines.join('\n');
+export function applyKitChange(db:DataDatabase,value:Change) {
+  const refused=kitRefusal(db,value);
+  if(refused)throw new OperationError(refused.cause==='same'?'conflict':'invalid',refused.message);
+  rows(db,value).apply();
 }

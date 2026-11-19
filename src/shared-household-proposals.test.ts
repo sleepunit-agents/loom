@@ -29,7 +29,7 @@ function fixture() {
 const pond = { id: 'pond', name: 'Pond', members: ['sam', 'lee'], agents: ['art'], repositories: [] };
 type Fixture = ReturnType<typeof fixture>;
 /** What a household owner is told about a waiting card: what it would replace, and what already stands against it. */
-const look = async (f: Fixture, id: string, owner: keyof typeof credentials = 'sam') => (await f.call('household/proposal', { id }, owner)).body.value as unknown as { summary: string; problem: string | null };
+const look = async (f: Fixture, id: string, owner: keyof typeof credentials = 'sam') => (await f.call('household/proposal', { id }, owner)).body.value as unknown as { summary: string; problem: string | null; blocked: string | null; card: { title: string; nothing: boolean; facts: { label: string; value: string; small?: boolean }[]; exact: { label: string; value: string }[] } | null };
 /** What an owner is told as soon as they look: these are plain to see from what is there now. */
 const plain = ['That is how it already is', 'Unknown agent', 'No live machine has that id', 'No live token has that label', 'No live machine has that name', 'No such signed-in browser', 'There is no such rule to remove'];
 /** A change that cannot be made is filed like any other, and the asker is told nothing of why not. The
@@ -51,8 +51,8 @@ it('lets an agent in a terminal session propose a project; nothing changes until
   expect(f.db.select().from(approvals).all()).toEqual([expect.objectContaining({ id, kind: 'setting', state: 'pending', agent: 'art', operation: 'household.change',
     target: 'household:project:pond', askedFrom: 'terminal', actingFor: 'unknown', conversation: null, member: null, why: 'Lee and I are fixing the pond' })]);
   // The card says what was asked for. What it would replace is for a household owner, who asks for it.
-  expect(f.db.select().from(approvals).get()!.changeSummary).toContain('project pond: {"agents":["art"]');
-  expect(await look(f, id)).toEqual({ summary: expect.stringContaining('project pond: null → {"agents":["art"]'), problem: null });
+  expect(f.db.select().from(approvals).get()!.changeSummary).toContain('Agents: Art');
+  expect(await look(f, id)).toMatchObject({ summary: expect.stringContaining('Agents: Art'), problem: null, blocked: null, card: { title: 'Create the project Pond', nothing: false } });
   for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposal', { id }, actor)).status).toBe(403);
   for (const actor of ['lee', 'art'] as const) expect((await f.call('approvals/answer', { id, answer: 'allow' }, actor)).status).toBe(403);
   expect(f.db.select().from(projects).all()).toEqual([]);
@@ -71,8 +71,8 @@ it('proposes member, agent and settings changes, and a denied card changes nothi
   expect((await allow(about.body.value!.id)).body.ok).toBe(true);
   expect(f.db.select().from(agents).all().find(row => row.id === 'art')!.about).toBe('Keeps the household running');
   const zone = await propose('settings', { timezone: 'America/Chicago', commsDays: 7 });
-  expect(f.db.select().from(approvals).all().find(row => row.id === zone.body.value!.id)!.changeSummary).toBe('Household settings: {"commsDays":7,"timezone":"America/Chicago"}');
-  expect((await look(f, zone.body.value!.id)).summary).toBe('Household settings: {"commsDays":14,"timezone":"'+f.root.services.household.settings().timezone+'"} → {"commsDays":7,"timezone":"America/Chicago"}');
+  expect(f.db.select().from(approvals).all().find(row => row.id === zone.body.value!.id)!.changeSummary).toBe('Time zone: America/Chicago\nDays Comms keeps words: 7');
+  expect((await look(f, zone.body.value!.id)).summary).toBe('Time zone: '+f.root.services.household.settings().timezone+' → America/Chicago\nDays Comms keeps words: 14 → 7');
   expect((await allow(zone.body.value!.id, 'deny')).body.ok).toBe(true);
   expect(f.root.services.household.settings().commsDays).toBe(14);
   // People cannot use the agent's door. A change that changes nothing is the owner's to be told of.
@@ -103,7 +103,7 @@ it('proposes a standing approval rule, recorded as set by the owner who allowed 
   const rule = { kind: 'merge', scope: 'github:Owner/Repo', person: '', tier: 'tell' };
   const filed = await f.call('household/propose', { change: 'rule', input: rule, why: 'Merges here are routine' }, 'art');
   expect(filed.body.ok).toBe(true);
-  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:rule:merge github:owner/repo', ask: 'Change approval rule merge github:owner/repo?' });
+  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:rule:merge github:owner/repo', ask: expect.stringContaining('standing rule for merging a pull request (github:owner/repo)') });
   expect(f.root.services.approvalRules.list()).toEqual([]);
   expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
   expect(f.root.services.approvalRules.list()).toEqual([expect.objectContaining({ kind: 'merge', scope: 'github:owner/repo', person: '', tier: 'tell', setBy: 'sam' })]);
@@ -116,7 +116,7 @@ it('proposes how an agent treats outside people and which tools its body is not 
   const f = fixture();
   const policy = { agent: 'art', people: [{ platform: 'discord', workspace: 'pond', user: 'u1', tier: 2 }], deniedTools: [{ pattern: 'Bash(rm *)', guestsOnly: true }] };
   const filed = await f.call('household/propose', { change: 'bodyPolicy', input: policy, why: 'Lee asks on Discord' }, 'art');
-  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:bodyPolicy:art', ask: 'Change how art treats outside people and tools?' });
+  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:bodyPolicy:art', ask: 'Change which outside people Art takes messages from, and which tools it is not given?' });
   expect(f.db.select().from(agentPeople).all()).toEqual([]);
   expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(agentPeople).all()).toEqual([{ agent: 'art', person: '["discord","pond","u1"]', tier: 2 }]);
@@ -126,9 +126,9 @@ it('proposes how an agent treats outside people and which tools its body is not 
 it('proposes one dangerous action, revoking a token by its label, and it takes effect only on Allow', async () => {
   const f = fixture();
   const filed = await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'Lee lost the laptop' }, 'art');
-  expect(f.db.select().from(approvals).get()).toMatchObject({ kind: 'dangerous', state: 'pending', target: 'household:tokenRevoke:lee', ask: 'Revoke token lee?',
-    changeSummary: 'Revoke token lee', what: 'Revoke token lee', ifYes: 'The token stops working at once. This cannot be undone.' });
-  expect(await look(f, filed.body.value!.id)).toEqual({ summary: 'Revoke token lee: {"for":"lee","kind":"owner","label":"lee"} → revoked', problem: null });
+  expect(f.db.select().from(approvals).get()).toMatchObject({ kind: 'dangerous', state: 'pending', target: 'household:tokenRevoke:lee', ask: 'Revoke the token lee?',
+    changeSummary: 'Token: lee\nAfterwards: It stops working at once. This cannot be undone.', what: 'Revoke the token lee', ifYes: 'The token stops working at once. This cannot be undone.' });
+  expect(await look(f, filed.body.value!.id)).toMatchObject({ summary: expect.stringContaining('Belongs to: Lee (owner token)'), problem: null, blocked: null });
   // Lee's token still works: the door knows Lee, and refuses only because Lee is not an owner.
   expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'deny' }, 'lee')).status).toBe(403);
   // Allowing a dangerous card takes a second, explicit yes. Without it nothing happens.
@@ -157,8 +157,8 @@ it('proposes revoking a machine and signing out a browser; a deny needs no confi
   await hopeless(f, await propose('boxRevoke', { name: 'attic' }), 'No live machine has that name');
   await hopeless(f, await propose('browserSignOut', { member: 'lee', device: 'Firefox' }), 'No such signed-in browser');
   const box = await propose('boxRevoke', { name: 'workshop' });
-  expect(f.db.select().from(approvals).all().find(row => row.id === box.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Revoke machine workshop?', changeSummary: 'Revoke machine workshop' });
-  expect((await look(f, box.body.value!.id)).summary).toBe('Revoke machine workshop: {"name":"workshop","owner":"sam"} → revoked');
+  expect(f.db.select().from(approvals).all().find(row => row.id === box.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Revoke the machine workshop?', changeSummary: expect.stringContaining('Machine: workshop') });
+  expect((await look(f, box.body.value!.id)).summary).toContain('Owned by: Sam');
   expect((await f.call('approvals/answer', { id: box.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(boxes).get()!.revokedAt).toBeNull();
   const again = await propose('boxRevoke', { name: 'workshop' });
@@ -166,8 +166,8 @@ it('proposes revoking a machine and signing out a browser; a deny needs no confi
   expect((await f.call('approvals/answer', { id: again.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(boxes).get()!.revokedAt).toBeTruthy();
   const browser = await propose('browserSignOut', { member: 'lee', device: 'Chrome on Mac' });
-  expect(f.db.select().from(approvals).all().find(row => row.id === browser.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Sign out browser Chrome on Mac of lee?', changeSummary: 'Sign out browser Chrome on Mac of lee' });
-  expect((await look(f, browser.body.value!.id)).summary).toBe('Sign out browser Chrome on Mac of lee: {"browsers":2,"device":"Chrome on Mac","member":"lee"} → signed out');
+  expect(f.db.select().from(approvals).all().find(row => row.id === browser.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Sign out Lee’s browser Chrome on Mac?', changeSummary: expect.stringContaining('Browser: Chrome on Mac') });
+  expect((await look(f, browser.body.value!.id)).summary).toContain('Signed in now: 2 browsers');
   expect((await f.call('approvals/answer', { id: browser.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(sessions).all().map(row => row.id)).toEqual(['s3']);
   // An ordinary settings card is allowed with one answer.
@@ -186,7 +186,7 @@ it('proposes a machine\'s settings, how an agent runs, and its outside accounts'
   await hopeless(f, await propose('boxSettings', { ...machine, box: 'no-such-box' }), 'No live machine has that id');
   await hopeless(f, await propose('boxSettings', { ...machine, agents: [{ agent: 'art', lent: true }] }), 'Lending must match current agent ownership');
   const settings = await propose('boxSettings', machine);
-  expect(f.db.select().from(approvals).all().find(row => row.id === settings.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change settings of machine workshop?', target: 'household:boxSettings:box-1' });
+  expect(f.db.select().from(approvals).all().find(row => row.id === settings.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change the settings of the machine workshop?', target: 'household:boxSettings:box-1' });
   expect((await allow(settings.body.value!.id)).body.ok).toBe(true);
   expect(f.db.select().from(boxes).get()).toMatchObject({ reportOnly: false, alwaysOn: true });
   expect(f.db.select().from(boxAgents).all()).toEqual([{ box: 'box-1', agent: 'art', lent: false }]);
@@ -203,11 +203,11 @@ it('proposes a machine\'s settings, how an agent runs, and its outside accounts'
   await hopeless(f, await propose('runSettings', { ...run, boxes: ['no-such-box'] }));
   // No Housefile: the agent runs in the core house loom provides. The card says so in words, to everyone who reads it.
   const core = await propose('runSettings', { ...run, houseFile: '' });
-  expect(f.db.select().from(approvals).all().find(row => row.id === core.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change how art runs, in the core house with no Housefile of its own?', target: 'household:runSettings:art' });
+  expect(f.db.select().from(approvals).all().find(row => row.id === core.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change how Art runs, in the core house with no Housefile of its own?', target: 'household:runSettings:art' });
   expect((await allow(core.body.value!.id)).body.ok).toBe(true);
   expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseFile: '', houseRepository: 'https://example.invalid/house.git', prefers: ['fast', 'local'] });
   const clear = await propose('runSettings', { ...run, prefers: [] });
-  expect((await look(f, clear.body.value!.id)).summary).toContain('"prefers":["fast","local"]');
+  expect((await look(f, clear.body.value!.id)).summary).toContain('Prefers a machine with: fast, local → None');
   expect((await allow(clear.body.value!.id)).body.ok).toBe(true);
   expect(f.db.select().from(agentRunSettings).get()?.prefers).toEqual([]);
   // A path is still a path: one that climbs or is absolute is no Housefile, empty or not.
@@ -236,8 +236,8 @@ it('proposes secret rules, the secrets default, bridge settings, tempo timings a
   expect(await allow(await propose('bridge', { action: 'person', platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }))).toMatchObject({ ok: true });
   expect(f.db.select().from(bridgePeople).all()).toEqual([{ platform: 'discord', workspace: 'pond', user: 'u1', member: 'lee' }]);
   const timings = await propose('tempoTimings', { who: { kind: 'person', id: 'sam' }, settleSeconds: 60 });
-  expect(f.db.select().from(approvals).all().find(row => row.id === timings.body.value!.id)).toMatchObject({ ask: 'Change Tempo timings for person sam?', changeSummary: 'Tempo timings for person sam: {"settleSeconds":60,"who":{"kind":"person","id":"sam"}}' });
-  expect((await look(f, timings.body.value!.id)).summary).toBe('Tempo timings for person sam: {"settleSeconds":5,"who":{"kind":"person","id":"sam"}} → {"settleSeconds":60,"who":{"kind":"person","id":"sam"}}');
+  expect(f.db.select().from(approvals).all().find(row => row.id === timings.body.value!.id)).toMatchObject({ ask: 'Change Tempo’s timings for Sam?', changeSummary: 'Inbox settle time: 60 seconds' });
+  expect((await look(f, timings.body.value!.id)).summary).toBe('Inbox settle time: 5 seconds → 60 seconds');
   expect(await allow(timings)).toMatchObject({ ok: true });
   expect(f.root.services.tempo.volume.timings({ kind: 'person', id: 'sam' })).toMatchObject({ settleSeconds: 60, dimDays: 1 });
   expect(await allow(await propose('measuring', { on: true, send_outside: false, outside_address: '', keep_days: 30 }))).toMatchObject({ ok: true });
@@ -315,7 +315,7 @@ it('removes and restores a person, an agent and a project without deleting anyth
   const probe = () => f.call('household/setPreferences', {}, 'lee');
   const known = (await probe()).status; expect(known).not.toBe(401);
   await allow('remove', { of: 'member', id: 'lee' });
-  expect(f.db.select().from(approvals).all().at(-1)).toMatchObject({ target: 'household:remove:member lee', kind: 'setting', ask: 'Remove member lee?' });
+  expect(f.db.select().from(approvals).all().at(-1)).toMatchObject({ target: 'household:remove:member lee', kind: 'setting', ask: 'Remove Lee from the household?' });
   expect(f.db.select().from(members).all().find(row => row.id === 'lee')!.removedAt).not.toBeNull();
   expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeNull();
   expect((await probe()).status).toBe(401);
@@ -429,7 +429,7 @@ it('tells the asking agent nothing it could not already read: not on the card, a
   // Neither may ask what a card would replace.
   const waiting = await propose('member', { id: 'lee', role: 'owner', agents: [] });
   for (const actor of ['art', 'lee'] as const) expect((await f.call('household/proposal', { id: waiting.body.value!.id }, actor)).status).toBe(403);
-  expect((await look(f, waiting.body.value!.id)).summary).toContain('"agents":["art"]');
+  expect((await look(f, waiting.body.value!.id)).summary).toContain('Their agents: Art → None');
   // Another agent's waiting card for the same thing is not this agent's to learn of.
   f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'settings', input: { commsDays: 5 }, why: 'Mark asks' }));
   expect((await propose('settings', { commsDays: 6 })).body).toMatchObject({ ok: true, value: { state: 'pending' } });
@@ -501,12 +501,12 @@ it('merges one project into another only when an owner allows the card, and the 
   expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
   const id = filed.body.value!.id;
   // The card says what is asked, in words that name both projects. Nothing has moved.
-  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'dangerous', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge project pond into garden?',
-    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.', why: 'The first sort put pond work in two places', decidedBy: null });
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'dangerous', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge the project pond into the project garden?',
+    changeSummary: expect.stringContaining('Emptied and removed: pond\nReceives everything: garden'), why: 'The first sort put pond work in two places', decidedBy: null });
   expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details)).toMatchObject({ change: 'projectMerge', after: { from: 'pond', into: 'garden' } });
   expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
   // An owner is shown both projects as they stand. Nobody else is, and nobody else allows it.
-  expect(await look(f, id)).toEqual({ summary: expect.stringContaining('As they stand: {"from":{"id":"pond","name":"Pond","removed":false,"retired":false,"members":["lee"],"agents":["art"],"repositories":[]},"into":{"id":"garden"'), problem: null });
+  expect(await look(f, id)).toMatchObject({ summary: expect.stringContaining('Emptied and removed: Pond. Now: Pond: members Lee; agents Art; 0 repositories'), problem: null, blocked: null });
   for (const actor of ['lee', 'art'] as const) expect((await f.call('approvals/answer', { id, answer: 'allow' }, actor)).status).toBe(403);
   expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
   // It cannot be undone, so the card is a dangerous one: the owner's Allow must also confirm.
@@ -519,7 +519,7 @@ it('merges one project into another only when an owner allows the card, and the 
   expect(f.db.select().from(projects).where(eq(projects.id, 'pond')).get()!.removedAt).not.toBeNull();
   // The record: the card, with who asked, who allowed it and what changed. No comment is left on the task.
   expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ state: 'used', agent: 'art', decidedBy: 'sam', operation: 'household.change',
-    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.' });
+    changeSummary: expect.stringContaining('Emptied and removed: pond') });
   expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval, id)).all().map(row => row.event)).toEqual(expect.arrayContaining(['request', 'allow', 'use']));
   expect(f.root.services.tasks.get(task.id).comments).toEqual([]);
 
@@ -593,11 +593,11 @@ it('lets an agent ask to be let onto a project; allowing it adds that one agent 
   const card = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'pond', agent: 'mark' }, why: 'Sam asked me to work on pond and I am not on it' },
     { conversation: 'cv-room', member: null, project: null })).value;
   // The card says plainly who wants onto which project, and why. It is a setting, and nothing has changed.
-  expect(card).toMatchObject({ kind: 'setting', state: 'pending', agent: 'mark', conversation: 'cv-room', target: 'household:projectJoin:mark onto project pond', ask: 'Let mark work on project pond?',
-    changeSummary: 'Let mark work on project pond. Nothing else about the project changes.', why: 'Sam asked me to work on pond and I am not on it' });
+  expect(card).toMatchObject({ kind: 'setting', state: 'pending', agent: 'mark', conversation: 'cv-room', target: 'household:projectJoin:mark onto project pond', ask: 'Let Mark work on the project pond?',
+    changeSummary: expect.stringContaining('Nothing else about the project changes.'), why: 'Sam asked me to work on pond and I am not on it' });
   const before = f.root.services.projects.describe('pond');
   expect(before).toMatchObject({ agents: ['art'] });
-  expect(await look(f, card.id)).toEqual({ summary: expect.stringContaining('Let mark work on project pond. As it stands: '), problem: null });
+  expect(await look(f, card.id)).toMatchObject({ summary: expect.stringContaining('Mark sees what is filed under the project.'), problem: null, blocked: null, card: { title: 'Let Mark work on the project Pond' } });
   expect((await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'lee')).status).toBe(403);
   expect(await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'sam')).toMatchObject({ status: 200, body: { ok: true } });
   // That one agent is on that one project. Its name, people, other agents and repositories are as they were.
@@ -607,13 +607,13 @@ it('lets an agent ask to be let onto a project; allowing it adds that one agent 
   expect(f.db.select().from(approvals).where(eq(approvals.id, card.id)).get()).toMatchObject({ state: 'used', decidedBy: 'sam' });
   // The answer is mail to mark in the conversation it asked from, waiting for its next body there.
   expect(f.db.select().from(inbox).where(eq(inbox.toKind, 'agent')).all()).toMatchObject([{ to: 'mark', conversation: 'cv-room', source: 'answer', fromKind: 'person', fromId: 'sam', state: 'waiting',
-    words: 'Allow\nLet mark work on project pond?\nmark is added to project pond and sees what is filed under it. Nothing else about the project changes.' }]);
+    words: 'Allow\nLet Mark work on the project pond?\nmark is added to project pond and sees what is filed under it. Nothing else about the project changes.' }]);
   // A deny reaches it the same way, and changes nothing.
   const denied = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'shut', agent: 'mark' }, why: 'Again' }, { conversation: 'cv-room', member: null, project: null })).value;
   expect((await look(f, denied.id)).problem).toBe('Project shut is removed');
   expect((await f.call('approvals/answer', { id: denied.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'Project shut is removed' });
   expect((await f.call('approvals/answer', { id: denied.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
-  expect(f.db.select().from(inbox).where(eq(inbox.toKind, 'agent')).all().at(-1)).toMatchObject({ to: 'mark', conversation: 'cv-room', words: expect.stringMatching(/^Deny\nLet mark work on project shut\?\nmark stays off the project\.$/) });
+  expect(f.db.select().from(inbox).where(eq(inbox.toKind, 'agent')).all().at(-1)).toMatchObject({ to: 'mark', conversation: 'cv-room', words: expect.stringMatching(/^Deny\nLet Mark work on the project shut\?\nmark stays off the project\.$/) });
   expect(f.db.select().from(projectAgents).all()).toHaveLength(3);
   expect(others()).toEqual(untouched);
 });
@@ -693,7 +693,7 @@ it('takes a request to join a project from the agent itself or a household owner
   const owners = await ask({ project: 'pond', agent: 'mark' }, 'sam');
   expect(owners).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
   expect(cards()).toBe(before + 1);
-  expect(f.db.select().from(approvals).where(eq(approvals.id, owners.body.value!.id)).get()).toMatchObject({ agent: 'mark', kind: 'setting', actingFor: 'sam', askedFrom: 'household owner', ask: 'Let mark work on project pond?' });
+  expect(f.db.select().from(approvals).where(eq(approvals.id, owners.body.value!.id)).get()).toMatchObject({ agent: 'mark', kind: 'setting', actingFor: 'sam', askedFrom: 'household owner', ask: 'Let Mark work on the project pond?' });
   expect((await f.call('approvals/answer', { id: owners.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
   expect(f.root.services.projects.describe('pond')).toMatchObject({ agents: ['art', 'mark'] });
   // Only projectJoin is an owner's to file: every other change is still asked by an agent.
@@ -719,8 +719,8 @@ it('retires and revives a project by a card an owner answers; its tasks leave ev
   const ask = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Set aside for now' }, 'art');
   const filed = await ask('projectRetire', { project: 'phasecraft' });
   const id = filed.body.value!.id;
-  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'setting', state: 'pending', target: 'household:projectRetire:phasecraft', ask: 'Retire project phasecraft?',
-    changeSummary: 'Retire project phasecraft. Everything in it stays and stays readable; its unfinished tasks are shelved until it is revived.' });
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'setting', state: 'pending', target: 'household:projectRetire:phasecraft', ask: 'Retire the project phasecraft?',
+    changeSummary: expect.stringContaining('Everything in it stays and stays readable. Its unfinished tasks are shelved until it is revived.') });
   expect(await work()).toEqual(before.work);
   expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'lee')).status).toBe(403);
   expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
@@ -743,7 +743,7 @@ it('retires and revives a project by a card an owner answers; its tasks leave ev
   }
   // Revived by the mirror card: everything is work again exactly as it was, the claim and the question included.
   const revive = await ask('projectRevive', { project: 'phasecraft' });
-  expect(f.db.select().from(approvals).where(eq(approvals.id, revive.body.value!.id)).get()).toMatchObject({ kind: 'setting', ask: 'Revive project phasecraft?' });
+  expect(f.db.select().from(approvals).where(eq(approvals.id, revive.body.value!.id)).get()).toMatchObject({ kind: 'setting', ask: 'Revive the project phasecraft?' });
   expect((await f.call('approvals/answer', { id: revive.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
   expect(await work()).toEqual(before.work);
   expect(f.root.services.tasks.get(held.id)).toMatchObject({ status: 'in_progress', assignee: 'art' });
@@ -771,10 +771,10 @@ it('requires owner cards for kit definitions, their grants and outside project m
     const id = filed.body.value!.id;
     if (change==='kit' && (input as {tools?:unknown}).tools) {
       const preview=await look(f,id);
-      expect(preview.summary).toContain('Run forecast with program "tools/forecast" {city}');
+      expect(preview.summary).toContain('forecast: tools/forecast <city>');
       expect(preview.summary).toContain('weather-key as KIT_WEATHER');
     }
-    if (change==='projectOutsidePerson') expect((await look(f,id)).summary).toContain('Project kits: art/tools.');
+    if (change==='projectOutsidePerson') expect((await look(f,id)).summary).toContain('Kits this gives them: Art’s tools kit');
 
     expect((await f.call('approvals/answer', {id, answer:'allow'}, 'lee')).status).toBe(403);
     expect((await f.call('approvals/answer', {id, answer:'allow'}, 'sam')).body.ok).toBe(true);
@@ -860,4 +860,113 @@ it('shows an agent-proposed change to explicit readers on the machine owner’s 
  expect((await f.call('machine/readerCards',{machine:'work'},'lee')).body.value).toEqual([{id,ask:'Grant machine reads to mark.'}]);
  expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
  expect(f.db.select().from(boxes).get()?.readers).toEqual(['mark']);
+});
+
+it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
+  await f.call('household/propose', { change: 'kit', input: { agent: 'art', kit: 'pond-et-livonia', tools: [] }, why: 'Field scope' }, 'art').then(filed => f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam'));
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify([gage.platform, gage.workspace, gage.user]), tier: 2 }).run();
+  const id = (await f.call('household/propose', { change: 'kitGrant', input: { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, why: 'Restore the recorded Pond field scope.' }, 'art')).body.value!.id;
+  // The card itself, which the asking agent and others read, says only what was asked: the id, and no name.
+  const stored = f.db.select().from(approvals).where(eq(approvals.id, id)).get()!;
+  expect(stored).toMatchObject({ what: 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit', ask: 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit?',
+    ifYes: 'They can have Art use the kit’s tools for them.', ifNo: 'Who can use the kit stays as it is.' });
+  for (const words of [stored.what, stored.ask, stored.changeSummary!, stored.ifYes, stored.ifNo]) expect(words).not.toContain('{"');
+  // loom holds no name yet: the owner is told so in words.
+  expect((await look(f, id)).card).toMatchObject({ title: 'Let a Slack account loom has no name for (U07V8CZUC1J in workspace T02AYL3QM) use Art’s pond-et-livonia kit' });
+  // A person link names the account for the owner. It is read when the card is read, so the same card now says it.
+  f.db.insert(members).values({ id: 'gage', role: 'member', joinedAt: at }).run();
+  f.db.insert(bridgePeople).values({ ...gage, workspace: 'T0OTHER', member: 'gage' }).run();
+  expect((await look(f, id)).card!.title).toContain('loom has no name for');
+  f.db.delete(bridgePeople).run();
+  f.db.insert(secrets).values({ name: 'slack-token', description: 'Bot token', changedAt: at, changedBy: 'sam' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'art-slack', platform: 'slack', agent: 'art', workspace: gage.workspace, botUser: 'UBOT', tokenSecret: 'slack-token', enabled: true, state: 'connected', stateAt: at }).run();
+  const told = await look(f, id);
+  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'T02AYL3QM (reached by the connection art-slack)' });
+  expect(told.card!.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
+  expect(JSON.stringify([told.summary, told.card!.title, told.card!.facts.map(fact => fact.value), told.card!.exact.map(fact => fact.value)])).not.toContain('{\\"');
+  expect(told.blocked).toBeNull();
+  // Neither the asking agent nor a member who is not an owner may ask for the owner's reading, and the card
+  // they do read through the data door still holds no name and nothing of what is there now.
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposal', { id }, actor)).status).toBe(403);
+  f.db.insert(memberAgents).values({ member: 'lee', agent: 'art' }).run();
+  f.db.insert(bridgePeople).values({ ...gage, member: 'gage' }).run();
+  expect((await look(f, id)).card!.title).toContain('Gage (Slack)');
+  for (const actor of ['lee', 'art'] as const) {
+    const response = await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + credentials[actor] }, body: JSON.stringify({ query: '{ approvals { id what ask changeSummary ifYes ifNo details } }' }) });
+    const read = JSON.stringify(await response.json());
+    expect(read).toContain(id);
+    expect(read).toContain('U07V8CZUC1J');
+    expect(read).not.toMatch(/Gage|art-slack|loom has no name/);
+  }
+});
+
+it('says on the card, before anyone presses Allow, why it cannot be allowed and what would fix it; Allow refuses the same', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const outside = { platform: 'slack', workspace: 'T1', user: 'U1' };
+  const file = async (change: string, input: unknown, by: 'art' | 'sam' = 'art') => { const filed = await f.call('household/propose', { change, input, why: 'Asked' }, by); expect(filed.body, change + ' ' + JSON.stringify(input)).toMatchObject({ ok: true }); return filed.body.value!.id; };
+  const allow = (id: string) => f.call('approvals/answer', { id, answer: 'allow', confirm: true }, 'sam');
+  const blocked = async (id: string) => (await look(f, id)).blocked;
+  /** Blocked on the card in these words, refused by Allow, and still there to deny. */
+  const stands = async (id: string, words: RegExp) => {
+    expect(await blocked(id)).toMatch(words);
+    expect((await allow(id)).body.ok).toBe(false);
+    expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ state: 'pending' });
+  };
+  const deny = async (id: string) => expect((await f.call('approvals/answer', { id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  expect((await allow(await file('project', pond))).body.ok).toBe(true);
+  expect((await allow(await file('kit', { agent: 'art', kit: 'tools', tools: [] }))).body.ok).toBe(true);
+  const grant = { agent: 'art', kit: 'tools', to: outside, grant: true };
+
+  // The account is not placed with the agent: no owner has given it a tier.
+  const unplaced = await file('kitGrant', grant);
+  await stands(unplaced, /^This cannot be allowed yet: Art does not know this account as an outside contact\./);
+  expect((await allow(unplaced)).body.message).toBe('Choose an outside account already known to the agent or household');
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'U1']), tier: 2 }).run();
+  expect(await blocked(unplaced)).toBeNull();
+  expect((await allow(unplaced)).body.ok).toBe(true);
+  expect((await allow(await file('kitGrant', { ...grant, grant: false }))).body.ok).toBe(true);
+
+  // The account is linked to a member: the member should be named instead. With the link gone a fresh card is clear.
+  f.db.insert(bridgePeople).values({ ...outside, member: 'lee' }).run();
+  const linked = await file('kitGrant', grant);
+  await stands(linked, /^This cannot be allowed: this account is linked to the household member lee\. Deny this card, and ask for the kit to be granted to the member lee instead\.$/);
+  await deny(linked);
+  const roster = await file('projectOutsidePerson', { project: 'pond', ...outside, on: true });
+  await stands(roster, /linked to the household member lee\. Deny this card, and ask for lee to be put on the project as a member instead\.$/);
+  await deny(roster);
+  f.db.delete(bridgePeople).run();
+  const clear = await file('kitGrant', grant);
+  expect(await blocked(clear)).toBeNull();
+  expect((await allow(clear)).body.ok).toBe(true);
+
+  // Already so.
+  await stands(await file('kitGrant', grant), /^This cannot be allowed: it is already so, and nothing would change\. Deny it\.$/);
+  // No such kit, a project that is not in use, a person who is no member, an agent that is removed.
+  await stands(await file('kitGrant', { agent: 'art', kit: 'missing', to: { member: 'lee' }, grant: true }), /Art has no kit called missing\. The kit would have to be defined first\./);
+  await stands(await file('kitGrant', { agent: 'art', kit: 'tools', to: { project: 'nowhere' }, grant: true }), /the project nowhere is not in use/);
+  await stands(await file('kitGrant', { agent: 'art', kit: 'tools', to: { member: 'ghost' }, grant: true }), /Ghost is not a member of the household now/);
+  const marks = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
+  expect(await blocked(marks)).toBeNull();
+  f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
+  expect(await blocked(marks)).toMatch(/changed since the card was filed/);
+  await deny(marks);
+  // Filed while the agent is removed, it says so; restored, a fresh card is clear.
+  const removed = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
+  await stands(removed, /^This cannot be allowed: Mark is not an agent in the household now\./);
+  await deny(removed);
+  f.db.update(agents).set({ removedAt: null }).where(eq(agents.id, 'mark')).run();
+  expect(await blocked(await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam'))).toBeNull();
+
+  // Other kinds: what Allow would refuse, where reading alone can tell.
+  await stands(await file('remove', { of: 'project', id: 'nowhere' }), /^This cannot be allowed as it stands: loom has no project by that name\.$/);
+  await stands(await file('restore', { of: 'agent', id: 'art' }), /it is already so/);
+  await stands(await file('models', { agent: 'art', models: ['no-such-model'] }), /^This cannot be allowed as it stands: Choose configured models\.$/);
+  await stands(await file('bridge', { action: 'disconnect', id: 'nothing' }), /Unknown connection/);
+  const already = await file('settings', { commsDays: f.root.services.household.settings().commsDays });
+  await stands(already, /it is already so/);
+  await deny(already);
+  // A card that can be allowed says nothing against itself.
+  expect(await blocked(await file('settings', { commsDays: 3 }))).toBeNull();
 });

@@ -62,17 +62,19 @@ function ChatQuestion({ item, actions, sourceCard, openInbox, zone }: { item: In
 }
 
 /** The open item in the Inbox tile. */
-function QuestionReader({ item, actions, sourceCard, zone }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; zone?: string }) {
+/** `words`: the item's line as its own app says it now (an approval's plain sentence), in place of the words stored
+ * when it was filed. `whole`: the source card below says why and what each answer does, so they are not said twice. */
+function QuestionReader({ item, actions, sourceCard, zone, words, whole }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; zone?: string; words?: string; whole?: boolean }) {
   const { busy, error, answer, volume } = useItemActions(item, actions);
   const waiting = item.state === 'waiting', link = safeLink(item.body?.link);
   return <Reader aria-label="Inbox item">
     <Meta>{`${from(item)} · ${stateWord(item)}`}</Meta>
-    <Title>{item.body?.words ?? 'Message words are unavailable'}</Title>
+    <Title>{words ?? item.body?.words ?? 'Message words are unavailable'}</Title>
     <Meta><time dateTime={item.at}>{when(item.at, zone)}</time>{item.project && ` · ${item.project}`}</Meta>
     {(item.body?.why || item.body?.ifYes || item.body?.ifNo || item.refs.length > 0) && <Facts>
-      <Fact label="Why">{item.body?.why}</Fact>
+      {!whole && <><Fact label="Why">{item.body?.why}</Fact>
       <Fact label="If yes">{item.body?.ifYes}</Fact>
-      <Fact label="If no">{item.body?.ifNo}</Fact>
+      <Fact label="If no">{item.body?.ifNo}</Fact></>}
       {item.refs.length > 0 && <Fact label="About"><Chips label="About">{item.refs.map(ref => <Chip key={ref} onClick={actions?.openRef?.(ref)} label={`Open ${ref}`}>{ref}</Chip>)}</Chips></Fact>}
     </Facts>}
     {link && <a className="loom-kit-link" href={link} target="_blank" rel="noreferrer">Open linked page</a>}
@@ -96,15 +98,17 @@ function QuestionReader({ item, actions, sourceCard, zone }: { item: InboxItem; 
 }
 
 /** `inline`: drawn in a conversation as a compact card (`openInbox` is its way to the whole item); otherwise the Inbox's reader. */
-export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard, openInbox, zone }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode; openInbox?(): void;
+export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard, openInbox, zone, words, whole }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode; openInbox?(): void; words?: string; whole?: boolean;
   /** The zone times are said in (the household's); the device's own without one. */
   zone?: string }) {
   const item = snapshot.status === 'live' ? snapshot.items.find(row => row.id === id) : undefined;
   if (!item) return inline ? <Body quiet>This question is unavailable.</Body> : <Empty title="Item is unavailable" />;
-  return inline ? <ChatQuestion key={item.id} item={item} actions={actions} sourceCard={sourceCard} openInbox={openInbox} zone={zone} /> : <QuestionReader key={item.id} item={item} actions={actions} sourceCard={sourceCard} zone={zone} />;
+  return inline ? <ChatQuestion key={item.id} item={item} actions={actions} sourceCard={sourceCard} openInbox={openInbox} zone={zone} /> : <QuestionReader key={item.id} item={item} actions={actions} sourceCard={sourceCard} zone={zone} words={words} whole={whole} />;
 }
 
-export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation, sourceCard, zone }: {
+export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation, sourceCard, zone, words }: {
+  /** An item's line as its own app says it now, where the composition knows it (an approval's plain sentence). */
+  words?(item: InboxItem): string | undefined;
   /** The zone times are said in (the household's); the device's own without one. */
   zone?: string;
   sourceCard?(item: InboxItem): ReactNode;
@@ -140,8 +144,8 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
     listTop={navigation && folder !== 'errors' && <Pager label="Inbox pages" disabled={!live} hasPrevious={navigation.offset > 0} hasNext={navigation.hasNext} previous={navigation.previous} next={navigation.next} />}
     search={<Search label="Search asks" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.onQuery(value) : setQuery(value)} />}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} zone={zone} />
-      : <Row key={id} title={row.body?.words ?? `Item from ${from(row)}`} className={row.volume === 'dim' ? '[&_.loom-kit-title]:line-clamp-1' : undefined} meta={row.volume === 'dim' ? undefined : row.body?.why ?? undefined}
+      : <Row key={id} title={words?.(row) ?? row.body?.words ?? `Item from ${from(row)}`} className={row.volume === 'dim' ? '[&_.loom-kit-title]:line-clamp-1' : undefined} meta={row.volume === 'dim' ? undefined : row.body?.why ?? undefined}
         status={row.volume === 'dim' ? undefined : `${from(row)} · ${stateWord(row)} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : <Empty title="No items here" />}
-    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} words={words?.(item)} whole={item.waitsOnKind === 'approval' && !!sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }

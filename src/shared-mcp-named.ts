@@ -1,6 +1,7 @@
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
+import {proposalCard,storedProposal,factLines} from './proposal-words.js';
 import {DAY} from './core/day.js';
 import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
@@ -342,14 +343,20 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   async input=>{
    // The state is one of the column's own fixed words, so it is safe to write into the query as an enum value.
    type Decision = {event:'allow'|'deny';note:string};
-   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null;approvalRecordByApproval:Decision[]}[]}>(
-    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy approvalRecordByApproval(where:{event:{inArray:["allow","deny"]}},orderBy:{seq:{direction:desc,priority:1}},limit:1){event note}}}',{limit:input.limit??20});
+   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;details:string;operation:string|null;target:string;askedAt:string;decidedBy:string|null;approvalRecordByApproval:Decision[]}[]}>(
+    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary details operation target askedAt decidedBy approvalRecordByApproval(where:{event:{inArray:["allow","deny"]}},orderBy:{seq:{direction:desc,priority:1}},limit:1){event note}}}',{limit:input.limit??20});
    if(!data.approvals.length)return 'No approvals'+(input.state?' are '+input.state:'')+'.';
    return data.approvals.map(row=>{
     const decision=row.approvalRecordByApproval[0];
     const attributed=decision?.note.startsWith(decision.event==='allow'?'Allowed by ':'Denied by ');
     const answer=attributed?decision.note:row.decidedBy?'answered by '+row.decidedBy:'';
-    return '## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(answer?' · '+answer:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
+    // A household card is said in the same plain words as everywhere else (proposal-words.ts), from the change
+    // the card itself keeps: so a card filed before those words were written reads plainly too. Nothing more is
+    // read for it; names and what the change would replace are a household owner's (household.proposal).
+    const kept=storedProposal(row),card=kept&&proposalCard(kept.change,kept.input);
+    const head='_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(answer?' · '+answer:'')+'_';
+    if(card)return '## '+card.title+'?\n'+head+'\n\n'+factLines(card.facts)+'\n\nWhy: '+row.why;
+    return '## '+row.ask+'\n'+head+'\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
    }).join('\n\n---\n\n');
   });
  tool('inbox','List what is in your inbox, newest first. state narrows it: '+inbox.state.enumValues.join(', ')+'.',

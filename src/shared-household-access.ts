@@ -11,14 +11,18 @@ import {agents,agentAccounts,sessions} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {householdOwner} from './shared-sharing.js';
 import {endBrowser,browserRef} from './core/signin/shared-browser.js';
+export function validateAgentAccounts(db:DataDatabase,input:{agent:string;github:string[]}){
+   if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw new OperationError('invalid','Choose an existing agent');
+   const logins=[...new Set(input.github.map(login=>login.toLowerCase()))];
+   if(db.select().from(agentAccounts).all().some(row=>row.agent!==input.agent&&logins.includes(row.login.toLowerCase())))throw new OperationError('conflict','Login already belongs to another agent');
+   return logins;
+}
 export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:MergeRuleReader){
  return{
   read(){ return readHouseholdSetup(db, now()); },
   revokeSession(reference:string){const row=db.select().from(sessions).all().find(row=>browserRef(row.id)===reference);if(!row)throw new OperationError('not-found','Browser not found');endBrowser(db,row.id);return{revoked:true as const};},
   setAccounts(input:{agent:string;github:string[]}){
-   if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw new OperationError('invalid','Choose an existing agent');
-   const logins=[...new Set(input.github.map(login=>login.toLowerCase()))];
-   if(db.select().from(agentAccounts).all().some(row=>row.agent!==input.agent&&logins.includes(row.login.toLowerCase())))throw new OperationError('conflict','Login already belongs to another agent');
+   const logins=validateAgentAccounts(db,input);
    db.delete(agentAccounts).where(eq(agentAccounts.agent,input.agent)).run();if(logins.length)db.insert(agentAccounts).values(logins.map(login=>({agent:input.agent,service:'github' as const,login}))).run();
    try{return{saved:true as const,changedChanges:reattributeChanges(db,rule)};}catch(error){if(error instanceof AttributionConflict)throw new OperationError('conflict',error.message);throw error;}
   },
