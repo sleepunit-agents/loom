@@ -13,15 +13,23 @@ async function post(url:string,body:unknown){const r=await fetch(url,{method:'PO
 /** The word for this time of day, from the device's own clock. */
 export const greetingAt=(hour:number)=>hour>=5&&hour<12?'Good morning':hour>=12&&hour<18?'Good afternoon':'Good evening';
 
-/** The look before sign-in: this device's kept copy of a person's look when there is one (looks/boot.js has usually
- * painted it already); with none, the device's own light or dark, for this page only and never kept. */
-function wearGateLook(){
-  const root=document.documentElement as HTMLElement|undefined;if(!root)return;
+/** The gate's own look, worn only while the gate is shown: this device's kept copy of a person's look when there is
+ * one (looks/boot.js has usually painted it already); with none, the device's own light or dark, never kept. Answers
+ * how to put back exactly what was on the document before (its look, its light or dark, the browser bar's colour), so
+ * a person who is signed in never has the gate's choice on their desk. Until loom answers, nothing is touched. */
+function wearGateLook():(()=>void)|undefined{
+  const root=document.documentElement;
   let kept:string|null=null,mode:string|null=null;
   try{kept=localStorage.getItem('loom-look');mode=localStorage.getItem('loom-mode');}catch{/* private window */}
   const light=typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: light)').matches;
   const look=kept?lookOf(kept,mode):light?'daylight':'neon';
-  if(root.dataset.look!==look)wearLook(look);
+  if(root.dataset.look===look)return;
+  const before={look:root.dataset.look,mode:root.dataset.mode},bar=[...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].map(meta=>({meta,content:meta.content,own:meta.dataset.own}));
+  wearLook(look);
+  return()=>{
+    for(const key of ['look','mode'] as const){if(before[key]===undefined)delete root.dataset[key];else root.dataset[key]=before[key];}
+    for(const {meta,content,own} of bar){meta.content=content;if(own===undefined)delete meta.dataset.own;else meta.dataset.own=own;}
+  };
 }
 
 // The ground: one tile of plain weave, eight warp and eight weft threads, each broken where it passes under.
@@ -49,11 +57,12 @@ function Weave(){
 export default function Signin({children}:{children:ReactNode}){
   const [session,setSession]=useState<{viewer:{id:string}|null;csrf?:string}|undefined>(),[message,say]=useState('');
   const [greeting]=useState(()=>greetingAt(new Date().getHours()));
-  useLayoutEffect(wearGateLook,[]);
   useEffect(()=>{fetch('/auth/session').then(r=>r.json()).then(s=>{setSession(s);const m=document.createElement('meta');m.name='loom-csrf';m.content=s.csrf ?? '';document.head.append(m);}).catch(()=>say('Could not reach loom. Reload to try again.'));},[]);
   const login=async()=>{try{const o=await post('/login/passkey/options',{});const c=await navigator.credentials.get({publicKey:{challenge:dec(o.challenge),rpId:o.rpId,userVerification:'required',timeout:o.timeout}}) as PublicKeyCredential;const r=c.response as AuthenticatorAssertionResponse;await post('/login/passkey',{id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.authenticatorData),signature:enc(r.signature)});location.reload();}catch(e){say(e instanceof Error?e.message:'Sign-in cancelled');}};
-  if(session?.viewer)return <>{children}</>;
-  const state=session?'out':message?'down':'connecting',words=state==='connecting'?'Connecting to loom…':message;
+  const state=session?.viewer?'in':session?'out':message?'down':'connecting',shown=state==='out'||state==='down';
+  useLayoutEffect(()=>shown?wearGateLook():undefined,[shown]);
+  if(state==='in')return <>{children}</>;
+  const words=state==='connecting'?'Connecting to loom…':message;
   return <main className="loom-gate" data-state={state}>
     <Weave />
     <div className="loom-gate__column">
@@ -61,13 +70,15 @@ export default function Signin({children}:{children:ReactNode}){
       <h1 className="loom-gate__mark" aria-label="loom">LOOM<i aria-hidden="true">//</i>OS</h1>
       <div className="loom-gate__thread" aria-hidden="true"><i /></div>
       <div className="loom-gate__panel">
-        <p className="loom-gate__status" role="status" data-tone={state==='connecting'?'calm':'error'}>{words}</p>
-        {state==='out'&&<div className="loom-gate__act" key="out">
+        {state==='out'&&<div className="loom-gate__act">
           <h2 className="loom-gate__title">Sign in to loom</h2>
           <button className="loom-gate__go" autoFocus onClick={login}>Sign in with a passkey</button>
           <p className="loom-gate__hint">Have a one-time sign-in link? Open it and press Sign in.</p>
         </div>}
-        {state==='down'&&<div className="loom-gate__act" key="down">
+        {/* One element, always the panel's second child, so it is never made again and a reader hears it change. Signed
+            out it comes after the button, where someone moving on from the button finds the error. */}
+        <p className="loom-gate__status" role="status" data-tone={words?(state==='connecting'?'calm':'error'):undefined}>{words}</p>
+        {state==='down'&&<div className="loom-gate__act">
           <button className="loom-gate__go" data-kind="quiet" autoFocus onClick={()=>location.reload()}>Reload</button>
         </div>}
       </div>

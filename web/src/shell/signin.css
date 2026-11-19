@@ -6,7 +6,9 @@
    these tokens and carries a copy of: Neon Noir's and Daylight's canvas, text, second text, edge, border, pink, deep
    pink, on-accent, blue, yellow and violet; the spacing steps 4, 8, 12, 16, 24, 32 px; the wordmark (700, .08em
    tracking, clamp(44px, 14vw, 112px), its slashes pink); the 384 px panel; the 48 px pill button; the weave's 192 px
-   tile and its thread places (12, 36, 60, 76, 108, 132, 156, 172). */
+   tile and its thread places (12, 36, 60, 76, 108, 132, 156, 172); the column's inset (clamp(0px, 8vw, 128px), none
+   on a phone) and its width less that inset. Once the link page's palette is generated from the look tokens, a test
+   should pin the two copies together. */
 .loom-gate{position:relative;isolation:isolate;min-height:100dvh;overflow:hidden;display:grid;align-items:center;
   padding:max(32px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(32px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));
   background:var(--v-canvas);color:var(--v-text);font-family:var(--font-text)}
@@ -32,7 +34,8 @@
 .loom-gate__veil{position:absolute;inset:0;background:linear-gradient(90deg,color-mix(in srgb,var(--v-canvas) 92%,transparent),color-mix(in srgb,var(--v-canvas) 80%,transparent) 40%,transparent 90%)}
 
 /* ---- the words: left of centre on a wide page, the cloth open to their right ---- */
-.loom-gate__column{width:min(100%,704px);margin-left:clamp(0px,8vw,128px);display:grid;gap:16px;justify-items:start}
+/* The column's width leaves room for its own inset, so nothing in it is ever cut at the page's edge. */
+.loom-gate__column{--gate-inset:clamp(0px,8vw,128px);width:min(100% - var(--gate-inset),704px);margin-left:var(--gate-inset);display:grid;gap:16px;justify-items:start}
 .loom-gate__greeting{margin:0;font-size:16px;line-height:24px;color:var(--v-text-2)}
 .loom-gate__mark{margin:0;max-width:100%;font:700 clamp(44px,14vw,112px)/1 var(--font-display);letter-spacing:.08em;color:var(--v-text);overflow-wrap:anywhere}
 .loom-gate__mark i{font-style:normal;color:var(--v-pink)}
@@ -49,13 +52,12 @@
 .loom-gate__act{display:grid;gap:16px}
 .loom-gate__title{margin:0;font:var(--fw-display,600) 21px/1.25 var(--font-display);letter-spacing:var(--ls-display,0);color:var(--v-text)}
 .loom-gate__hint{margin:0;font-size:14px;line-height:20px;color:var(--v-text-2);overflow-wrap:anywhere}
-/* The status line is one element in one place in the page, so a reader hears it change. It keeps a line's room when
-   it has nothing to say; signed out, it sits under the button so an error never moves the button. */
+/* The status line is one element (signin.tsx), so a reader hears it change. It keeps a line's room when it has nothing
+   to say; signed out, it comes after the button and the hint, so an error never moves the button. */
 .loom-gate__status{margin:0;min-height:24px;font-size:15px;line-height:24px;color:var(--v-text-2);overflow-wrap:anywhere}
-.loom-gate[data-state="out"] .loom-gate__status{order:1}
-.loom-gate__status[data-tone="error"]:not(:empty){display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:12px 16px;border-radius:var(--r-md);
+.loom-gate__status[data-tone="error"]{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:12px 16px;border-radius:var(--r-md);
   background:var(--status-danger-bg);color:var(--status-danger-ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--v-danger)}
-.loom-gate__status[data-tone="error"]:not(:empty)::before{content:"!";content:"!"/"";width:24px;height:24px;border-radius:50%;
+.loom-gate__status[data-tone="error"]::before{content:"!";content:"!"/"";width:24px;height:24px;border-radius:50%;
   background:var(--v-danger);color:var(--v-canvas);font-weight:700;text-align:center}
 
 /* ---- the one thing to press ---- */
@@ -69,7 +71,7 @@
 
 /* A phone: the words take the width, and the veil runs down the page so the cloth shows above and below them. */
 @media (max-width:640px){
-  .loom-gate__column{margin-left:0}
+  .loom-gate__column{--gate-inset:0px}
   .loom-gate__veil{background:linear-gradient(180deg,color-mix(in srgb,var(--v-canvas) 30%,transparent),color-mix(in srgb,var(--v-canvas) 88%,transparent) 28%,color-mix(in srgb,var(--v-canvas) 88%,transparent) 78%,color-mix(in srgb,var(--v-canvas) 40%,transparent))}
 }
 
@@ -96,5 +98,5 @@
   .loom-gate__cloth{opacity:.45}
   .loom-gate__shuttle{display:none}
   .loom-gate__veil{background:color-mix(in srgb,var(--v-canvas) 80%,transparent)}
-  .loom-gate__status[data-tone="error"]:not(:empty){box-shadow:inset 0 0 0 2px var(--v-danger)}
+  .loom-gate__status[data-tone="error"]{box-shadow:inset 0 0 0 2px var(--v-danger)}
 }
