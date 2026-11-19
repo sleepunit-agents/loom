@@ -17,6 +17,8 @@ export interface InboxActions {
   read?(id: string): Promise<void>;
   answer?(id: string, answer: InboxAnswer, words?: string): Promise<void>;
   openSource?(item: InboxItem): void;
+  /** Where a reference (a task or approval id) opens, when the app knows; undefined leaves it a plain chip. */
+  openRef?(ref: string): (() => void) | undefined;
 }
 export function managed(item: InboxItem): boolean {
   return !!item.waitsOnKind || ['task', 'approval', 'secret-request'].includes(item.source);
@@ -32,4 +34,30 @@ export function rows(snapshot: InboxSnapshot, folder: string, query: string): In
       : folder.startsWith('agent:') ? item.agent === folder.slice(6) : true)
     && terms.every(term => [item.body?.words, item.body?.why, item.agent, item.project, item.source, ...item.refs].filter(Boolean).join(' ').toLowerCase().includes(term)))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.id.localeCompare(a.id));
+}
+
+/** The stored state in plain words, said in this one place. A waiting item is open; one settled without an answer
+ * (its task closed, its approval was decided) is settled. */
+const stateWords: Record<InboxItem['state'], string> = { waiting: 'open', taken: 'in progress', done: 'done', answered: 'answered', resolved: 'settled' };
+export const stateWord = (item: InboxItem) => stateWords[item.state] ?? item.state;
+/** The stored answer in plain words. */
+const answerWords: Record<string, string> = { yes: 'Yes', no: 'No', words: 'Answered in words', done: 'Marked done', dismiss: 'Dismissed', replied: 'Replied' };
+export const answerWord = (answer: string) => answerWords[answer] ?? answer;
+/** Who it is from. The Inbox's own data carries the agent's id, not its display name. */
+export const from = (item: InboxItem) => item.agent ?? item.fromId ?? 'Loom';
+/** How loudly an item is shown (stored as full, dim, mute). Full is listed whole and may notify this person's
+ * devices. Dim is one line in the list and mute is left out of it; neither notifies, and both go back to full
+ * at the item's quiet-until time. */
+export const volumeWords: Record<InboxItem['volume'], string> = { full: 'Normal', dim: 'Quiet', mute: 'Hidden' };
+export const volumeNote: Record<InboxItem['volume'], string> = { full: '', dim: 'One line in the list, no notifications', mute: 'Left out of the list, no notifications' };
+/** The button that goes to where a managed question is answered, named by what it opens (never the stored kind). */
+export function sourceLabel(item: InboxItem): string {
+  const kind = item.waitsOnKind ?? item.source;
+  return kind === 'task' ? 'Open the task' : kind === 'approval' ? 'Open in Approvals' : kind === 'secret-request' ? 'Open in Secrets' : 'Open where this is answered';
+}
+/** "Nov 14, 2026, 9:20 AM CT": the household's zone, named by its short letters and never by its id. */
+const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', dateStyle: 'medium', timeStyle: 'short' });
+export function when(at: string): string {
+  const date = new Date(at);
+  return Number.isFinite(date.getTime()) ? `${clock.format(date).replace(/\u202f/g, ' ')} CT` : '';
 }

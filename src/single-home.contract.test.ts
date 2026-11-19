@@ -739,8 +739,8 @@ it('takes these choices from the columns that check them too', () => {
   // When a secret is handed over is still written out beside its column: that file was being changed
   // elsewhere when the others were rolled up. It is to read `secretRuleAgents.when.enumValues`.
   expect(holders(/'on_request',\s*'at_start'/)).toEqual([]);
-  // The app does not import the program; its volume buttons are the column's choices, in the column's order.
-  expect(/\(\[([^\]]*)\] as const\)\.map\(value => <Button/.exec(text('web/src/pieces/inbox-view/index.tsx'))?.[1].replaceAll("'", '').split(', ')).toEqual([...inbox.volume.enumValues]);
+  // The app does not import the program; its Notify choices are the column's choices, in the column's order.
+  expect(/\(\[([^\]]*)\] as const\)\.map\(value => <option/.exec(text('web/src/pieces/inbox-view/index.tsx'))?.[1].replaceAll("'", '').split(', ')).toEqual([...inbox.volume.enumValues]);
 });
 
 it('reads a review of a held reply with one shape at the door and in the service', () => {

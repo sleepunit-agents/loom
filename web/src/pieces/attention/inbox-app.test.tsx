@@ -11,10 +11,10 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(_query: string, variables: R
     inboxItem: variables.hasItem ? f.data.inboxItem : null } : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.read(name, input), useRecords: f.records }));
-vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
-  (props: { children?: ReactNode; folder?: string; folders?: unknown; onFolder?: (id: string) => void; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode }) => name === 'Split'
+vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
+  (props: { children?: ReactNode; title?: ReactNode; status?: ReactNode; actions?: ReactNode; folder?: string; folders?: unknown; onFolder?: (id: string) => void; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode }) => name === 'Split'
     ? h(name, { folder: props.folder, folders: props.folders, onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search)
-    : h(name, props, props.children)])));
+    : name === 'NoteRow' ? h(name, { status: props.status }, props.title, props.actions, props.children) : h(name, props, props.children)])));
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -31,6 +31,7 @@ function setup(item = row(), items = [item]) {
 }
 const button = (name: string) => tree.root.findAllByType('Button').find((node: { props: { children: unknown } }) => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children) === name);
 const text = () => JSON.stringify(tree.toJSON());
+const link = (name: string) => tree.root.findAllByType('LinkButton').find((node: { props: { children: unknown } }) => node.props.children === name);
 it('mounts shared Inbox, server folder totals and actual authenticated read/answer operations', async () => {
   setup(); const go = vi.fn();
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
@@ -48,23 +49,24 @@ it('consumes whole-mailbox search without locally discarding source matches, pag
   setup(selected, Array.from({ length: 51 }, (_, n) => row({ id: `in-${n}`, read: true })));
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go: vi.fn() })); });
   expect(tree.root.findAllByType('Row')).toHaveLength(50);
-  await act(async () => { button('Next page').props.onClick(); });
+  expect(tree.root.findByType('Pager').props).toMatchObject({ hasPrevious: false, hasNext: true });
+  await act(async () => { tree.root.findByType('Pager').props.next(); });
   expect(f.requests.at(-1)?.variables.offset).toBe(50);
   f.data.inboxItems = [selected];
-  await act(async () => { tree.root.findByType('Input').props.onChange({ target: { value: 'needle' } }); });
+  await act(async () => { tree.root.findByType('Search').props.onChange('needle'); });
   expect(f.requests.at(-1)?.variables).toMatchObject({ search: 'needle', offset: 0 });
-  expect(text()).toContain('Different display text'); expect(button('Next page').props.disabled).toBe(true);
+  expect(text()).toContain('Different display text'); expect(tree.root.findByType('Pager').props).toMatchObject({ hasPrevious: false, hasNext: false });
 });
-it.each([['task','t-1','Open task','/p/tasks-preview/task/t-1'], ['approval','a-1','Open Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
+it.each([['task','t-1','Open the task','/p/tasks-preview/task/t-1'], ['approval','a-1','Open in Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open in Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
   setup(row({ source, sourceId, read: true })); const go = vi.fn();
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
   expect(button('Yes')).toBeUndefined();
-  await act(async () => { button(label).props.onClick(); });
+  await act(async () => { link(label).props.onClick(); });
   expect(go).toHaveBeenCalledWith(path);
   await act(async () => { tree.root.findByType('Split').props.onFolder('errors'); });
   expect(f.requests.at(-1)?.variables.onlyErrors).toBe(true);
   expect(text()).toContain('Action failed');
-  await act(async () => { button('Dismiss notice').props.onClick(); });
+  await act(async () => { link('Dismiss').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.dismissResult', { id: 'result-1' });
 });
 it('opens the answered approval from its decision tell', async () => {
@@ -74,7 +76,7 @@ it('opens the answered approval from its decision tell', async () => {
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
   expect(button('Yes')).toBeUndefined();
   expect(text()).not.toContain('Answer this at its source.');
-  await act(async () => { button('Open Approvals').props.onClick(); });
+  await act(async () => { link('Open in Approvals').props.onClick(); });
   expect(go).toHaveBeenCalledWith('/p/approvals-preview/approval/a-card');
 });
 it('withdraws private question and answer words at their independent deadlines and on access loss', async () => {
@@ -143,10 +145,10 @@ it('offers recipient volume independently of managed answers through the current
  const props={path:'/p/inbox-preview/ask/in-1',go:vi.fn()};
  await act(async()=>{tree=create(h(InboxApp,props));});
  expect(button('Yes')).toBeUndefined();
- await act(async()=>{button('Mute').props.onClick();});
+ await act(async()=>{tree.root.findByType('select').props.onChange({target:{value:'mute'}});});
  expect(fetch).toHaveBeenCalledWith('/api/inbox/volume',expect.objectContaining({method:'POST',credentials:'same-origin'}));
  expect(f.call).toHaveBeenCalledWith('inbox.volume',{item:'in-1',volume:'mute'});
  f.data.inboxItem=row({canAnswer:false,canSetVolume:false,read:true});
  await act(async()=>{tree.update(h(InboxApp,props));});
- expect(button('Mute')).toBeUndefined();
+ expect(tree.root.findAllByType('select')).toHaveLength(0);
 });
