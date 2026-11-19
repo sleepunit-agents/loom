@@ -8,6 +8,7 @@ import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/source
 import {maySee,type Sharing,type Viewer} from './policy.js';
 import {OperationError,RecoveredWrite,type Operations,type WriteReceipt,type Context} from './core/operations/index.js';
 const path=z.string().max(NOTE_PATH_MAX).regex(NOTE_PATH);
+const noteBody=z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES);
 const noteType=new GraphQLObjectType({name:'MemoryNote',fields:Object.fromEntries(['path','body','lifespan','created','updated','by'].map(name=>[name,{type:new GraphQLNonNull(GraphQLString)}]))});
 /** A listing carries no words: path, lifetime and size only. */
 const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:{
@@ -38,11 +39,15 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
  register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   const recover=(ctx:Context)=>{const notes=selected(ctx.viewer),prior=notes&&ctx.receipt?receipt(notes,ctx.receipt,ctx.now):undefined;if(prior)ctx.changed('memory',ctx.viewer.id);return prior;};
-  operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
+  operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:noteBody,expectedBody:noteBody.nullable().optional(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
    run(ctx,input){const notes=selected(ctx.viewer),identity=ctx.receipt;if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
     const result=notes.atomicWrite(db=>{const previous=receipt(notes,identity,ctx.now);if(previous)return previous;mindReceipts.expire(db,ctx.now);
      const only=commands.addsOnly?.(ctx.viewer);
-     if(only&&notes.read(input.path))throw new OperationError('denied',only.overwrite);
+     if(only||input.expectedBody!==undefined){
+      const current=notes.read(input.path);
+      if(only&&current)throw new OperationError('denied',only.overwrite);
+      if(input.expectedBody!==undefined&&(current?.body??null)!==input.expectedBody)throw new OperationError('conflict','The note has changed');
+     }
      notes.write(input.path,input.body,{lifespan:input.lifespan,by:only?.by??ctx.viewer.id});const value={saved:true};
      mindReceipts.save(db,identity,value,identity.expires);return value;
     });commands.committed();ctx.changed('memory',ctx.viewer.id);return result;

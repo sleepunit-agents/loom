@@ -166,8 +166,8 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    return '# '+note.path+'\n_'+note.lifespan+' · updated '+note.updated+' by '+note.by+'_\n\n'+note.body;
   });
 
- tool('note_write','Write a note, whole. A new note needs a lifespan ('+LIFESPAN_NAMES.join(', ')+').',
-  z.object({path:notePath,body:z.string(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),
+ tool('note_write','Write a note, whole. A new note needs a lifespan ('+LIFESPAN_NAMES.join(', ')+'). Pass expectedBody to replace only the exact old text, or null to create only if absent.',
+  z.object({path:notePath,body:z.string(),expectedBody:z.string().nullable().optional(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),
   async input=>{await run('memory.noteWrite',input);return 'Saved note '+input.path;});
 
  tool('note_list','List your notes under a prefix, newest first. No text.',

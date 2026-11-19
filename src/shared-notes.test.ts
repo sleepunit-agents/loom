@@ -17,3 +17,24 @@ it('restarts with an existing Notes source byte-for-byte and refuses to prepare 
   const read=await fetch(restarted.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},body:JSON.stringify({query:'{memoryNote(agent:"art",path:"fictional/precious"){body}}'})});expect(await read.json()).toEqual({data:{memoryNote:{body:'FICTIONAL_PRECIOUS_EXISTING_NOTE'}}});expect(snapshot()).toEqual(before);
  }finally{await restarted?.close();await p.close();}
 });
+
+it('atomically chooses one claimant and fences the former holder after takeover',async()=>{
+ const p=await sharedUiProgram({clock:new FakeClock(Date.now()),seed(db){
+  db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ }});
+ try{
+  const credential=p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'agent',agent:'art',label:'Fictional lane'})).value;
+  const write=async(id:string,expectedBody:string|null,body:string)=>{
+   const response=await fetch(p.url+'/api/memory/noteWrite',{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},
+    body:JSON.stringify({id,input:{path:'lanes/fictional',lifespan:'keep',expectedBody,body}})});
+   return response.status;
+  };
+  const claims=await Promise.all([write('claim-a',null,'a'),write('claim-b',null,'b')]);
+  expect([...claims].sort()).toEqual([200,409]);
+  const holder=claims[0]===200?'a':'b';
+  expect(await write('takeover',holder,'c')).toBe(200);
+  expect(await write('stale-completion',holder,'stale checkpoint')).toBe(409);
+  expect(await write('finish','c','next checkpoint')).toBe(200);
+  expect(await write('finish','c','next checkpoint')).toBe(200);
+ }finally{await p.close();}
+});
