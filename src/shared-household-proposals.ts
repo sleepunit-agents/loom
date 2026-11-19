@@ -45,7 +45,7 @@ import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js'
 import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
-import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
+import {boxSettingsInput,applyBoxSettings,applyMachineReader} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
 import type {ModelRole} from './runtime/placement.js';
@@ -288,15 +288,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='bridge')parts.bridges.change(value.input);
    else if(value.change==='tempoTimings'){const {who,...patch}=value.input;parts.tempo().setTimings(who,patch);}
    else if(value.change==='measuring'){parts.measuring.write(value.input);parts.measuring.changed();}
-   else if(value.change==='machineReader'){
-    const {box,agent,allow}=value.input;
-    const row=db.select().from(boxes).where(and(eq(boxes.id,box),isNull(boxes.revokedAt))).get();
-    if(row?.owner!==by)throw new OperationError('denied','Only the machine owner may change explicit readers');
-    const readers=row.readers??[];
-    if(allow&&(!sharedSharing(db).agents?.includes(agent)||readers.length>=128))throw new OperationError('invalid','Reader unavailable or limit reached');
-    if(allow===readers.includes(agent))throw new OperationError('conflict','That is how it already is');
-    db.update(boxes).set({readers:allow?[...readers,agent].sort():readers.filter(id=>id!==agent)}).where(eq(boxes.id,box)).run();
-   }
+   else if(value.change==='machineReader')applyMachineReader(db,by,value.input);
    else if(value.change==='boxSettings'){
     if(value.input.readers!==undefined&&db.select({owner:boxes.owner}).from(boxes).where(eq(boxes.id,value.input.box)).get()?.owner!==by)
      throw new OperationError('denied','Only the machine owner may change explicit readers');

@@ -1394,7 +1394,7 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
   - `boxes` has a writer for each fact about a machine. `src/shared-machine-registry.ts` makes the row
     when a machine is enrolled. `src/shared-box-settings.ts` writes what its owner chose (`boxes.name`,
-    `hosts_any`, `report_only`, `always_on`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
+    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
     machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
