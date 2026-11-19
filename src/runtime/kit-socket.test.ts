@@ -17,6 +17,9 @@ it('serves a single job across the worker socket and returns only its bounded re
    expect(tools.map(tool=>tool.name)).toEqual(['kit_hello']);
    expect(await tools[0].execute({who:'friend'},signal)).toEqual({content:[{type:'text',text:'hello'}]});
    expect(call).toHaveBeenCalledWith('kit_hello',{who:'friend'},expect.anything());
+   const large=Object.fromEntries(Array.from({length:16},(_,n)=>['field'+n,'界'.repeat(4096)]));
+   expect(Buffer.byteLength(JSON.stringify(large))).toBeGreaterThan(96*1024);
+   expect(await tools[0].execute(large,signal)).toEqual({content:[{type:'text',text:'hello'}]});
    call.mockRejectedValueOnce(new KitRefused());
    expect(await tools[0].execute({who:'friend'},signal)).toEqual({isError:true,content:[{type:'text',text:new KitRefused().message}]});
  }finally{await socket.close();await rm(directory,{recursive:true,force:true});}

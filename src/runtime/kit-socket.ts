@@ -7,6 +7,8 @@ import {join} from 'node:path';
 import {z} from 'zod';
 import type {kitBroker} from './kit-broker.js';
 
+// Sixteen 4096-code-unit strings may each need six JSON bytes per code unit.
+const REQUEST_BYTES=512*1024;
 const call=z.strictObject({name:z.string().max(64),args:z.record(z.string(),z.unknown())});
 export async function kitSocket(directory:string,broker:()=>ReturnType<typeof kitBroker>|undefined,lifetime:AbortSignal){
   const dir=await mkdtemp(join(directory,'kit-'));
@@ -21,7 +23,7 @@ export async function kitSocket(directory:string,broker:()=>ReturnType<typeof ki
         const active=broker();
         if(!active||signal.aborted||pending.size||request.method!=='POST'||request.headers.origin)throw Error();
         const chunks:Buffer[]=[];let size=0;
-        for await(const chunk of request){size+=chunk.length;if(size>96*1024)throw Error();chunks.push(chunk);}
+        for await(const chunk of request){size+=chunk.length;if(size>REQUEST_BYTES)throw Error();chunks.push(chunk);}
         const body:unknown=JSON.parse(Buffer.concat(chunks).toString());
         let result:unknown;
         if(request.url==='/list'){z.strictObject({}).parse(body);result=await active.list(signal);}
