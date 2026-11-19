@@ -60,7 +60,11 @@ _Avoid_: log, trace, transcript
    whose `agents` is `"*"` or lists the agent. Today that's the household owner, for Art and Mark. A member who owns
    their own agent, running on their own box with their own CLI login, gets Comms for that agent and no other.
 2. **A thread is its opener's.** With several owners on one agent (owners.md), each owner sees only the threads they
-   opened. A thread's words are never shown to another member, household owner included. The conversation record
+   opened. A thread's words are never shown to another member, household owner included. The agent the thread is
+   with reads it back in the two places where its opener is the only person it could show it to: a body doing that
+   member's own work, and a session at that member's own terminal (owner's ruling, 2026-11-19: the rule is that an
+   agent must not expose what a person said to it, not that it must not know it; `itsOwnPrivateTalk` in
+   `src/policy.ts`). Any other body of the agent, whoever woke it, reads none of it. The conversation record
    (its metadata and digests) is still visible to the agent's owners, as for any venue (conversations.md, "Reading").
    Its asks are its member's too (t-2084): a Needs you of its conversation, an approval asked from it, and either's
    history are in their Inbox, Home, badges, live attention records, Projects counts and devices' pushes alone, and

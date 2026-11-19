@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
 import type { DataDatabase } from './database.js';
-import { tokens, sessions, members, agents, boxes, jobs, programTokens } from './schema.js';
+import { tokens, sessions, members, agents, boxes, jobs, programTokens, terminalCredentials } from './schema.js';
 import { jobClaimed } from './job-states.js';
 import type { Viewer } from '../../policy.js';
 
@@ -88,7 +88,13 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
       // here, where the job row is read, so no door can meet a body's token as the whole agent.
       if (job.member) return { token, viewer: { kind: 'agent' as const, id: token.agent, workingFor: job.member }, job: token.job };
     }
-    return { token, viewer: { kind: 'agent' as const, id: token.agent }, job: token.job ?? undefined };
+    // A terminal credential bound to a machine is the agent at that machine's owner's terminal (policy.ts,
+    // Viewer.atTerminalOf): only while the machine is that member's, is not revoked, and they are in the household.
+    const terminal = token.job || token.box ? undefined : db.select({ member: terminalCredentials.member }).from(terminalCredentials)
+      .innerJoin(boxes, and(eq(boxes.id, terminalCredentials.machine), eq(boxes.owner, terminalCredentials.member), isNull(boxes.revokedAt)))
+      .innerJoin(members, and(eq(members.id, terminalCredentials.member), isNull(members.removedAt)))
+      .where(eq(terminalCredentials.fingerprint, token.fingerprint)).get();
+    return { token, viewer: { kind: 'agent' as const, id: token.agent, ...(terminal && { atTerminalOf: terminal.member }) }, job: token.job ?? undefined };
   }
   if (token.kind === 'runner' && token.box) {
     if (!machineCurrent(db, token.box)) return;
@@ -147,7 +153,8 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
     return { ...admitted, window: !!sessionId, credential: Object.freeze({ token: tokenId, session: sessionId }), valid() {
       const live = current();
       return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
-        && (live.viewer.kind === 'agent' ? live.viewer.workingFor : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.workingFor : undefined);
+        && (live.viewer.kind === 'agent' ? live.viewer.workingFor : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.workingFor : undefined)
+        && (live.viewer.kind === 'agent' ? live.viewer.atTerminalOf : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.atTerminalOf : undefined);
     } };
   };
 }

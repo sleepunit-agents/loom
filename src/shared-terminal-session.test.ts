@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
-import { boxes } from './core/data/schema.js';
+import { boxes, memberAgents } from './core/data/schema.js';
 
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -38,4 +38,44 @@ it('refuses steering an observed conversation through Comms, the runtime and wor
   expect((await post('comms/change',{thread,change:'stop'},bodyCredentials.member)).status).toBe(403);
   expect((await post('runtime/jobStop',{job,reason:'reset'},bodyCredentials.member)).status).toBe(403);
   expect(() => f.root.services.signin.issue({kind:'agent',agent:'art',job,label:'Worker'})).toThrow();
+});
+
+it('lets the agent read back, at its member\'s own terminal, what the two of them said there, and nobody else\'s talk', async () => {
+  const f = await bodyFixture(clean);
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' });
+  let n = 0;
+  const post = (input: unknown, bearer = token) => f.root.http.request('/api/terminal/session', {
+    method: 'POST', headers: { authorization: 'Bearer ' + bearer, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'event-' + (++n), input }) });
+  const key = { machine: 'box', sessionId: 's', harness: 'claude' };
+  const { thread, conversation } = (await (await post({ ...key, action: 'open', model: null, cwd: '/home/alice/Code/pond' })).json()).value;
+  expect((await post({ ...key, action: 'turn', role: 'member', eventId: 'm1', words: 'remember the fixture word heron' })).status).toBe(200);
+  expect((await post({ ...key, action: 'turn', role: 'agent', eventId: 'a1', words: 'noted: heron' })).status).toBe(200);
+  const ask = async (bearer: string, query: string) => (await (await f.root.http.request('/graphql', { method: 'POST',
+    headers: { authorization: 'Bearer ' + bearer, 'content-type': 'application/json' }, body: JSON.stringify({ query }) })).json()).data;
+  const threads = '{ commsThreads(agent: "art") { id title venue member } }', words = `{ commsMessages(thread: "${thread}") { seq kind sender words } }`;
+  // The session is titled by the machine's name and the folder it began in, not by the machine's id.
+  // It reads all of its private talk with this member: this session and the thread they already had.
+  const mine = (await ask(token, threads)).commsThreads as { id: string; title: string; venue: string; member: string }[];
+  expect(mine.find(row => row.id === thread)).toEqual({ id: thread, title: 'Box · claude · pond', venue: 'terminal', member: 'alice' });
+  expect(mine.every(row => row.member === 'alice')).toBe(true);
+  expect(mine.map(row => row.venue).sort()).toEqual(['loom', 'terminal']);
+  expect((await ask(token, words)).commsMessages).toEqual([
+    { seq: 1, kind: 'message', sender: 'alice', words: 'remember the fixture word heron' }, { seq: 2, kind: 'reply', sender: 'art', words: 'noted: heron' }]);
+  expect((await ask(token, `{ conversations(where: { id: { eq: "${conversation}" } }) { id venue member } }`)).conversations).toEqual([{ id: conversation, venue: 'terminal', member: 'alice' }]);
+  // The member reads their own, as before.
+  expect((await ask(bodyCredentials.member, words)).commsMessages).toHaveLength(2);
+  // The agent alone does not: its ordinary credential, and any body of it not doing this member's own work.
+  for (const other of [bodyCredentials.agent]) {
+    expect((await ask(other, threads)).commsThreads).toEqual([]);
+    expect((await ask(other, words)).commsMessages).toEqual([]);
+  }
+  // Another member's private talk with the same agent is not read from this member's terminal.
+  f.db.insert(memberAgents).values({ member: 'bob', agent: 'art' }).run();
+  const theirs = f.root.writes.run(() => f.root.services.comms.threads.open({ agent: 'art', member: 'bob', venue: 'loom', title: 'Bob and Art' })).value;
+  expect(((await ask(token, '{ commsThreads(agent: "art") { id member } }')).commsThreads as { id: string; member: string }[]).map(row => row.member).sort()).toEqual(['alice', 'alice']);
+  expect((await ask(bodyCredentials.member, `{ commsMessages(thread: "${theirs.id}") { seq } }`)).commsMessages).toEqual([]);
+  expect((await ask(token, `{ commsMessages(thread: "${theirs.id}") { seq } }`)).commsMessages).toEqual([]);
+  // Once the machine is no longer this member's, the same credential reads none of it.
+  f.root.writes.run(() => f.db.update(boxes).set({ owner: 'bob' }).run());
+  expect((await ask(token, threads))?.commsThreads ?? []).toEqual([]);
 });

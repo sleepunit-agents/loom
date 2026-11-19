@@ -25,8 +25,15 @@ export type Viewer =
    * So a body working for a member reads and changes nothing through a project the member is not in, and
    * nothing at all once the member has left or lost the agent. It never gains what only a member holds
    * (self, householdOwner). What stays the agent's own whoever it works for is listed in
-   * docs/accepted-tradeoffs.md, "A body keeps the agent's own knowledge". */
-  | { kind: 'agent'; id: string; workingFor?: string }
+   * docs/accepted-tradeoffs.md, "A body keeps the agent's own knowledge".
+   *
+   * `atTerminalOf` is the member at whose terminal this session of the agent runs: the member a machine-bound
+   * terminal credential is bound to, on that member's own machine. It too is set where the credential is
+   * resolved and never from request input. It narrows nothing: the session is the agent, as before. It adds
+   * one reach, by one rule (atItsTerminal): what that member said to this agent and this agent said to them.
+   * The agent was there for those conversations, and at that member's own terminal they are the only
+   * person it can show them to. */
+  | { kind: 'agent'; id: string; workingFor?: string; atTerminalOf?: string }
   | { kind: 'runner'; id: string }
   | { kind: 'service'; id: string };
 export interface Scope { project?: string; agent?: string; member?: string }
@@ -83,7 +90,10 @@ export type Rule =
   /** The viewer is a body working for a member who has its agent on their own list, and `rule` holds for
    * that member. The one way a body does something on its member's word; a rule that does not say this
    * gives a body nothing of its member's. */
-  | { is: 'forItsMember'; rule: Rule };
+  | { is: 'forItsMember'; rule: Rule }
+  /** The viewer is the agent in a session at a member's own terminal (Viewer.atTerminalOf), that member has
+   * the agent on their own list, and `rule` holds for that member. */
+  | { is: 'atItsTerminal'; rule: Rule };
 
 const never: Rule = { is: 'never' };
 const householdOwner: Rule = { is: 'householdOwner' };
@@ -121,7 +131,16 @@ const agentOwners: Rule = all(viewerIs('member'), ownsAgent('agent'));
  * Anything else is read by household owners, the people in its project and whoever owns its agent. */
 const privateTalk = (...more: (readonly [Rule, Rule])[]): Rule =>
   first([[set('member'), self('member')], ...more], any(householdOwner, inProject('project'), ownsAgent('agent')));
-const conversation: Rule = privateTalk([equal('direct', true), agentOwners]);
+/** The agent a private conversation is with, where it can only be showing it to the person it was with: a body
+ * doing that member's own work, or a session at that member's own terminal. The rule is about where the
+ * words could be shown, not about keeping them from the agent that was there. A body woken by anyone else,
+ * in any room, is neither, and reads none of it. */
+const itsOwnPrivateTalk: Rule = all(viewerIs('agent'), ownsAgent('agent'),
+  any({ is: 'forItsMember', rule: self('member') }, { is: 'atItsTerminal', rule: self('member') }));
+/** A conversation: private talk (above), and the agent it is with reads its own (itsOwnPrivateTalk). What
+ * hangs off a conversation (its jobs, its mail) keeps the narrower rule, inTalk. */
+const conversation: Rule = first([[set('member'), any(self('member'), itsOwnPrivateTalk)], [equal('direct', true), agentOwners]],
+  any(householdOwner, inProject('project'), ownsAgent('agent')));
 /** A record that carries a conversation's labels and may name the conversation (a job, an inbox item, a
  * question). In a conversation it is seen with it, so the direct label reaches it; either way a member label
  * keeps it that member's alone. */
@@ -381,6 +400,10 @@ export function holds(rule: Rule, v: Viewer, row: Row, s: Sharing, parent?: Pare
       return !!found && holds(rule.as ?? tableRules[rule.table], v, found, s, parent);
     }
     case 'forItsMember': return bound !== undefined && !!its?.agents.includes(v.id) && holds(rule.rule, { kind: 'member', id: bound }, row, s, parent);
+    case 'atItsTerminal': {
+      const at = v.kind === 'agent' ? v.atTerminalOf : undefined;
+      return at !== undefined && !!entry(s.members, at)?.agents.includes(v.id) && holds(rule.rule, { kind: 'member', id: at }, row, s, parent);
+    }
   }
 }
 
