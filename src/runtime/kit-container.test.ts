@@ -6,7 +6,7 @@ import { runKitContainer } from './kit-container.js';
 
 const image = 'sha256:' + 'e'.repeat(64);
 const input = { job:'test-job', box:'test-box', image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ KIT_POND:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
-function fixture(output:string, inspectedImage=image) {
+function fixture(output:string, inspectedImage=image, frameSize=Infinity) {
   const calls: {method:string; path:string; body:unknown}[] = [];
   const socket = new Duplex({read(){},write(_chunk, _encoding, done){done();}});
   const engine: DockerEngine = {
@@ -17,9 +17,15 @@ function fixture(output:string, inspectedImage=image) {
       if (path.startsWith('/containers/') && path.endsWith('/json')) return {Mounts:[]};
       if (path.includes('/create')) return {Id:'a'.repeat(64)};
       if (path.endsWith('/start')) {
-        const data = Buffer.from(output), header = Buffer.alloc(8);
-        header[0] = 1; header.writeUInt32BE(data.length,4);
-        socket.push(Buffer.concat([header,data])); socket.push(null);
+        const data = Buffer.from(output);
+        for (let offset = 0; offset < data.length; offset += frameSize) {
+          const part = data.subarray(offset, offset + frameSize);
+          const header = Buffer.alloc(8);
+          header[0] = 1;
+          header.writeUInt32BE(part.length, 4);
+          socket.push(Buffer.concat([header, part]));
+        }
+        socket.push(null);
       }
       if (path.includes('/wait')) return {StatusCode:0};
     },
@@ -60,4 +66,10 @@ it('applies the same stdout budget and credential checks without any bound secre
     const {engine}=fixture(output);
     await expect(runKitContainer(engine,{...input,secrets:{}})).rejects.toThrow(reason);
   }
+});
+
+it('accepts the full stdout allowance even when Docker frames each byte separately', async () => {
+  const text = 'x'.repeat(PROGRAM_OUTPUT_BYTES);
+  const {engine} = fixture(text, image, 1);
+  expect((await runKitContainer(engine, input)).toString()).toBe(text);
 });

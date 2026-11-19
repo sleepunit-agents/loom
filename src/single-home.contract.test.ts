@@ -512,7 +512,6 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/agy-body.ts': 'how much of a harness\'s first output is searched for its session id',
       'src/runtime/claude-body.ts': 'the size of the tools configuration handed to the harness',
       'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
-      'src/runtime/kit-container.ts': 'the maximum framed output from a kit helper',
       'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
     { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX', 'src/runtime/house-program.ts': 'PROGRAM_OUTPUT_BYTES' }, others: {
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
