@@ -1258,7 +1258,7 @@ it.each(['oversize', 'secret', 'invalid utf8', 'nonzero'])('keeps %s program std
   const run = workOnce({ box: job.box, control, executor: f.executor, signal: f.abort.signal });
   await flush();
   let output: Buffer;
-  if (reason === 'oversize') output = frame('x'.repeat(16385));
+  if (reason === 'oversize') output = frame('x'.repeat(1024 * 1024));
   else if (reason === 'invalid utf8') {
     output = frame('{"version":1,"wake":true,"line":"x"}');
     output[output.length - 3] = 0xff;

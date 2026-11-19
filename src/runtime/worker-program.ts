@@ -159,7 +159,7 @@ export async function workerProgram(input: {
     const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     const remote = { url: config.url, token, signal: abort.signal };
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
-    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, programs: !!config.container, silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
+    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container
