@@ -29,6 +29,8 @@ export interface LoginCheck { account: string; harness: string; place: Login['pl
 /** The only reasons a sign-in is recorded as gone, as the sentence its owner reads. A worker sends the word, never the sentence. */
 const REASONS: Record<LoginReason, string> = { 'no-file': 'There is no sign-in file.', 'no-sign-in': 'The sign-in file holds no sign-in.', ended: 'The sign-in has ended.' };
 
+/** The last instant of the year 9999: the latest time the household database keeps. */
+const LAST_MS = 253_402_300_799_999;
 type Key = Pick<Login, 'account' | 'box' | 'harness' | 'place'>;
 // One notice per time a sign-in is found gone, and one per end date: a notice already closed under an id is
 // never sent again (Conversations.send), so each id names the occasion and not only the sign-in.
@@ -84,7 +86,9 @@ export class AccountLogins {
         if (check.state === 'unknown') continue;
         const key = { account: check.account, box, harness: check.harness, place: check.place };
         const before = this.db.select().from(modelAccountLogins).where(where(key)).get();
-        const expiresAt = check.state === 'signed-in' && check.expiresAt != null ? new Date(check.expiresAt).toISOString() : null;
+        // A time written with an offset can land outside the years the database keeps: then there is no known end.
+        const ends = check.state === 'signed-in' && check.expiresAt != null ? Date.parse(check.expiresAt) : NaN;
+        const expiresAt = Number.isFinite(ends) && ends >= 0 && ends <= LAST_MS ? new Date(ends).toISOString() : null;
         const after = this.write(key, { state: check.state, expiresAt, learnedFrom: 'check', why: check.state === 'signed-out' && check.why ? REASONS[check.why] : null }, at);
         if (!before || before.state !== after.state || before.expiresAt !== after.expiresAt || before.why !== after.why) changed.add(check.account);
       }
