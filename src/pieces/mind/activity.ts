@@ -7,6 +7,7 @@ import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
 import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {Clock} from '../../core/clock.js';
+import {DAY_MS} from '../../core/day.js';
 import type {ActivityConversations,ActivityConversation,ActivityRun} from './activity-role.js';
 const link=z.object({label:z.string(),href:z.string().optional()}).strict();
 const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
@@ -29,12 +30,18 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   try{if(existsSync(a.memories))return new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0});}catch{sourceErrors.add(a.agent);}
   return undefined;
  }).follow();
- const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
+ // One window asks who may see what for every agent and every conversation row. The sharing facts are a read
+ // of whole tables and nothing in a read writes, so one synchronous call of this reader reads them once.
+ // Nothing is kept past the call: the next one asks afresh.
+ let held:Sharing|undefined;
+ const sharing=()=>held??options.sharing();
+ const once=<T>(work:()=>T):T=>{if(held)return work();held=options.sharing();try{return work();}finally{held=undefined;}};
+ const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},sharing());
  const conversationAllowed=(v:Viewer,agent:string)=>allowed(v,agent,'conversation')||!!options.conversations?.agents?.(v).includes(agent);
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||conversationAllowed(v,a.agent));
  // Conversation records carry the shared model's scope. Episode files remain
  // private to their agent, checked separately before opening the file.
- const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>clock.now())&&c.agent===agent&&maySee(v,{type:'conversation',agent,...(c.project!==undefined?{project:c.project}:{}),...(c.member!==undefined?{member:c.member}:{})},options.sharing());
+ const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>clock.now())&&c.agent===agent&&maySee(v,{type:'conversation',agent,...(c.project!==undefined?{project:c.project}:{}),...(c.member!==undefined?{member:c.member}:{})},sharing());
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;
  const ownerLabel=(v:Viewer)=>{const person=ownerPerson(v);return (person===options.owner&&options.ownerLabel?options.ownerLabel:person??'Owner').split(/[\s-]+/)[0].replace(/^./,x=>x.toUpperCase());};
@@ -137,7 +144,12 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}
   for(const db of sources.values())try{
    if(!has(db))continue;
-   for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0").iterate()){
+   // Only an episode that ends, or one written lately (its writer's clock may run ahead), can set a deadline.
+   // The store leaves the others out, so a schedule does not carry every episode ever kept into this program:
+   // it runs after each committed change. The store and the loop below read a time differently (one written
+   // without a zone is UTC to the store and this machine's time to the loop), so the store keeps back only
+   // what is more than two days old by its reading, and anything it cannot read at all is left in.
+   for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0 AND (expires_at IS NOT NULL OR julianday(created) IS NULL OR julianday(created)>julianday(?))").iterate(new Date(now-2*DAY_MS).toISOString())){
     const row=raw as {created:string;expires_at:string|null};
     const expiry=row.expires_at===null?undefined:Date.parse(row.expires_at);
     if(expiry!==undefined&&(!Number.isFinite(expiry)||expiry<=now))continue;
@@ -149,6 +161,6 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   }catch{/* A failed source remains an explicit reader error, not a timer failure. */}
   return next;
  }
- const reader={allowed:(v:Viewer)=>agents(v).length>0,access,window,read,nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
+ const reader={allowed:(v:Viewer)=>once(()=>agents(v).length>0),access:(v:Viewer)=>once(()=>access(v)),window:(scope:string,v:Viewer)=>once(()=>window(scope,v)),read:(id:string,v:Viewer)=>once(()=>read(id,v)),nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
  return reader;
 }

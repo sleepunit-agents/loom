@@ -591,6 +591,27 @@ On success the body sends its report alongside settlement. A body with validated
 - **What would change the answer.** Stamping reports with a count that only moves forward instead of a
   time, which is a schema change.
 
+### A last-seen time reaches an open window up to a minute late
+
+- **What.** Three kinds of time are written far more often than anything a person does: a machine's last
+  report (a worker with no work asks about once a second), a credential's or a session's last use (every
+  request), and a timing row (every measured call). Open live selections are read again for these at most
+  once in a minute (`STAMP_WAKE_MS` in `src/next-data.ts`), so a window shows such a time up to a minute
+  after it was written. The rows themselves are written at once, and placement and the silence sweep
+  read them as before.
+- **What is enforced.** Only a write that has checked what it wrote may be kept back: a report that left
+  the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
+  a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and
+  every change of who may see what, is told to every selection at once, as before
+  (`DataWrites.run`). A machine heard from again after a silence is told at once.
+- **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
+  was waiting is set again by the next such time written, a minute from then; with nothing more written it
+  waits until the clock has caught up, as every other deadline of this program does.
+- **Why accepted.** Reading every selection again for each of them is what took the server to all of one
+  processor with one person's browser open (2026-11-19), and no screen shows these times to the second.
+- **What would change the answer.** A screen that counts up from a last-seen time, which would then keep
+  its own clock rather than be sent the time each second.
+
 ### A queued job has one deadline, whatever keeps it queued
 
 - **What.** A job no machine has taken 24 hours after it could first be claimed is ended as failed
