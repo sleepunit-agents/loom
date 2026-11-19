@@ -4,15 +4,24 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Children, createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer has no declarations.
 import { act, create } from 'react-test-renderer';
-const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
-vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
-  f.requests.push({ query, variables });
+// `thread` is the state of the open thread's own reading; `hold` and `heldThread` make the list and the thread answer as
+// the data hook does while their next variables load (the last answer again, marked settling).
+const f = vi.hoisted(() => ({ status: 'live', thread: 'live', hold: false, heldThread: false, last: undefined as unknown, lastThread: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown>; options?: { keep?: boolean; pause?: boolean } }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
+vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: { keep?: boolean; pause?: boolean }) {
+  f.requests.push({ query, variables, options });
+  if (options?.pause) return { status: 'loading' };
+  if (f.status === 'live' && query.includes('query CommsThread(')) {
+    if (f.thread !== 'live') return { status: f.thread };
+    if (f.heldThread && options?.keep) return { status: 'live', data: f.lastThread, settling: true };
+    return { status: 'live', data: f.lastThread = { commsThread: f.data.commsThread, commsMessages: f.data.commsMessages, commsRefs: f.data.commsRefs } };
+  }
+  if (f.status === 'live' && query.includes('query Comms(')) return f.hold && options?.keep ? { status: 'live', data: f.last, settling: true } : { status: 'live', data: f.last = { ...f.data } };
   return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {taskQuestions:((f.data.taskQuestions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11),approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { conversationMadeChanges:((f.data.sourceMembership ?? f.data.madeChanges ?? []) as {id:string}[]).filter(row=>row.id===variables.id),changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
-  (props: { children?: ReactNode; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown }) => name === 'Split'
-    ? h(name, { folders: props.folders, onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
+  (props: { children?: ReactNode; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown; listBusy?: boolean }) => name === 'Split'
+    ? h(name, { folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
 import CommsApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -20,7 +29,7 @@ afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers
 const thread = (extra = {}) => ({ id: 'th:pump', conversation: 'cv-pump', title: 'Private pump', agent: 'art', member: 'alice', pinned: false, archivedAt: null, lastAt: '2026-11-14T18:00:00Z', readSeq: 0, working: true, stopRequested: false, ...extra });
 const message = (extra = {}) => ({ thread: 'th:pump', seq: 1, kind: 'reply', sender: 'art', at: '2026-11-14T18:00:00Z', words: 'PRIVATE REPLY', wordsKeepUntil: new Date(Date.now()+60000).toISOString(), ...extra });
 function setup() {
-  f.status = 'live'; f.requests = []; f.records.mockClear();
+  f.status = 'live'; f.thread = 'live'; f.hold = false; f.heldThread = false; f.requests = []; f.records.mockClear();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const name = url.replace('/api/','').replace('/','.');
     const body = JSON.parse(String(init.body));
@@ -60,9 +69,9 @@ it('uses server counts, search and thread/message pages without caching old priv
   await act(async () => { tree.root.findByType('Input').props.onChange({ target: { value: 'needle' } }); });
   expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables).toMatchObject({ search: 'needle', offset: 0 });
   await act(async () => { named('Earlier messages').props.onClick(); });
-  expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables.before).toBe(2);
+  expect(f.requests.findLast(row => row.query.includes('query CommsThread('))?.variables.before).toBe(2);
   await act(async () => { named('Latest messages').props.onClick(); });
-  expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables.before).toBeNull();
+  expect(f.requests.findLast(row => row.query.includes('query CommsThread('))?.variables.before).toBeNull();
 });
 it('withdraws still-retained private words and drafts when the read is denied', async () => {
   setup(); await draw(); expect(text()).toContain('PRIVATE REPLY');
@@ -253,4 +262,45 @@ it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
 it('shows the exact setting proposal to its private conversation member while the owner answer waits in a different Inbox',async()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.owner=false;f.data.questions=[];f.data.commsMessages=[];f.data.ordinaryApprovals=[{id:'a-tempo'}];
  await draw();expect(text()).toContain('Tempo settings change');expect(text()).toContain('Before');expect(text()).toContain('After');expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();
+});
+
+// Only the part that changes is replaced: opening a thread is the reader's business, another folder, search or page the list's.
+const titles = () => tree.root.findAllByType('Row').map((node: { props: { title: string } }) => node.props.title);
+const asked = (name: string) => f.requests.findLast(row => row.query.includes(`query ${name}(`));
+it('opening a thread leaves the list, counts, search and pages as they were, and the reader alone loads', async () => {
+  setup(); f.data.commsThreads = [thread(), thread({ id: 'th:filter', title: 'Private filter' })]; const go = vi.fn();
+  await draw('/p/comms-preview', go);
+  const rows = titles(), folders = tree.root.findByType('Split').props.folders, list = asked('Comms');
+  expect(rows).toHaveLength(2); expect(asked('CommsThread')?.options).toMatchObject({ pause: true });
+  f.thread = 'loading';
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/filter', go })); });
+  expect(titles()).toEqual(rows); expect(tree.root.findByType('Split').props).toMatchObject({ folders, listBusy: undefined });
+  expect(tree.root.findByType('Input').props.disabled).toBe(false); expect(named('Previous page').props.disabled).toBe(true);
+  expect(asked('Comms')).toEqual(list); expect(asked('Comms')?.variables).toMatchObject({ selected: false });
+  expect(asked('CommsThread')).toMatchObject({ variables: { id: 'th:filter', before: null }, options: { keep: true, pause: false } });
+  expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(named('Send')).toBeUndefined();
+  // The thread that was open before is not the open thread: its kept words are not drawn and nothing can act on it.
+  f.thread = 'live'; f.heldThread = true;
+  f.lastThread = { commsThread: thread(), commsMessages: [message()], commsRefs: [] };
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/filter', go })); });
+  expect(text()).not.toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined(); expect(named('Pin')).toBeUndefined();
+  expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(titles()).toEqual(rows); expect(f.call).not.toHaveBeenCalled();
+});
+it('keeps the rows and counts in place while another folder loads, and a thread’s messages while an earlier page loads', async () => {
+  setup(); f.data.commsMessages = Array.from({ length: 51 }, (_, n) => message({ seq: n+1 }));
+  await draw();
+  const rows = titles(), folders = tree.root.findByType('Split').props.folders;
+  f.hold = true;
+  await act(async () => { tree.root.findByType('Split').props.onFolder('1'); });
+  expect(asked('Comms')).toMatchObject({ variables: { archived: true, offset: 0 }, options: { keep: true } });
+  expect(titles()).toEqual(rows); expect(tree.root.findByType('Split').props).toMatchObject({ folders, listBusy: true });
+  expect(tree.root.findByType('Input').props.disabled).toBe(false); expect(tree.root.findAllByType('Loading')).toHaveLength(0);
+  f.heldThread = true;
+  await act(async () => { named('Earlier messages').props.onClick(); });
+  expect(asked('CommsThread')?.variables).toMatchObject({ id: 'th:pump', before: 2 });
+  expect(text()).toContain('PRIVATE REPLY'); expect(tree.root.findAllByType('Loading')).toHaveLength(0); expect(named('Send')).toBeDefined();
+  // The moment the feed fails, everything kept goes with it.
+  f.hold = false; f.heldThread = false; f.status = 'offline';
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go: vi.fn() })); });
+  expect(titles()).toHaveLength(0); expect(text()).not.toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined();
 });

@@ -50,3 +50,29 @@ it('keeps the page-wide control rules to the tile page, compact at a desk and a 
   // Every Split fills its tile page and scrolls pane by pane without its app asking.
   expect(rows).toMatch(/\.next-page > \.loom-split \{ height: 100%/);
 });
+it('opening an item leaves the rows mounted and where they were scrolled; only another list starts from its top', async () => {
+  const { act, create } = await import('react-test-renderer' as string) as { act(run: () => Promise<void>): Promise<void>; create(node: unknown, options: object): { update(node: unknown): void; unmount(): void; root: { findByProps(props: object): { props: Record<string, unknown> } } } };
+  const { useEffect } = await import('react');
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const had = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} } as unknown as typeof ResizeObserver;
+  let mounts = 0; const scrolls: string[] = [];
+  const RowProbe = ({ current }: { current: boolean }) => { useEffect(() => { mounts++; }, []); return h('button', { 'data-split-row': '', 'aria-current': current ? 'true' : undefined }, 'Row'); };
+  const node = (element: { props: { className?: string } }) => ({ getBoundingClientRect: () => ({ width: 1000 }), closest: () => null, querySelectorAll: () => [], focus() {},
+    scrollTo: () => scrolls.push(String(element.props.className)), parentElement: { scrollTo: () => scrolls.push('pane') } });
+  const draw = (extra: object) => h(Split, { label: 'Inbox', folders: [{ id: 'needs', label: 'Needs you', count: 2 }], folder: 'needs', onFolder() {}, listTitle: 'Needs you', onBack() {}, backLabel: 'Back',
+    list: h(RowProbe, { current: false }), reader: null, open: false, listKey: 'needs|0', ...extra });
+  let tree!: ReturnType<typeof create>;
+  try {
+    await act(async () => { tree = create(draw({}), { createNodeMock: node }); });
+    scrolls.length = 0;
+    // Open an item, let its reader load, then show it: the rows are the same rows and nothing scrolls them.
+    for (const reader of [h('p', null, 'Loading…'), h('article', null, 'The item')]) await act(async () => { tree.update(draw({ open: true, reader, list: h(RowProbe, { current: true }) })); });
+    expect(mounts).toBe(1); expect(scrolls).toEqual([]);
+    expect(tree.root.findByProps({ className: 'loom-split__rows' }).props['aria-busy']).toBeUndefined();
+    await act(async () => { tree.update(draw({ listKey: 'needs|50', listBusy: true })); });
+    expect(mounts).toBe(1); expect(scrolls).toEqual(['loom-split__rows', 'pane']);
+    expect(tree.root.findByProps({ className: 'loom-split__rows' }).props['aria-busy']).toBe(true);
+    await act(async () => tree.unmount());
+  } finally { globalThis.ResizeObserver = had; }
+});

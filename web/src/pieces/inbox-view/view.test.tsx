@@ -144,3 +144,19 @@ it('never shows a raw source word under a row that has no why', async () => {
   await act(async () => { tree = create(h(InboxView, { snapshot: { status: 'live', items: [{ ...item, source: 'notice', body: { words: 'Clock stopped' } }] }, select: vi.fn() })); });
   expect(tree.root.findByType('Row').props.meta).toBeUndefined();
 });
+it('keeps the open item’s row in the list while its own reading loads, and shows loading in the reader alone', async () => {
+  const select = vi.fn(), other = { ...item, id: 'in-other', body: { words: 'Another question' } };
+  const props = { snapshot: { status: 'live' as const, items: [item, other] }, selected: item.id, select, actions: { answer: vi.fn(async () => {}) } };
+  await act(async () => { tree = create(h(InboxView, { ...props, detail: { status: 'loading', item: null } })); });
+  const titles = () => tree.root.findAllByType('Row').map((row: { props: { title: string } }) => row.props.title);
+  expect(titles()).toEqual([item.body!.words, 'Another question']);
+  expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(buttons()).toHaveLength(0);
+  // An answer for a different item than the open one is not drawn and offers nothing.
+  await act(async () => { tree.update(h(InboxView, { ...props, detail: { status: 'live', item: other } })); });
+  expect(tree.root.findAllByType('Reader')).toHaveLength(0); expect(buttons()).toHaveLength(0); expect(titles()).toHaveLength(2);
+  await act(async () => { tree.update(h(InboxView, { ...props, detail: { status: 'live', item } })); });
+  expect(named('Yes')).toBeDefined(); expect(titles()).toHaveLength(2);
+  // A reading that failed or was refused takes the row with it, as before.
+  await act(async () => { tree.update(h(InboxView, { ...props, detail: { status: 'offline', item: null } })); });
+  expect(titles()).toEqual(['Another question']); expect(buttons()).toHaveLength(0);
+});

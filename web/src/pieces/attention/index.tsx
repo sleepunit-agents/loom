@@ -2,8 +2,9 @@ import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
+import { useAnswered } from '../../data/graphql/selection';
 import { InboxView, type InboxActions } from '../inbox-view';
-import { inboxSelection, useInboxSelection, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
+import { inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
 export { stamp } from './time';
 const inboxBase = '/p/inbox-preview';
 export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
@@ -14,10 +15,19 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const path = (shellPath ?? localPath).split('?')[0];
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/') + 5)) : undefined; } catch { /* Invalid routes select nothing. */ }
-  const selection = useMemo(() => inboxSelection(folder, search, offset, selected), [folder, search, offset, selected]);
+  // Two readings, so opening an item cannot disturb the list: the folder, search and page select the rows,
+  // counts and outcomes; the open item is read by its id alone.
+  const selection = useMemo(() => inboxSelection(folder, search, offset), [folder, search, offset]);
   const reading = useInboxSelection(selection), live = reading.status === 'live';
+  const opened = useInboxItem(selected);
+  const drawnFolder = useAnswered(reading, folder);
   const status = reading.status;
   const data = live ? reading.data : undefined;
+  // Until the item's own reading answers, the reader shows the row the list already holds for this id
+  // (the list reads the same fields). A list still showing its previous folder or page lends nothing.
+  const known = live && !reading.settling && opened.status === 'loading' ? data?.items.find(row => row.id === selected) : undefined;
+  const item = !selected ? null : opened.status === 'live' ? opened.data ?? null : known ?? null;
+  const detailStatus = !live ? status : !selected || known ? 'live' : opened.status;
   const navigate = (next: string) => {
     if (go) go(next);
     else { if (typeof history !== 'undefined') history.pushState(null, '', next); setLocalPath(next); }
@@ -30,14 +40,15 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   }, [go]);
   useEffect(() => {
     if (!data) return;
-    const deadlines = [...data.items, ...(data.item ? [data.item] : [])]
+    const deadlines = [...data.items, ...(item ? [item] : [])]
       .flatMap(row => [row.bodyKeepUntil, row.answerKeepUntil]).map(value => Date.parse(value ?? ''))
       .filter(value => Number.isFinite(value) && value > now);
     if (!deadlines.length) return;
     const timer = setTimeout(() => setNow(Date.now()), Math.min(2147483647, Math.max(1, Math.min(...deadlines) - Date.now())));
     return () => clearTimeout(timer);
-  }, [data, now]);
-  const current = data?.item ? retainedInboxItem(data.item, Math.max(now, Date.now())) : null;
+  }, [data, item, now]);
+  // Every control below acts on `current`, and `current` is only ever the item the path names.
+  const current = live && item && item.id === selected ? retainedInboxItem(item, Math.max(now, Date.now())) : null;
   const mutate = memberOperation;
 
   const actions: InboxActions | undefined = live ? {
@@ -47,8 +58,8 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
     openRef: ref => { const target = inboxRefPath(ref); return target ? () => navigate(target) : undefined; },
   } : undefined;
-  return <InboxView snapshot={{ status, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
-    selected={selected} select={select} detail={{ status, item: current }} actions={actions}
+  return <InboxView snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
+    selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
     sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
     navigation={{ folder, query: search, offset, hasNext: (data?.items.length ?? 0) > inboxPageSize,

@@ -1,8 +1,8 @@
 import React,{act,createElement as h} from 'react';
 import {afterEach,expect,it,vi} from 'vitest';
 import {create,type ReactTestRenderer} from 'react-test-renderer';
-const feed=vi.hoisted(()=>({result:{status:'live',data:undefined} as {status:string;data?:unknown},variables:{} as Record<string,unknown>}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(_query:unknown,variables:Record<string,unknown>)=>{feed.variables=variables;return feed.result;}}));
+const feed=vi.hoisted(()=>({result:{status:'live',data:undefined} as {status:string;data?:unknown;settling?:boolean},variables:{} as Record<string,unknown>}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(_query:unknown,variables:Record<string,unknown>,options?:{keep?:boolean})=>{feed.variables=variables;return feed.result.settling&&!options?.keep?{status:'loading'}:feed.result;}}));
 vi.mock('../../data',async original=>({...await original<object>(),useRecords:()=>{throw Error('Legacy reader mounted');}}));
 vi.mock('../../kit',async original=>({...await original<object>(),Button:(props:object)=>h('button',props),Empty:({title}:{title:string})=>h('p',null,title),Error:({text}:{text:string})=>h('p',null,text),Loading:({label}:{label:string})=>h('p',null,label)}));
 import CommsApp from './index';
@@ -33,4 +33,19 @@ it('withdraws the previous private label on disconnect and a current hidden resu
  await act(async()=>tree!.update(h(CommsApp,props)));expect(JSON.stringify(tree!.toJSON())).not.toContain('PRIVATE CONVERSATION LABEL');
  feed.result={status:'live',data:{activity:null}};
  await act(async()=>tree!.update(h(CommsApp,props)));expect(JSON.stringify(tree!.toJSON())).toContain('Conversation unavailable');expect(JSON.stringify(tree!.toJSON())).not.toContain('PRIVATE CONVERSATION LABEL');
+});
+it('keeps the steps and the label on screen while an earlier page loads, and drops them when the feed fails',async()=>{
+ feed.result={status:'live',data:{activity}};
+ const props={path:'/p/comms-preview/conversation/cv-fixture',go:vi.fn()};
+ await act(async()=>{tree=create(h(CommsApp,props));});
+ const earlier=()=>tree!.root.findAllByType('button').find(button=>button.children.includes('Load earlier activity'))!;
+ // As the data hook answers with `keep`: the last answer again, marked settling.
+ feed.result={status:'live',data:{activity},settling:true};
+ await act(async()=>earlier().props.onClick());expect(feed.variables.before).toBe(51);
+ const text=JSON.stringify(tree!.toJSON());
+ expect(text).toContain('PRIVATE CONVERSATION LABEL');expect(tree!.root.findAllByType('li')).toHaveLength(50);expect(text).not.toContain('Opening conversation activity');
+ expect(earlier().props.disabled).toBe(true);
+ feed.result={status:'offline'};
+ await act(async()=>tree!.update(h(CommsApp,props)));
+ expect(JSON.stringify(tree!.toJSON())).not.toContain('PRIVATE CONVERSATION LABEL');expect(tree!.root.findAllByType('li')).toHaveLength(0);
 });

@@ -80,12 +80,16 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
 }) {
   const [localFolder, setFolder] = useState('needs'), [localQuery, setQuery] = useState('');
   const folder = navigation?.folder ?? localFolder, query = navigation?.query ?? localQuery;
-  const display = selected && detail && detail.status !== 'live'
+  // An open item whose own reading failed or was refused leaves the list too. One that is still loading
+  // keeps its row: the row is what was clicked, and it holds the keyboard focus.
+  const display = selected && detail && detail.status !== 'live' && detail.status !== 'loading'
     ? { ...snapshot, items: snapshot.items.filter(row => row.id !== selected) } : snapshot;
-  const shown = folder === 'errors' ? [] : rows(display, folder, navigation ? '' : query);
+  // Rows kept from the last folder are drawn as that folder's until the chosen one answers.
+  const drawn = snapshot.folder ?? folder;
+  const shown = drawn === 'errors' ? [] : rows(display, drawn, navigation ? '' : query);
   const live = snapshot.status === 'live';
   // Outcomes of this person's own actions sit in the list as quiet rows, in time order with the items around them.
-  const notices = live && (folder === 'fyi' || folder === 'errors' || folder === 'all') ? currentNotices(results, folder === 'errors') : [];
+  const notices = live && (drawn === 'fyi' || drawn === 'errors' || drawn === 'all') ? currentNotices(results, drawn === 'errors') : [];
   const entries = [...shown.map(row => ({ at: row.at, id: row.id, row, notice: undefined })), ...notices.map(notice => ({ at: notice.at, id: `notice:${notice.id}`, row: undefined, notice }))]
     .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
   const item = live ? (detail ? detail.status === 'live' && detail.item?.id === selected ? detail.item : undefined : snapshot.items.find(row => row.id === selected)) : undefined;
@@ -97,7 +101,7 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
   ];
   const current = folders.find((entry): entry is Extract<SplitFolder, { id: string }> => 'id' in entry && entry.id === folder);
   return <Split label="Inbox" folders={folders} folder={folder} onFolder={id => navigation ? navigation.onFolder(id) : setFolder(id)}
-    listTitle={current?.label ?? 'Inbox'} listCount={live ? current?.count : undefined}
+    listTitle={current?.label ?? 'Inbox'} listCount={live ? current?.count : undefined} listBusy={snapshot.settling} listKey={JSON.stringify([folder, navigation?.query, navigation?.offset])}
     listTop={navigation && folder !== 'errors' && <Pager label="Inbox pages" disabled={!live} hasPrevious={navigation.offset > 0} hasNext={navigation.hasNext} previous={navigation.previous} next={navigation.next} />}
     search={<Search label="Search asks" value={live ? query : ''} disabled={!live} onChange={value => navigation ? navigation.onQuery(value) : setQuery(value)} />}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} />
