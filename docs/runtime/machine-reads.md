@@ -14,10 +14,24 @@ A machine read selects one diagnostic by name. For example, `{"machine":"box-exa
 | `proxmox-vms`, `proxmox-containers` | None | Local Proxmox VM or container list |
 | `zfs`, `zpool` | None | Dataset names, types and space usage, or pool health from `zpool status -x` |
 
-Use `user` or `system` for `scope`. Specify a literal unit including its suffix. The name must start with an ASCII letter or digit and may contain letters, digits, dots, colons, underscores, hyphens and at signs. The root mount and backslash-escaped names are outside this subset. Journal reads accept 1–100 lines (default 30) and 1–1440 minutes for `since` (default 60). Unknown arguments are refused.
+Use `user` or `system` for `scope`. Specify a literal unit including its suffix. The name must start with an ASCII letter or digit and may contain letters, digits, dots, colons, underscores, hyphens and at signs. The root mount and backslash-escaped names are outside this subset. Journal reads accept 1–100 lines (default 30) and a default `since` of 60 minutes. The maximum lookback is 10,080 minutes for one unit and 1,440 for the worker log (minimum 1). Unknown arguments are refused.
 
 Each diagnostic has a fixed executable, a four-second deadline and a 16,384-byte output limit. An oversized answer is refused in full. The worker checks output for its own credential in plain text and base64 and for recognizable credential formats before returning it. A matching answer is withheld in full. Programs' error output stays on the worker. By default journal output contains only timestamps and priorities. The operator may list exact scope/unit pairs in `journalUnits` to release their message text. Both worker unit names must be listed to release worker-log messages. A journal is as sensitive as what its programs log. An opaque or encoded credential can escape recognition. Choose message access only for units whose output the agent's authorized jobs may read.
 
 Open **Your account → Your machines** and select a machine you own to view its latest 100 read requests. History records the agent, job, conversation, whose word started it, diagnostic, arguments, time, returned byte count and outcome. It stores request metadata and omits the diagnostic output.
 
 Use **Request read grant** or **Request revocation** under the machine's explicit grants. Review the named agent and machine on the pending card, then choose **Allow** or **Deny**. Allowing a revocation removes the explicit grant. An agent may still qualify through its existing permission to run on the machine. The reader list gives an agent inspection access only.
+
+### Art lane observations
+
+The optional reads `mirror-freshness`, `alert-ledger`, and `cleanup-receipt` take empty arguments. Their inputs are three operator-published JSON files named for the read under `/var/lib/loom/machine-facts/`. Keep that directory and its ancestors outside house mounts and writable only by the publishing account or root. Give the worker read access to the projections. Enable the corresponding read names only on the machine that actually owns these records. Every agent authorized to inspect that machine can request its enabled reads.
+
+Use the tracked `scripts/project-lane-machine-fact.py KIND` outside the worker to prepare each projection independently. Supply the following sources on standard input.
+
+| Kind | Complete input to the publisher | Released evidence |
+| --- | --- | --- |
+| `mirror-freshness` | Fresh stdout of Art's `bin/taskstore-mirror-check` from its live checkout. A stale result exits 1 and still prints the measured counts. A failed lookup supplies no counts. | Highest tracked and live task numbers. The groom threshold is live minus tracked greater than 15. |
+| `alert-ledger` | Art's complete append-only `.alerts/ledger.jsonl`, including the previous 26 hours | Each entry's timestamp, kind, source, optional alert ID and verdict. Up to 100 records. Detail, messages, causes, and facts stay private. |
+| `cleanup-receipt` | Art's complete append-only `.local/state/art/worktree-cleanup.jsonl`, including the previous seven days | Start and finish counts, counts kept, removed and marked for removal, and counts by recognized keep reason. Start and finish counts can differ. |
+
+The operator must supply continuous history across rotations for the stated window. Never replace a missing source with an empty input. Capture each source successfully before publication, writing the resulting projection to a temporary file in the destination directory and renaming it into place only on success. Refresh at least every 15 minutes and withdraw the file on a known input failure. The publisher refuses malformed, oversized or unknown records in its observation window. An over-budget alert window is unavailable in full. The worker checks the schema and observation time, and applies its normal output and credential limits. A planning cursor older than the snapshot's start needs separate reconciliation before it can advance. A snapshot read never advances a mark.

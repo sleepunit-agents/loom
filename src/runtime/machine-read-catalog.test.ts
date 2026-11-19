@@ -5,9 +5,9 @@ afterEach(() => vi.restoreAllMocks());
 
 it('refuses unknown kinds, foreign keys, option injection and out-of-budget reads', () => {
   for (const input of [
-    null, {kind: 'command'}, {kind: 'disk', path: '/etc'}, {kind:'failed-units'},
+    {kind:'worker-log',since:1441}, {kind:'cleanup-receipt',path:'/tmp/input'}, null, {kind: 'command'}, {kind: 'disk', path: '/etc'}, {kind:'failed-units'},
     ...['--all', '../other.service', 'unit*.service', 'foo.service\n', '$(id).service'].map(unit => ({kind:'unit-state',scope:'user',unit})),
-    ...[{lines:0},{lines:101},{since:1441},{since:'today'},{scope:'remote'}].map(extra => ({kind:'unit-journal',scope:'system',unit:'a.service',...extra})),
+    ...[{lines:0},{lines:101},{since:10081},{since:'today'},{scope:'remote'}].map(extra => ({kind:'unit-journal',scope:'system',unit:'a.service',...extra})),
   ]) expect(() => parseMachineRead(input)).toThrow();
 });
 
@@ -70,4 +70,19 @@ it('projects only timestamps and severity unless the operator lists the exact jo
  const got=await runMachineRead({kind:'unit-journal',unit:'other.service',scope:'system'},token,execute,[{scope:'user',unit:'other.service'}]);
  expect(got).toEqual({ok:true,output:'2023-11-14T22:13:20.000Z priority 3'});
  expect(execute.mock.calls[0]).toBeDefined();
+});
+
+it('accepts seven days of one journal under the same line cap', () => {
+  const cmd = machineReadCommand(parseMachineRead({kind:'unit-journal',scope:'user',unit:'cleanup.service',since:10080}));
+  expect(cmd).toContain('--since=10080 minutes ago');
+  expect(cmd).toContain('--lines=30');
+});
+
+it('releases only current fixed-shape operator projections', async () => {
+  const observedAt = Math.floor(Date.now()/1000);
+  const fact = {observedAt, since:observedAt-604800, started:2, finished:1, kept:3, removed:0, wouldRemove:0, reasons:{dirty:3}};
+  const read = (row: object) => runMachineRead({kind:'cleanup-receipt'},token,async()=>({stdout:JSON.stringify(row)}));
+  expect(await read(fact)).toEqual({ok:true,output:JSON.stringify(fact)});
+  for (const bad of [{kept:4},{observedAt:observedAt-901,since:fact.since-901},{since:1},{path:'/private'}])
+    expect((await read({...fact,...bad})).ok).toBe(false);
 });
