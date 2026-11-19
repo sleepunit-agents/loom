@@ -458,3 +458,11 @@ it('holds a process worker to its one slot for accounts too', async () => {
   const fine = fixture(); fine.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 3, accountSlots: 2 }) : 'private-token');
   expect(await workerProgram(fine)).toBe(0); expect(fine.run).toHaveBeenCalledTimes(3);
 });
+
+it('a diagnostics-only worker polls and reports health without constructing an executor or claiming jobs', async()=>{
+ const f=fixture(),health=vi.fn(async()=>({ok:true as const})),next=vi.fn(async()=>null);
+ f.read.mockImplementation(async path=>path==='/config'?JSON.stringify({...houseConfig,reportOnly:true,reads:['memory']}):'private-token');
+ const result=await workerProgram({...f,health,readRemote:()=>({next,done:async()=>true}),pause:async()=>{f.handlers.get('SIGTERM')?.();}});
+ expect(result).toBe(0);expect(next).toHaveBeenCalledWith(['memory']);expect(health).toHaveBeenCalledWith(expect.objectContaining({slots:0}));
+ expect(f.run).not.toHaveBeenCalled();expect(f.executor).not.toHaveBeenCalled();expect(f.control).not.toHaveBeenCalled();
+});

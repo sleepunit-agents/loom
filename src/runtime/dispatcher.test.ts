@@ -400,9 +400,11 @@ it('claims the frozen program through a capable poll with no account or model', 
   f.db.insert(triggers).values({id:'watch',ownerKind:'agent',owner:'art',sourceKind:'time',times:'09:07',lifespan:'until-stopped',
     targetKind:'inbox',toKind:'agent',to:'art',enabled:true,state:'standing',note:'Watch',createdAt:f.now(),changedAt:f.now()}).run();
   f.db.update(jobs).set({startedByKind:'program',startedBy:'watch'}).where(eq(jobs.id,f.job.id)).run();
+  expect(f.runtime.next('first', [], undefined, 1, true)).toBeUndefined();
+  // Its new diagnostics-only process still reports health, with zero job slots.
+  f.runtime.machines.heartbeat('first', [], 0);
   f.db.insert(programFirings).values({id:'watch:1',trigger:'watch',job:f.job.id,at:f.now(),program,status:'pending'}).run();
   f.db.delete(modelAccountBoxes).run();
-  expect(f.runtime.next('first')).toBeUndefined();
   f.db.insert(boxFacts).values({box:'first', fact:'program-step:v1', fromOwner:true}).run();
   expect(f.runtime.next('second',[],undefined,1,true)).toMatchObject({program,box:'second',model:'',account:'',harness:'house-program'});
   expect(f.runtime.next('second',[],undefined,1,true)).toBeUndefined();

@@ -513,7 +513,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/claude-body.ts': 'the size of the tools configuration handed to the harness',
       'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
       'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
-    { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX', 'src/runtime/house-program.ts': 'PROGRAM_OUTPUT_BYTES' }, others: {
+    { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX', 'src/runtime/fixed-program.ts': 'PROGRAM_OUTPUT_BYTES' }, others: {
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {

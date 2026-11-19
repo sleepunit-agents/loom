@@ -1,3 +1,4 @@
+import { PROGRAM_OUTPUT_BYTES, looksLikeCredential } from './fixed-program.js';
 import { pinnedProgram } from './pinned-program.js';
 import { DAY_MS } from '../core/day.js';
 import { z } from 'zod';
@@ -26,7 +27,7 @@ export function programInput(program: HouseProgram, secrets: Record<string, stri
   return { version: 1, payload: program.payload, state: program.state };
 }
 
-export const PROGRAM_OUTPUT_BYTES = 16_384;
+export { PROGRAM_OUTPUT_BYTES };
 const resultSchema = z.object({
   version: z.literal(1), wake: z.boolean(), line: z.string().max(1024).regex(/^[^\r\n\u2028\u2029]*$/).optional(),
   payload: boundedJson.optional(), state: boundedJson.optional(),
@@ -34,21 +35,10 @@ const resultSchema = z.object({
 }).strict();
 export type ProgramResult = z.infer<typeof resultSchema>;
 
-const credential = /(?:Bearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|AGE-SECRET-KEY-|loom_[a-z0-9_-]{43}|(?:body_|loom_ui=)[a-f0-9]{32,}|(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}|xox[baprs]-[\w-]{10,}|sk-(?:ant-)?[\w-]{20,})/i;
-export function assertSafeProgramOutput(text: string, secrets: readonly string[]) {
-  const forms = secrets.filter(Boolean).flatMap(value => [value, Buffer.from(value).toString('base64')]);
-  const inspect = (value: string) => {
-    if (credential.test(value) || forms.some(secret => value.includes(secret))) throw new Error('Invalid program result');
-  };
-  inspect(text);
-  // A helper can print JSON inside a larger text response. Inspect decoded keys and values there too.
-  for (const [literal] of text.matchAll(/"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[\da-fA-F]{4}))*"/g))
-    inspect(JSON.parse(literal));
-}
 export function parseProgramResult(text: string, secrets: readonly string[] = []): ProgramResult {
   try {
     if (Buffer.byteLength(text) > PROGRAM_OUTPUT_BYTES) throw new Error();
-    assertSafeProgramOutput(text, secrets);
+    if (looksLikeCredential(text, secrets)) throw new Error();
     const value: unknown = JSON.parse(text);
     return resultSchema.parse(value);
   } catch { throw new Error('Invalid program result'); }

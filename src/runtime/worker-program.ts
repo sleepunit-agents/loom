@@ -4,12 +4,13 @@ import { ACCOUNT_SLOTS_BY_HARNESS, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS,
 import { workerTurns } from './worker-turns.js';
 import { keyPart } from './worker-mounts.js';
 import { z } from 'zod';
+import { journalUnit, machineReadKinds, offeredMachineReads, runMachineRead } from './machine-read-catalog.js';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
@@ -33,6 +34,9 @@ const accountCommand = z.object({
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const configSchema = z.object({
+  reportOnly: z.literal(true).optional(),
+  journalUnits:z.array(journalUnit).max(128).optional(),
+  reads: z.array(z.enum(machineReadKinds)).max(machineReadKinds.length).optional(),
   facts: machineFacts.optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   /** A directory of this worker's own, where it records the builds and bodies it starts and keeps each
@@ -79,7 +83,7 @@ const configSchema = z.object({
   const most = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
   if ((typeof config.accountSlots === 'number' ? [config.accountSlots] : Object.values(config.accountSlots ?? {})).some(count => count > most)) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
   // Bodies as processes need the command that builds and a runner for each harness, as before.
-  if (!config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
+  if (!config.reportOnly && !config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
 });
 export async function workerProgram(input: {
   args: readonly string[];
@@ -89,6 +93,7 @@ export async function workerProgram(input: {
   error: (text: string) => void;
   /** Local structured observations only; never private command diagnostics. */
   output?: (text: string) => void;
+  readRemote?: typeof workerMachineReads;
   relaySignIn?: typeof relaySignIn;
   signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
@@ -103,6 +108,7 @@ export async function workerProgram(input: {
   const abort = new AbortController();
   const stop = () => abort.abort();
   let executor: WorkerExecutor | undefined;
+  let diagnostics: Promise<void> | undefined;
   // The stage the worker is in: what a failure there is reported as (worker-stop.ts).
   let stage: WorkerStopStage = 'usage';
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
@@ -158,6 +164,37 @@ export async function workerProgram(input: {
     stage = 'setup';
     const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
     const remote = { url: config.url, token, signal: abort.signal };
+    const wait = input.pause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, {signal}); });
+    const reportHealth = () => (input.health ?? reportWorkerHealth)({
+      ...remote, facts: config.facts, slots: config.reportOnly ? 0 : slots,
+    });
+    async function poll(intervalMs: number, failure: string, check: () => Promise<void>) {
+      while (!abort.signal.aborted) {
+        try { await check(); }
+        catch { if (!abort.signal.aborted) input.error(failure); }
+        if (abort.signal.aborted) return;
+        try { await wait(intervalMs, abort.signal); } catch { return; }
+      }
+    }
+    if (config.reads?.length || config.reportOnly) {
+      const reads = offeredMachineReads(config.reads ?? []);
+      const reader = (input.readRemote ?? workerMachineReads)(remote);
+      let heartbeat = 0;
+      diagnostics = poll(3000, 'Machine read check unavailable\n', async () => {
+        if (config.reportOnly && Date.now() >= heartbeat) {
+          await reportHealth();
+          heartbeat = Date.now() + REPORT_MS;
+        }
+        const request = await reader.next(reads);
+        if (!request || abort.signal.aborted) return;
+        const kind = reads.find(kind => kind === request.read);
+        const result = kind
+          ? await runMachineRead({...request.args, kind}, token, undefined, config.journalUnits, abort.signal)
+          : {ok: false, output: 'Machine read unavailable'};
+        await reader.done({id: request.id, ...result});
+      });
+      if (config.reportOnly) { await diagnostics; return 0; }
+    }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
     const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && !config.container.nestedSocket && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
@@ -183,13 +220,12 @@ export async function workerProgram(input: {
     };
     stage = 'health';
     if (config.accountUsage) {
-      const health = async () => { await (input.health ?? reportWorkerHealth)({ ...remote, slots, facts: config.facts }); };
       if (abort.signal.aborted) return 0;
-      await health();
+      await reportHealth();
       let heartbeat: Promise<void> | undefined, failed = false;
       const timer = setInterval(() => {
         if (heartbeat || abort.signal.aborted) return;
-        heartbeat = health().then(() => {}, () => {
+        heartbeat = reportHealth().then(() => {}, () => {
           if (!abort.signal.aborted) { failed = true; abort.abort(); }
         }).finally(() => { heartbeat = undefined; });
       }, REPORT_MS);
@@ -199,7 +235,7 @@ export async function workerProgram(input: {
     } else await scan();
     const refresh = config.accountUsage ? (async () => {
       while (!abort.signal.aborted) {
-        try { await (input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); }))(config.accountUsage!.intervalMs ?? 60_000, abort.signal); }
+        try { await wait(config.accountUsage!.intervalMs ?? 60_000, abort.signal); }
         catch (error) { if (abort.signal.aborted) return; throw error; }
         if (!abort.signal.aborted) await scan();
       }
@@ -209,21 +245,15 @@ export async function workerProgram(input: {
     settled?.catch(() => {});
     // Sign-ins asked for through loom run beside the job slot, one at a time. A failed poll is tried again
     // at the next interval; it never stops the worker.
-    const wait = input.pause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); });
-    const signIns = config.accountSignIn ? (async () => {
-      const remoteSignIn = (input.signInRemote ?? workerSignIn)(remote);
-      while (!abort.signal.aborted) {
-        try {
-          const request = await remoteSignIn.next();
-          if (request) {
-            const program = config.accountSignIn!.programs.find(entry => entry.provider === request.provider);
-            if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
-            else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: config.accountSignIn!.timeoutMs });
-          }
-        } catch { if (!abort.signal.aborted) input.error('Worker sign-in check unavailable\n'); }
-        try { await wait(config.accountSignIn!.intervalMs ?? 10_000, abort.signal); } catch { return; }
-      }
-    })().catch(() => {}) : undefined;
+    const signIn = config.accountSignIn;
+    const remoteSignIn = signIn && (input.signInRemote ?? workerSignIn)(remote);
+    const signIns = signIn && remoteSignIn && poll(signIn.intervalMs ?? 10_000, 'Worker sign-in check unavailable\n', async () => {
+      const request = await remoteSignIn.next();
+      if (!request || abort.signal.aborted) return;
+      const program = signIn.programs.find(entry => entry.provider === request.provider);
+      if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
+      else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: signIn.timeoutMs });
+    });
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
@@ -248,5 +278,5 @@ export async function workerProgram(input: {
     const at = error instanceof WorkerStop ? error.stage : stage;
     input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
-  } finally { executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
+  } finally { abort.abort(); await diagnostics; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

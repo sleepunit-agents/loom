@@ -45,7 +45,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     return box;
   };
   operations.register({ name: 'runtime.health', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: ack, may: machine,
+    input: z.object({ facts: machineFacts.optional(), slots: z.number().int().min(0).max(SLOTS_MAX).optional() }).strict(), output: ack, may: machine,
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
     run(ctx, input) {
       const box = runner(ctx.viewer); dispatcher.machines.heartbeat(box, input.facts, input.slots ?? null);

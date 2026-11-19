@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { secretValueSize } from '../pieces/secrets/input.js';
 import { canonicalKitImage, KIT_IMAGE, programPath, programSecretAlias } from './pinned-program.js';
-import { assertSafeProgramOutput, PROGRAM_OUTPUT_BYTES } from './house-program.js';
+import { looksLikeCredential, programDeadline, PROGRAM_OUTPUT_BYTES } from './fixed-program.js';
 import { DockerResponseError } from './docker-engine.js';
 import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
@@ -129,25 +129,28 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
         throw new Error('Kit secret unavailable');
       bindings[alias]=value.toString('base64');
     }
-    const timer=setTimeout(()=>abort.abort(),input.timeoutMs);
+    const execution = programDeadline(input.timeoutMs, signal);
     const cancel=()=>socket?.destroy(new Error('Kit execution cancelled'));
-    signal.addEventListener('abort',cancel,{once:true});
+    execution.addEventListener('abort',cancel,{once:true});
     const result=stdout(socket);
     void result.catch(()=>{});
     try {
-      await engine.json('POST','/containers/'+id+'/start',undefined,signal);
+      await engine.json('POST','/containers/'+id+'/start',undefined,execution);
       input.onStarted?.();
       socket.end(JSON.stringify({bindings,argv:input.argv,input:input.input,timeoutMs:input.timeoutMs}));
-      const [status,bytes]=await Promise.all([engine.json('POST','/containers/'+id+'/wait?condition=not-running',undefined,signal),result]);
-      signal.throwIfAborted();
+      const [status,bytes]=await Promise.all([engine.json('POST','/containers/'+id+'/wait?condition=not-running',undefined,execution),result]);
+      execution.throwIfAborted();
       const exit=(status as {StatusCode?:unknown})?.StatusCode;
       if(typeof exit!=='number'||!Number.isSafeInteger(exit)||(status as {Error?:unknown}).Error)throw new Error('Invalid container exit');
       if(exit===0){
-        try { assertSafeProgramOutput(new TextDecoder('utf-8',{fatal:true}).decode(bytes),Object.values(input.secrets).map(value=>value.toString())); }
+        try {
+          const text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+          if (looksLikeCredential(text, Object.values(input.secrets).map(value => value.toString()))) throw new Error();
+        }
         catch { bytes.fill(0);throw new Error('Kit result withheld'); }
       }else bytes.fill(0);
       return {exit,bytes};
-    } finally {clearTimeout(timer);signal.removeEventListener('abort',cancel);}
+    } finally {execution.removeEventListener('abort',cancel);}
   }
   function stop(){
     return stopping??=(async()=>{

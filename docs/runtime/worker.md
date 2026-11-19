@@ -1660,3 +1660,32 @@ Both callers start a fresh helper container from the pinned image. It runs as an
 A kit may declare typed slots for values supplied at invocation. A clock has no interactive caller and fixes every argument when the schedule is defined. Kit use requires a live entitlement for the asker. A scheduled credential requires the assigned agent's current startup grant. Loom validates the output before a kit answer reaches the model or a schedule result can change state, queue a post or request a wake.
 
 The house supplies the executable and its application-specific dependencies. A service adapter reads or changes the external system, enforces any resource limits specific to that service, and produces its answer. A scheduled adapter emits the versioned result described in [Tempo](tempo.md#scheduled-house-programs). Loom owns authorization, scheduling, launch, credential delivery, output limits, credential checks, receipts, history, state and bridge delivery. Adapter authors only need separate idempotency for side effects made directly against an external service.
+
+## Reading a machine from a house
+
+A worker opts in by listing fixed diagnostics in its JSON configuration. On an existing hosting worker, add the following fields alongside its normal container settings.
+
+```json
+{
+  "reads": ["unit-state", "unit-journal", "failed-units", "restarting-units", "disk", "memory", "swap", "load", "uptime", "boots", "worker-log"],
+  "journalUnits": [{"scope":"user","unit":"art-chain-check.service"}]
+}
+```
+
+For a dedicated inspection worker, enroll the machine as report-only and run the worker as an unprivileged Linux user with this configuration, substituting the enrolled machine ID, Loom URL and worker token file.
+
+```json
+{
+  "url": "https://loom.example",
+  "box": "ENROLLED_MACHINE_ID",
+  "tokenFile": "/run/credentials/loom-worker/worker-token",
+  "reportOnly": true,
+  "reads": ["disk", "memory", "swap", "load", "uptime", "boots", "failed-units", "restarting-units", "unit-state", "proxmox-vms", "proxmox-containers", "zpool", "zfs"]
+}
+```
+
+The report-only program reports zero job slots with its health and polls for diagnostics. It never constructs a job executor. Both modes poll every three seconds when reads are configured. The server considers an offer stale after 15 seconds. Only installed, executable utilities are advertised. Filesystem and service permissions can still refuse an invocation. A Proxmox installation that restricts pct or qm to root cannot supply those reads through this worker. There is no privileged helper. Running with a root UID or effective, permitted or ambient Linux capabilities disables reads. Each command runs under setpriv with no-new-privileges and empty inheritable and ambient capability sets.
+
+A current job calls the named tool `machine_read` with the enrolled machine ID, a read name and its arguments. The underlying operation is `machine.read`. A machine that hosts the agent is eligible. Its owner can also grant inspection on the machine page. Loom checks the job's word, credential and current machine grant before dispatch and delivery. One request per machine can wait at a time, for up to ten seconds, inside the body’s 15-second HTTP deadline. The executable has four seconds and at most 16,384 output bytes. A refused result contains a reason. A successful result identifies the machine and read and wraps output in an array of untrusted lines.
+
+Read names, arguments and disclosure limits are in [Machine reads](machine-reads.md).

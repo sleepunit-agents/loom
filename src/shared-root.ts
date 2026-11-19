@@ -20,6 +20,7 @@ import {registerMachineRegistry} from './shared-machine-registry.js';
 import { applyAgentModels } from './shared-agent-models.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
+import { registerMachineReads } from './shared-machine-reads.js';
 import { registerSharedAccountSignIn } from './shared-account-signin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
@@ -233,6 +234,7 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
+  const stopMachineReads=registerMachineReads(operations,db,now,bodyScope,credentials.runner);
   const accountSignIns = registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
@@ -391,9 +393,9 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>workLife.close());
   const authenticate = authenticateOutside;
 
-  const executeCommand=async(auth:NonNullable<ReturnType<typeof authenticate>>,name:string,input:unknown,id?:string)=>{
+  const executeCommand=async(auth:NonNullable<ReturnType<typeof authenticate>>,name:string,input:unknown,id?:string,signal?:AbortSignal)=>{
     if(closing||!auth.valid())return failure('denied','Authentication ended');
-    const answer=await operations.callAsync('http',auth.viewer,name,input,id,auth.window===true,()=>!closing&&auth.valid());
+    const answer=await operations.callAsync('http',auth.viewer,name,input,id,auth.window===true,()=>!closing&&auth.valid()&&!signal?.aborted,signal);
     if(!closing)recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name,input,id,result:answer,now:()=>clock.now(),reportError:options.reportError});
     return closing||!auth.valid()?failure('denied','Authentication ended'):answer;
   };
@@ -440,7 +442,7 @@ export function sharedRoot(options: {
   // same `may`, the same receipts, dispatched as 'http'. So an operation's `doors` list cannot keep it off
   // /mcp while it is on /api, and none tries to: what a caller may do is decided by who they are, not by
   // which of the two they came through.
-  http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
+  http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id,c.req.raw.signal):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/kits/private',kitBroker({db,credentials,source:options.secretInputs?.source,now,write:secretCommit,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
@@ -457,7 +459,7 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer=await executeCommand(auth,`${c.req.param('piece')}.${c.req.param('operation')}`,parsed.data.input,parsed.data.id);
+    const answer=await executeCommand(auth,`${c.req.param('piece')}.${c.req.param('operation')}`,parsed.data.input,parsed.data.id,request.signal);
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
@@ -483,6 +485,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       stopMemoryWrites();stopHouseholdProposals();memorySignals?.close();
+      stopMachineReads();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();
