@@ -4,7 +4,7 @@ import type { DockerEngine } from './docker-engine.js';
 import { runKitContainer } from './kit-container.js';
 
 const image = 'sha256:' + 'e'.repeat(64);
-const input = { image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ POND_TOKEN:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
+const input = { job:'test-job', box:'test-box', image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ POND_TOKEN:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
 function fixture(output:string) {
   const calls: {method:string; path:string; body:unknown}[] = [];
   const socket = new Duplex({read(){},write(_chunk, _encoding, done){done();}});
@@ -28,8 +28,9 @@ it('uses the approved image without body mounts, host privileges or credentials 
   const {engine,calls} = fixture('online');
   expect((await runKitContainer(engine,input)).toString()).toBe('online');
   expect(JSON.stringify(calls)).not.toContain('fixture-secret');
+  expect(JSON.stringify(calls)).not.toContain(input.argv[0]);
   expect(calls.find(c=>c.path.includes('/create'))?.body).toMatchObject({
-    Image:image, HostConfig:{ReadonlyRootfs:true, LogConfig:{Type:'none'}, CapDrop:['ALL'], Mounts:[]},
+    Image:image, Labels:{'loom.job':'test-job','loom.box':'test-box'}, HostConfig:{ReadonlyRootfs:true, LogConfig:{Type:'none'}, CapDrop:['ALL'], Mounts:[]},
   });
   expect(calls.at(-1)?.method).toBe('DELETE');
 });

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { isHouseSecretAlias, secretValueSize } from '../pieces/secrets/input.js';
-import { SHA256_HEX } from '../core/sha256-hex.js';
+import { KIT_IMAGE } from './kit-manifest.js';
 import { saysNoSecret } from './body-secrets.js';
 import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
 
 type Invocation = {
+  job:string;
+  box:string;
   image:string;
   entrypoint:string;
   argv:readonly string[];
@@ -14,7 +16,7 @@ type Invocation = {
   signal:AbortSignal;
   onStarted?:()=>void;
 };
-const MAX_OUTPUT = 64 * 1024;
+const MAX_OUTPUT = 65_536;
 // A fixed bootstrap, never assembled from tool arguments. Docker sees neither the envelope nor its values
 // in container config. The pinned image supplies node, the program and all of the program's dependencies.
 const bootstrap = `
@@ -23,10 +25,10 @@ setTimeout(() => process.exit(1), 30_000).unref();
 (async () => {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  const bindings = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const {bindings,argv} = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const env = {PATH:'/usr/local/bin:/usr/bin:/bin', LANG:'C.UTF-8'};
   for (const [name, value] of Object.entries(bindings)) env[name] = Buffer.from(value,'base64').toString('utf8');
-  const child = spawn(process.argv[1], process.argv.slice(2), {env, stdio:['ignore','inherit','ignore']});
+  const child = spawn(process.argv[1], argv, {env, stdio:['ignore','inherit','ignore']});
   child.once('error', () => process.exitCode = 1);
   child.once('exit', code => process.exitCode = code ?? 1);
 })().catch(() => process.exitCode = 1);`;
@@ -52,7 +54,7 @@ async function stdout(socket:Duplex):Promise<Buffer> {
 }
 
 export async function runKitContainer(engine:DockerEngine,input:Invocation):Promise<Buffer> {
-  if (!input.image.startsWith('sha256:') || !SHA256_HEX.test(input.image.slice(7))) throw new Error('Kit needs an immutable house image');
+  if (!KIT_IMAGE.test(input.image)) throw new Error('Kit needs an immutable house image');
   const path = input.entrypoint;
   if (!path.startsWith(HOUSE_REPOSITORY + '/') || path.slice(1).split('/').some(part=>!part || !/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$/.test(part)))
     throw new Error('Kit program must be inside its house');
@@ -72,7 +74,7 @@ export async function runKitContainer(engine:DockerEngine,input:Invocation):Prom
   try {
     await engine.json('POST','/containers/create?name='+name,{
       Image:input.image, User:'65534:65534', WorkingDir:HOUSE_REPOSITORY,
-      Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path,...input.argv],
+      Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path], Labels:{'loom.job':input.job,'loom.box':input.box},
       Healthcheck:{Test:['NONE']}, OpenStdin:true, AttachStdin:true, StdinOnce:true,
       AttachStdout:true, AttachStderr:true, Tty:false,
       HostConfig:{ReadonlyRootfs:true, Privileged:false, Mounts:[], CapDrop:['ALL'],
@@ -86,7 +88,7 @@ export async function runKitContainer(engine:DockerEngine,input:Invocation):Prom
     signal.throwIfAborted();
     await engine.json('POST',container+'/start',undefined,signal);
     input.onStarted?.();
-    socket.end(JSON.stringify(envelope));
+    socket.end(JSON.stringify({bindings:envelope,argv:input.argv}));
     const [status,bytes] = await Promise.all([engine.json('POST',container+'/wait',undefined,signal),result]);
     if ((status as {StatusCode?:number})?.StatusCode !== 0) throw new Error('Kit helper failed');
     const text = new TextDecoder('utf-8',{fatal:true}).decode(bytes);
