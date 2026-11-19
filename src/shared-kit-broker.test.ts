@@ -103,3 +103,10 @@ it('pages the mounted house in binary kit/tool order and excludes the cursor its
   expect(last.next).toBeUndefined();
   expect(await (await post('list',{...pin,image:'sha256:'+'f'.repeat(64)})).json()).toEqual({tools:[]});
 });
+it('records a worker refusal without obtaining values or retaining the offending arguments',async()=>{
+  const {db,source,post,call}=fixture();
+  expect((await post('refuse',{...call,args:{sender:'private'}})).status).toBe(400);
+  expect((await post('refuse',call)).status).toBe(200);
+  expect(source.read).not.toHaveBeenCalled();
+  expect(db.select().from(kitUses).all()).toMatchObject([{kit:'weather',job:'job',tool:'lookup',outcome:'refused'}]);
+});

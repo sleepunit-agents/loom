@@ -76,10 +76,14 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
       if (row.outcome!==outcome) options.write(()=>db.update(kitUses).set({outcome}).where(and(eq(kitUses.id,use),eq(kitUses.outcome,'authorized'))).run());
       return c.json({saved:true});
     }
-    if (operation!=='authorize') return c.json({message:'Unknown kit operation'},400);
+    if (operation!=='authorize' && operation!=='refuse') return c.json({message:'Unknown kit operation'},400);
     const parsed=call.safeParse(raw);
     if (!parsed.success) return c.json({message:'Invalid kit call'},400);
     const input=parsed.data;
+    if (operation==='refuse') {
+      audit(target,input,'refused');
+      return c.json({saved:true});
+    }
     const select=(t:Target|undefined)=>t?.tools.find(row=>row.kit===input.kit && row.tool.name===input.tool && row.definition===input.definition);
     const approved=select(target);
     if (!approved) { audit(target,input,'refused'); return c.json({message:changed},403); }
