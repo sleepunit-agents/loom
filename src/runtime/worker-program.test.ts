@@ -516,7 +516,7 @@ for (const source of ['~/.claude', '.claude', '']) it(`refuses a sign-in directo
 it('reads its own machine on a slow clock of its own and reports everything it watches each time', async () => {
   const f = fixture(), sent: unknown[] = [], waits: number[] = [];
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, state: '/var/lib/loom-worker', watchPaths: ['/srv/data'] }) : 'private-token');
-  const readings = [[{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }], [{ kind: 'disk', thing: '/', unknown: true }], [{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }]];
+  const readings = [[{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100, freeBytes: 29 }], [{ kind: 'disk', thing: '/', unknown: true }], [{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100, freeBytes: 29 }]];
   let round = 0;
   const machineReader = vi.fn((_input: { paths: readonly string[]; engine?: unknown; signal?: AbortSignal }) => async () => readings[round]);
   const reportReadings = vi.fn(async (_remote: unknown, said: unknown) => { sent.push(said); return { changed: false }; });
@@ -531,18 +531,6 @@ it('reads its own machine on a slow clock of its own and reports everything it w
   expect(reportReadings).toHaveBeenCalledWith(expect.objectContaining({ url: config.url, token: 'private-token' }), readings[0], 300_000);
   expect(waits).toEqual([300_000, 300_000, 300_000]);
   expect(f.error).not.toHaveBeenCalled();
-});
-it('tells whoever runs it, as it returns, how many calls to a filesystem that never answered are still out', async () => {
-  for (const [reader, out] of [[Object.assign(async () => [], { unanswered: () => 2 }), 2], [Object.assign(async () => [], { unanswered: () => 0 }), 0], [async () => [], 0]] as const) {
-    const f = fixture(), unanswered = vi.fn();
-    expect(await workerProgram({ ...f, machineReader: (() => reader) as never, unanswered })).toBe(0);
-    expect(unanswered).toHaveBeenCalledExactlyOnceWith(out);
-  }
-  // Also when the worker never got as far as reading its machine.
-  const f = fixture(), unanswered = vi.fn();
-  f.read.mockImplementation(async () => 'not a configuration');
-  expect(await workerProgram({ ...f, unanswered })).toBe(WORKER_STOP.config[0]);
-  expect(unanswered).toHaveBeenCalledExactlyOnceWith(0);
 });
 it('goes on working when its machine cannot be read or the report is not taken, and says one fixed line', async () => {
   const f = fixture();

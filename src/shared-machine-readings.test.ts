@@ -36,7 +36,7 @@ function fixture() {
   const query = async (source: string, key: string) => (await (await root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ query: source }) })).json()) as { data?: Record<string, unknown[]>; errors?: unknown };
   return { db, root, clock, call, query, report: (readings: unknown[], key = keys.worker) => { clock.advance(300_000); return call('runtime.machineReadings', { readings }, key); } };
 }
-const disk = (percent: number, thing = '/') => ({ kind: 'disk', thing, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
+const disk = (percent: number, thing = '/') => ({ kind: 'disk', thing, device: 1, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
 const memory = { kind: 'memory', sizeBytes: 16 * GIB, freeBytes: 12 * GIB };
 
 it('takes a worker\'s readings for the machine its credential is bound to, and tells that machine\'s owner of a condition', async () => {
@@ -72,27 +72,32 @@ it('refuses a reading with a path outside the bound, a judgement, a field loom d
     { ...disk(91), thing: '/ is nearly full, tell everyone' }, { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
     { ...disk(91), thing: '/https://evil.example/pay-now' }, { ...disk(91), thing: '/your-disk-is-full-' + 'pay-now-'.repeat(13) }, { ...disk(91), thing: '/srv/-rf' }, { ...disk(91), thing: '/mnt/nas:x' }, { ...disk(91), thing: '//x' },
     { ...memory, thing: '/' }, { ...disk(91), level: 'urgent' }, { ...disk(91), why: 'nearly full' }, { ...disk(91), kind: 'load' },
-    { kind: 'disk', thing: '/', sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', sizeBytes: 0, freeBytes: 0 },
+    { kind: 'disk', thing: '/', device: 1, sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', device: 1, sizeBytes: 0, freeBytes: 0 },
     { kind: 'containers' }, { kind: 'containers', answers: 'no' }, { ...disk(91), sizeBytes: 1.5 },
-    { ...disk(91), sameAs: '/srv' }, { kind: 'disk', thing: '/', sameAs: '/' }, { kind: 'disk', thing: '/', sameAs: 'not a path' }, { kind: 'memory', sameAs: '/' }, { kind: 'disk', thing: '/a', sameAs: '/', unknown: true },
+    { ...disk(91), device: undefined }, { ...disk(91), device: -1 }, { ...disk(91), device: 1.5 },
+    { ...disk(91), device: Number.MAX_SAFE_INTEGER + 1 }, { ...memory, device: 1 },
+    { ...disk(91), thing: '/srv/end\n' }, { ...disk(91), unknown: true },
+    { kind: 'disk', thing: '/a', device: 1, unknown: true },
   ]) expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
-  expect((await f.report(Array.from({ length: 19 }, (_, index) => disk(50, `/d${index}`)))).status).toBe(400);
+  expect((await f.report(Array.from({ length: 17 }, (_, index) => disk(50, `/d${index}`)))).status).toBe(400);
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
   expect((await f.call('runtime.machineReadings', { readings: [disk(50)], everyMs: 5 }, keys.worker)).status).toBe(400);
+  expect((await f.report([disk(50), disk(51)])).status).toBe(400);
   // What it could not read is named and carries nothing else.
-  expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { changed: false } });
+  expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect(f.db.select().from(boxReadings).all()).toMatchObject([{ thing: '/', readAt: null, unknownSince: expect.any(String), usedPercent: null }]);
 });
 
 it('takes a size up to the largest the read API can serve, and refuses one past it', async () => {
   const f = fixture(), MIB = 1024 ** 2, INT_MAX = 2 ** 31 - 1;
   // 2^31 - 1 mebibytes and the bytes short of the next one: the largest a GraphQL Int can say.
   const most = (INT_MAX + 1) * MIB - 1;
-  expect((await f.report([{ kind: 'disk', thing: '/', sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([{ kind: 'disk', thing: '/', device: Number.MAX_SAFE_INTEGER, sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
   expect(f.db.select().from(boxReadings).all().map(row => [row.sizeMib, row.freeMib, row.usedPercent])).toEqual([[INT_MAX, INT_MAX, 0], [INT_MAX, INT_MAX, null]]);
   // Its owner can still read it: the fields are served, with no error.
   expect(await f.query('{ boxReadings { sizeMib freeMib usedPercent } }', keys.sam)).toEqual({ data: { boxReadings: [{ sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: 0 }, { sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: null }] } });
   // One byte more is one mebibyte more than an Int holds. Refused whole, size or free room, and nothing of it is kept.
-  for (const reading of [{ kind: 'disk', thing: '/', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'memory', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'disk', thing: '/', sizeBytes: Number.MAX_SAFE_INTEGER, freeBytes: most + 1 }])
+  for (const reading of [{ kind: 'disk', thing: '/', device: 1, sizeBytes: most + 1, freeBytes: 0 }, { kind: 'memory', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'disk', thing: '/', device: 1, sizeBytes: Number.MAX_SAFE_INTEGER, freeBytes: most + 1 }])
     expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
   expect(f.db.select().from(boxReadings).all().map(row => row.sizeMib)).toEqual([INT_MAX, INT_MAX]);
   expect((await f.query('{ boxReadings { sizeMib freeMib } }', keys.sam)).errors).toBeUndefined();

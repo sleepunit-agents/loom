@@ -161,7 +161,7 @@ it('does not take a jump of the server clock for silence: after one it waits a f
 it('closes on its sweep what was said about the condition of a machine since removed, and leaves a machine that is there alone', () => {
   const f = fixture(), conditions = new MachineConditions(f.db, f.now);
   f.db.update(boxes).set({ lastSeenAt: f.now() }).where(eq(boxes.id, 'worker')).run();
-  conditions.read('worker', [{ kind: 'disk', thing: '/', sizeBytes: 100 * 1024 ** 3, freeBytes: 9 * 1024 ** 3 }]);
+  conditions.read('worker', [{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100 * 1024 ** 3, freeBytes: 9 * 1024 ** 3 }]);
   f.runtime.start();
   f.clock.advance(30_000);
   expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.words])).toEqual([['waiting', 'Workshop: / is 91% full (9 GB free). Alerts at 85%.']]);

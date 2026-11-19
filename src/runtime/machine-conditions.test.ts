@@ -27,7 +27,7 @@ function fixture() {
     closed: () => mail().filter(item => item.state !== 'waiting').map(item => [item.words, item.resolution]) };
 }
 /** A 200 GiB disk that is this many percent full. */
-const disk = (percent: number, thing = '/') => ({ kind: 'disk' as const, thing, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
+const disk = (percent: number, thing = '/', device = thing === '/' ? 1 : 2) => ({ kind: 'disk' as const, thing, device, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
 const memory = (freeMib: number) => ({ kind: 'memory' as const, sizeBytes: 16 * GIB, freeBytes: freeMib * MIB });
 
 it('keeps the latest reading of each thing and tells nobody of one under every line', () => {
@@ -127,7 +127,7 @@ it('does not say again what its reader closed by hand, for as long as the same o
 it('raises under the free-room floor with words about the floor, and clears a tenth over it', () => {
   const f = fixture();
   // 25 GiB with 4.5 free is 82% full: under the 85% line, and under the 5 GiB floor.
-  const part = (freeMib: number) => ({ kind: 'disk' as const, thing: '/', sizeBytes: 25 * GIB, freeBytes: freeMib * MIB });
+  const part = (freeMib: number) => ({ kind: 'disk' as const, thing: '/', device: 1, sizeBytes: 25 * GIB, freeBytes: freeMib * MIB });
   f.read(part(4608));
   expect(f.open()).toEqual(['loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.']);
   f.read(part(5300));
@@ -136,11 +136,11 @@ it('raises under the free-room floor with words about the floor, and clears a te
   expect(f.closed()).toEqual([['loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', '/ has 5.5 GB free (78% full), over the 5 GB floor.']]);
   // A disk too small for the floor to mean anything is held to the percent line alone, and when it is
   // over that line its notice says nothing of a floor it is not held to.
-  f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
+  f.read({ kind: 'disk', thing: '/', device: 1, sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
   expect(f.open()).toEqual([]);
-  f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 1 * GIB });
+  f.read({ kind: 'disk', thing: '/', device: 1, sizeBytes: 8 * GIB, freeBytes: 1 * GIB });
   expect(f.open()).toEqual(['loom: / is 88% full (1 GB free). Alerts at 85%.']);
-  f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
+  f.read({ kind: 'disk', thing: '/', device: 1, sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
   expect(f.closed().at(-1)).toEqual(['loom: / is 88% full (1 GB free). Alerts at 85%.', '/ is at 50% (4 GB free), under the 85% line.']);
 });
 
@@ -171,10 +171,9 @@ it('keeps what was last read of a thing named as unknown, raising and clearing n
   const since = f.now();
   expect(f.read({ kind: 'disk', thing: '/', unknown: true }, disk(92, '/srv/data'), { kind: 'memory', unknown: true }, { kind: 'disk', thing: '/never/read', unknown: true })).toEqual({ changed: false });
   // The numbers, the level and the time they were read stand; only that it is unknown, and since when, is added.
-  expect(f.rows().filter(row => row.thing !== '/srv/data')).toEqual(before.filter(row => row.thing !== '/srv/data').map(row => ({ ...row, unknownSince: since })));
-  expect(f.rows().map(row => row.readAt)).toEqual([readAt, f.now(), readAt]);
-  // A thing never read has no record made for it by being unknown.
-  expect(f.rows().map(row => row.thing)).toEqual(['/', '/srv/data', '']);
+  expect(f.rows().filter(row => row.thing !== '/srv/data' && row.thing !== '/never/read')).toEqual(before.filter(row => row.thing !== '/srv/data').map(row => ({ ...row, unknownSince: since })));
+  expect(f.rows().filter(row => row.thing !== '/never/read').map(row => row.readAt)).toEqual([readAt, f.now(), readAt]);
+  expect(f.rows().find(row => row.thing === '/never/read')).toMatchObject({ level: 'ok', unknownSince: since, usedPercent: null, readAt: null });
   expect(f.open()).toHaveLength(2);
   // Readable again is shown too, and the same occasion goes on: no second notice.
   expect(f.read(disk(91), disk(92, '/srv/data'), memory(9000))).toEqual({ changed: true });
@@ -195,9 +194,9 @@ it('closes what it said about a thing that has been unknown for a day, marks the
   expect(f.open()).toEqual(['loom: / is 96% full (8 GB free). Urgent at 95%.']);
   const gone = [{ kind: 'disk' as const, thing: '/', unknown: true as const }, disk(40, '/srv'), memory(9000)];
   f.read(...gone);
-  // Unknown for most of a day: the notice stands, and nothing is raised or closed.
+  // The healthy readings return after a long gap, but the unreadable disk notice stands.
   f.advance(STALE_MS - 20 * MINUTES);
-  expect(f.read(...gone)).toEqual({ changed: false });
+  expect(f.read(...gone)).toEqual({ changed: true });
   expect(f.open()).toHaveLength(1);
   expect(f.rows()[0]).toMatchObject({ level: 'urgent', stale: false, usedPercent: 96 });
   // A full day: loom closes it, saying that it can no longer be read and what was last read, in the household's time.
@@ -317,88 +316,129 @@ it('writes room in binary units, rounded down', () => {
 });
 
 it('works a disk\'s fullness out as df does, used over used and available and rounded up, and holds the line to that number', () => {
-  const f = fixture(), of = (usedMib: number) => ({ kind: 'disk' as const, thing: '/', sizeBytes: 100_000 * MIB, freeBytes: (100_000 - usedMib) * MIB });
+  const f = fixture(), of = (usedMib: number) => ({ kind: 'disk' as const, thing: '/', device: 1, sizeBytes: 100_000 * MIB, freeBytes: (100_000 - usedMib) * MIB });
   // 84.0% is 84 and under the line. 84.001% is 85 in df, and so it is here: over the line.
   f.read(of(84_000));
   expect(f.rows()[0]).toMatchObject({ usedPercent: 84, level: 'ok' });
   f.read(of(84_001));
   expect(f.rows()[0]).toMatchObject({ usedPercent: 85, level: 'raised' });
-  expect(f.open()).toEqual(['loom: / is 85% full (15 GB free). Alerts at 85%.']);
+  expect(f.open()).toEqual(['loom: / is 85% full (15.6 GB free). Alerts at 85%.']);
   // A whole percent stays that percent: 71% of a size whose hundredth is no whole number of bytes is 71, not 72.
   for (const [used, percent] of [[71, 71], [29, 29], [1, 1], [0, 0], [100, 100]]) {
-    f.read({ kind: 'disk', thing: '/x', sizeBytes: 3 * 100 * 1_000_003, freeBytes: 3 * (100 - used) * 1_000_003 }, of(10_000));
+    f.read({ kind: 'disk', thing: '/x', device: 2, sizeBytes: 3 * 100 * 1_000_003, freeBytes: 3 * (100 - used) * 1_000_003 }, of(10_000));
     expect(f.rows().find(row => row.thing === '/x')!.usedPercent, String(used)).toBe(percent);
   }
   // One byte used of a petabyte is 1%, as df says, and a full disk is 100.
-  f.read({ kind: 'disk', thing: '/x', sizeBytes: 2 ** 50, freeBytes: 2 ** 50 - 1 }, of(10_000));
+  f.read({ kind: 'disk', thing: '/x', device: 2, sizeBytes: 2 ** 50, freeBytes: 2 ** 50 - 1 }, of(10_000));
   expect(f.rows().find(row => row.thing === '/x')!.usedPercent).toBe(1);
 });
 
-it('raises one notice for a machine whose disks are all unknown for a day, closes no disk\'s own notice for it, and closes it when a disk is read again', () => {
+const unknown = (thing: string) => ({ kind: 'disk' as const, thing, unknown: true as const });
+const a = '/srv/a', b = '/srv/b', c = '/srv/c';
+const grouped = 'loom: the disk holding /srv/a and /srv/b is 91% full (18 GB free). Alerts at 85%.';
+
+it('shares one persisted occasion across paths, worker restarts, report order and device renumbering', () => {
   const f = fixture();
-  f.db.insert(household).values({ timezone: 'America/Chicago' }).run();
-  f.read(disk(96), disk(91, '/srv'), disk(40, '/var/lib/docker'), memory(9000));
-  const raised = ['loom: / is 96% full (8 GB free). Urgent at 95%.', 'loom: /srv is 91% full (18 GB free). Alerts at 85%.'];
-  expect(f.open()).toEqual(raised);
-  // Every disk at once, as when the worker's reader is held up by a filesystem that does not answer.
-  const blind = [{ kind: 'disk' as const, thing: '/', unknown: true as const }, { kind: 'disk' as const, thing: '/srv', unknown: true as const }, { kind: 'disk' as const, thing: '/var/lib/docker', unknown: true as const }, memory(9000)];
-  f.read(...blind);
-  f.advance(STALE_MS - 10 * MINUTES);
-  expect(f.read(...blind)).toEqual({ changed: false });
-  expect(f.open()).toEqual(raised);
-  // A day: nothing is closed as "can no longer be read". The full disks are still full for all loom knows.
-  f.advance(10 * MINUTES);
-  expect(f.read(...blind)).toEqual({ changed: true });
-  expect(f.open()).toEqual([...raised, 'loom: its disks have not been readable since Nov 19, 8:10 AM.']);
-  expect(f.closed()).toEqual([]);
-  expect(f.rows().map(row => [row.level, row.stale])).toEqual([['urgent', false], ['raised', false], ['ok', false], ['ok', false]]);
-  // Said once, however long it lasts.
-  f.advance(3 * STALE_MS);
-  expect(f.read(...blind)).toEqual({ changed: false });
-  expect(f.mail()).toHaveLength(3);
-  // One disk is read again: the machine's notice closes. The disk still unknown is then one disk gone among
-  // others that are read, and long past its day: its notice closes as no longer readable.
-  expect(f.read(disk(97), { kind: 'disk', thing: '/srv', unknown: true }, disk(40, '/var/lib/docker'), memory(9000))).toEqual({ changed: true });
-  expect(f.open()).toEqual(['loom: / is 96% full (8 GB free). Urgent at 95%.']);
-  expect(f.closed()).toEqual([['loom: /srv is 91% full (18 GB free). Alerts at 85%.', '/srv can no longer be read; last read Nov 19, 8:05 AM at 91%.'],
-    ['loom: its disks have not been readable since Nov 19, 8:10 AM.', 'Its disks are being read again.']]);
-  // Blind again later is a new occasion; a machine removed while blind has that notice closed with the rest.
-  f.read(...blind); f.advance(STALE_MS); f.read(...blind);
-  expect(f.open()).toHaveLength(2);
-  f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'box-1')).run();
-  f.service.sweep();
-  expect(f.open()).toEqual([]);
-  expect(f.closed().filter(([, why]) => why === 'No longer watched')).toHaveLength(2);
+  f.read(disk(91, a, 10), disk(91, b, 10));
+  expect(f.open()).toEqual([grouped]);
+  expect(f.rows().map(row => [row.thing, row.disk, row.since])).toEqual([[a, f.rows()[0].disk, f.now()], [b, f.rows()[0].disk, f.now()]]);
+  const group = f.rows()[0].disk, since = f.now();
+  f.advance(5 * MINUTES);
+  expect(new MachineConditions(f.db, f.now).read('box-1', [disk(91, b, 110), disk(91, a, 110)])).toEqual({ changed: false });
+  expect(f.rows().every(row => row.disk === group && row.since === since)).toBe(true);
+  expect(f.mail()).toHaveLength(1);
+  f.read(disk(96, a, 110), disk(96, b, 110));
+  expect(f.open()).toEqual([grouped, 'loom: the disk holding /srv/a and /srv/b is 96% full (8 GB free). Urgent at 95%.']);
+  f.read(disk(60, a, 110), disk(60, b, 110));
+  expect(f.closed().map(([, why]) => why)).toEqual([
+    'the disk holding /srv/a and /srv/b is at 60% (80 GB free), under the 85% line.',
+    'the disk holding /srv/a and /srv/b is at 60% (80 GB free), under the 95% line.',
+  ]);
 });
 
-it('keeps one record and one notice for a disk whichever of two watched paths stands for it', () => {
-  const f = fixture(), b = (percent: number) => disk(percent, '/srv/b');
-  // /srv/a is not there at first, so /srv/b stands for the disk and is raised.
-  f.read(disk(40), { kind: 'disk', thing: '/srv/a', unknown: true }, b(91));
-  expect(f.open()).toEqual(['loom: /srv/b is 91% full (18 GB free). Alerts at 85%.']);
-  const since = f.rows().find(row => row.thing === '/srv/b')!.since;
-  // /srv/a appears and, coming first, stands for the disk; /srv/b is said to be the same disk. loom knows
-  // the disk as /srv/b: the numbers go on under that name. No second record, no second notice.
-  expect(f.read(disk(40), disk(92, '/srv/a'), { kind: 'disk', thing: '/srv/b', sameAs: '/srv/a' })).toEqual({ changed: false });
-  expect(f.rows().map(row => [row.thing, row.usedPercent, row.level, row.since, row.unknownSince])).toEqual([['/', 40, 'ok', null, null], ['/srv/b', 92, 'raised', since, null]]);
+it('keeps a partly unknown group readable and waits a day after the last path becomes unknown', () => {
+  const f = fixture();
+  f.db.insert(household).values({ timezone: 'UTC' }).run();
+  f.read(disk(91, a, 10), disk(91, b, 10));
+  f.read(unknown(a), disk(92, b, 10));
+  f.advance(STALE_MS);
+  f.read(unknown(a), disk(93, b, 10));
+  const latest = f.now();
+  expect(f.open()).toEqual([grouped]);
+  expect(f.rows().map(row => [row.usedPercent, row.stale])).toEqual([[91, false], [93, false]]);
+  f.read(unknown(a), unknown(b));
+  f.advance(STALE_MS - 10 * MINUTES);
+  expect(f.read(unknown(a), unknown(b))).toEqual({ changed: false });
+  expect(f.open()).toEqual([grouped]);
+  expect(f.read(unknown(a), unknown(b))).toEqual({ changed: true });
   expect(f.mail()).toHaveLength(1);
-  // And it is closed under that name when the disk is back under the line: nothing lingers for a day.
-  f.advance(2 * STALE_MS);
-  f.read(disk(40), disk(60, '/srv/a'), { kind: 'disk', thing: '/srv/b', sameAs: '/srv/a' });
+  const when = new Intl.DateTimeFormat('en-US', {timeZone:'UTC', month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(latest)).replace(/\u202f/g, ' ');
+  expect(f.closed()).toEqual([[grouped, `the disk holding /srv/a and /srv/b can no longer be read; last read ${when} at 93%.`]]);
+  expect(f.rows().every(row => row.stale && row.level === 'ok')).toBe(true);
+  f.read(unknown(a), disk(91, b, 11));
+  expect(f.open()).toEqual([grouped]);
+  expect(f.mail()).toHaveLength(2);
+});
+
+it('keeps the occasion through a device renumbering while one member is unreadable', () => {
+  const f = fixture();
+  f.read(disk(91, a, 10), disk(91, b, 10));
+  const group = f.rows()[0].disk;
+  f.read(unknown(a), unknown(b));
+  f.read(unknown(a), disk(91, b, 11));
+  f.read(disk(91, a, 11), disk(91, b, 11));
+  expect(f.rows().map(row => row.disk)).toEqual([group, group]);
+  expect(f.open()).toEqual([grouped]);
+  expect(f.mail()).toHaveLength(1);
+});
+
+it('closes each wholly unreadable disk after a day without emitting a machine-wide notice', () => {
+  const f = fixture();
+  f.read(disk(96, a, 10), disk(91, b, 11));
+  f.read(unknown(a), unknown(b));
+  f.advance(STALE_MS);
+  f.read(unknown(a), unknown(b));
   expect(f.open()).toEqual([]);
-  expect(f.closed()).toEqual([['loom: /srv/b is 91% full (18 GB free). Alerts at 85%.', '/srv/b is at 60% (80 GB free), under the 85% line.']]);
-  expect(f.rows().map(row => [row.thing, row.stale])).toEqual([['/', false], ['/srv/b', false]]);
-  // A path that is the same disk as another and was never a record of its own makes none.
-  const g = fixture();
-  g.read(disk(40), { kind: 'disk', thing: '/var/lib/loom-worker', sameAs: '/' });
-  expect(g.rows().map(row => row.thing)).toEqual(['/']);
-  // Two records that were two disks, one now on the other's filesystem (its mount is not there): that is
-  // not a reading of the disk it was. It is unknown, and its notice stands.
-  const h = fixture();
-  h.read(disk(40), disk(91, '/mnt/nas'));
-  expect(h.read(disk(40), { kind: 'disk', thing: '/mnt/nas', sameAs: '/' })).toEqual({ changed: true });
-  expect(h.rows().map(row => [row.thing, row.usedPercent, row.unknownSince])).toEqual([['/', 40, null], ['/mnt/nas', 91, h.now()]]);
-  expect(h.open()).toEqual(['loom: /mnt/nas is 91% full (18 GB free). Alerts at 85%.']);
+  expect(f.closed().map(([, why]) => why)).toEqual([
+    expect.stringMatching(/^\/srv\/a can no longer be read; .* at 96%\.$/),
+    expect.stringMatching(/^\/srv\/b can no longer be read; .* at 91%\.$/),
+  ]);
+  f.read(unknown(a));
+  expect(f.mail()).toHaveLength(2);
+});
+
+it('closes the old group when it splits and judges the new disks independently', () => {
+  const f = fixture();
+  f.read(disk(91, a, 10), disk(91, b, 10), disk(91, c, 10));
+  f.read(disk(91, a, 10), disk(60, b, 11), unknown(c));
+  expect(f.closed()[0][1]).toBe('/srv/a and /srv/b are now on different disks.');
+  expect(f.open()).toEqual(['loom: /srv/a is 91% full (18 GB free). Alerts at 85%.']);
+  expect(f.rows().find(row => row.thing === c)).toMatchObject({ level: 'ok', unknownSince: f.now() });
+  f.read(disk(91, a, 10), disk(60, b, 11), disk(91, c, 10));
+  expect(f.open()).toEqual(['loom: the disk holding /srv/a and /srv/c is 91% full (18 GB free). Alerts at 85%.']);
+  expect(f.closed().at(-1)?.[1]).toBe('/srv/c and /srv/a are now read on the same disk.');
+});
+
+it('resolves old occasions when two disks merge or a watched member is dropped', () => {
+  const f = fixture();
+  f.read(disk(91, a, 10), disk(91, b, 11));
+  f.read(disk(91, a, 12), disk(91, b, 12));
+  expect(f.closed().map(([, why]) => why)).toEqual([
+    '/srv/b and /srv/a are now read on the same disk.', '/srv/a and /srv/b are now read on the same disk.',
+  ]);
+  expect(f.open()).toEqual([grouped]);
+  f.read(disk(91, a, 12));
+  expect(f.closed().at(-1)).toEqual([grouped, 'No longer watched: /srv/b.']);
+  expect(f.open()).toEqual(['loom: /srv/a is 91% full (18 GB free). Alerts at 85%.']);
+});
+
+it('publishes a fresh reading immediately when a machine returns with its previous level', () => {
+  const f = fixture();
+  f.read(disk(91), memory(9000), { kind: 'containers', answers: true });
+  f.advance(16 * MINUTES);
+  expect(f.read(disk(91), memory(9000), { kind: 'containers', answers: true })).toEqual({ changed: true });
+  expect(f.mail()).toHaveLength(1);
+  expect(f.rows().every(row => row.readAt === f.now())).toBe(true);
 });
 
 /** Every sentence a notice is opened or closed with, against the way it came to be said. Each row is a
@@ -406,29 +446,32 @@ it('keeps one record and one notice for a disk whichever of two watched paths st
  * happens (a reading, the lines changed, or both) and the sentence that must follow. Sizes: a 200 GiB
  * disk unless the row says, 16 GiB of memory. */
 const lined = (lines: Partial<typeof ALERT_LINE_DEFAULTS>) => ({ ...ALERT_LINE_DEFAULTS, ...lines });
-const sized = (sizeGib: number, freeMib: number) => ({ kind: 'disk' as const, thing: '/', sizeBytes: sizeGib * GIB, freeBytes: freeMib * MIB });
+const sized = (sizeGib: number, freeMib: number) => ({ kind: 'disk' as const, thing: '/', device: 1, sizeBytes: sizeGib * GIB, freeBytes: freeMib * MIB });
 it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: string, then: { lines?: Partial<typeof ALERT_LINE_DEFAULTS>; reading: Parameters<MachineConditions['read']>[1][number] }, closed: string | null, said?: string]>([
   // Opened by a reading, closed by a reading that recovered.
   ['over the percent line, then under it by the margin', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { reading: disk(71) }, '/ is at 71% (58 GB free), under the 85% line.'],
-  ['under the free-room floor, then a tenth over it', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { reading: sized(25, 5700) }, '/ has 5.5 GB free (78% full), over the 5 GB floor.'],
-  ['over the urgent line, then under the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(60) }, '/ is at 60% (80 GB free), under the 85% line.'],
+  ['under the free-room floor and inside the percent margin, then clear of both', [sized(30, 5000)], 'loom: / has 4.8 GB free (84% full). Alerts under 5 GB free.', { reading: sized(30, 6144) }, '/ has 6 GB free (80% full), over the 5 GB floor.'],
+  ['over the urgent line, then under the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(60) }, '/ is at 60% (80 GB free), under the 95% line.'],
   ['over the urgent line, then under it and still raised', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(90) }, '/ is at 90% (20 GB free), under the 95% line.', 'loom: / is 90% full (20 GB free). Alerts at 85%.'],
   ['over the urgent line, then inside the margin of the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(83) }, '/ is at 83% (34 GB free), under the 95% line.', 'loom: / is 83% full (34 GB free). Not yet clear of the alert lines (85%, 5 GB free).'],
   ['low memory twice, then a tenth over the floor', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { reading: memory(2048) }, '2 GB of memory is available, over the 512 MB floor.'],
   ['the container runtime not answering twice, then answering', [{ kind: 'containers', answers: false }, { kind: 'containers', answers: false }], 'loom: the container runtime is not answering.', { reading: { kind: 'containers', answers: true } }, 'The container runtime is answering again.'],
   // Closed because the lines changed while it was open: the reading is the same and nothing recovered.
-  ['the percent line raised over a disk that is as full as it was', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 96, diskUrgentPercent: 99 }, reading: disk(91) }, 'The lines changed: alerts are now at 96% or under 5 GB free; / is at 91% (18 GB free).'],
-  ['the free-room floor lowered under a disk with as little room as it had', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 2048 }, reading: sized(25, 4608) }, 'The lines changed: alerts are now at 85% or under 2 GB free; / is at 82% (4.5 GB free).'],
-  ['the free-room floor raised until it is no longer asked of a disk that small', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 20_480 }, reading: sized(25, 4608) }, 'The lines changed: alerts are now at 85%; / is at 82% (4.5 GB free).'],
+  ['the percent line raised over a disk that is as full as it was', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 96, diskUrgentPercent: 99 }, reading: disk(91) }, 'The alert line is now 96%; / is at 91% (18 GB free).'],
+  ['the free-room floor lowered under a disk with as little room as it had', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 2048 }, reading: sized(25, 4608) }, 'The disk floor is now 2 GB; / has 4.5 GB free (82% full).'],
+  ['the free-room floor raised until it is no longer asked of a disk that small', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 20_480 }, reading: sized(25, 4608) }, 'The 20 GB floor is no longer asked of /; 4.5 GB is free.'],
   ['the urgent line raised over a disk that is as full as it was', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { lines: { diskUrgentPercent: 100 }, reading: disk(96) }, 'The urgent line is now 100%; / is at 96% (8 GB free).', 'loom: / is 96% full (8 GB free). Alerts at 85%.'],
   ['the memory floor lowered under a machine with as little memory free', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 200 }, reading: memory(310) }, 'The memory floor is now 200 MB; 310 MB of memory is available.'],
   ['the memory floor raised past half the machine\'s memory, where it is not asked', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 9000 }, reading: memory(310) }, 'The memory floor is now 8.7 GB, which is not asked of a machine with 16 GB of memory; 310 MB is available.'],
+  ['the memory floor switched off', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 0 }, reading: memory(310) }, 'The memory floor was switched off.'],
+  ['the disk floor switched off', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 0 }, reading: sized(25, 4608) }, 'The disk floor was switched off; / is at 82% (4.5 GB free).'],
+  ['a reading and floor that round to the same amount', [sized(100, 40_000)], '', { lines: { diskFreeMib: 40_001 }, reading: sized(100, 40_000) }, null, 'loom: / has 40000 MB free (61% full). Alerts under 40001 MB free.'],
   // The lines changed and the condition stands: nothing is closed and nothing new is said.
   ['the memory floor raised, still asked, and still not met', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 600 }, reading: memory(310) }, null],
   ['the percent line lowered under a raised disk', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 70 }, reading: disk(91) }, null],
   // Opened by the lines changing over a reading that did not move.
   ['the percent line lowered under a disk that was fine', [disk(75), disk(75)], '', { lines: { diskPercent: 70 }, reading: disk(75) }, null, 'loom: / is 75% full (50 GB free). Alerts at 70%.'],
-  ['the free-room floor raised over a disk that was fine', [sized(100, 30_000), sized(100, 30_000)], '', { lines: { diskFreeMib: 40_000 }, reading: sized(100, 30_000) }, null, 'loom: / has 29 GB free (71% full). Alerts under 39 GB free.'],
+  ['the free-room floor raised over a disk that was fine', [sized(100, 30_000), sized(100, 30_000)], '', { lines: { diskFreeMib: 40_000 }, reading: sized(100, 30_000) }, null, 'loom: / has 29.2 GB free (71% full). Alerts under 39 GB free.'],
 ])('says what is true when %s', (_cause, open, opened, then, closed, said) => {
   const f = fixture();
   for (const reading of open) f.read(reading);

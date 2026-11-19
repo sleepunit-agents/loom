@@ -6,7 +6,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { liveWorker } from './shared-worker.js';
 import { householdOwner } from './shared-sharing.js';
 import { boxReadings } from './core/data/schema.js';
-import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, watchedPath } from './runtime/machine-check.js';
+import { DEVICE_MAX, SIZE_BYTES_MAX, WATCHED_PATHS_MAX, watchedPath } from './runtime/machine-check.js';
 import { MachineConditions, alertLines, setAlertLines } from './runtime/machine-conditions.js';
 
 // loom keeps a size in whole mebibytes and the read API serves an integer column as a GraphQL `Int`, which
@@ -18,18 +18,21 @@ const bytes = z.number().int().min(0).max(SIZE_BYTES_MAX);
  * watched, held to a short length and a plain alphabet (`watchedPath`, which says what that does and does
  * not protect). No judgement: whether a number is a fault is decided here (MachineConditions), and every
  * word of a notice but the path is loom's. `unknown` names a thing the worker watches and could not read. */
-export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(), sameAs: z.string().refine(watchedPath).optional(),
+export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(), device: z.number().int().min(0).max(DEVICE_MAX).optional(),
   sizeBytes: bytes.optional(), freeBytes: bytes.optional(), answers: z.boolean().optional() }).strict().superRefine((reading, context) => {
   const issue = (message: string) => context.addIssue({ code: 'custom', message });
   if ((reading.kind === 'disk') !== (reading.thing !== undefined)) issue('A disk is named by its path, and nothing else is named');
-  // A disk on the filesystem another watched path stands for: named by that path, a fixed word and nothing more.
-  if (reading.sameAs !== undefined) {
-    if (reading.kind !== 'disk' || reading.sameAs === reading.thing || reading.unknown || reading.sizeBytes !== undefined || reading.freeBytes !== undefined || reading.answers !== undefined) issue('The same disk as another path carries nothing else');
+  const numbers = reading.sizeBytes !== undefined || reading.freeBytes !== undefined;
+  if (reading.unknown) {
+    if (numbers || reading.device !== undefined || reading.answers !== undefined) issue('An unknown reading carries no values');
     return;
   }
-  if (reading.unknown) return;
-  if (reading.kind === 'containers') { if (reading.answers === undefined) issue('Say whether the container runtime answers'); return; }
-  if (!reading.sizeBytes || reading.freeBytes === undefined || reading.freeBytes > reading.sizeBytes) issue('Say how much there is and how much of it is free');
+  if ((reading.kind === 'disk') !== (reading.device !== undefined)) issue('A readable disk carries its device id');
+  if (reading.kind === 'containers') {
+    if (numbers || reading.answers === undefined) issue('Say only whether the container runtime answers');
+    return;
+  }
+  if (reading.answers !== undefined || !reading.sizeBytes || reading.freeBytes === undefined || reading.freeBytes > reading.sizeBytes) issue('Say how much there is and how much of it is free');
 });
 // A line clears a few points under itself, so the lowest is one that can; the same bounds as the columns' checks.
 const percent = z.number().int().min(10).max(99), urgentPercent = z.number().int().min(11).max(100), mib = z.number().int().min(0).max(1_000_000_000);
@@ -38,7 +41,9 @@ export function registerSharedMachineReadings(operations: Operations, db: DataDa
   // The worker names every thing it watches each time, so the record of its machine is replaced whole.
   // Which machine it speaks for comes from its credential alone.
   operations.register({ name: 'runtime.machineReadings', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ readings: z.array(machineReading).max(WATCHED_PATHS_MAX + 2), everyMs: z.number().int().min(10_000).max(3_600_000).optional() }).strict(), output: z.object({ changed: z.boolean() }).strict(),
+    input: z.object({ readings: z.array(machineReading).max(WATCHED_PATHS_MAX + 2)
+      .refine(readings => readings.filter(row => row.kind === 'disk').length <= WATCHED_PATHS_MAX &&
+        new Set(readings.map(row => JSON.stringify([row.kind, row.thing]))).size === readings.length, 'Report each watched thing once'), everyMs: z.number().int().min(10_000).max(3_600_000).optional() }).strict(), output: z.object({ changed: z.boolean() }).strict(),
     may: viewer => !!liveWorker(db, viewer, runner(viewer)),
     run(ctx, input) {
       const box = liveWorker(db, ctx.viewer, runner(ctx.viewer));

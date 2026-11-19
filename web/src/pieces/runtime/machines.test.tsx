@@ -73,3 +73,30 @@ it('shows what each machine last read on itself quietly, and an open condition p
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
  expect(text()).toEqual([]);
 });
+it('ages readings in an open window and shows one condition for paths on the same disk',async()=>{
+ const before=f.feed;
+ vi.useFakeTimers();
+ try {
+  const now=Date.parse('2026-11-19T14:00:00Z');
+  vi.setSystemTime(now);
+  const disk={box:'box',kind:'disk',disk:'group',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised',
+   readAt:new Date(now-14*60_000-1).toISOString(),unknownSince:null,stale:false};
+  f.feed={status:'live',data:{...before.data,boxReadings:[
+   {...disk,thing:'/srv/a',usedPercent:99,unknownSince:disk.readAt,readAt:new Date(now-16*60_000).toISOString()},
+   {...disk,thing:'/srv/b'},
+  ]}} as never;
+  await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
+  const status=tree.root.findAllByProps({role:'status'});
+  expect(status).toHaveLength(1);
+  expect(status[0].findByType('strong').children.join('')).toBe('The disk holding /srv/a and /srv/b is running out of room: 91% full, 18 GB free.');
+  const text=()=>JSON.stringify(tree.toJSON());
+  expect(text().match(/as of/g)).toHaveLength(1);
+  await act(async()=>{vi.advanceTimersByTime(60_000);});
+  expect(text().match(/as of/g)).toHaveLength(2);
+  await act(async()=>tree.unmount());
+  expect(vi.getTimerCount()).toBe(0);
+ } finally {
+  f.feed=before;
+  vi.useRealTimers();
+ }
+});

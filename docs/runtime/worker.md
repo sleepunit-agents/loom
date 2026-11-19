@@ -1044,92 +1044,50 @@ tells the machine's owner once, and closes what it said when a later reading is
 back under the line. No model takes part, and the worker sends no words of its
 own: numbers, a yes or no, and for a disk the path watched.
 
-What is read (`src/runtime/machine-check.ts`), with Node's own calls and no
-program run:
+The worker uses Node's filesystem calls in its own disk helper, memory calls
+in the worker, and one bounded request to the configured container socket.
 
-- **Disks.** The room on the filesystem under `/`, under each path in
-  `watchPaths`, under the worker's state directory (a worker that takes jobs),
-  and under the place the container runtime keeps its containers (what the
-  engine answers as `DockerRootDir`). So the text of a watched path has three
-  sources: `/`, the worker's configuration, and the engine's answer; all three
-  are held to the same bound, below. Fullness is worked out as `df` does: used
-  over used and available, rounded up to a whole percent (84.2% is 85%), and
-  that number is the one held to the lines. A filesystem mounted read-only is
-  read like any other; being read-only is not itself a condition.
-- **Memory.** What is available to start something new with (on Linux,
-  `MemAvailable`), and the total.
-- **The container runtime.** Whether the engine at `container.socket` answers
-  one small question within five seconds. Only a worker with `container.socket`
-  set is asked about one; a worker without it says nothing of an engine.
+- **Disks.** The filesystems under `/`, the state directory of a worker that
+  takes jobs, and each path in `watchPaths`. Include the container runtime's
+  real data directory in `watchPaths` when it is on a separate filesystem.
+  The worker keeps this set across rounds and starts it from configuration
+  on every launch. Fullness follows `df`: used over used and available,
+  rounded up to a whole percent. Read-only filesystems are read normally.
+- **Memory.** The total and what is available to start something new with.
+- **The container runtime.** Whether the engine at `container.socket`
+  answers a version request within five seconds. Only workers with that
+  socket configured report this reading.
 
-System load is not read: no line is drawn on it.
+For every watched path the worker starts this program's own
+`machine-disk-helper.js` at a fixed location beside the compiled reader,
+using the worker's own Node binary (`process.execPath`) with no shell.
+The sole script argument is the configured path. Both the worker and helper
+validate it with `watchedPath`. The check runs no other program.
 
-Not every path becomes a disk of its own:
+The helper checks every directory from `/` down without following links,
+calls `statfs`, then checks the same devices and inodes again. If a directory
+such as `/var/lib/docker` is a symlink, configure the real directory.
+**Keep watched paths outside trees bodies can write.** A link swapped in and
+out within a single read can go undetected ([accepted trade-offs](../accepted-tradeoffs.md)).
+A watched path is absolute and at most 120 characters. Each component starts
+with a letter, digit, dot or underscore and continues with those or `@ + -`.
+The special components `.` and `..` are disallowed. An invalid `watchPaths`
+entry fails configuration. An invalid state path is skipped with a fixed
+diagnostic.
 
-- Two paths on one filesystem are one disk. The first in order stands for it
-  and the other is reported as the same disk as that one. loom keeps one
-  record and one notice for a disk, under the name it first knew it by, also
-  when the path that stands for it changes. The state directory is usually on
-  the filesystem `/` is on, and is then not a second disk.
-- A filesystem kept in memory or made up by the kernel, or an image mounted to
-  be read (squashfs, an ISO), has no room worth watching. The default state
-  directory is under the temporary directory, which is often such a
-  filesystem.
-- A path is followed through no link that is there when it is checked: every
-  step from `/` down must be a real directory before the room is read, and the
-  same directory after. If the engine's directory or a watched path is a link
-  (a `/var/lib/docker` linked to another disk), name the real directory in
-  `watchPaths`. **Do not put a watched path inside a tree bodies can write.**
-  A step swapped for a link and back within one read is not seen
-  ([accepted trade-offs](../accepted-tradeoffs.md), "A watched path can be
-  swapped under the worker for one read").
-- A path whose name loom does not take is not watched at all, and the worker
-  says so once in its log. A watched path is absolute, at most 120 long, each
-  step beginning with a letter, a digit, a dot or an underscore and going on in
-  those and `@ + -`: no spaces, no colon. That bounds the text; it does not
-  make it a real path, and loom cannot tell. The text is shown only to the
-  machine's owner and household owners, and every other word of a notice is
-  loom's. A `watchPaths` entry written
-  otherwise stops the worker as a file that is not valid; a state directory or
-  an engine directory written otherwise is only left unwatched.
+Helpers can read in parallel. After five seconds the worker reports the path
+as unknown and leaves the helper alone. It starts a replacement only after
+the previous helper exits. This bounds live helpers by the number of watched
+paths. Healthy siblings continue to be read each round. Shutdown signals live
+helpers and the worker exits normally. A helper stuck in the kernel can
+remain asleep until the mount responds or the machine restarts. A failed
+start produces an unknown reading and a fixed diagnostic logged once.
 
-**Unknown is not absent.** Everything the worker is set to watch is named in
-every report, as numbers or as unknown: a path that did not answer, is not
-there just now, is reached through a link, or is a filesystem kept in memory. loom
-keeps what it last read of an unknown thing, with the time it was read, and
-raises and clears nothing for it. A thing is dropped (and its notices closed
-`No longer watched`) only when the worker no longer names it, which means it
-is no longer configured. The engine's directory is remembered from the last
-time the engine answered and goes on being read while the engine is down;
-that memory is the process's, so a worker started while the engine is down
-does not name the directory until the engine first answers.
-
-**A filesystem that never answers.** The worker asks the filesystem one thing
-at a time, never two at once. A call that has not answered in five seconds is
-no longer waited for, but the kernel still holds it, and it holds one of the
-threads every file read and name lookup in the worker shares. The worker
-process has eight of those (`UV_THREADPOOL_SIZE`, set by the worker's entry
-file before anything uses one, unless whoever starts the worker set their own;
-Node's default is four; loom's server is not touched).
-
-- While such a call is out, the directory it was reached from is suspect, and
-  no watched path at or under it is asked anything. So one dead mount holds one
-  thread however many watched paths are on it. (For a directory directly under
-  `/` the suspect is that directory itself, not `/`.)
-- With four such calls out, half the pool, the worker asks only about paths
-  that answered on the round before, which are the ones least likely to hang.
-  The healthy disks go on being read; a path not yet read waits.
-- The worst case: each further mount that answered a round ago and has died
-  since takes one more thread, up to one per watched path on distinct dead
-  mounts. Nothing in the process can end such a call.
-
-A stopped worker ends even with such a call out, which it would not by itself
-and would not by `process.exit` either (Node waits for its file threads on the
-way out). Only then, two seconds after the worker program has ended its bodies
-and loops, the process signals itself: SIGTERM after a clean stop, SIGKILL
-after any other, since its exit code can no longer be delivered and a failed
-worker must not look like a clean stop (`src/runtime/worker-exit.ts`). With no
-call out the process ends by itself with its own code.
+Every report names each watched path with numbers and an integer device ID,
+or as unknown. loom records an unknown path even before its first successful
+read, with no numbers or last-read time. Missing directories, links, memory-backed and kernel
+filesystems, and read-only images such as squashfs are reported as unknown.
+The worker keeps its filesystem readings independent of the engine's answer.
 
 ```json
 "machineCheckMs": 300000,
@@ -1154,8 +1112,8 @@ them.
 | --- | --- | --- | --- |
 | `diskPercent` | 85 | 10 to 99 | a disk at or over this is raised |
 | `diskUrgentPercent` | 95 | over `diskPercent`, at most 100 | a disk at or over this is urgent |
-| `diskFreeMib` | 5120 (5 GiB) | | a disk with less free than this is raised |
-| `memoryFreeMib` | 512 | | memory available under this, twice in a row, is raised |
+| `diskFreeMib` | 5120 (5 GiB) | 0 to 1,000,000,000 MiB | a disk with less free than this is raised |
+| `memoryFreeMib` | 512 | 0 to 1,000,000,000 MiB | memory available under this, twice in a row, is raised |
 | | | | the container runtime not answering, twice in a row, is raised |
 
 A condition is raised at its line and cleared only under it by a margin, so a
@@ -1169,13 +1127,16 @@ the one before was read no more than three of the worker's intervals ago, and
 an older one starts the count again. A floor is asked only of something at
 least twice its size: a smaller disk is held to the percent line alone, and its
 notices say nothing of the floor. A machine is held to changed lines by its
-next reading.
+next reading. Zero switches off either free-room floor. The percentage lines
+remain bounded by the table above.
 
 A size is kept in whole mebibytes and served as a GraphQL `Int`, which ends at
 2^31 - 1. The door refuses a size of 2^51 bytes (2 PiB) or more; it is not cut
 down to fit, because a number that is not the disk's would be held to the
 lines. A worker names a filesystem that large as unknown, so the rest of its
-report is taken.
+report is taken. A readable disk carries a device ID from 0 through
+2^53 - 1. An unknown reading carries only its kind and, for a disk, its path.
+A report can name up to 16 disk paths and one reading of each other kind.
 
 ### What the owner is told
 
@@ -1188,24 +1149,26 @@ free), under the 85% line.` A notice its reader closed by hand is not sent
 again for the same occasion; a condition that cleared and came back is a new
 occasion with a notice of its own.
 
-Every closing sentence says why the notice closed. A reading that recovered
-names the line it is clear of. Lines an owner changed while the notice was
-open say that instead (`The lines changed: alerts are now at 96% or under 5 GB
-free; / is at 91% (18 GB free).`, `The memory floor is now 8.7 GB, which is
-not asked of a machine with 16 GB of memory; 310 MB is available.`), because
-nothing about the machine got better.
+A recovery names the alert line or floor the notice was raised for. If the
+owner switched off the memory floor, its notice closes with
+`The memory floor was switched off.`
 
-Unknown raises nothing, and it does not hold a notice open for ever either.
-When one thing has been unknown for a day while other disks of the machine are
-read, loom closes its notices with `/srv can no longer be read; last read Nov
-19, 8:05 AM at 91%.` (the household's time), keeps the last numbers, and marks
-the record stale: it is held to no line until it is read again, and a reading
-then over a line is a new occasion.
+loom stores a reading per watched path. In each report, paths with the same
+device ID form one disk with one condition. The notice names the group, for
+example `loom: the disk holding /srv/a and /srv/b is 91% full (18 GB free).
+Alerts at 85%.` The same set of paths keeps its occasion if the device is
+renumbered. An unknown path keeps its last reading and remains with its
+group while the group can still be identified. A proven split or merge
+closes the old occasions with what was observed, for example
+`/srv/a and /srv/b are now on different disks.` The resulting disks are
+judged afresh. An unknown member of a split stays unresolved until it can
+be read. Removing a configured member closes the old occasion and names which
+paths are no longer watched. The remaining paths are judged as reported.
 
-When every disk of a machine is unknown at once, the worker is not seeing its
-filesystems, which says nothing about any one of them. No disk's notice is
-closed for that. After a day the owner gets one notice, `loom: its disks have
-not been readable since Nov 19, 8:10 AM.`, closed when any disk is read again.
+Only after every path of a disk has been unknown for a day does loom close
+its notices with `/srv can no longer be read; last read Nov 19, 8:05 AM at
+91%.` (in the household's time). It keeps the last numbers and marks the
+group stale. A later reading over a line starts a new occasion.
 
 A machine that stops reporting keeps its conditions and their notices as they
 were; its silence is its own notice. A machine taken out of the household has
@@ -1217,7 +1180,8 @@ read with the machine (`boxReadings`, by the machines rule): the machine's own
 member and household owners. "Your machines" shows a number as current only
 while it is: a reading the worker can no longer take, or one older than
 fifteen minutes, is shown with the time it was read (`as of 14:05`), and a
-stale one as `not read since`. A change in a state a person is shown is told
+stale one as `not read since`. The open screen updates ages every minute.
+A fresh reading after the old reading has aged out is told at once. A change in a state a person is shown is told
 to open windows at once; a drift in the numbers alone reaches them as a
 last-seen time does ([accepted trade-offs](../accepted-tradeoffs.md)).
 

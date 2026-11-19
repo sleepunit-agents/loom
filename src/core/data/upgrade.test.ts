@@ -482,7 +482,7 @@ it('starts upgraded households with no machine readings and the default lines fo
  expect(db.prepare('select * from box_alert_settings').all()).toEqual([]);
  db.prepare('insert into box_alert_settings default values').run();
  expect(db.prepare('select * from box_alert_settings').all()).toEqual([{singleton:1,disk_percent:85,disk_urgent_percent:95,disk_free_mib:5120,memory_free_mib:512}]);
- db.prepare("insert into box_readings(box,kind,thing,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/',71,204800,59392,'ok',?)").run(at);
+ db.prepare("insert into box_readings(box,kind,thing,disk,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/','group',71,204800,59392,'ok',?)").run(at);
  expect(db.prepare('select unknown_since, stale from box_readings').get()).toEqual({unknown_since:null,stale:0});
  // A line that could never clear, and an urgent line not over the other, are refused by the table itself.
  expect(()=>db.prepare('update box_alert_settings set disk_percent=3').run()).toThrow(/box_alert_settings_disk_percent_range/);

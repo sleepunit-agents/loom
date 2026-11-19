@@ -68,7 +68,7 @@ async function fixture() {
   /** What the worker read on its own machine: a 200 GiB disk this full, and its memory. */
   const reading = async (percent: number | 'unknown', freeMemoryMib = 12_288, answers = true) => {
     const response = await root.http.request('http://loom/api/runtime/machineReadings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys.worker },
-      body: JSON.stringify({ input: { readings: [percent === 'unknown' ? { kind: 'disk', thing: '/', unknown: true } : { kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) },
+      body: JSON.stringify({ input: { readings: [percent === 'unknown' ? { kind: 'disk', thing: '/', unknown: true } : { kind: 'disk', thing: '/', device: 1, sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) },
         { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }, { kind: 'containers', answers }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
     return (await response.json() as { value: { changed: boolean } }).value.changed;
   };
@@ -155,7 +155,7 @@ it('does not read an open selection again for a write that was refused before it
 });
 
 it('reads an open selection again at once for a machine reading that changes a state a person is shown, and for no drift in the numbers between', async () => {
-  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { kind usedPercent answers level unknownSince } }');
+  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { kind usedPercent answers level unknownSince readAt } }');
   const shown = () => (window.data() as { boxReadings: { kind: string; usedPercent: number | null; answers: boolean | null; level: string; unknownSince: string | null }[] }).boxReadings;
   f.clock.advance(1000); expect(await f.reading(71)).toBe(true);
   await vi.waitFor(() => expect(shown()).toHaveLength(3));
@@ -184,6 +184,9 @@ it('reads an open selection again at once for a machine reading that changes a s
   await quiet([0, 0], true, true);
   await loud(72, true, () => expect(shown()[1]).toMatchObject({ kind: 'disk', usedPercent: 72, unknownSince: null }));
   await quiet([75, 71], true);
+  // Pause the worker long enough for its last reading to wear an “as of” marker.
+  f.clock.advance(16 * 60_000);
+  await loud(71, true, () => expect(shown()[1]).toMatchObject({ usedPercent: 71, level: 'ok', readAt: f.now() }));
 });
 
 it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {

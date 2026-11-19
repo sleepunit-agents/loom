@@ -593,7 +593,7 @@ On success the body sends its report alongside settlement. A body with validated
 
 ### A watched path can be swapped under the worker for one read
 
-- **What.** A worker reads the room on each watched path (`src/runtime/machine-check.ts`). It looks at every
+- **What.** A worker reads the room on each watched path (`src/runtime/machine-disk-helper.ts`). It looks at every
   step from `/` down as it is and requires a real directory, asks for the room of the path, then looks at
   every step again and requires the same directory (device and inode) at each. A step that is swapped for
   a link after the first look and swapped back before the second is not seen, and the room reported under
@@ -607,11 +607,19 @@ On success the body sends its report alongside settlement. A body with validated
   notice closed, and raised again by the next honest reading), or the reverse.
 - **What bounds it.** Only the numbers of that one path, on that one machine, for as long as the race is
   won again at every read. Nothing is read from or written to what the link points at. The paths every
-  worker watches without being told (`/`, its state directory, the container runtime's directory) are
+  worker watches without being told (`/` and its state directory) are
   not writable by bodies.
 - **The rule.** Do not put a watched path (`watchPaths`) inside a tree bodies can write
   (`docs/runtime/worker.md`).
 - **What would change the answer.** An `fstatfs` in Node, or a reason to watch a directory bodies write in.
+
+### A hung mount can leave a sleeping disk helper
+
+A kernel call on a hung mount can keep one helper asleep per watched path
+for each worker process that encounters it, until the mount responds or the
+machine restarts. The worker reports those paths as unknown, keeps reading
+the others, and exits normally on shutdown after signalling its helpers. A
+replacement worker can leave another asleep if the mount is still hung.
 
 ### A last-seen time reaches an open window up to a minute late
 
@@ -632,7 +640,8 @@ On success the body sends its report alongside settlement. A body with validated
   is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
   once: a condition raised, made urgent or cleared; the container runtime going from answering to not
   answering or back; a thing becoming unknown, readable again or stale; a thing watched for the first
-  time or no more. `src/shared-live-idle.test.ts` holds both halves.
+  time or no more; and a fresh reading after the previous one has aged out.
+  `src/shared-live-idle.test.ts` holds the stamp and ordinary-change paths.
 - **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
   was waiting is set again by the next such time written, a minute from then; with nothing more written it
   waits until the clock has caught up, as every other deadline of this program does.

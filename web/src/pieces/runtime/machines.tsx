@@ -8,14 +8,34 @@ import {useHouseholdZone} from '../../data/zone';
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
 type Card = {id:string; ask:string};
-const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } boxReadings { box kind thing usedPercent sizeMib freeMib answers level readAt unknownSince stale } agents { id } }';
+const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } boxReadings { box kind thing disk usedPercent sizeMib freeMib answers level readAt unknownSince stale } agents { id } }';
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
 function MachineReadings({readings}: {readings:Reading[]}) {
  const zone=useHouseholdZone();
- if(!readings.length)return null;
+ const [,tick]=useState(0);
+ const hasReadings=readings.length>0;
+ useEffect(()=>{
+  if(!hasReadings)return;
+  const timer=setInterval(()=>tick(value=>value+1),60_000);
+  return ()=>clearInterval(timer);
+ },[hasReadings]);
+ if(!hasReadings)return null;
  const disks=readings.filter(reading=>reading.kind==='disk').length,now=Date.now();
- const open=readings.map(conditionLine).filter((line):line is string=>!!line);
+ const groups=new Map<string,Reading[]>();
+ for(const reading of readings){
+  const key=reading.disk??JSON.stringify([reading.kind,reading.thing]);
+  const group=groups.get(key);
+  if(group)group.push(reading);
+  else groups.set(key,[reading]);
+ }
+ const open=[...groups.values()].map(group=>{
+  const latest=group.reduce((best,reading)=>(reading.readAt??'')>(best.readAt??'')||
+   (reading.readAt===best.readAt&&best.unknownSince&&!reading.unknownSince)?reading:best);
+  const paths=group.map(reading=>reading.thing);
+  const thing=paths.length>1?`The disk holding ${paths.slice(0,-1).join(', ')} and ${paths.at(-1)}`:latest.thing;
+  return conditionLine({...latest,thing});
+ }).filter((line):line is string=>!!line);
  return <div className="grid gap-1">
   {open.map(line=><p key={line} role="status"><strong>{line}</strong></p>)}
   <p className="text-muted-foreground">{readings.map(reading=>readingLine(reading,disks,now,zone)).join(' · ')}</p>
