@@ -11,7 +11,7 @@ import type { Snapshot } from '../../data';
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('MemoryActivity')?f.snapshots['activity.window']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots['generated.homeComms']:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],f.snapshots['generated.homeComms']?.records[0]?.member??''):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('MemoryActivity')?{status:f.snapshots['activity.window'].status,data:{memoryActivity:f.snapshots['activity.window'].records[0]??null}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?{status:f.snapshots['generated.homeComms'].status,data:{homeComms:f.snapshots['generated.homeComms'].records[0]??null}}:document.includes('DeskDoing')?{status:f.snapshots['generated.jobs'].status,data:{agentDoing:{more:(f.snapshots['generated.jobs'] as any).more??0,items:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({kind:'job',title:null,with:null,place:null,direct:null,ref:null,machine:null,href:null,since:row.queuedAt??'2026-11-14T01:00:00Z',state:'running',...row}))}}}:({status:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent'].status:'live',data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots['activity.window'],f.snapshots.person,f.snapshots['generated.homeComms'],f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('MemoryActivity')?f.snapshots['activity.window']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots['generated.homeComms']:document.includes('DeskCardTalk')?f.snapshots['conversation.summary']:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],f.snapshots['generated.homeComms']?.records[0]?.member??''):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('MemoryActivity')?{status:f.snapshots['activity.window'].status,data:{memoryActivity:f.snapshots['activity.window'].records[0]??null}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?{status:f.snapshots['generated.homeComms'].status,data:{homeComms:f.snapshots['generated.homeComms'].records[0]??null}}:document.includes('DeskDoing')?{status:f.snapshots['generated.jobs'].status,data:{agentDoing:{more:(f.snapshots['generated.jobs'] as any).more??0,items:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({kind:'job',title:null,with:null,place:null,direct:null,ref:null,machine:null,href:null,since:row.queuedAt??'2026-11-14T01:00:00Z',state:'running',...row}))}}}:({status:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent'].status:document.includes('DeskCardTalk')?(f.snapshots['conversation.summary']?.status??'live'):'live',data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},recent:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({venue:'loom',place:'th:'+row.id,label:row.id,lastAt:'2026-11-14T10:00:00Z',...row})).sort((a:any,b:any)=>b.lastAt.localeCompare(a.lastAt)).slice(0,variables?.limit??3),answered:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({venue:'loom',place:'th:'+row.id,label:row.id,lastAt:'2026-11-14T10:00:00Z',...row})).sort((a:any,b:any)=>b.lastAt.localeCompare(a.lastAt)).filter((row:any)=>row.lastAnswer).slice(0,1),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots['activity.window'],f.snapshots.person,f.snapshots['generated.homeComms'],f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['attention.ask','household.agentDisplay','activity.window','person','wake','clock','attention.agent','thread','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 vi.mock('../../data/operation',()=>({memberOperation:(name:string,input:object)=>f.once(name,input).result.then((result:any)=>{if(!result.ok)throw new Error(result.message);return result.value;})}));
@@ -109,16 +109,15 @@ it('clears failed asks and statuses independently while retaining idle owned car
 });
 
 const person=(slug:string,name:string,extra:Record<string,unknown>={})=>({id:`commons:${slug}`,slug,name,kind:'agent',...extra});
-it('uses live directory agent names and People links without adding relationship or project-only cards',async()=>{
+it('uses live directory agent names without adding relationship or project-only cards, and leaves People to the agent’s own page',async()=>{
   f.snapshots['person']=live([person('art','Zulu Fish'),person('mark','ALPHA Mark'),person('pond-bot','Not owned'),person('art','Relationship name',{id:'mark:art',agent:'mark'}),person('outsider','Outside')]);
-  const go=await draw();
+  await draw();
   const cards=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props['aria-label']?.endsWith(' card')).map((n:Node)=>n.props['aria-label']);
   expect(cards()).toEqual(['Zulu Fish card','ALPHA Mark card']);
   expect(text()).not.toContain('Relationship name');expect(text()).not.toContain('Not owned');
-  await act(async()=>tree!.root.findByProps({'aria-label':'Zulu Fish in People'}).props.onClick());expect(go).toHaveBeenCalledWith('/p/people-preview/person/art');expect(f.call).not.toHaveBeenCalled();
+  expect(tree!.root.findAllByProps({'aria-label':'Zulu Fish in People'})).toHaveLength(0);expect(f.call).not.toHaveBeenCalled();
   await publish('person',live([person('art','Beta Fish')]));
   expect(cards()).toEqual(['Beta Fish card','Mark card']);
-  expect(tree!.root.findAllByProps({'aria-label':'ALPHA Mark in People'})).toHaveLength(0);
 });
 it.each(['loading','offline','denied'] as const)('drops stale directory names and links on %s while retaining owned ids and Inbox previews',async(status)=>{
   const records=[person('art','Private display name')];f.snapshots['person']=live(records);f.snapshots['attention.ask']=live([ask('first')]);
@@ -157,7 +156,7 @@ it('leads each card with what its agent is doing, directly under its name, in se
   expect(text()).not.toContain('Runtime foreign');expect(text()).not.toContain('Runtime jobs');expect(text()).not.toContain('Current jobs');
   // Mark has nothing: one quiet line, and the word it reported.
   expect(words(tree!.root.findByProps({'aria-label':'Mark card'}))).toContain('Nothing right now.');
-  expect(words(tree!.root.findByProps({'aria-label':'Mark card'}).findByType('header').findByType('p'))).toBe('No status reported');
+  expect(words(tree!.root.findByProps({'aria-label':'Mark card'}).findByType('header').findByType('p'))).toBe('Quiet');
   await publish('generated.jobs',live([]));expect(text()).not.toContain('Plan the night');
   expect(words(tree!.root.findByProps({'aria-label':'Art card'}).findByType('header').findByType('p'))).toBe('Quiet');
 });
@@ -170,15 +169,45 @@ it.each(['loading','offline','denied'] as const)('clears what an agent was doing
   await publish('generated.jobs',live([{id:'returned',agent:'art',kind:'job',title:'Runtime returned'}]));expect(phrases()).toEqual(['Runtime returned']);
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
 });
-it('shows generated mailbox counts and opens exact last/unread destinations without legacy commands',async()=>{
- f.snapshots['generated.homeComms']=live([{member:'owner',agents:[],summaries:[{agent:'art',unread:102,last:{thread:'th:last',title:'Recent desk work',at:'2026-11-14T00:00:00Z'},first:{thread:'th:first'}}]}]);
- const go=await draw();expect(text()).toContain('Recent desk work');expect(buttons('102 unread threads')).toHaveLength(1);expect(f.once).not.toHaveBeenCalled();
- await click('102 unread threads');expect(go).toHaveBeenCalledWith('/p/comms-preview/thread/first');
- for(const status of ['loading','offline','denied'] as const){
-  await publish('generated.homeComms',{...f.snapshots['generated.homeComms'],status});
-  expect(text()).not.toContain('Recent desk work');expect(buttons('102 unread threads')).toHaveLength(0);
- }
- await publish('generated.homeComms',live([{member:'owner',agents:[],summaries:[]}]));expect(text()).toContain('No conversations yet.');
+const talk=(id:string,fields:Record<string,unknown>={})=>({id,agent:'art',label:`Talk ${id}`,venue:'loom',place:`th:${id}`,lastAt:'2026-11-14T10:00:00Z',...fields});
+const artCard=()=>tree!.root.findByProps({'aria-label':'Art card'});
+it('is a summary that leads to the agent’s own page: the name, the face and a quiet link all open it',async()=>{
+  const go=await draw();
+  const links=artCard().findByType('header').findAllByType('a');
+  expect(links.map((n:Node)=>n.props.href)).toEqual(Array(3).fill('/p/agents-preview/agent/art'));
+  expect(words(links[1])).toBe('Art');expect(words(links[2])).toBe('Open Art ›');
+  for(const link of links){go.mockClear();const preventDefault=vi.fn();await act(async()=>link.props.onClick({button:0,preventDefault}));expect(preventDefault).toHaveBeenCalled();expect(go).toHaveBeenCalledWith('/p/agents-preview/agent/art');}
+  // Steps, the reported line, the card's own ask and the People button live on that page, not here.
+  expect(tree!.root.findAllByProps({'aria-label':'Art recent steps'})).toHaveLength(0);expect(text()).not.toMatch(/Last steps|No recent steps|Runtime jobs|No status reported|No retained agent answer|No unread threads/);
+  expect(artCard().findAllByType('button').map(words)).toEqual([]);
+});
+it('shows the last answer in brief, opening its conversation, and nothing at all when there is none',async()=>{
+  f.snapshots['conversation.summary']=live([talk('old',{lastAnswer:{at:'2026-11-14T11:00:00Z',words:'Line one\nLine two\nLine three\nLine four'}}),talk('channel',{venue:'discord',place:'[]',label:'Discord channel #pond'})]);
+  const go=await draw(),answer=()=>artCard().findAllByProps({className:'desk-home-answer'});
+  expect(answer()).toHaveLength(1);expect(words(answer()[0])).toContain('Last answer · ');
+  // The whole text is in the block; the sheet clamps it to three lines.
+  expect(words(answer()[0].findByProps({className:'desk-home-answer-words'}))).toBe('Line one\nLine two\nLine three\nLine four');
+  expect(answer()[0].props.href).toBe('/p/comms-preview/thread/old');
+  await act(async()=>answer()[0].props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/old');
+  expect(tree!.root.findByProps({'aria-label':'Mark card'}).findAllByProps({className:'desk-home-answer'})).toHaveLength(0);
+  await publish('conversation.summary',live([talk('old')]));expect(answer()).toHaveLength(0);expect(text()).not.toContain('Line one');expect(text()).not.toMatch(/Last answer|No retained agent answer|Answer unavailable/);
+});
+it('lists at most three recent conversations as quiet links, marks the unread one, and ends with All conversations',async()=>{
+  f.snapshots['generated.homeComms']=live([{member:'owner',agents:[],summaries:[{agent:'art',unread:2,last:{thread:'th:d',title:'Talk d',at:'2026-11-14T00:00:00Z'},first:{thread:'th:b/1'}}]}]);
+  f.snapshots['conversation.summary']=live([talk('a',{lastAt:'2026-11-14T01:00:00Z'}),talk('b/1',{lastAt:'2026-11-14T03:00:00Z'}),talk('c',{lastAt:'2026-11-14T02:00:00Z',venue:'discord',place:'[]',label:'Discord channel #pond'}),talk('d',{lastAt:'2026-11-14T04:00:00Z'}),talk('e',{lastAt:'2026-11-14T00:30:00Z'}),talk('foreign',{agent:'other'})]);
+  const go=await draw(),nav=()=>artCard().findByProps({'aria-label':'Art conversations'});
+  const rows=nav().findAllByProps({className:'desk-home-talk'});
+  expect(rows.map((n:Node)=>words(n.findByProps({className:'desk-home-talk-title'})))).toEqual(['Talk d','Talk b/1','Discord channel #pond']);
+  expect(rows.map((n:Node)=>n.props.href)).toEqual(['/p/comms-preview/thread/d','/p/comms-preview/thread/b%2F1','/p/comms-preview/conversation/c']);
+  expect(rows.map((n:Node)=>n.findAllByProps({'aria-label':'Unread'}).length)).toEqual([0,1,0]);expect(words(nav())).toContain('Conversations · 2 unread');
+  expect(nav().findAllByType('button')).toHaveLength(0);
+  await act(async()=>rows[2].props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/comms-preview/conversation/c');
+  const all=nav().findByProps({className:'desk-home-all'});expect(words(all)).toBe('All conversations ›');
+  await act(async()=>all.props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');expect(f.once).not.toHaveBeenCalled();
+  // None, or a lost source: nothing is drawn, and no line says so.
+  expect(tree!.root.findByProps({'aria-label':'Mark card'}).findAllByProps({className:'desk-home-talks'})).toHaveLength(0);
+  await publish('conversation.summary',{status:'offline',records:f.snapshots['conversation.summary'].records});
+  expect(artCard().findAllByProps({className:'desk-home-talks'})).toHaveLength(0);expect(text()).not.toContain('Talk d');expect(text()).not.toMatch(/No conversations|unavailable/);
 });
 it('withdraws compose eligibility on current ownership, identity and query loss',async()=>{
  f.snapshots['generated.homeComms']=live([{member:'owner',agents:['art'],summaries:[]}]);await draw();
@@ -188,7 +217,7 @@ it('withdraws compose eligibility on current ownership, identity and query loss'
  await publish('generated.homeComms',live([{member:'owner',agents:[],summaries:[]}]));expect(composer()).toHaveLength(0);
  await publish('generated.homeComms',live([{member:'other',agents:['art'],summaries:[]}]));expect(composer()).toHaveLength(1);
  await publish('generated.homeComms',{...f.snapshots['generated.homeComms'],status:'offline'});expect(composer()).toHaveLength(0);
- await publish('generated.homeComms',live([]));expect(composer()).toHaveLength(0);expect(text()).toContain('Conversations unavailable.');
+ await publish('generated.homeComms',live([]));expect(composer()).toHaveLength(0);
 });
 
 it('folds only phone rosters over four, prioritizes current working state then asks then unread, and unmounts other readers',async()=>{
@@ -218,20 +247,6 @@ it('folds only phone rosters over four, prioritizes current working state then a
 });
 
 
-
-it('shows each owned agent’s latest three Activity entries with exact reader navigation and clears lost sources',async()=>{
- const entry=(id:string,agent='art',at='2026-11-13T18:00:00Z')=>({id,agent,at,day:'2026-11-13',hour:12,title:`Step ${id}`,line:'What landed',venue:'terminal',where:'Terminal',what:'work'});
- const window={id:'recent',to:'2026-11-13',days:['2026-11-13'],entries:[entry('old','art','2026-11-13T15:00:00Z'),entry('private','other'),entry('z'),entry('b'),entry('a'),entry('mark','mark')],conversations:'available',episodes:'available',truncated:false,expires:1};
- f.snapshots['activity.window']=live([window]);const go=await draw();
- const steps=tree!.root.findByProps({'aria-label':'Art recent steps'});
- const rows=steps.findAllByType('button');expect(rows.map((r:Node)=>words(r))).toEqual(['Step aWhat landed11/13/2026, 12:00:00 PM CT · Terminal','Step bWhat landed11/13/2026, 12:00:00 PM CT · Terminal','Step zWhat landed11/13/2026, 12:00:00 PM CT · Terminal']);
- expect(text()).not.toContain('Step old');expect(text()).not.toContain('Step private');expect(text()).toContain('Step mark');
- await act(async()=>rows[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/activity-preview/?who=art&e=a&day=2026-11-13');
- await publish('activity.window',live([{...window,entries:[],conversations:'unavailable',truncated:true}]));
- expect(text()).not.toContain('Step a');expect(text()).toContain('Some activity is unavailable.');expect(text()).toContain('Showing the available recent activity.');expect(text()).not.toContain('No recent steps.');
- await publish('activity.window',live([{...window,entries:[]}]));expect(text()).toContain('No recent steps.');
- for(const status of ['offline','denied','loading'] as const){await publish('activity.window',{status,records:[window]});expect(text()).not.toContain('Step a');expect(text()).toContain(status==='loading'?'Opening activity':'Activity unavailable.');}
-});
 
 it('opens an owned agent’s dedicated window from its Home face',async()=>{
  const go=await draw(),link=tree!.root.findByProps({'aria-label':'Open Art agent window'});expect(link.props.href).toBe('/p/agents-preview/agent/art');const preventDefault=vi.fn();await act(async()=>link.props.onClick({button:0,preventDefault}));expect(preventDefault).toHaveBeenCalled();expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');go.mockClear();await act(async()=>link.props.onClick({button:0,ctrlKey:true,preventDefault}));expect(go).not.toHaveBeenCalled();

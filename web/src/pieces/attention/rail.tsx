@@ -18,7 +18,8 @@ function CompanionSlot({agent}:{agent:string}) {
   useLayoutEffect(()=>{if(!el.current||!rail?.setScreen)return;rail.setScreen({agent,el:el.current},source.current);return()=>rail.setScreen?.(null,source.current);},[agent,rail?.setScreen]);
   return <div className="desk-rail-screen" ref={el}/>;
 }
-/** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
+/** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. A card is the agent's
+ * face, name and state, what it is doing, and its unread count; what needs you is said once, at the top. */
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useDeskRoster();
   const displays = useDeskAgentDisplays();
@@ -80,9 +81,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
           <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,doing.items.length), !!ask)} size={40} />
           <span><strong>{agent.name}</strong><span className="desk-rail-state">{said(doing.items.length)}</span></span>
         </button>}
-        <p className="desk-rail-work">{statuses.status==='live'?(status?.work||'Nothing right now'):'Agent status unavailable'}</p>
         <Doing doing={doing} name={agent.name} names={names} go={go} compact />
-        {ask&&<div className="desk-rail-ask"><span className="desk-rail-kicker">Needs you</span><WaitingRow agent={agent.id} go={go} onChange={waitingChanged}/>{(needs??0)>1&&<span className="desk-rail-kicker">{`${(needs??0)-1} more · Inbox`}</span>}</div>}
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
       </section>}</WithDoing>;
   };

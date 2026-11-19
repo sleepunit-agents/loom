@@ -68,10 +68,14 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>a.locator('.next-shell').count()).toBe(1);await b.goto(app.url);
   for(const page of [a,b]){
    await expect.poll(()=>page.getByRole('heading',{name:displayName,exact:true}).count()).toBe(1);
-   expect(await page.getByRole('button',{name:`${displayName} in People`,exact:true}).count()).toBe(1);
-   await expect.poll(()=>page.getByRole('region',{name:`${displayName} last steps`,exact:true}).getByText(activityTitle,{exact:true}).count()).toBe(1);
+   expect(await page.getByRole('link',{name:`Open ${displayName} ›`,exact:true}).count()).toBe(1);
   }
-  await b.getByRole('region',{name:`${displayName} last steps`,exact:true}).getByText(activityTitle,{exact:true}).click();
+  // An agent's steps are on its own page in the Agents app; Home's card is the summary that leads there.
+  await b.getByRole('link',{name:`Open ${displayName} ›`,exact:true}).click();
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/agents-preview/agent/art');
+  const steps=b.locator('[data-tile=agents]').getByRole('region',{name:'Last steps',exact:true});
+  await expect.poll(()=>steps.getByText(activityTitle,{exact:true}).count()).toBe(1);
+  await steps.getByText(activityTitle,{exact:true}).click();
   await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/activity-preview/');
   expect(new URL(b.url()).searchParams.get('who')).toBe('art');
   expect(new URL(b.url()).searchParams.get('e')).toBe(`d~art~${digest.id}`);

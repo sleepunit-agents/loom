@@ -2,9 +2,8 @@
 /* Home scrolls, and its width decides its layout (the queries below). A scrollbar that comes and goes would
    change that width and the layout with it, and the layout decides whether there is a scrollbar: at the
    width where one column turns into two, the page flickered between them. Its place is kept whether or not
-   it shows, so the width the queries read never moves. The same holds for a card's own scrolling details. */
+   it shows, so the width the queries read never moves. */
 .desk-home{container-type:inline-size;overflow:auto;scrollbar-gutter:stable;color:var(--v-text)}
-.desk-home-details{scrollbar-gutter:stable}
 .desk-home-content{display:grid;gap:16px;min-width:0;padding:4px 16px 16px}
 /* Needs you: a slim band over the cards. Its count, the first asks as chips, the Inbox at the end. Home is
    outside any window, so the kit's in-page control faces (kit/controls.css, .next-page) do not reach here:
@@ -36,13 +35,29 @@
 .desk-home-card h3{font:500 11px var(--font-data,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-3)}
 .desk-home-identity{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding-bottom:16px;border-bottom:1px solid var(--v-border)}
 .desk-home-identity h2{font:600 30px/1.1 var(--font-display);color:var(--v-text)}
+.desk-home-identity h2 a{color:inherit;text-decoration:none}
+/* The way to the whole of an agent: a quiet link at the end of the row its name is on. */
+.desk-home-open{margin-left:auto;padding:4px 2px;font-size:12.5px;white-space:nowrap;text-decoration:none;color:var(--v-text-2)}
+.desk-home-kicker{display:block;font:500 11px var(--font-data,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-3)}
+/* The last answer in brief: three lines, since the whole of it is one click away. */
+.desk-home-answer{display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--v-border);color:var(--v-text);text-decoration:none}
+.desk-home-answer-words{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:pre-wrap;font-size:13.5px;line-height:1.45}
+.desk-home-talks{display:grid;gap:4px;min-width:0}
+.desk-home-talks ul{display:grid;min-width:0;margin:0;padding:0;list-style:none}
+.desk-home-talk{display:flex;align-items:baseline;gap:8px;min-width:0;padding:5px 0;border-bottom:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
+.desk-home-talk[data-unread]{color:var(--v-text)}
+.desk-home-talk-title{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.desk-home-talk time{flex:none;font:11px var(--font-data,monospace);color:var(--v-text-3)}
+.desk-home-unread{flex:none;align-self:center;width:6px;height:6px;border-radius:50%;background:var(--loom-unread,var(--v-blue))}
+.desk-home-all{justify-self:start;padding:4px 2px;font-size:12.5px;text-decoration:none;color:var(--v-text-2)}
+@media(hover:hover){:is(.desk-home-open,.desk-home-all,.desk-home-talk):hover{color:var(--v-text)}.desk-home-identity h2 a:hover,.desk-home-talk:hover .desk-home-talk-title{text-decoration:underline;text-underline-offset:3px}.desk-home-answer:hover{border-color:var(--v-edge)}}
+.desk-home-card a:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media(pointer:coarse){.desk-home-talk{min-height:40px;align-items:center}:is(.desk-home-open,.desk-home-all){padding-block:10px}}
 .desk-home-identity p{flex-basis:100%;font:500 11px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.1em;color:var(--v-text-2)}
 @container(max-width:600px){.desk-home-content{padding:12px}.desk-needs-band{align-items:stretch;flex-direction:column;padding:10px 12px}.desk-needs-items{flex:none;flex-direction:column}.desk-need{flex-wrap:wrap}.desk-need-open{max-width:none}.desk-needs-all{margin-left:0}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
-.desk-home-columns{display:grid;gap:20px;min-width:0}
 .desk-home-compose{min-width:0;padding-top:12px;border-top:1px solid var(--v-border)}
 /* (The bar itself is Comms' own: comms/composer.css.) */
 .desk-home-compose>p{font-size:var(--fs-small);color:var(--v-text-2)}
-@container(min-width:760px){.desk-home-card:only-child .desk-home-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .desk-home-compact{min-width:0;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 88%,transparent)}
 .desk-home-flags{display:flex;gap:8px;align-items:center;font:500 10px var(--font-data,monospace);color:var(--v-blue)}
@@ -50,3 +65,7 @@
 .desk-home-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--v-text-3)}
 .desk-home-dot[data-state=working]{background:var(--v-blue)}
 .desk-home-dot[data-state=waiting]{background:var(--v-yellow)}
+
+/* The Agents app: one agent in full, inside a window, drawn with the kit's reader. */
+.desk-agent-app{padding:4px 16px 16px}
+.desk-agent-who{display:flex;align-items:center;gap:14px;min-width:0}

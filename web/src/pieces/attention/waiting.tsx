@@ -104,7 +104,7 @@ export function WaitingRow({agent,go,onChange}:{agent?:string;go(path:string):vo
   if(preview.status!=='live')return <p>Waiting item unavailable. <Button variant="outline" type="button" onClick={()=>go(waitingPath())}>Open Inbox</Button></p>;
   const item=preview.item;
   if(!item)return <Button variant="outline" type="button" onClick={()=>go(waitingPath())}>Open Inbox</Button>;
-  const words=item.body?.words||'Wording unavailable. Open Inbox.';
+  const words=item.body?.words||'Open it in the Inbox to read it.';
   return <Row layout="stack" title={item.volume==='dim'?words.split('\n')[0]:words}
     meta={item.volume==='dim'?undefined:item.body?.why} status={item.agent??'Household'} onClick={()=>go(waitingPath(item.id))}/>;
 }

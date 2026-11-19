@@ -37,16 +37,18 @@ afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();})
 it('keeps only the owned roster in saved order, opens the first unread thread and reads full asks in Inbox',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
- expect(text()).toContain('Checking the backup');expect(text()).toContain('1 unread thread');
+ expect(text()).not.toContain('Checking the backup');expect(text()).toContain('1 unread thread');
+ // A card is the face, name and state, what the agent is doing and its unread count: the ask is said once, at the top.
+ expect(tree.root.findAllByProps({className:'desk-rail-ask'})).toHaveLength(0);expect(tree.root.findByProps({'aria-label':'Art rail card'}).findAllByType('button')).toHaveLength(2);
  await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
- await act(async()=>tree.root.findByProps({className:'desk-rail-ask'}).findByType('button').props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
- await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark'}]);expect(text()).not.toContain('Art conversation');expect(text()).not.toContain('Checking the backup');
+ await act(async()=>tree.root.findByProps({className:'desk-rail-needs'}).findAllByType('button')[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
+ await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark'}]);expect(text()).not.toContain('Art conversation');
 });
 it.each(['offline','denied','loading'] as const)('drops stale names, asks, work and private thread metadata on %s',async(status)=>{
  f.snapshots.person=live([{id:'commons:art',slug:'art',kind:'agent',name:'Directory name'}]);
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});expect(text()).toContain('Directory name');
  for(const type of ['person','attention.ask','attention.agent','thread'])await publish(type,status);
- for(const word of ['Directory name','Proceed with backup?','Checking the backup','Unread conversation','1 unread thread','All clear.'])expect(text()).not.toContain(word);
+ for(const word of ['Directory name','Proceed with backup?','Unread conversation','1 unread thread','All clear.'])expect(text()).not.toContain(word);
  expect(text()).toContain('Art rail card');expect(text()).toContain('Conversations unavailable');
  await publish('attention.ownedAgent',status);expect(text()).not.toContain('Art rail card');
 });
@@ -165,9 +167,7 @@ it('shows the first waiting item and how many more, updates on answers, and clea
  ]);
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});
  const needs=()=>tree.root.findByProps({className:'desk-rail-needs'});
- const ask=()=>tree.root.findAllByProps({className:'desk-rail-ask'})[0];
  expect(words(needs())).toContain('2 more');
- expect(words(ask())).toContain('1 more');
  expect(text()).not.toContain('Already answered');
  await publish('attention.ask','live',[{...first,state:'answered'}]);
  expect(text()).not.toContain(' more');expect(text()).toContain('All clear.');

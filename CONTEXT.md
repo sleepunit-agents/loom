@@ -340,8 +340,9 @@ dock. Kept per person (`oneWindow`).
 _Avoid_: plain mode, single-window mode
 
 **Agent card**:
-An agent on the desktop (docs/specs/agent-desk.md): big on Home (its face, how it is, what it's on, its last thread, its
-next wake, what's unread, its ask, a composer), compact in the rail. The viewer's own agents only, always there,
+An agent on the desktop (docs/specs/agent-desk.md): big on Home, a summary that leads to the agent's page in the Agents
+app (its face, how it is, what it is doing, its last answer and latest conversations in brief, a composer); compact in
+the rail (its face, how it is, what it is doing, what's unread). The viewer's own agents only, always there,
 alphabetical by name.
 _Avoid_: widget (Home's small tiles, removed 2026-11-07), status card
 

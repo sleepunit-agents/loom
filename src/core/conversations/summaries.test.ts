@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -189,4 +190,17 @@ it('reads timestamp-only last answers without loading ciphertext or opening word
   expect(result.errors).toBeUndefined(); expect(result.data).toMatchObject({ recentConversations: [{ reply: { when: '2026-11-14T18:00:00.000Z' } }] });
   expect(f.opens()).toBe(0);
   expect(f.statements.filter(statement => statement.includes('from "messages"')).every(statement => !/select[^]*"words",/.test(statement))).toBe(true);
+});
+
+it('answers the card’s one request (web talk.tsx): recent conversations and the latest answered one, side by side', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Private answer' });
+  const source = /cardTalkQuery = `([^`]+)`/.exec(readFileSync(new URL('../../../web/src/pieces/attention/talk.tsx', import.meta.url), 'utf8'))![1];
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
+  const read = (id: string) => graphql({ schema, source, variableValues: { agent: 'art', limit: 3 }, contextValue: { viewer: { kind: 'member', id } } });
+  const mine = await read('alice'); expect(mine.errors).toBeUndefined();
+  expect(mine.data).toMatchObject({ recent: [{ id: f.thread.conversation, agent: 'art', venue: 'loom', place: f.thread.id }],
+    answered: [{ id: f.thread.conversation, venue: 'loom', place: f.thread.id, lastAnswer: { words: 'Private answer' } }] });
+  // Another member reads neither the conversation nor its answer.
+  const theirs = JSON.stringify((await read('bob')).data); expect(theirs).not.toContain(f.thread.id); expect(theirs).not.toContain('Private answer'); expect(theirs).toContain('"answered":[]');
 });
