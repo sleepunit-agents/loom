@@ -1,4 +1,6 @@
-.desk-agent-rail{display:grid;align-content:start;gap:12px;min-width:0;height:100%;overflow:auto;padding:0 0 12px 10px;border-left:1px solid var(--v-border);font-size:13px;overflow-wrap:anywhere}
+/* The rail folds its cards when they overflow and measures itself to decide (rail.tsx): its scrollbar keeps
+   its place, so showing one does not change the width it measures. */
+.desk-agent-rail{display:grid;align-content:start;gap:12px;min-width:0;height:100%;overflow:auto;scrollbar-gutter:stable;padding:0 0 12px 10px;border-left:1px solid var(--v-border);font-size:13px;overflow-wrap:anywhere}
 .desk-rail-needs{display:grid;gap:8px;text-align:left;padding:12px;background:color-mix(in srgb,var(--v-blue) 7%,var(--v-canvas));border-top:2px solid var(--v-blue);color:var(--v-text)}
 .desk-rail-kicker{display:block;font:500 10px var(--loom-font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-text-3)}
 .desk-rail-card{padding:14px 12px;background:color-mix(in srgb,var(--v-canvas) 88%,transparent);border:1px solid var(--v-border);display:grid;gap:10px}

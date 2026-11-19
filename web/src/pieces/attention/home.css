@@ -1,5 +1,10 @@
 /* Home uses the same canvas, accents and cut corners as the desk frames. */
-.desk-home{container-type:inline-size;color:var(--v-text)}
+/* Home scrolls, and its width decides its layout (the queries below). A scrollbar that comes and goes would
+   change that width and the layout with it, and the layout decides whether there is a scrollbar: at the
+   width where one column turns into two, the page flickered between them. Its place is kept whether or not
+   it shows, so the width the queries read never moves. The same holds for a card's own scrolling details. */
+.desk-home{container-type:inline-size;overflow:auto;scrollbar-gutter:stable;color:var(--v-text)}
+.desk-home-details{scrollbar-gutter:stable}
 .desk-home-content{display:grid;gap:16px;min-width:0;padding:4px 16px 16px}
 .desk-home-needs{padding:14px 18px;border-left:3px solid var(--v-blue);background:color-mix(in srgb,var(--v-blue) 6%,var(--v-canvas));backdrop-filter:blur(8px)}
 .desk-home-needs h2{font:600 12px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-blue)}

@@ -36,7 +36,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const opened = (ordered.find(a=>statuses.status==='live'&&latestStatus(statuses.records,a.id)?.state==='working')
     ?? ordered.find(a=>waiting.status==='live'&&(waiting.agents.get(a.id)??0)>0)
     ?? ordered.find(a=>conversations?.summaries.some(s=>s.agent===a.id&&s.unread)) ?? ordered[0])?.id;
-  return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
+  return <div className="desk-home h-full w-full min-w-0 max-w-full [overflow-wrap:anywhere]" data-attention-home="">
     <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(waitingPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
         <section aria-label="Needs you" className="desk-home-needs grid min-w-0 gap-2">
@@ -63,7 +63,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             }
             return <section key={agent.id} aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">
               <header className="desk-home-identity"><a className="inline-flex shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 [&>*]:pointer-events-none" aria-label={`Open ${agent.name} agent window`} href={agentPath(agent.id)} onClick={event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();go(agentPath(agent.id));}}><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!first)} size={96} /></a><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{needs ? ` · ${needs} needs you` : ''}</p></header>
-              <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
+              <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="desk-home-details grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {waiting.status !== 'live' ? <Unavailable status={waiting.status} label="agent waiting items" /> : first ? <List label={`${agent.name} first waiting item`}><WaitingRow agent={agent.id} go={go}/></List> : <p>Nothing needs you from {agent.name}.</p>}
               {(needs??0) > 1 && <Button variant="outline" onClick={()=>go(waitingPath())}>Inbox · +{needs!-1} more</Button>}
               <LastAnswer key={agent.id} agent={agent.id} name={agent.name} />
