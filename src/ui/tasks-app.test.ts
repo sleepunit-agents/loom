@@ -6,9 +6,9 @@ import type { TasksSelection, TaskSelection } from '../../web/src/pieces/tasks/q
 import { tasksQuery } from '../../web/src/pieces/tasks/query';
 const f = vi.hoisted(() => ({snapshot: {status:'loading'} as DataQuerySnapshot<TasksSelection>, read: vi.fn()}));
 vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string) => { f.read(query); return f.snapshot; }}));
-vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: unknown) => h('Tasks',props)}));
+// The open form is handed to the view, which draws it in the reader.
+vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: {form?: {node: ReactNode}}) => h('Tasks',props,props.form?.node)}));
 vi.mock('../../web/src/pieces/tasks/shared-form', () => ({SharedTaskForm: (props: unknown) => h('Form',props)}));
-vi.mock('../../web/src/components/ui/dialog', () => Object.fromEntries(['Dialog','DialogContent','DialogTitle'].map(name => [name, (props: {children?: ReactNode; open?: boolean}) => name === 'Dialog' && !props.open ? null : h(name, props, props.children)])));
 import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;

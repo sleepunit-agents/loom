@@ -9,7 +9,7 @@ export const tasksQuery = `query Tasks {
     id title type status priority position ownerKind owner project assigneeKind assignee
     goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
     commentCount isReady isShelved
-    changeTasksByTask { changeRow { id repository number state checks review } }
+    changeTasksByTask { changeRow { id repository number title state draft checks review waitingOn } }
     taskLinksByTask { task dependsOn type }
     taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
   }

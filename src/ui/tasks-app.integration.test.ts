@@ -109,9 +109,9 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await Promise.all([a.goto(`${app.url}/p/tasks-preview`), b.goto(`${app.url}/p/tasks-preview`)]);
     const row = (page: typeof a, name = title) => page.locator('[data-split-row]').filter({ hasText: name });
     for (const page of [a,b]) { await expect.poll(() => row(page).count()).toBe(1); expect(await page.getByText(hiddenTitle, { exact: true }).count()).toBe(0); await row(page).click(); }
-    for (const page of [a,b]) { await expect.poll(() => page.getByRole('link', { name:'acme/app#3', exact:true }).locator('..').textContent()).toContain('passing · approved'); expect(await page.getByRole('link', { name:'secret/app#9', exact:true }).count()).toBe(0); }
+    for (const page of [a,b]) { await expect.poll(() => page.getByRole('group', { name:'Pull request acme/app#3', exact:true }).textContent()).toContain('Checks passing · Approved'); expect(await page.getByRole('link', { name:'secret/app#9', exact:true }).count()).toBe(0); }
     app.data.writes.run(() => app.db.update(s.changes).set({ checks:'failing', review:'changes_requested' }).where(eq(s.changes.id,'github:acme/app#3')).run());
-    for (const page of [a,b]) await expect.poll(() => page.getByRole('link', { name:'acme/app#3', exact:true }).locator('..').textContent()).toContain('failing · changes requested');
+    for (const page of [a,b]) await expect.poll(() => page.getByRole('group', { name:'Pull request acme/app#3', exact:true }).textContent()).toContain('Checks failing · Changes requested');
     step('comment');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Comment', exact: true }).click();
     let form = a.getByRole('form', { name: 'Add comment', exact: true });
@@ -126,23 +126,24 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await form.getByRole('button', { name: 'Set priority', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('t-1 · P0 · open', { exact: true }).count()).toBe(1);
     await b.reload(); await expect.poll(() => b.getByText('Shared HTTP comment', { exact: true }).count()).toBe(1);
-    await expect.poll(() => b.getByRole('link', {name:'acme/app#3',exact:true}).locator('..').textContent()).toContain('failing · changes requested');
+    await expect.poll(() => b.getByRole('group', {name:'Pull request acme/app#3',exact:true}).textContent()).toContain('Checks failing · Changes requested');
     step('Edit');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
     form = a.getByRole('form', { name: 'Edit task', exact: true });
     await form.getByLabel('Done when', { exact: true }).fill('Water flows after the browser edit');
-    await form.getByRole('button', { name: 'Edit task', exact: true }).click();
+    await form.getByRole('button', { name: 'Save changes', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Water flows after the browser edit', { exact: true }).count()).toBe(1);
-    for (const [action, relation, label] of [['Parent','parent-child','Parent task'], ['Blockers','blocks','Blocking task']] as const) {
+    // Parent and Blocked by are behind More; each form lists what the task has (with its own Remove) and adds one.
+    for (const [action, title, relation, label, add] of [['Parent','Parent','parent-child','Parent task','Set parent'], ['Blocked by…','Blocked by','blocks','Blocking task','Add blocker']] as const) {
       for (const remove of [false, true]) {
         step(`${action} remove=${remove}`);
-        await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: action, exact: true }).click();
-        form = a.getByRole('form', { name: action, exact: true });
-        await form.getByLabel(label, { exact: true }).selectOption('t-2');
-        if (remove) await form.getByLabel('Remove this relation', { exact: true }).check();
-        await form.getByRole('button', { name: action, exact: true }).click();
+        await a.getByRole('button', { name: 'More for this task', exact: true }).click();
+        await a.getByRole('group', { name: 'More for this task', exact: true }).getByRole('button', { name: action, exact: true }).click();
+        form = a.getByRole('form', { name: title, exact: true });
+        if (remove) await form.getByRole('button', { name: /^Remove / }).click();
+        else { await form.getByLabel(label, { exact: true }).selectOption('t-2'); await form.getByRole('button', { name: add, exact: true }).click(); }
         await expect.poll(() => app.db.select().from(s.taskLinks).where(and(eq(s.taskLinks.task, 't-1'), eq(s.taskLinks.dependsOn, 't-2'), eq(s.taskLinks.type, relation))).all().length).toBe(remove ? 0 : 1);
-        for (const page of [a,b]) await expect.poll(() => page.getByRole('group', { name: action === 'Parent' ? 'Parent' : 'Blocked by', exact: true }).count()).toBe(remove ? 0 : 1);
+        for (const page of [a,b]) await expect.poll(() => page.getByRole('group', { name: title, exact: true }).count()).toBe(remove ? 0 : 1);
       }
     }
     for (const project of ['bank','pond']) {
@@ -155,29 +156,29 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     }
     step('Claim');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Claim', exact: true }).click();
-    await a.getByRole('form', { name: 'Claim task', exact: true }).getByRole('button', { name: 'Claim task', exact: true }).click();
-    for (const page of [a,b]) await expect.poll(() => page.getByText('Assigned to member sam', { exact: true }).count()).toBe(1);
+    // Claim is done at once: no form, and the task then says who has it, by name.
+    expect(await a.getByRole('form').count()).toBe(0);
+    for (const page of [a,b]) await expect.poll(() => page.getByText('Assigned to', { exact: true }).count()).toBe(1);
     step('Unclaim');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Unclaim', exact: true }).click();
-    await a.getByRole('form', { name: 'Unclaim task', exact: true }).getByRole('button', { name: 'Unclaim task', exact: true }).click();
     await expect.poll(() => a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Claim', exact: true }).count()).toBe(1);
     step('Ask a person');
-    await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Ask a person', exact: true }).click();
+    await a.getByRole('button', { name: 'More for this task', exact: true }).click();
+    await a.getByRole('group', { name: 'More for this task', exact: true }).getByRole('button', { name: 'Ask a person', exact: true }).click();
     form = a.getByRole('form', { name: 'Ask a person', exact: true });
     await form.getByLabel('Person', { exact: true }).selectOption('lee');
     for (const [label,text] of [['Question','Which pump?'],['If yes','Order it'],['If no','Wait']]) await form.getByLabel(label, { exact: true }).fill(text);
-    await form.getByRole('button', { name: 'Ask a person', exact: true }).click();
+    await form.getByRole('button', { name: 'Ask', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Which pump?', { exact: true }).count()).toBe(1);
     expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.waitsOnKind, 'task'), eq(s.inbox.waitsOnId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'lee', answers: 'yes-no' })]));
     step('Close');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
     form = a.getByRole('form', { name: 'Close task', exact: true });
-    await form.getByLabel('Reason (cancelled marks it cancelled)', { exact: true }).fill('Finished in browser');
+    await form.getByLabel('Reason', { exact: true }).fill('Finished in browser');
     await form.getByRole('button', { name: 'Close task', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Finished in browser', { exact: true }).count()).toBe(1);
     step('Reopen');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Reopen', exact: true }).click();
-    await a.getByRole('form', { name: 'Reopen task', exact: true }).getByRole('button', { name: 'Reopen task', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('open · P0 · pond', {exact:true}).count()).toBe(1);
     step('create at390');
     await a.setViewportSize({ width: 390, height: 900 });

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import Tasks, { type TasksAppProps } from '../pieces/tasks';
 import { useDataQuery } from './graphql';
 import { useTaskCommandSubmitter } from './task-command';
+import { useAgentNames } from './names';
+import { useHouseholdZone } from './zone';
+import { displayName } from '../kit/words';
 
 import { taskChoicesQuery } from '../pieces/tasks/query';
 type Choices = { projects: { id: string; name: string; projectMembersByProject: {member:string}[] }[]; agents: { id: string }[]; members: { id: string }[] };
@@ -9,6 +12,7 @@ type Choices = { projects: { id: string; name: string; projectMembersByProject: 
 export default function TasksScreen(props: TasksAppProps = {}) {
   const submit = useTaskCommandSubmitter();
   const choices = useDataQuery<Choices>(taskChoicesQuery);
+  const names = useAgentNames(), zone = useHouseholdZone();
   const [member, setMember] = useState<string>();
   useEffect(() => {
     const controller = new AbortController();
@@ -23,7 +27,8 @@ export default function TasksScreen(props: TasksAppProps = {}) {
   const data = choices.status === 'live' ? choices.data : undefined;
   return <Tasks {...props} questionFor={props.questionFor ?? member}
     submit={props.submit ?? submit}
-    people={props.people ?? [...Array.from(new Set([...(member ? [member] : []), ...(data?.members ?? []).map(person=>person.id), ...(data?.projects ?? []).flatMap(project=>project.projectMembersByProject.map(edge=>edge.member))]), id=>({kind:'member' as const,id,label:id})),
-      ...(data?.agents ?? []).map(agent => ({ kind: 'agent' as const, id: agent.id, label: agent.id }))]}
+    people={props.people ?? [...Array.from(new Set([...(member ? [member] : []), ...(data?.members ?? []).map(person=>person.id), ...(data?.projects ?? []).flatMap(project=>project.projectMembersByProject.map(edge=>edge.member))]), id=>({kind:'member' as const,id,label:displayName(id,names)})),
+      ...(data?.agents ?? []).map(agent => ({ kind: 'agent' as const, id: agent.id, label: displayName(agent.id,names) }))]}
+    names={props.names ?? names} zone={props.zone ?? zone}
     projects={props.projects ?? (data?.projects ?? []).map(project => ({ id: project.id, label: project.name }))} />;
 }
