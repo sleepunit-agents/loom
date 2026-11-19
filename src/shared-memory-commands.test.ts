@@ -561,7 +561,7 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  // A note: a new path only, and who it was written for is in the note's own record, which the body does not write.
  expect((await api('memory','noteWrite',{path:'guests/door',body:'The code is 1234',lifespan:'short'},'held-note',token)).status).toBe(200);
  const note=(path:string)=>new Database(join(f.home,'agents/art/notes.db'),{readonly:true}).prepare('SELECT body,by FROM notes WHERE path=?').get(path) as {body:string;by:string};
- for(const [id,input] of [['cas',{path:'claims/first',expectedBody:null}],['install',{path:'lane-state/new'}]] as const){
+ for(const [id,input] of [['cas',{path:'claims/first',expectedBody:null}],['install',{path:'lane-state/new'}],['verdict',{path:'alert-verdicts/alert/first'}]] as const){
   expect((await api('memory','noteWrite',{...input,body:'claim',lifespan:'keep'},'held-'+id,token)).status).toBe(403);
   expect(note(input.path)).toBeUndefined();
  }
