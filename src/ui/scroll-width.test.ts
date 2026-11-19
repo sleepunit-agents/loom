@@ -50,3 +50,16 @@ it('centres a dock key\'s name by its margins, with no transform or translate to
   expect(rules.some(body => /left:-200px;right:-200px;margin-inline:auto;transform:none/.test(body) && /width:max-content/.test(body))).toBe(true);
   expect(rules.filter(body => /(^|;)\s*translate\s*:/.test(body) || /transform:\s*translate/.test(body))).toEqual([]);
 });
+
+it('names the order of the cascade layers before any sheet of the app or the kit opens one', () => {
+  // A layer's place is fixed where it is first named, and the build puts the kit's sheets ahead of the app's. A kit
+  // sheet that opened `components` first put it under `base`, whose reset then took a bare select's padding and corners.
+  const order = '@layer properties, theme, base, components, utilities;';
+  const opening = sheets.filter(sheet => !sheet.startsWith('styles/') && /@layer\s+[a-z-]+\s*\{/.test(readFileSync(join(root, sheet), 'utf8')));
+  expect(opening).toEqual(expect.arrayContaining(['index.css', 'kit/controls.css', 'kit/reader.css']));
+  for (const sheet of opening) {
+    const css = readFileSync(join(root, sheet), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css.indexOf(order), sheet).toBeGreaterThanOrEqual(0);
+    expect(css.indexOf(order), sheet).toBeLessThan(css.search(/@layer\s+[a-z-]+\s*\{/));
+  }
+});

@@ -1,3 +1,7 @@
+/* The order of the cascade's layers, said before any of them is opened. A layer's place is fixed where it is first
+   named, and the build puts the kit's sheets ahead of the app's: without this line `components` came first and so
+   lowest, under the reset in `base`, and a bare select in a page kept no padding or corners (2026-11-19). */
+@layer properties, theme, base, components, utilities;
 /* What an open item is made of (reader.tsx), as the "how it works" site draws a reader (site.css: .sp__read,
    .meta, h4, .kv, .sec, .lbl, .chip): a quiet mono line, a title, facts as label and value, ruled sections with a
    small uppercase label, and body text. Nothing here is ever cut off: every value wraps, ids included. */
