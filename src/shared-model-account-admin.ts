@@ -53,8 +53,8 @@ export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,
   may:(viewer,input)=>owns(viewer,input.account),
   run(ctx,input){
    // What was learned about its sign-ins there goes with it, and any notice about them closes.
-   new AccountLogins(db,now).forget(input.account,input.box);
-   if(signIns.signedOut(input,input.account,input.box))ctx.changed('modelAccount',input.account);
+   const forgot=new AccountLogins(db,now).forget(input.account,input.box);
+   if(signIns.signedOut(input,input.account,input.box)||forgot)ctx.changed('modelAccount',input.account);
    return{saved:true as const};
   },
   // Membership changes share the existing observation generation. A remove/

@@ -16,6 +16,9 @@ export type LoginReason = typeof LOGIN_REASONS[number];
 export interface LoginRead { state: 'signed-in' | 'signed-out'; expiresAt?: string; why?: LoginReason }
 type Read = (path: string) => Promise<string>;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+/** The last instant of the year 9999: the latest time the household database keeps. */
+const LAST_MS = 253_402_300_799_999;
+const READ_MS = 5_000;
 const filled = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
 const out = (why: LoginReason): LoginRead => ({ state: 'signed-out', why });
 
@@ -33,30 +36,35 @@ async function file(read: Read, path: string): Promise<{ json: Record<string, un
   try { return { json: object(JSON.parse(text)) }; } catch { throw new Error('Sign-in file unreadable'); }
 }
 
-const readers: Record<string, (directory: string, read: Read, now: number) => Promise<LoginRead>> = {
+const readers = {
   /** Claude Code keeps the time its renewing token ends, which is when a person has to sign in again. */
-  async claude(directory, read, now) {
+  async claude(directory: string, read: Read, now: number): Promise<LoginRead> {
     const found = await file(read, join(directory, '.credentials.json'));
     if ('none' in found) return found.none;
     const login = object(found.json.claudeAiOauth);
     if (!filled(login.refreshToken) && !filled(login.accessToken)) return out('no-sign-in');
     const ends = login.refreshTokenExpiresAt;
-    if (typeof ends !== 'number' || !Number.isFinite(ends) || ends <= 0 || ends > 8.64e15) return { state: 'signed-in' };
+    // An end that is no time loom can keep (not a number, or past the year 9999) is no known end.
+    if (typeof ends !== 'number' || !Number.isFinite(ends) || ends <= 0 || ends > LAST_MS) return { state: 'signed-in' };
     const expiresAt = new Date(ends).toISOString();
     return ends <= now ? out('ended') : { state: 'signed-in', expiresAt };
   },
   /** Codex keeps no end time for a sign-in: it is there or it is not. */
-  async codex(directory, read) {
+  async codex(directory: string, read: Read): Promise<LoginRead> {
     const found = await file(read, join(directory, 'auth.json'));
     if ('none' in found) return found.none;
-    return filled(object(found.json.tokens).refresh_token) || filled(found.json.OPENAI_API_KEY) ? { state: 'signed-in' } : out('no-sign-in');
+    const tokens = object(found.json.tokens);
+    return filled(tokens.refresh_token) || filled(tokens.access_token) || filled(found.json.OPENAI_API_KEY) ? { state: 'signed-in' } : out('no-sign-in');
   },
 };
 
+/** The harnesses whose sign-in the worker can read: the only ones a sign-in record can name. */
+export const LOGIN_HARNESSES = ['claude', 'codex'] as const satisfies readonly (keyof typeof readers)[];
 /** Whether this harness's sign-in is one the worker can read. */
-export const watchesLogin = (harness: string) => Object.hasOwn(readers, harness);
+export const watchesLogin = (harness: string) => (LOGIN_HARNESSES as readonly string[]).includes(harness);
 /** Throws when the file is there and cannot be read or is not whole: that is not knowing, which is not signed out. */
-export function readLogin(harness: string, directory: string, options: { read?: Read; now?: () => number } = {}): Promise<LoginRead> {
+export async function readLogin(harness: string, directory: string, options: { read?: Read; now?: () => number } = {}): Promise<LoginRead> {
   if (!watchesLogin(harness)) throw new Error('Sign-in of this harness is not watched');
-  return readers[harness](directory, options.read ?? (path => readFile(path, 'utf8')), (options.now ?? Date.now)());
+  // A file on a mount that has stopped answering must not hold up the other sign-ins or the worker's stop.
+  return readers[harness as typeof LOGIN_HARNESSES[number]](directory, options.read ?? (path => readFile(path, { encoding: 'utf8', signal: AbortSignal.timeout(READ_MS) })), (options.now ?? Date.now)());
 }

@@ -312,7 +312,7 @@ it('refreshes from the normal worker before claims and reports later failure thr
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => { paths.push(new URL(String(input)).pathname); return f.root.http.fetch(new Request(input, init)); });
   cleanup.push(() => { fetcher.mockRestore(); });
   const command = { command: '/fake/reader', args: [], cwd: '/fake', env: {} };
-  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, accountUsage: { readers: [{ account: f.identity, command }] }, loginCheckMs: 3_600_000 };
+  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, accountUsage: { readers: [{ account: f.identity, command }] } };
   let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
   let stop!: () => void; const ended = new Promise<void>(resolve => { stop = resolve; });
   let attempts = 0, scans = 0;
@@ -321,8 +321,6 @@ it('refreshes from the normal worker before claims and reports later failure thr
     containerExecutor: () => ({} as never),
     run: async input => { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true); expect(await input.control.next()).toMatchObject({ id: 'quota-ready-job', box: 'worker', model: 'model', account: 'account', harness: 'native' }); expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' }); release(); await ended; },
     pause: async (ms, signal) => {
-      // The sign-in check waits on its own interval: it reports once and then stays out of this test's way.
-      if (ms === 3_600_000) return new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
       expect(ms).toBe(60_000);
       if (scans++ === 0) await ready;
       else { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false); stop(); await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }

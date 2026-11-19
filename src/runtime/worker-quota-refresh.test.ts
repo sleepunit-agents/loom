@@ -16,6 +16,8 @@ function fixture() {
     on: (name: string, stop: () => void) => { handlers.set(name, stop); }, off: (name: string) => { handlers.delete(name); },
     error: vi.fn(), output: vi.fn(), health: vi.fn(async (_input: { signal: AbortSignal; facts?: readonly string[] }) => ({ ok: true as const })), usage: vi.fn((_plan: WorkerCommand, _options: { signal: AbortSignal; timeoutMs?: number }) => provider), usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })),
     reportUsage: vi.fn(async (_remote: unknown, _observation: { basis: string }) => ({ recorded: true })), usageUnavailable: vi.fn(async () => ({ recorded: true })),
+    // The sign-in report every worker makes: stubbed, so that these tests reach no network and count only their own lines.
+    reportLogins: vi.fn(async () => ({ changed: 0 })),
     control: vi.fn(() => ({} as never)), containerExecutor: vi.fn(() => ({} as never)),
     run: vi.fn(async ({ signal }: { signal: AbortSignal }) => { signal.addEventListener('abort', () => stopRun.resolve(), { once: true }); await stopRun.promise; }),
     pause: vi.fn(async (_ms: number, signal: AbortSignal) => { await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }) };

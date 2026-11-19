@@ -61,10 +61,10 @@ const configSchema = z.object({
   // An entry is the machine's directory and nothing else. A `target` is what an entry used to carry: read
   // here so that the worker can stop on it with its own line (WorkerStop 'retired').
   accountLogins: z.record(z.string().min(1), z.record(z.string().min(1), z.object({ source: z.string(), target: z.unknown().optional() }).strict())).optional(),
-  /** The machine user's own sign-ins, by account and harness: the directory each harness keeps its sign-in in
-   * (for example `~/.claude`). They are only watched, so their owner hears when one is gone or ending; no body
+  /** The machine user's own sign-ins, by account and harness: the directory each harness keeps its sign-in in,
+   * as a whole path (for example `/home/art/.claude`; nothing in it is expanded). They are only watched, so their owner hears when one is gone or ending; no body
    * is given them. The sign-ins houses mount (accountLogins) are watched without being named here. */
-  hostLogins: z.record(z.string().min(1), z.record(z.string().min(1), z.object({ source: z.string().min(1) }).strict())).optional(),
+  hostLogins: z.record(z.string().min(1).max(200), z.record(z.string().min(1), z.object({ source: z.string().startsWith('/') }).strict())).optional(),
   /** How often the worker reads the sign-in files on its machine. */
   loginCheckMs: z.number().int().min(1_000).max(3_600_000).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
@@ -109,13 +109,15 @@ export async function workerProgram(input: {
   usageUnavailable?: typeof reportWorkerAccountUnavailable;
   health?: typeof reportWorkerHealth;
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** The wait between two reads of the sign-in files. */
+  loginPause?: (ms: number, signal: AbortSignal) => Promise<void>;
   run?: typeof runWorker; control?: typeof httpWorkerControl;
   containerExecutor?: typeof containerWorkerExecutor;
 }): Promise<number> {
   const abort = new AbortController();
   const stop = () => abort.abort();
   let executor: WorkerExecutor | undefined;
-  let diagnostics: Promise<void> | undefined;
+  let diagnostics: Promise<void> | undefined, loginChecks: Promise<void> | undefined;
   // The stage the worker is in: what a failure there is reported as (worker-stop.ts).
   let stage: WorkerStopStage = 'usage';
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
@@ -177,14 +179,41 @@ export async function workerProgram(input: {
     const reportHealth = async () => (input.health ?? reportWorkerHealth)({
       ...remote, facts: config.facts, slots: config.reportOnly ? 0 : slots,
     });
-    async function poll(intervalMs: number, failure: string, check: () => Promise<void>) {
+    async function poll(intervalMs: number, failure: string, check: () => Promise<void>, pause = wait) {
       while (!abort.signal.aborted) {
         try { await check(); }
         catch { if (!abort.signal.aborted) input.error(failure); }
         if (abort.signal.aborted) return;
-        try { await wait(intervalMs, abort.signal); } catch { return; }
+        try { await pause(intervalMs, abort.signal); } catch { return; }
       }
     }
+    // What the sign-in files on this machine say, for every sign-in houses mount and every one of the machine's
+    // own that is named. Loom is told when that changes, and again every so often so that it knows the answer
+    // is still current and so that a record loom dropped meanwhile comes back. The list is everything this
+    // worker watches, also when that is nothing and also from a worker that only reports: loom stops watching
+    // what is no longer named. A file that cannot be read is named as unknown, so that it alone keeps what
+    // loom last learned and the others are told. A sign-in is said to be gone only when two reads in a row
+    // found it gone: a harness that replaces its file leaves a moment with none, and that is not signed out.
+    const watched = [['containers', config.accountLogins], ['host', config.hostLogins]] as const;
+    let lastLogins: string | undefined, lastLoginsAt = -Infinity, foundGone = new Set<string>();
+    // Started once the worker is otherwise ready (below), on its own clock so that it shares no timing with the usage refresh.
+    const loginPause = input.loginPause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); });
+    const watchLogins = () => poll(config.loginCheckMs ?? 60_000, 'Worker sign-in state unavailable\n', async () => {
+      const logins: WorkerLoginCheck[] = [], gone = new Set<string>();
+      for (const [place, accounts] of watched) for (const [account, harnesses] of Object.entries(accounts ?? {})) for (const [harness, login] of Object.entries(harnesses)) {
+        if (!watchesLogin(harness)) continue;
+        let read: Awaited<ReturnType<typeof readLogin>> | { state: 'unknown' };
+        try { read = await (input.readLogin ?? readLogin)(harness, login.source); } catch { read = { state: 'unknown' }; }
+        const name = JSON.stringify([account, harness, place]);
+        if (read.state === 'signed-out') { gone.add(name); if (!foundGone.has(name)) read = { state: 'unknown' }; }
+        logins.push({ account, harness, place, ...read });
+      }
+      foundGone = gone;
+      const said = JSON.stringify(logins);
+      if (abort.signal.aborted || (said === lastLogins && performance.now() - lastLoginsAt < LOGIN_REPORT_MS)) return;
+      await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
+      lastLogins = said; lastLoginsAt = performance.now();
+    }, loginPause);
     if (config.reads?.length || config.reportOnly) {
       const reads = offeredMachineReads(config.reads ?? []);
       const reader = (input.readRemote ?? workerMachineReads)(remote);
@@ -202,7 +231,7 @@ export async function workerProgram(input: {
           : {ok: false, output: 'Machine read unavailable'};
         await reader.done({id: request.id, ...result});
       });
-      if (config.reportOnly) { await diagnostics; return 0; }
+      if (config.reportOnly) { loginChecks = watchLogins(); await diagnostics; return 0; }
     }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
     const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
@@ -262,26 +291,7 @@ export async function workerProgram(input: {
       if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
       else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: signIn.timeoutMs });
     });
-    // What the sign-in files on this machine say, for every sign-in houses mount and every one of the machine's
-    // own that is named. Loom is told when that changes, and again every so often so that it knows the answer
-    // is still current and so that a record loom dropped meanwhile comes back. The list is everything this
-    // worker watches, also when that is nothing: loom stops watching what is no longer named. A file that
-    // cannot be read is named as unknown, so that it alone keeps what loom last learned and the others are told.
-    const watched = [['containers', config.accountLogins], ['host', config.hostLogins]] as const;
-    let lastLogins: string | undefined, lastLoginsAt = -Infinity;
-    const loginChecks = poll(config.loginCheckMs ?? 60_000, 'Worker sign-in state unavailable\n', async () => {
-      const logins: WorkerLoginCheck[] = [];
-      for (const [place, accounts] of watched) for (const [account, harnesses] of Object.entries(accounts ?? {})) for (const [harness, login] of Object.entries(harnesses)) {
-        if (!watchesLogin(harness)) continue;
-        let read: Awaited<ReturnType<typeof readLogin>> | { state: 'unknown' };
-        try { read = await (input.readLogin ?? readLogin)(harness, login.source); } catch { read = { state: 'unknown' }; }
-        logins.push({ account, harness, place, ...read });
-      }
-      const said = JSON.stringify(logins);
-      if (abort.signal.aborted || (said === lastLogins && performance.now() - lastLoginsAt < LOGIN_REPORT_MS)) return;
-      await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
-      lastLogins = said; lastLoginsAt = performance.now();
-    });
+    loginChecks = watchLogins();
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
@@ -299,12 +309,12 @@ export async function workerProgram(input: {
         if (failed) throw failed.reason;
       }
     }
-    finally { abort.abort(); await settled; await signIns; await loginChecks; }
+    finally { abort.abort(); await settled; await signIns; }
     return 0;
   } catch (error) {
     // One fixed line and code for the stage; never the error's own words.
     const at = error instanceof WorkerStop ? error.stage : stage;
     input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
-  } finally { abort.abort(); await diagnostics; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
+  } finally { abort.abort(); await diagnostics; await loginChecks; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

@@ -79,9 +79,9 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     if (!roles.length) return { box: id, reason: 'No allowed model and harness can run this job.' };
     let signedOut = false;
     for (const role of roles) {
-      const account = accounts.find(account => account.provider === role.provider
-        && signedIn.some(binding => binding.account === account.id && binding.box === id)
-        && !(gone.some(login => login.account === account.id && login.box === id && login.harness === role.harness) && (signedOut = true)));
+      const enabled = accounts.filter(account => account.provider === role.provider && signedIn.some(binding => binding.account === account.id && binding.box === id));
+      const account = enabled.find(account => !gone.some(login => login.account === account.id && login.box === id && login.harness === role.harness));
+      if (!account && enabled.length) signedOut = true;
       if (account) return { box: id, placement: { box: id, model: role.model, account: account.id, harness: role.harness },
         missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     }
