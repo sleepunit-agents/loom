@@ -37,6 +37,18 @@ def records(stream):
 
 def project(kind, stream, now):
     result = {'observedAt': now}
+    if kind == 'login-expiry':
+        raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise ValueError()
+        expiry = json.loads(raw)['claudeAiOauth']['refreshTokenExpiresAt']
+        if type(expiry) is not int:
+            raise ValueError()
+        if expiry > 10**10:
+            expiry //= 1000
+        if not 0 < expiry <= 253402300799:
+            raise ValueError()
+        return dict(result, refreshExpiresAt=expiry)
     if kind == 'mirror-freshness':
         # The checker emits its counts on stdout on both fresh and stale results.
         raw = stream.read(257)
@@ -94,7 +106,7 @@ def project(kind, stream, now):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt'])
+    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry'])
     args = parser.parse_args()
     try:
         result = project(args.kind, sys.stdin.buffer, int(time.time()))

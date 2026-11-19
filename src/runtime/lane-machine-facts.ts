@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt'] as const;
+export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry'] as const;
 export type LaneFact = typeof laneFactKinds[number];
 export const factDirectory = '/var/lib/loom/machine-facts';
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -13,6 +13,7 @@ const alert = z.strictObject({
   verdict: z.enum(['real','fixed','false-alarm']).optional(),
 });
 const schemas = {
+  'login-expiry': z.strictObject({ observedAt: stamp, refreshExpiresAt: stamp.max(253402300799) }),
   'mirror-freshness': z.strictObject({ observedAt: stamp, trackedMax: count, liveMax: stamp }),
   'alert-ledger': z.strictObject({ observedAt: stamp, since: stamp, entries: z.array(alert).max(100) }),
   'cleanup-receipt': z.strictObject({

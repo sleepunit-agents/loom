@@ -24,12 +24,13 @@ Use **Request read grant** or **Request revocation** under the machine's explici
 
 ### Art lane observations
 
-The optional reads `mirror-freshness`, `alert-ledger`, and `cleanup-receipt` take empty arguments. Their inputs are three operator-published JSON files named for the read under `/var/lib/loom/machine-facts/`. Keep that directory and its ancestors outside house mounts and writable only by the publishing account or root. Give the worker read access to the projections. Enable the corresponding read names only on the machine that actually owns these records. Every agent authorized to inspect that machine can request its enabled reads.
+The optional reads `mirror-freshness`, `alert-ledger`, `cleanup-receipt`, and `login-expiry` take empty arguments. Their inputs are operator-published JSON files named for the read under `/var/lib/loom/machine-facts/`. Keep that directory and its ancestors outside house mounts and writable only by the publishing account or root. Give the worker read access to the projections. Enable the corresponding read names only on the machine that actually owns these records. Every agent authorized to inspect that machine can request its enabled reads.
 
 Use the tracked `scripts/project-lane-machine-fact.py KIND` outside the worker to prepare each projection independently. Supply the following sources on standard input.
 
 | Kind | Complete input to the publisher | Released evidence |
 | --- | --- | --- |
+| `login-expiry` | The publisher reads the single configured Claude account login JSON locally on stdin. Keep that input outside the worker. | Only the observation time and refresh expiry as integer Unix seconds. Withdraw the projection when the source is unavailable. |
 | `mirror-freshness` | Fresh stdout of Art's `bin/taskstore-mirror-check` from its live checkout. A stale result exits 1 and still prints the measured counts. A failed lookup supplies no counts. | Highest tracked and live task numbers. The groom threshold is live minus tracked greater than 15. |
 | `alert-ledger` | Art's complete append-only `.alerts/ledger.jsonl`, including the previous 26 hours | Each entry's timestamp, kind, source, optional alert ID and verdict. Up to 100 records. Detail, messages, causes, and facts stay private. |
 | `cleanup-receipt` | Art's complete append-only `.local/state/art/worktree-cleanup.jsonl`, including the previous seven days | Start and finish counts, counts kept, removed and marked for removal, and counts by recognized keep reason. Start and finish counts can differ. |
