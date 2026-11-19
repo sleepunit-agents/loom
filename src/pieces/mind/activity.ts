@@ -7,6 +7,7 @@ import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
 import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {Clock} from '../../core/clock.js';
+import {DAY_MS} from '../../core/day.js';
 import type {ActivityConversations,ActivityConversation,ActivityRun} from './activity-role.js';
 const link=z.object({label:z.string(),href:z.string().optional()}).strict();
 const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
@@ -143,10 +144,12 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}
   for(const db of sources.values())try{
    if(!has(db))continue;
-   // Only an episode that ends, or one written within the last minutes (its clock may run ahead), can set a
-   // deadline. The store leaves the others out, so a schedule does not carry every episode ever kept into
-   // this program: it runs after each committed change.
-   for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0 AND (expires_at IS NOT NULL OR julianday(created) IS NULL OR julianday(created)>julianday(?))").iterate(new Date(now-5*60000).toISOString())){
+   // Only an episode that ends, or one written lately (its writer's clock may run ahead), can set a deadline.
+   // The store leaves the others out, so a schedule does not carry every episode ever kept into this program:
+   // it runs after each committed change. The store and the loop below read a time differently (one written
+   // without a zone is UTC to the store and this machine's time to the loop), so the store keeps back only
+   // what is more than two days old by its reading, and anything it cannot read at all is left in.
+   for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0 AND (expires_at IS NOT NULL OR julianday(created) IS NULL OR julianday(created)>julianday(?))").iterate(new Date(now-2*DAY_MS).toISOString())){
     const row=raw as {created:string;expires_at:string|null};
     const expiry=row.expires_at===null?undefined:Date.parse(row.expires_at);
     if(expiry!==undefined&&(!Number.isFinite(expiry)||expiry<=now))continue;

@@ -23,7 +23,7 @@ const day=DAY_MS;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
-export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:{list(viewer:Viewer):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
+export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:{list(viewer:Viewer,sharing?:Sharing):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
@@ -55,7 +55,8 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  }
  function peopleSection(v:Viewer,q:ProjectQuery):ProjectSection{
   if(!options.people)return {key:'people',label:'People',available:false};
-  const people=held?.viewer===v?(held.people??=options.people.list(v)):options.people.list(v);
+  // The people reader is handed the facts this call read, so the two readers read them once between them.
+  const people=held?.viewer===v?(held.people??=options.people.list(v,held.sharing)):options.people.list(v);
   const fields=q.names.map(n=>n.replace(/-/g,'_'));
   // A hub may use the household directory and its own agent relationships, never another agent's cards.
   const rows=people.filter(p=>!p.agent||p.agent===q.agent);

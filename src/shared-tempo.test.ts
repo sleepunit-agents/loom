@@ -108,7 +108,8 @@ it('exposes an observable word-free notice only after the person batch settles',
  expect(await read()).toMatchObject({id:expect.any(String),count:1});
  expect(await read(credential)).toBeNull();
  const notice=await read();expect(JSON.stringify(notice)).not.toContain('Check pump');
- f.root.services.tempo.committed();f.root.writes.run(()=>{});f.clock.advance(5000);expect(await read()).toEqual(notice);
+ // A commit that leaves the waiting mail as it was does not settle it a second time: the notice keeps its id.
+ f.root.writes.run(()=>{f.db.update(members).set({joinedAt:f.now()}).where(eq(members.id,'owner')).run();});f.root.services.tempo.committed();f.clock.advance(5000);expect(await read()).toEqual(notice);
  const item=f.db.select().from(inbox).get()!;
  f.root.writes.run(()=>f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,item.id)).run());
  expect(await read()).toBeNull();

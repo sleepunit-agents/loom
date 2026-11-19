@@ -8,11 +8,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { PeopleStore } from '../../backends/people.js';
 import { ProjectsStore } from '../../backends/projects.js';
 import { FakeClock } from '../../core/clock.js';
 import type { Sharing, Viewer } from '../../core/index.js';
 import { createActivityReader } from './activity.js';
 import type { ActivityRun } from './activity-role.js';
+import { peopleReader } from './people.js';
 import { createProjectsReader } from './projects.js';
 
 const homes: string[] = [], closes: Array<() => void> = [];
@@ -29,13 +31,20 @@ it('reads the sharing facts and the people once for a whole listing of projects,
   const memories = join(home(), 'memories.db'), store = new ProjectsStore({ dbPath: memories });
   for (let n = 0; n < 9; n++) store.write({ slug: `pond-${n}`, name: `Fictional pond ${n}` });
   store.close();
+  const people = new PeopleStore({ dbPath: memories, actor: 'fiction' });
+  for (let n = 0; n < 4; n++) people.write({ slug: `friend-${n}`, name: `Fictional friend ${n}`, where: { pond_0: { value: 'Fictional' } } });
+  people.close();
   const { state, sharing } = facts();
+  // The real people reader, given the same facts as the projects reader, as shared-memory.ts gives them.
+  const peopleReaderReal = peopleReader({ agents: [{ agent: 'fiction', memories }], sharing, now: () => now });
   let peopleListed = 0;
-  const reader = createProjectsReader(new FakeClock(now), { agents: [{ agent: 'fiction', memories }], sharing, people: { list: () => { peopleListed++; return []; } } });
-  closes.push(() => reader.close());
+  const reader = createProjectsReader(new FakeClock(now), { agents: [{ agent: 'fiction', memories }], sharing,
+    people: { list: (v, read) => { peopleListed++; return peopleReaderReal.list(v, read); } } });
+  closes.push(() => reader.close(), () => peopleReaderReal.close());
   const listed = reader.list(viewer);
   expect(listed).toHaveLength(9);
-  expect(listed[0]!.sections.map(section => section.key)).toContain('people');
+  expect(listed[0]!.sections.find(section => section.key === 'people')?.items).toHaveLength(4);
+  // Once for the whole listing, the people reader's own reading included.
   expect(state.asked).toBe(1); expect(peopleListed).toBe(1);
   state.asked = 0;
   expect(reader.read('fiction:pond-0', viewer)?.name).toBe('Fictional pond 0'); expect(state.asked).toBe(1);
@@ -96,4 +105,17 @@ it('finds the next activity deadline without carrying every old episode out of t
   expect(reader.nextDeadline()).toBe(now + 20_000);
   add.run('unreadable', 'Unreadable', 'not a time', null);
   expect(reader.nextDeadline()).toBe(now + 20_000);
+  // A time written without a zone is UTC to the store and this machine's time to the reader. West of UTC the
+  // store reads such an episode as hours old; it still sets the deadline the reader gives it.
+  const zone = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+  try {
+    db.prepare("DELETE FROM memories WHERE ref IN ('ahead','unreadable')").run();
+    expect(reader.nextDeadline()).toBe(now + 90_000);
+    const local = new Date(now + 70_000), two = (n: number) => String(n).padStart(2, '0');
+    const zoneless = `${local.getFullYear()}-${two(local.getMonth() + 1)}-${two(local.getDate())}T${two(local.getHours())}:${two(local.getMinutes())}:${two(local.getSeconds())}`;
+    expect(Date.parse(zoneless)).toBe(now + 70_000); expect(Date.parse(zoneless + 'Z')).toBe(now + 70_000 - 8 * 3600_000);
+    add.run('zoneless', 'Zoneless', zoneless, null);
+    expect(reader.nextDeadline()).toBe(now + 10_000);
+  } finally { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone; }
 });

@@ -21,7 +21,9 @@ export interface PeopleReader {
  ids(scope?:string):string[];
  sources:Map<string,Database>;
  allowed(viewer:Viewer,agent?:string):boolean;
- list(viewer:Viewer):PersonRecord[];
+ /** `sharing`: the facts a caller read itself earlier in the same synchronous call (a listing of projects lists
+  * the people too), so that one call reads them once. Never facts kept from an earlier call. */
+ list(viewer:Viewer,sharing?:Sharing):PersonRecord[];
  history(id:string,viewer:Viewer):Array<{id:number;op:string;replacedAt:string;actor:string|null;card:PersonCard}>;
  close():void;
 }
@@ -134,9 +136,9 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     access(v){return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
       agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},options.sharing(),'act')};},
     nextDeadline,read, ids, sources, allowed,
-    list(viewer:Viewer) {
+    list(viewer:Viewer,given?:Sharing) {
       // Synchronous from here to the end: no write of this program can fall inside it.
-      const outer=held;held={sharing:options.sharing(),projects:new Map()};
+      const outer=held;held={sharing:given??options.sharing(),projects:new Map()};
       try {
         for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);
         return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source))
