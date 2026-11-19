@@ -34,13 +34,13 @@ it('keeps the scrollbar\'s place on every box that scrolls and is a size contain
   for (const selector of ['.desk-home', '.next-page', '.next-rail']) expect(scrolls(said.get(selector)!) && sized(said.get(selector)!) && kept(said.get(selector)!), selector).toBe(true);
 });
 
-it('keeps it too where a script measures the box to decide its layout, and where a card scrolls its own details', () => {
+it('keeps it too where a script measures the box to decide its layout', () => {
   const said = (sheet: string, selector: string) => rules(readFileSync(join(root, sheet), 'utf8')).filter(([name]) => name.split(',').map(part => part.trim()).includes(selector)).map(([, body]) => body).join(';');
   expect(kept(said('pieces/attention/rail.css', '.desk-agent-rail'))).toBe(true);
-  expect(kept(said('pieces/attention/home.css', '.desk-home-details'))).toBe(true);
+  // Home's card is a summary now and scrolls nothing of its own (its details live on the agent's page).
   // Home's scrolling is said in its sheet beside its container type, not by a utility class the scan cannot see.
   expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).not.toMatch(/className="desk-home [^"]*\boverflow-(auto|scroll|[xy]-)/);
-  expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).toContain('desk-home-details');
+  expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).not.toMatch(/overflow-(y-)?(auto|scroll)/);
 });
 
 it('centres a dock key\'s name by its margins, with no transform or translate to be folded, doubled or cleared', () => {

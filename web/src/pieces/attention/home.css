@@ -2,14 +2,32 @@
 /* Home scrolls, and its width decides its layout (the queries below). A scrollbar that comes and goes would
    change that width and the layout with it, and the layout decides whether there is a scrollbar: at the
    width where one column turns into two, the page flickered between them. Its place is kept whether or not
-   it shows, so the width the queries read never moves. The same holds for a card's own scrolling details. */
+   it shows, so the width the queries read never moves. */
 .desk-home{container-type:inline-size;overflow:auto;scrollbar-gutter:stable;color:var(--v-text)}
-.desk-home-details{scrollbar-gutter:stable}
 .desk-home-content{display:grid;gap:16px;min-width:0;padding:4px 16px 16px}
-.desk-home-needs{padding:14px 18px;border-left:3px solid var(--v-blue);background:color-mix(in srgb,var(--v-blue) 6%,var(--v-canvas));backdrop-filter:blur(8px)}
-.desk-home-needs h2{font:600 12px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.12em;color:var(--v-blue)}
-.desk-home-needs [aria-label="First three asks"]{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;border:0;background:none}
-.desk-home-needs [aria-label="First three asks"]>button{flex:1 1 220px;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 60%,transparent)}
+/* Needs you: a slim band over the cards. Its count, the first asks as chips, the Inbox at the end. Home is
+   outside any window, so the kit's in-page control faces (kit/controls.css, .next-page) do not reach here:
+   the band draws its own small quiet controls, from tokens, so each look and both modes paint them. */
+.desk-needs-band{--n:var(--v-accent-ink,var(--v-pink));display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-width:0;min-height:46px;padding:7px 14px;border:1px solid color-mix(in srgb,var(--n) 55%,var(--v-border));background:color-mix(in srgb,var(--v-paper) 90%,transparent);backdrop-filter:blur(6px);clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)}
+.desk-needs-band[data-zero]{min-height:36px;padding-block:4px;border-color:var(--v-border)}
+.desk-needs-label{display:flex;align-items:center;gap:8px;flex:none;font:500 11px var(--font-data,monospace);letter-spacing:.14em;text-transform:uppercase;white-space:nowrap;color:var(--n)}
+.desk-needs-dot{width:7px;height:7px;border-radius:50%;background:var(--n);box-shadow:var(--glow-tick,0 0 0 0) var(--n)}
+.desk-needs-band[data-zero] .desk-needs-label{color:var(--v-text-3)}
+.desk-needs-band[data-zero] .desk-needs-dot{background:var(--v-edge);box-shadow:none}
+.desk-needs-quiet{font-size:13px;color:var(--v-text-3)}
+.desk-needs-items{display:flex;flex:1 1 0;flex-wrap:nowrap;gap:8px 10px;min-width:0;margin:0;padding:0;list-style:none}
+.desk-needs-all{flex:none;margin-left:auto;padding:4px 2px;font-size:12.5px;white-space:nowrap;text-decoration:none;color:var(--v-text-2)}
+.desk-need{display:flex;align-items:center;gap:10px;flex:0 1 auto;min-width:0;max-width:100%;padding:4px 6px 4px 10px;border-left:2px solid var(--n);background:color-mix(in srgb,var(--v-canvas) 70%,transparent)}
+.desk-need-open{display:grid;gap:1px;flex:1 1 auto;min-width:0;max-width:360px;padding:0;border:0;background:none;text-align:left;line-height:1.25;color:var(--v-text);cursor:pointer}
+.desk-need-open b{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-weight:600;font-size:13.5px}
+.desk-need-open small{font-size:11.5px;color:var(--v-text-3)}
+.desk-need-answer{display:flex;flex:none;gap:5px}
+.desk-need-answer button{min-height:26px;padding:2px 10px;border:1px solid var(--v-border);border-radius:var(--r-sm,2px);background:transparent;font-size:12px;line-height:1.25;color:var(--v-text-2);cursor:pointer}
+.desk-need-answer button:disabled{opacity:.5;cursor:default}
+@media(hover:hover){.desk-needs-all:hover{color:var(--v-text)}.desk-need-open:hover b{text-decoration:underline;text-underline-offset:3px}.desk-need-answer button:not(:disabled):hover{border-color:var(--v-edge);color:var(--v-text)}}
+.desk-needs-band :is(a,button):focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media(pointer:coarse){.desk-need-answer button{min-height:40px;padding-inline:14px}.desk-needs-all{padding-block:10px}}
+@media(prefers-reduced-transparency:reduce){.desk-needs-band{backdrop-filter:none;background:var(--v-paper)}}
 .desk-home-agents{align-items:stretch}
 .desk-home-card{--c:var(--v-pink);position:relative;padding:26px 24px 24px;align-content:start;border:1px solid var(--v-border);border-radius:0;background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%)}
 .desk-home-card::before{content:"";position:absolute;left:24px;top:0;width:72px;height:3px;background:var(--c);box-shadow:var(--glow-bar) var(--c)}
@@ -17,17 +35,42 @@
 .desk-home-card h3{font:500 11px var(--font-data,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-3)}
 .desk-home-identity{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding-bottom:16px;border-bottom:1px solid var(--v-border)}
 .desk-home-identity h2{font:600 30px/1.1 var(--font-display);color:var(--v-text)}
+.desk-home-identity h2 a{color:inherit;text-decoration:none}
+/* The way to the whole of an agent: a quiet link at the end of the row its name is on. */
+.desk-home-open{margin-left:auto;padding:4px 2px;font-size:12.5px;white-space:nowrap;text-decoration:none;color:var(--v-text-2)}
+.desk-home-kicker{display:block;font:500 11px var(--font-data,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-3)}
+/* The last answer in brief: three lines, since the whole of it is one click away. */
+.desk-home-answer{display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--v-border);color:var(--v-text);text-decoration:none}
+.desk-home-answer-words{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:pre-wrap;font-size:13.5px;line-height:1.45}
+.desk-home-talks{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;min-width:0}
+.desk-home-talks ul{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;margin:0;padding:0;list-style:none}
+.desk-home-talk{display:flex;align-items:baseline;gap:8px;min-width:0;padding:5px 0;border-bottom:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
+.desk-home-talk[data-unread]{color:var(--v-text)}
+.desk-home-talk-title{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.desk-home-talk time{flex:none;font:11px var(--font-data,monospace);color:var(--v-text-3)}
+.desk-home-unread{flex:none;align-self:center;width:6px;height:6px;border-radius:50%;background:var(--loom-unread,var(--v-blue))}
+.desk-home-all{justify-self:start;padding:4px 2px;font-size:12.5px;text-decoration:none;color:var(--v-text-2)}
+@media(hover:hover){:is(.desk-home-open,.desk-home-all,.desk-home-talk):hover{color:var(--v-text)}.desk-home-identity h2 a:hover,.desk-home-talk:hover .desk-home-talk-title{text-decoration:underline;text-underline-offset:3px}.desk-home-answer:hover{border-color:var(--v-edge)}}
+.desk-home-card a:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media(pointer:coarse){.desk-home-talk{min-height:40px;align-items:center}:is(.desk-home-open,.desk-home-all){padding-block:10px}}
 .desk-home-identity p{flex-basis:100%;font:500 11px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.1em;color:var(--v-text-2)}
-@container(max-width:600px){.desk-home-content{padding:12px}.desk-home-needs{padding:12px}.desk-home-needs [aria-label="First three asks"]{display:grid}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
-.desk-home-columns{display:grid;gap:20px;min-width:0}
+/* One row while there is room for three chips side by side; below that the label and the Inbox link keep the first
+   row and the chips wrap under them, and on a phone they stack. */
+@container(max-width:900px){.desk-needs-items{order:3;flex:1 1 100%;flex-wrap:wrap}}
+@container(max-width:600px){.desk-home-content{padding:12px}.desk-needs-band{align-items:stretch;flex-direction:column;padding:10px 12px}.desk-needs-items{order:0;flex:none;flex-direction:column}.desk-need{flex-wrap:wrap}.desk-need-open{max-width:none}.desk-needs-all{margin-left:0}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
 .desk-home-compose{min-width:0;padding-top:12px;border-top:1px solid var(--v-border)}
 /* (The bar itself is Comms' own: comms/composer.css.) */
 .desk-home-compose>p{font-size:var(--fs-small);color:var(--v-text-2)}
-@container(min-width:760px){.desk-home-card:only-child .desk-home-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
+/* A folded card's own list sits inside its edge, under the row that opens the conversation. */
+.desk-home-compact>:is(.desk-doing,.desk-doing-quiet){margin:8px 12px 10px}
 .desk-home-compact{min-width:0;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 88%,transparent)}
 .desk-home-flags{display:flex;gap:8px;align-items:center;font:500 10px var(--font-data,monospace);color:var(--v-blue)}
 
 .desk-home-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--v-text-3)}
 .desk-home-dot[data-state=working]{background:var(--v-blue)}
 .desk-home-dot[data-state=waiting]{background:var(--v-yellow)}
+
+/* The Agents app: one agent in full, inside a window, drawn with the kit's reader. */
+.desk-agent-app{padding:4px 16px 16px}
+.desk-agent-who{display:flex;align-items:center;gap:14px;min-width:0}

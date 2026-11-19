@@ -2,9 +2,13 @@ import { taskSegment } from '../tasks/route';
 import { useMemo } from 'react';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import type { DataQuerySnapshot } from '../../data/graphql';
-import type { InboxFolders, InboxItem } from '../inbox-view/model';
+import type { InboxAnswer, InboxFolders, InboxItem } from '../inbox-view/model';
+import { memberOperation } from '../../data/operation';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
+/** Recording an answer to an Inbox item: the one action, for the Inbox and for Home's band. */
+export const answerInboxItem = (id: string, answer: InboxAnswer, words?: string) =>
+  memberOperation<void>('inbox.answer', { item: id, answer, ...(words ? { words } : {}) });
 const fields = `id canAnswer canSetVolume quietUntil source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
  bodyKeepUntil answerKeepUntil body { words why ifYes ifNo link } read refs answer answerText answeredBy answeredAt resolution`;
 /** The list: rows, folder counts and action outcomes. Inbox no longer asks for the open item here (`hasItem` is

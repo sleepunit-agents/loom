@@ -4,7 +4,7 @@ import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
 import { useAnswered } from '../../data/graphql/selection';
 import { InboxView, type InboxActions } from '../inbox-view';
-import { inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
+import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
 export { stamp } from './time';
 const inboxBase = '/p/inbox-preview';
 export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
@@ -54,7 +54,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const actions: InboxActions | undefined = live ? {
     volume: current?.canSetVolume ? (id, volume) => mutate('inbox.volume', { item: id, volume }) : undefined,
     read: readingVisible ? id => mutate('inbox.read', { item: id }) : undefined,
-    answer: current?.canAnswer ? (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }) : undefined,
+    answer: current?.canAnswer ? answerInboxItem : undefined,
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
     openRef: ref => { const target = inboxRefPath(ref); return target ? () => navigate(target) : undefined; },
   } : undefined;

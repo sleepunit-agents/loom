@@ -52,6 +52,18 @@ it('mounts current jobs through the real root with canonical private-member prec
   }
   for (const who of ['bob', 'art'] as const) expect((await (await f.post(who, f.query('mark'))).json()).data.currentJobs.map((row: {id:string}) => row.id)).toEqual(['project']);
 });
+it('mounts what an agent is doing through the real root, each viewer by the household’s own rules', async () => {
+  const f = fixture(), source = '{ agentDoing(agent:"art") { more items { id kind title with machine href } } }';
+  const ids = async (who: keyof typeof keys) => { const response = await f.post(who, source), body = await response.json(); expect(body.errors).toBeUndefined();
+    return (body.data.agentDoing.items as { id: string; kind: string; machine: string | null }[]).map(item => [item.id, item.kind, item.machine].join(' ')); };
+  f.db.update(jobs).set({ box: 'worker' }).run();
+  // The machine is the household owner's: nobody else is told its name.
+  expect(await ids('alice')).toEqual(['owned job ', 'private-alice job ']);
+  expect(await ids('house')).toEqual(['owned job Worker', 'private-house job Worker']);
+  expect(await ids('bob')).toEqual(['private-bob job ']);
+  expect(await ids('guest')).toEqual([]);
+  expect(await ids('art')).toEqual(['owned job ']);
+});
 for (const revoked of ['project', 'owned-agent', 'household-owner'] as const) it(`rechecks ${revoked} after a public await and never releases stale titles`, async () => {
   let began!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });

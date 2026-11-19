@@ -8,12 +8,10 @@
 .desk-rail-agent strong{font:600 18px var(--font-display);display:block}
 .desk-rail-state{font-size:11px;color:var(--v-text-2)}
 .desk-rail-mark{flex:none;display:grid;place-items:center;width:48px;height:48px;background:color-mix(in srgb,var(--v-pink) 12%,var(--v-paper));color:var(--v-pink);border:1px solid color-mix(in srgb,var(--v-pink) 45%,var(--v-border));font:600 24px var(--font-display);clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
-.desk-rail-work{color:var(--v-text-2);line-height:1.5}
-.desk-rail-ask{display:grid;gap:5px;text-align:left;border-left:2px solid var(--v-yellow);padding:8px 10px;background:color-mix(in srgb,var(--v-yellow) 6%,transparent)}
 .desk-rail-thread{text-align:left;font-size:11px;color:var(--v-blue);padding-top:8px;border-top:1px solid var(--v-border)}
 .desk-agent-rail button:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
 /* The shell already reserves a 64px strip below 1280. Keep it useful without squeezing text. */
-@container rail (max-width:100px){.desk-agent-rail{padding-left:5px}.desk-rail-card{padding:7px 0;border:0;background:none}.desk-rail-agent{justify-content:center}.desk-rail-agent>span:last-child,.desk-rail-work,.desk-rail-ask,.desk-rail-thread{display:none}.desk-rail-needs{padding:6px;font-size:10px}.desk-rail-needs>span:nth-child(2){display:none}.desk-rail-kicker{letter-spacing:0;font-size:9px}}
+@container rail (max-width:100px){.desk-agent-rail{padding-left:5px}.desk-rail-card{padding:7px 0;border:0;background:none}.desk-rail-agent{justify-content:center}.desk-rail-agent>span:last-child,.desk-rail-thread{display:none}.desk-rail-needs{padding:6px;font-size:10px}.desk-rail-needs>span:nth-child(2){display:none}.desk-rail-kicker{letter-spacing:0;font-size:9px}}
 
 .desk-rail-compact{min-width:0}
 .desk-rail-compact>[data-split-row]{padding:7px 4px;gap:8px;align-items:center;grid-template-columns:24px minmax(0,1fr) auto}
@@ -29,8 +27,3 @@
 .desk-rail-card[data-companion]{border-bottom:2px solid var(--v-blue)}
 .desk-rail-with{color:var(--v-blue);padding-bottom:8px;border-bottom:1px solid var(--v-border)}
 
-.desk-rail-jobs{display:grid;gap:6px;color:var(--v-text-2)}
-.desk-rail-jobs ul{display:grid;gap:6px;list-style:none;padding:0;margin:0}
-.desk-rail-jobs li{display:grid;gap:2px}
-.desk-rail-jobs li span{font-size:11px;color:var(--v-text-3)}
-@container rail (max-width:100px){.desk-rail-jobs{display:none}}
