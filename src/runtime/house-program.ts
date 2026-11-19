@@ -1,3 +1,4 @@
+import { DAY_MS } from '../core/day.js';
 import { z } from 'zod';
 import { houseSecretAlias, secretValueText } from '../pieces/secrets/input.js';
 import { HARNESS_NAME, HOUSE_REPOSITORY } from './house-layout.js';
@@ -12,7 +13,7 @@ const boundedJson = z.unknown().refine(value => {
 const name = z.string().regex(HARNESS_NAME);
 const arg = z.string().max(1024).refine(value => !value.includes('\0'));
 export const houseProgramSchema = z.object({
-  name, args: z.array(arg).max(32), timeoutMs: z.number().int().min(1).max(86_400_000),
+  name, args: z.array(arg).max(32), timeoutMs: z.number().int().min(1).max(DAY_MS),
   secrets: z.array(houseSecretAlias).max(16).refine(names => new Set(names).size === names.length),
   payload: boundedJson.optional(), state: boundedJson.optional(),
 }).strict();
