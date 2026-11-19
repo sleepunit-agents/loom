@@ -86,7 +86,7 @@ def see(labels, items):
     li = "".join(f'<li><span class="key key--sm t-ink" aria-hidden="true">{chr(97 + i)}</span><span><b>{b}</b> {t}</span></li>' for i, (b, t) in enumerate(items))
     return (f'<div class="labels">{lab}</div>' if lab else "") + f'<ul class="see">{li}</ul>'
 
-def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_h, panels, labels, see_items, groups, note="", ref_extra="", chat=None, ctl=False):
+def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_h, panels, labels, see_items, groups, note="", ref_extra="", chat=None, ctl=False, hero=None, extra=""):
     idx = NUM[title]
     tint = TINT[title]
     n = sum(len(names) for _, names in groups)
@@ -94,7 +94,9 @@ def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_
           if n else "")
     if ctl:
         cap += CTL
-    if chat:
+    if hero:
+        pass
+    elif chat:
         hero = hero_two(idx, tint, kind, title, f"<b>{lead_b}</b> {lead}", does, fig, chat[0], cap, chat[1])
     else:
         hero = f'''
@@ -112,7 +114,7 @@ def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_
 </section>'''
     body = f'''
 {hero}
-
+{extra}
 <section class="band" aria-labelledby="con-h">
   <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">{con_h}</h2><p>{con_p} The number on each part is its page on the path.</p></div>
   {anat}
@@ -183,20 +185,155 @@ def approvals():
                    + c_ask("Merge the pump order script?", "Checks pass and the task is done.", "Art merges it at this exact commit.", "The pull request stays open.", "github:owner/repo#12")), "Approvals"))
 
 # ───────────────────────── Tempo
+# The four kinds of thing on the calendar: a class for its colour, and the word the block carries.
+KIND = {"agent": "wakes an agent", "program": "a program decides", "loom": "loom itself", "once": "once"}
+
+def ev(kind, time, name, note, st="", on=False, fired=False):
+    """One block on the calendar. st: off (stopped or held), spent, bad (failed or lost), run (running now)."""
+    t = f"<time>{time}</time>" if time else ""
+    state = f' data-st="{st}"' if st else ""
+    return (f'<div class="ev k-{kind}{" ev--fired" if fired else ""}"{" data-on" if on else ""}{state}>'
+            f'{t}<b>{name}</b><em>{note}</em></div>')
+
+def st_attr(st):
+    return f' data-st="{st}"' if st else ""
+
+def hours(day, now, now_hour):
+    """day: {hour: [blocks]}. Every hour of the day gets a row; the now line sits inside its hour."""
+    out = []
+    for h in range(24):
+        blocks = "".join(day.get(h, []))
+        line = f'<div class="now"><b>{now} · now</b></div>' if h == now_hour else ""
+        past = " data-past" if h < now_hour else ""
+        out.append(f'<div class="hr"{past}><time>{h:02d}:00</time><div>{blocks}{line}</div></div>')
+    return f'<div class="hours">{"".join(out)}</div>'
+
 def tempo():
-    mock = split_mock("Search tempo", [("Due", 2, True), ("Standing", 2), ("Household lanes", 1), ("Recent history", "")], "Tempo", 2, "Create trigger",
-        [("Check the pump delivery", "Nov 14, 2026, 8:31 AM CT · art", "a time · once", True),
-         ("Merge when allowed", "when the approval is answered · art", "an answer · once"),
-         ("night-shift", "22:00 CT · Every day · art", "a time · until stopped")],
-        reader("a time · once · art", "Check the pump delivery", "Due: Nov 14, 2026, 8:31 AM CT", ["Run now", "Cancel"],
-               [("Project", "pond"), ("Target", "an item in art's inbox"), ("Words", "See whether the pump has shipped. Comment on t-2190.")]),
-        chips=["Due 2", "Standing 2", "Household lanes 1", "Recent history"])
+    def f(label, n="", on=False, dot=""):
+        d = f'<i class="dot k-{dot}"></i>' if dot else ""
+        return f'<div class="sp__f"{" data-on" if on else ""}><span>{d}{label}</span><em>{n}</em></div>'
+    nav = ('<div class="sp__search">Search tempo</div>' + f("Day", "", True) + f("Week") + f("All triggers", 30) + f("History")
+           + '<span class="lbl">Kind</span>' + f("Wakes an agent", 17, dot="agent") + f("A program decides", 7, dot="program")
+           + f("Loom itself", 3, dot="loom") + f("Once", 3, dot="once")
+           + '<span class="lbl">Whose</span>' + f("Household lanes", 10) + f("art", 18) + f("mark", 2)
+           + '<span class="lbl">State</span>' + f("Standing", 25) + f("Stopped", 2) + f("Held", 2) + f("Spent", 1))
+    week = "".join(f'<div{" data-on" if on else ""}><b>{d}</b><em>{n}</em><span>{only}</span></div>' for d, n, only, on in [
+        ("Mon 9", 15, "", False), ("Tue 10", 16, "landscape", False), ("Wed 11", 16, "wondering", False), ("Thu 12", 15, "", False), ("Fri 13", 15, "", False),
+        ("Sat 14", 19, "morning-brief, intro-skipper release check", True), ("Sun 15", 19, "morning-brief, groom, goals-review, memory-consolidation", False)])
+    waits = "".join(f'<div class="wait"><span class="lbl">{title}</span>{body}</div>' for title, body in [
+        ("A pull request changing", ev("agent", "", "coordinate", "art · watching 2 · last fired 10:42")),
+        ("An answer arriving", ev("once", "", "Merge when allowed", "art · when the approval is answered")),
+        ("A job stopping", '<span class="meta">Nothing waiting.</span>'),
+        ("An alert firing", ev("agent", "", "alert triage", "art · last fired 13:05"))])
+    allday = (ev("program", "", "lidarr-backlog", "every 2 hours · last 14:00, nothing to do · next 16:00")
+              + ev("program", "", "house-branch-sweep", "every 4 hours · last 12:00, woke art · next 16:00")
+              + ev("loom", "", "model sign-ins", "every machine · tells jonathan when one is signed out or ends within 3 days"))
+    day = {
+        3: [ev("agent", "03:07", "continuity check", "mark · held: mark is paused · would have run 03:07", "off"),
+            ev("agent", "03:13", "knowledge-triage", "art · done · 9 min"),
+            ev("loom", "03:37", "nightly backup", "loom · done · 4 min")],
+        4: [ev("loom", "04:14", "offsite copy", "loom · done · 11 min"),
+            ev("agent", "04:17", "knowledge-verify", "art · lost · workshop went quiet", "bad")],
+        5: [ev("agent", "05:17", "knowledge-expand", "art · stopped Nov 10 · would have run 05:17", "off")],
+        7: [ev("program", "07:17", "prowlarr-cf-check", "program · failed · it could not sign in", "bad")],
+        8: [ev("agent", "08:31", "plan", "art · done · 6 min", on=True)],
+        9: [ev("program", "09:07", "morning-brief", "program · told jonathan"),
+            ev("program", "09:17", "ship-nag", "program · stopped Nov 12 · would have run 09:17", "off"),
+            ev("once", "09:19", "Follow up on t-2175", "art · done · spent", "spent")],
+        10: [ev("agent", "10:42", "coordinate fired", "github:owner/repo#12 changed · art · done · 2 min", fired=True)],
+        13: [ev("agent", "13:05", "alert triage fired", "attic went quiet · art looked · told jonathan", fired=True)],
+        14: [ev("agent", "14:31", "plan-afternoon", "art · running · 16 min so far", "run")],
+        15: [ev("once", "15:30", "Check the pump delivery", "art · due")],
+        16: [ev("program", "16:44", "intro-skipper release check", "program · Saturdays")],
+        19: [ev("program", "19:17", "prowlarr-cf-check", "program")],
+        22: [ev("program", "22:44", "tending", "program · four repositories")],
+        23: [ev("agent", "23:17", "reflect", "art"),
+             ev("agent", "23:17", "retro", "mark · held: mark is paused · would run 23:17", "off"),
+             ev("agent", "23:41", "plan-night", "art · night shift")],
+    }
+    later = ('<div class="cal__sec"><span class="lbl">Not this week</span>'
+             + ev("agent", "Dec 1", "monthly identity review", "art · on the 1st of each month") + '</div>')
+    runs = "".join(f'<li{st_attr(st)}><time>{t}</time><span>{how_}</span><em>{cost}</em><u>conversation ›</u></li>' for t, how_, cost, st in [
+        ("Sat, Nov 14 · 08:31", "done · set 3 follow-ups", "6 min · $0.84", ""),
+        ("Fri, Nov 13 · 08:31", "done · set 1 follow-up", "5 min · $0.71", ""),
+        ("Thu, Nov 12 · 08:31", "failed · the model sign-in had ended", "12 sec · $0.00", "bad"),
+        ("Wed, Nov 11 · 08:31", "done · set 2 follow-ups", "7 min · $0.93", "")])
+    read = reader("wakes an agent · standing", "plan", "a time · until stopped · set by art", ["Run now", "Stop", "*Ask art to change it"],
+                  [("What for", "Shapes art's day and sets follow-ups for later."), ("When", "Every day at 08:31 CT"), ("Next", "Sun, Nov 15, 2026, 08:31 CT"),
+                   ("Words", "Read last night's reflection and the open tasks. Choose today's work. Set a follow-up for anything to check later."),
+                   ("Runs as", "art, as its own work"), ("Project", "none: it plans across art's projects"),
+                   ("Machine", "prefers workshop · needs nothing"), ("Model", "best")],
+                  f'<div class="sec"><span class="lbl">Recent runs</span><ol class="runs">{runs}</ol></div>')
+    cal = (f'<div class="tile__body sp cal"><div class="sp__nav">{nav}</div><div class="sp__list">'
+           '<div class="cal__top"><b>Sat, Nov 14, 2026</b><em>Central time</em><span class="cal__go"><span class="mbtn">‹</span><span class="mbtn">Today</span><span class="mbtn">›</span>'
+           '<span class="mbtn mbtn--on">Day</span><span class="mbtn">Week</span></span></div>'
+           f'<div class="wk7">{week}</div>'
+           f'<div class="cal__sec"><span class="lbl">Waiting on something</span><div class="waits">{waits}</div></div>'
+           f'<div class="cal__sec"><span class="lbl">Through the day</span><div class="waits">{allday}</div></div>'
+           f'{hours(day, "14:47", 14)}{later}</div>'
+           f'<div class="sp__read">{read}</div></div>')
+    hist = "".join(f'<li{st_attr(st)}><time>{t}</time><b>{what}</b><span>{started}</span><em>{ended}</em></li>' for t, what, started, ended, st in [
+        ("14:31", "plan-afternoon", "woke art", "running · 16 min so far", ""),
+        ("14:00", "lidarr-backlog", "its program ran", "done · nothing to do · 2 sec", ""),
+        ("13:05", "alert triage", "woke art: attic went quiet", "done · 3 min · $0.31 · told jonathan", ""),
+        ("10:42", "coordinate", "woke art: github:owner/repo#12 changed", "done · 2 min · $0.18", ""),
+        ("09:19", "Follow up on t-2175", "woke art", "done · 4 min · $0.40 · spent", ""),
+        ("09:17", "ship-nag", "nothing: it is stopped", "did not fire", "off"),
+        ("09:07", "morning-brief", "its program ran", "done · told jonathan · 3 sec", ""),
+        ("08:31", "plan", "woke art", "done · 6 min · $0.84", ""),
+        ("07:17", "prowlarr-cf-check", "its program ran", "failed · it could not sign in to Prowlarr · 1 sec", "bad"),
+        ("04:17", "knowledge-verify", "woke art", "lost · workshop went quiet after 11 min", "bad"),
+        ("03:37", "nightly backup", "loom ran it", "done · 4 min", ""),
+        ("03:07", "continuity check", "nothing: mark is paused", "held", "off")])
+    history = ('<div class="tile__body"><div class="cal__top"><b>History</b><em>Sat, Nov 14, 2026 · 12 of 27</em></div>'
+               f'<ol class="hist"><li class="hist__h"><time>When</time><b>What fired</b><span>What it started</span><em>How it ended</em></li>{hist}</ol></div>')
     tchat = chat("Tempo settings", c_me("Change tempo so my inbox wakes me every minute.") + c_art("I can do that. Here is exactly what would change.")
                  + '<div class="msg msg--ask"><div class="msg__b"><b>Change a setting: how long jonathan\'s inbox waits before waking him</b><small>Before: the default</small><small>After: 60 seconds</small>'
                    '<small>Yes: loom makes the change and records it. No: nothing changes.</small><span class="yn"><span class="mbtn mbtn--on t-cyan">Allow</span><span class="mbtn">Deny</span></span></div></div>')
+    idx, tint = NUM["Tempo"], TINT["Tempo"]
+    does = ["Shows a day as a calendar, with each trigger at the time it fires.", "Opens any trigger to show what it does, when it runs next and how its recent runs ended.",
+            "Fires on a time, a pull request changing, an answer arriving, a job stopping or an alert firing.",
+            "Drops an item in an inbox, or runs an operation that needs no agent.", "Holds an agent's triggers while the agent is paused."]
+    hero = f"""
+<section class="hero2">
+  <div class="hero2__text t-{tint}">
+    <div><p class="eyebrow">Page {idx} of {N} · an app</p><h1>Tempo</h1><p class="lead"><b>Triggers: what starts work without anyone asking.</b> A trigger fires in code and drops an item in someone's inbox. A non-empty inbox is what starts an agent or notifies a person.</p></div>
+    <ul class="does">{"".join(f"<li>{d}</li>" for d in does)}</ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="two" aria-hidden="true">
+      <div class="two__w"><span class="lbl">In the Tempo tile: one day, with plan opened</span><div class="shadowed">{tile(tint, "clock", "Tempo", cal)}</div></div>
+      <div class="two__a"><span class="lbl">The same day as history</span><div class="shadowed">{tile(tint, "clock", "Tempo", history)}</div></div>
+      <div class="two__b"><span class="lbl">In a chat</span><div class="shadowed">{tchat}</div></div>
+    </div>
+    <figcaption class="cap">The Tempo tile with example triggers on one Saturday, and plan opened beside the day. Below it, the same day as history, and a settings change asked for in chat: the agent proposes it, and loom shows an approval card inline with before and after.</figcaption>
+  </figure>
+</section>"""
+    legend = '<div class="legend">' + "".join(ev(k, "", KIND[k], note) for k, note in [
+        ("agent", "plan · art"), ("program", "ship-nag"), ("loom", "nightly backup"), ("once", "Check the pump delivery")]) + "</div>"
+    see_panels = [
+        ("One day", "violet", opts(("Day", "one day, hour by hour"), ("Week", "seven days side by side"), ("All triggers", "every trigger, by its next time")),
+         "Tempo opens on today, in the household's time zone. Each trigger is a block at the time it fires, and a line marks now. Above the line a block says how its run ended. Below the line it says what is coming. The arrows move one day at a time. The list at the side narrows the calendar to one kind, one state, one agent or the household's own lanes. Week shows seven days, so a trigger that runs on Sundays or on Wednesdays is on its day. All triggers lists every one by its next time, and that is where a monthly one is found. A trigger that fires many times a day sits in one row above the hours."),
+        ("Four kinds", "cyan", legend,
+         "Each block is one of four kinds, with its own colour and its own word. Wakes an agent: a body of the agent does a job each time. A program decides: a small program of the household's runs with no model, and wakes an agent or tells a person only when there is something to do. Loom itself: no agent and no program of the household's, such as the nightly backup or watching model sign-ins on every machine. Once: it fires one time at a set time, and then it is spent."),
+        ("No clock time", "amber", opts(("pull request", "coordinate"), ("answer", "Merge when allowed"), ("job", "nothing waiting"), ("alert", "alert triage")),
+         "Some triggers fire when something happens, not at a time: a pull request changing, an answer arriving, a job stopping, an alert firing. They have no place on the hours. They sit in a strip above the day, each under what it waits for. When one fires, a block with a dashed edge appears at the time it happened."),
+        ("State", "pink", opts(("standing", "it will fire at its next time"), ("stopped", "someone stopped it"), ("held", "its agent is paused"), ("spent", "it fired once and is finished")),
+         "Most triggers are standing. A stopped trigger stays on the calendar, struck through. It says when it was stopped and when it would have run next. A trigger whose agent is paused is held, and says so the same way. A one-off that has fired is spent. A run that failed or was lost is marked on its block."),
+        ("Open one", "violet", card("amber", "a program decides · stopped", "ship-nag", "Program: ship-nag. It checks for finished work that has not shipped. Stopped Nov 12 by jonathan. Next would have been 09:17 CT."),
+         "Click a block and it opens beside the day. It says what the trigger is for in one sentence, when it runs and when it runs next. It says what it does: the words handed to the agent, or the program's name and what it checks. It says who it runs as and for which project, which machine it needs or prefers, and which model. Its recent runs are listed with the time, how each ended, how long it took, what it cost and a link to its conversation. Run now fires it once. Stop and Start turn it off and on. To change it, ask the agent: it proposes the change, and loom shows an approval card with before and after."),
+        ("The day's history", "cyan", log(("08:31", "plan woke art · done"), ("07:17", "prowlarr-cf-check · failed"), ("04:17", "knowledge-verify · lost")),
+         "History lists everything that fired on the day being viewed, newest first: what fired, what it started and how that ended. A run that failed or was lost is in the list, with the reason. So is a trigger that was stopped or held at its time."),
+    ]
+    extra = f"""
+<section class="band" aria-labelledby="cal-h">
+  <div class="band__head"><span class="tag">The calendar</span><h2 id="cal-h">One day, four kinds, state, opening one and history</h2><p>What a person sees in the Tempo tile and what they can do there.</p></div>
+  {how(see_panels)}
+</section>
+"""
     anat = anatomy("trigger", "Check the pump delivery", [
         ("owner", "agent art", "l", "People and projects", "Who set it: the household, an agent or a person."),
-        ("source = time", "Nov 14, 8:31 AM"),
+        ("source = time", "Nov 14, 15:30"),
         ("source = pull request", "a pull request changing", "r", "Changes", "A pull request changing can fire a trigger."),
         ("source = answer", "an answer arriving", "l", "Approvals", "Waiting on an approval is a once-only trigger on that answer."),
         ("source = job", "a job stopping", "r", "Machines and jobs", "A job stopping can fire a trigger."),
@@ -205,7 +342,7 @@ def tempo():
         ("then", "a non-empty inbox starts the agent", "r", "Conversations", "The agent's body starts in that conversation and takes everything waiting at once."),
     ])
     panels = [
-        ("A trigger's four parts", "violet", opts(("source", "a time, a pull request changing, an answer arriving, a job stopping"), ("lifespan", "until stopped, for today, the next time only"),
+        ("A trigger's four parts", "violet", opts(("source", "a time, a pull request changing, an answer arriving, a job stopping, an alert firing"), ("lifespan", "until stopped, for today, the next time only"),
                                                  ("owner", "who set it"), ("target", "run an operation, or drop an item in an inbox")),
          "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them."),
         ("Fire, inbox, start", "pink", flow("trigger", "fires", "inbox", "settles", "agent"),
@@ -217,19 +354,14 @@ def tempo():
         ("Three settings", "violet", opts(("settle", "how long an inbox waits before waking its owner"), ("dim", "how long before a dimmed item returns to full"), ("mute", "how long a mute lasts: 7 days by default")),
          "The timings are settings a person can change, each with a default. Loom keeps a row only for a person or agent that has changed them."),
     ]
-    return app_page("Tempo", "an app", "Triggers: what starts work without anyone asking.",
-        "A trigger fires in code and drops an item in someone's inbox. A non-empty inbox is what starts an agent or notifies a person.",
-        ["Lists what is standing and what is due.", "Fires on a time, a pull request changing, an answer arriving or a job stopping.",
-         "Drops an item in an inbox, or runs an operation that needs no agent.", "Holds an agent's triggers while the agent is paused."],
-        tile("violet", "clock", "Tempo", mock),
-        "The Tempo tile with example triggers, and a settings change asked for in chat: the agent proposes it, and loom shows an approval card inline with before and after.",
+    return app_page("Tempo", "an app", "", "", does, "", "",
         "How a trigger connects to other parts", "One trigger, with a thread from each part of it that reaches another page.", anat,
         "Four parts, firing, the sweep, volume and settings", panels,
         [("owner", "cyan"), ("for an agent or a person", "pink"), ("project", "violet")],
         [("What it carries.", "A trigger names who set it, the agent or person it is for, and its project."),
          ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them."),
          ("Checked at the door.", DOOR)],
-        [("", ["triggers", "trigger_log", "trigger_edits", "agent_pauses", "tempo_settings"])], chat=(tchat, "Tempo"))
+        [("", ["triggers", "trigger_log", "trigger_edits", "agent_pauses", "tempo_settings"])], hero=hero, extra=extra)
 
 # ───────────────────────── 5 Changes
 def changes():
