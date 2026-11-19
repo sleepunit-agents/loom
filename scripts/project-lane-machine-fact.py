@@ -5,7 +5,7 @@ Input is an unrotated JSONL ledger or the output of Art's taskstore-mirror-check
 Publish stdout by atomic rename only on exit zero. Run outside the worker.
 """
 import argparse
-from collections import Counter
+from collections import Counter, deque
 import json
 import math
 import re
@@ -60,6 +60,21 @@ def project(kind, stream, now):
             raise ValueError()
         return dict(result, trackedMax=tracked, liveMax=live)
 
+    if kind == 'cleanup-week-journal':
+        since = now - 7 * DAY
+        recent = deque(maxlen=100)
+        total = 0
+        for row in records(stream):
+            if row.get('_SYSTEMD_USER_UNIT') != 'art-worktree-cleanup.service':
+                raise ValueError()
+            at = int(row['__REALTIME_TIMESTAMP']) // 1000000
+            priority = int(row['PRIORITY'])
+            if at > now or not 0 <= priority <= 7:
+                raise ValueError()
+            if at >= since:
+                total += 1
+                recent.append(dict(at=at, priority=priority))
+        return dict(result, since=since, total=total, recent=list(recent))
     alerts = kind == 'alert-ledger'
     since = now - (26 * 3600 if alerts else 7 * DAY)
     result['since'] = since
@@ -127,7 +142,7 @@ def project(kind, stream, now):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry'])
+    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry', 'cleanup-week-journal'])
     args = parser.parse_args()
     try:
         result = project(args.kind, sys.stdin.buffer, int(time.time()))
