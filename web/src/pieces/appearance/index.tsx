@@ -41,7 +41,7 @@ export default function AppearanceApp({ go = () => {} }: { path?: string; go?: (
       if(mounted.current)setState({pending:false,message:'Could not confirm the save. Your live choices are still shown.'});
     } finally {locked.current=false;}
   }
-  const toggle = (key: 'sound' | 'pixel' | 'icons' | 'haptics' | 'oneWindow' | 'zoom', label: string, hint: string, fallback: boolean) =>
+  const toggle = (key: 'sound' | 'pixel' | 'haptics' | 'oneWindow' | 'zoom', label: string, hint: string, fallback: boolean) =>
     <SwitchRow><b>{label}</b><small>{hint}</small><Switch aria-label={label} checked={prefs?.[key] ?? fallback} disabled={disabled} onCheckedChange={on => {void save({ [key]: on });}} /></SwitchRow>;
   const status = snapshot.status === 'denied' ? 'Sign in again to change appearance.'
     : snapshot.status === 'offline' ? 'Offline. Reconnect before changing appearance.'
@@ -56,7 +56,6 @@ export default function AppearanceApp({ go = () => {} }: { path?: string; go?: (
         <Choice label="Look" value={lookOf(prefs?.look, prefs?.mode)} options={LOOKS.map(look => ({ value: look.look, label: look.name }))} disabled={disabled} pick={look => {void save({ look: look as Prefs['look'] });}} />
         <Choice label="Desk background" value={prefs?.ground ?? 'depth'} options={GROUNDS} disabled={disabled} pick={ground => {void save({ ground: ground as Prefs['ground'] });}} />
         {toggle('pixel', 'Pixel faces', 'Agents with a pixel portrait wear it.', true)}
-        {toggle('icons', 'Pixel icons', 'Apps wear the household’s pixel icons, where it has them.', false)}
       </Section>
       <Section title="Sound and touch">
         {toggle('sound', 'Sound', 'Short sounds as you use loom.', false)}

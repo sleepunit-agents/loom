@@ -27,7 +27,7 @@ it('wears saved choices and cross-window live changes, overriding device cache e
   f.snapshot = live({ look: '000h', mode: 'light', motion: 'on', contrast: 'off', zoom: true, ground: 'wash', sound: true, oneWindow: true }); await draw();
   expect(f.look).toHaveBeenLastCalledWith('daylight'); expect(f.motion).toHaveBeenLastCalledWith('on'); expect(f.contrast).toHaveBeenLastCalledWith('off'); expect(f.zoom).toHaveBeenLastCalledWith(true);
   expect(f.keep).toHaveBeenCalledWith('loom-look', 'daylight'); expect(f.keep).toHaveBeenCalledWith('loom-one-window', 'on');
-  expect(dataset).toMatchObject({ ground: 'wash', sound: 'on', oneWindow: 'on', pixel: 'on', icons: 'off', haptics: 'on', zoom: 'on' });
+  expect(dataset).toMatchObject({ ground: 'wash', sound: 'on', oneWindow: 'on', pixel: 'on', haptics: 'on', zoom: 'on' });
   await publish(live({ look: 'lowlight' })); expect(f.look).toHaveBeenLastCalledWith('lowlight');
   expect(f.motion).toHaveBeenLastCalledWith('follow'); expect(f.contrast).toHaveBeenLastCalledWith('follow'); expect(f.zoom).toHaveBeenLastCalledWith(false);
   expect(dataset).toMatchObject({ ground: 'depth', sound: 'off', oneWindow: 'off', zoom: 'off' });

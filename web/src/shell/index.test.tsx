@@ -2,7 +2,7 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {createElement as h,Fragment,lazy,type ReactNode} from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import {act,create} from 'react-test-renderer';
-vi.mock('../app-icon',()=>({AppIcon:({label}:{label:string})=>h('app-icon',{label})}));
+vi.mock('../app-icon',()=>({AppIcon:({app}:{app?:string})=>h('app-icon',{app})}));
 vi.mock('@radix-ui/react-dialog',()=>({
  Root:({open,children}:{open:boolean;children:ReactNode})=>open?h(Fragment,null,children):null,
  Portal:({children}:{children:ReactNode})=>h(Fragment,null,children),
@@ -116,7 +116,7 @@ it('the dock shows each app’s name alone and keeps "Open …" as its accessibl
  await mount();
  const keys=tree.root.findAll((n:Node)=>n.type==='button'&&!!n.props['data-dock']).map((n:Node)=>[n.props['data-dock'],n.props['data-shown'],n.props['aria-label']]);
  expect(keys).toEqual([['home','Home','Home'],['tasks','Tasks','Open Tasks'],['inbox','Inbox','Open Inbox'],['launcher','All apps','All apps']]);
- expect(tree.root.findByProps({'data-dock':'launcher'}).findAllByType('app-icon').map((n:Node)=>n.props.label)).toEqual(['All apps']);
+ expect(tree.root.findByProps({'data-dock':'launcher'}).findAllByType('app-icon').map((n:Node)=>n.props.app)).toEqual(['launcher']);
 });
 it('the shell’s bar is handed no appearance control',async()=>{
  const Bar=vi.fn((_props:Record<string,unknown>)=>h('header',{'data-bar':true}));

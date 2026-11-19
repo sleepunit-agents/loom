@@ -7,7 +7,7 @@ import { dataQueries } from './queries';
 import { members, memberPreferences as preferencesTable } from './schema';
 import { memberPreferences, memberPreferencesQuery, type MemberPreferencesData, type MemberPreferenceRow } from '../../../web/src/shell/member-preferences';
 const identity = { status: 'live' as const, data: { homeComms: { member: 'sam', agents: [], summaries: [] } } };
-const row: MemberPreferenceRow = { member: 'sam', look: 'daylight', ground: 'wash', sound: false, pixel: false, icons: true, haptics: false, oneWindow: true, zoom: true, motion: 'on', contrast: 'off', changedAt: '2026-11-14T00:00:00.000Z' };
+const row: MemberPreferenceRow = { member: 'sam', look: 'daylight', ground: 'wash', sound: false, pixel: false, haptics: false, oneWindow: true, zoom: true, motion: 'on', contrast: 'off', changedAt: '2026-11-14T00:00:00.000Z' };
 const query = { status: 'live' as const, data: { memberPreferences: [{ ...row, member: 'other', look: 'lowlight' as const }, row] } };
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -15,7 +15,8 @@ it('executes the exact desk query against generated SQL, sees changed choices an
   const client = new Database(':memory:'); opened.push(client);
   const db = createDataSchema(client, () => row.changedAt);
   db.insert(members).values([{ id: 'sam', role: 'member', joinedAt: row.changedAt }, { id: 'other', role: 'member', joinedAt: row.changedAt }]).run();
-  db.insert(preferencesTable).values(query.data.memberPreferences as typeof preferencesTable.$inferInsert[]).run();
+  // The table still has `icons` (kept, unused: the web app no longer asks for it), so the stored rows carry one.
+  db.insert(preferencesTable).values(query.data.memberPreferences.map(stored => ({ ...stored, icons: false }))).run();
   let allowed = 'sam';
   const schema = dataQueries(client, { tables: ['memberPreferences'], visibility: { memberPreferences: fields => eq(fields.member, allowed) } });
   const read = async () => {

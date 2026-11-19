@@ -46,7 +46,7 @@ it('lays every setting the bar’s panel held out in labelled sections, on style
   const sections = tree.root.findAllByType('section').map((section: Node) => [section.props['aria-label'],
     [...section.findAllByType('ui-choice'), ...section.findAllByType('ui-switch')].map(control => control.props['aria-label'])]);
   expect(sections).toEqual([
-    ['How it looks', ['Look', 'Desk background', 'Pixel faces', 'Pixel icons']],
+    ['How it looks', ['Look', 'Desk background', 'Pixel faces']],
     ['Sound and touch', ['Sound', 'Haptics']],
     ['Motion and contrast', ['Reduce motion', 'Higher contrast']],
     ['Windows', ['One window at a time', 'Allow zoom']],
@@ -114,7 +114,7 @@ it('saves higher contrast as its own choice', async () => {
 });
 it.each([
   ['Sound', 'sound', false], ['Pixel faces', 'pixel', true],
-  ['Pixel icons', 'icons', false], ['Haptics', 'haptics', true],
+  ['Haptics', 'haptics', true],
   ['One window at a time', 'oneWindow', false], ['Allow zoom', 'zoom', false],
 ] as const)('saves %s as one member choice and waits for its live record', async (label, key, fallback) => {
   f.snapshot = live({}); const r = request(); f.call.mockReturnValue(r.handle); await draw();
