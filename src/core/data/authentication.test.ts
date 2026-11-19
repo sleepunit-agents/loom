@@ -184,7 +184,7 @@ it('makes a machine-bound terminal credential the agent at that machine owner\'s
   db.insert(members).values({ id: 'lee', role: 'member', joinedAt: at }).run();
   db.insert(boxes).values({ id: 'box', name: 'box', owner: 'sam', sameMachineAsLoom: false, hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
   for (const [key, label] of [[plain, 'plain'], [bound, 'bound']]) db.insert(tokens).values({ fingerprint: hash(key), label, kind: 'agent', agent: 'art', createdAt: at }).run();
-  db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam' }).run();
+  db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam', issuedBy: 'sam' }).run();
   const as = (key: string, extra: Record<string, string> = {}) => authenticate(request({ authorization: 'Bearer ' + key, ...extra }));
   expect(as(plain)?.viewer).toEqual({ kind: 'agent', id: 'art' });
   expect(as(bound)?.viewer).toEqual({ kind: 'agent', id: 'art', atTerminalOf: 'sam' });
@@ -204,5 +204,8 @@ it('makes a machine-bound terminal credential the agent at that machine owner\'s
   ends(() => db.update(boxes).set({ revokedAt: at }).run(), () => db.update(boxes).set({ revokedAt: null }).run());
   ends(() => db.update(boxes).set({ owner: 'lee' }).run(), () => db.update(boxes).set({ owner: 'sam' }).run());
   ends(() => db.update(members).set({ removedAt: at }).where(eq(members.id, 'sam')).run(), () => db.update(members).set({ removedAt: null }).where(eq(members.id, 'sam')).run());
-  ends(() => db.delete(terminalCredentials).run(), () => db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam' }).run());
+  ends(() => db.delete(terminalCredentials).run(), () => db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam', issuedBy: 'sam' }).run());
+  // A binding somebody else made for sam, or one made before the maker was recorded, is not the agent at sam's terminal.
+  ends(() => db.update(terminalCredentials).set({ issuedBy: 'lee' }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
+  ends(() => db.update(terminalCredentials).set({ issuedBy: null }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
 });

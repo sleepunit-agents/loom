@@ -1404,9 +1404,11 @@ CREATE TABLE `terminal_credentials` (
 	`fingerprint` text PRIMARY KEY NOT NULL,
 	`machine` text NOT NULL,
 	`member` text NOT NULL,
+	`issued_by` text,
 	FOREIGN KEY (`fingerprint`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`issued_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
 );
 
 CREATE TABLE `terminal_sessions` (

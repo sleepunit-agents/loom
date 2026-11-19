@@ -73,7 +73,12 @@ it('lets the agent at a household owner’s own terminal answer for them, only o
   const first=card();
   expect((await answer(first.id,quote)).status).toBe(403);
   // Bound to the owner's own machine, it is the agent at their terminal.
-  f.db.insert(terminalCredentials).values({fingerprint:credentialHash(bodyCredentials.agent),machine:'box',member:'alice'}).run();
+  // A binding somebody else made for her, or one from before the maker was recorded, answers nothing either.
+  f.db.insert(terminalCredentials).values({fingerprint:credentialHash(bodyCredentials.agent),machine:'box',member:'alice',issuedBy:'bob'}).run();
+  expect((await answer(first.id,quote)).status).toBe(403);
+  f.db.update(terminalCredentials).set({issuedBy:null}).run();
+  expect((await answer(first.id,quote)).status).toBe(403);
+  f.db.update(terminalCredentials).set({issuedBy:'alice'}).run();
   expect((await answer(first.id,quote)).status).toBe(200);
   expect(state(first.id)).toBe(`Allowed by alice as told to art at the terminal: “${quote}” (conversation ${conversation}, turn 1, machine box)`);
 
@@ -154,6 +159,13 @@ it('lets the agent at a household owner’s own terminal answer for them, only o
   expect((await answer(quiet.id,quote)).status).toBe(403);
   await send({...key,action:'heartbeat'});
   expect((await answer(quiet.id,quote)).status).toBe(200);
+
+  // What cannot be undone is the owner's own to allow: the agent is refused, whatever was said.
+  const danger=f.root.writes.run(()=>f.root.services.approvals.request({kind:'dangerous',target:'household:tokenRevoke:x',agent:'art',what:'Revoke token x',why:'Fixture',
+    askedFrom:'terminal',actingFor:'alice',ask:'Revoke token x?',ifYes:'Revoke',ifNo:'Keep',operation:'household.change',changeSummary:'Revoke token x',details:JSON.stringify({change:'tokenRevoke',input:{label:'x'}})})).value;
+  expect((await answer(danger.id,quote)).status).toBe(403);
+  expect(state(danger.id)).toBeUndefined();
+  expect((await answer(danger.id,quote,bodyCredentials.agent,{answer:'deny'})).status).toBe(200);
 
   // A body of the agent is not at the terminal; nor is a machine's worker, nor a member who is not an owner.
   const fourth=card();

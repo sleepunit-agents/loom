@@ -64,11 +64,10 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       const machine = db.select({owner:boxes.owner}).from(boxes)
         .where(and(eq(boxes.id, value.terminalMachine), isNull(boxes.revokedAt))).get();
       if (!machine?.owner) throw new OperationError('invalid', 'Choose an active machine with a signed-in owner');
-      // A credential bound to a machine is the agent at that machine's owner's terminal: it reads that member's
-      // private talk with the agent and can answer for them there (policy.ts, Viewer.atTerminalOf). So only that
-      // member makes one, never another household owner on their behalf.
-      if (by !== undefined && machine.owner !== by) throw new OperationError('denied', 'Only a machine’s own owner makes a terminal credential for it');
-      db.insert(terminalCredentials).values({fingerprint, machine:value.terminalMachine, member:machine.owner}).run();
+      // Who made it is kept. A binding its own member made is the agent at their terminal: it reads that
+      // member's private talk with the agent and can answer for them there (policy.ts, Viewer.atTerminalOf).
+      // One made for them by another household owner reports that machine's sessions, as before, and no more.
+      db.insert(terminalCredentials).values({fingerprint, machine:value.terminalMachine, member:machine.owner, issuedBy:by ?? null}).run();
     }
   };
   return {

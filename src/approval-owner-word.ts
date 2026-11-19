@@ -77,7 +77,8 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
   // it stands on, and that the owner is told of each one at once (shared-work-commands.ts). An action
   // that cannot be undone is not answered this way at all.
   const terminal = sources.terminal?.(viewer);
-  if (terminal && viewer.kind === 'agent' && viewer.id === terminal.agent) {
+  // Only a binding its own member made (authentication.ts): one another owner made for them answers nothing.
+  if (terminal && viewer.kind === 'agent' && viewer.id === terminal.agent && viewer.atTerminalOf === terminal.member) {
     const owner = { kind: 'member' as const, id: terminal.member };
     if (!workAnswersAllowed(db, owner)) refused('The person at this terminal is not a household owner.');
     if (!word || !('venue' in word) || word.through !== terminal.agent) refused('Quote what the owner said to you at this terminal.');

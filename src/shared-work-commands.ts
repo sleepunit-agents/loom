@@ -84,7 +84,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !sources.terminal?.(viewer)) return false;
+      if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
       evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
       const merge = mergeTarget(row);

@@ -2059,6 +2059,10 @@ export const terminalCredentials = sqliteTable('terminal_credentials', {
   fingerprint: text('fingerprint').primaryKey().notNull().references(() => tokens.fingerprint, {onDelete:'cascade'}),
   machine: text('machine').notNull().references(() => boxes.id),
   member: text('member').notNull().references(() => members.id),
+  // Who made the binding. Only one its own member made puts the agent at that member's terminal for reading
+  // their private talk and answering for them (policy.ts, Viewer.atTerminalOf); any binding reports the
+  // sessions of its machine. Absent on a binding made before this was recorded.
+  issuedBy: text('issued_by').references(() => members.id),
 });
 
 /** One observed harness session inside its authenticated machine, agent and member scope. */

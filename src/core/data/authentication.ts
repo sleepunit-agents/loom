@@ -88,12 +88,13 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
       // here, where the job row is read, so no door can meet a body's token as the whole agent.
       if (job.member) return { token, viewer: { kind: 'agent' as const, id: token.agent, workingFor: job.member }, job: token.job };
     }
-    // A terminal credential bound to a machine is the agent at that machine's owner's terminal (policy.ts,
-    // Viewer.atTerminalOf): only while the machine is that member's, is not revoked, and they are in the household.
+    // A terminal credential bound to a machine by that machine's own owner is the agent at their terminal
+    // (policy.ts, Viewer.atTerminalOf): only while the machine is that member's, is not revoked, and they are
+    // in the household. A binding somebody else made, or one made before the maker was recorded, is not.
     const terminal = token.job || token.box ? undefined : db.select({ member: terminalCredentials.member }).from(terminalCredentials)
       .innerJoin(boxes, and(eq(boxes.id, terminalCredentials.machine), eq(boxes.owner, terminalCredentials.member), isNull(boxes.revokedAt)))
       .innerJoin(members, and(eq(members.id, terminalCredentials.member), isNull(members.removedAt)))
-      .where(eq(terminalCredentials.fingerprint, token.fingerprint)).get();
+      .where(and(eq(terminalCredentials.fingerprint, token.fingerprint), eq(terminalCredentials.issuedBy, terminalCredentials.member))).get();
     return { token, viewer: { kind: 'agent' as const, id: token.agent, ...(terminal && { atTerminalOf: terminal.member }) }, job: token.job ?? undefined };
   }
   if (token.kind === 'runner' && token.box) {
