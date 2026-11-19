@@ -117,6 +117,7 @@ it('lets the agent at a household owner’s own terminal answer for them, only o
   await refused(()=>f.db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'box')).run(),()=>f.db.update(boxes).set({revokedAt:null}).where(eq(boxes.id,'box')).run(),'the machine was revoked');
   await refused(()=>f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.id,'box')).run(),()=>f.db.update(boxes).set({owner:'alice'}).where(eq(boxes.id,'box')).run(),'the machine is someone else’s');
   await refused(()=>f.db.update(jobs).set({member:'bob'}).where(eq(jobs.id,job)).run(),()=>f.db.update(jobs).set({member:'alice'}).where(eq(jobs.id,job)).run(),'the session’s records disagree');
+  await refused(()=>f.db.delete(memberAgents).where(eq(memberAgents.member,'alice')).run(),()=>f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run(),'the owner no longer has the agent');
   // What the owner said at one of their machines answers nothing for a session bound to another.
   f.db.insert(boxes).values({id:'other',name:'Other',owner:'alice',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
   await refused(()=>f.db.update(terminalCredentials).set({machine:'other'}).run(),()=>f.db.update(terminalCredentials).set({machine:'box'}).run(),'the credential is bound to another machine');

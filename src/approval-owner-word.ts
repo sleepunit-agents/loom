@@ -4,7 +4,7 @@ import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
 import { ageLimit, wordsKept } from './core/conversations/retention.js';
 import { commsKeepDays } from './core/data/comms-days.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, boxes, jobs, threads, terminalSessions, conversations, inbox, messages } from './core/data/schema.js';
+import { agents, boxes, jobs, memberAgents, threads, terminalSessions, conversations, inbox, messages } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
 import type { Viewer } from './policy.js';
@@ -81,6 +81,9 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
   if (terminal && viewer.kind === 'agent' && viewer.id === terminal.agent && viewer.atTerminalOf === terminal.member) {
     const owner = { kind: 'member' as const, id: terminal.member };
     if (!workAnswersAllowed(db, owner)) refused('The person at this terminal is not a household owner.');
+    // As for reading their talk: only while that owner has the agent on their own list.
+    if (!db.select({ agent: memberAgents.agent }).from(memberAgents).where(and(eq(memberAgents.member, terminal.member), eq(memberAgents.agent, terminal.agent))).get())
+      refused('The person at this terminal no longer has this agent.');
     if (!word || !('venue' in word) || word.through !== terminal.agent) refused('Quote what the owner said to you at this terminal.');
     if (word.quote !== word.quote.trim() || (word.quote.match(/[\p{L}\p{N}]/gu) ?? []).length < terminalQuoteMin) refused('Quote a longer passage of what the owner said.');
     const now = sources.now(), since = Date.parse(now) - terminalAnswerMs;
