@@ -1,6 +1,6 @@
 # Machine reads
 
-A machine read selects one diagnostic by name. For example, `{"machine":"box-example","read":"unit-journal","args":{"scope":"user","unit":"loom-worker.service","lines":10,"since":15}}` requests up to ten journal entries from the last fifteen minutes. The worker reads with its existing Linux account permissions. Missing software, unavailable services and access failures produce a refusal.
+A machine read selects one diagnostic by name. For example, `{"machine":"box-example","read":"unit-journal","args":{"scope":"user","unit":"loom-worker.service","lines":10,"since":15}}` requests up to ten journal entries from the last fifteen minutes. The worker reads with its existing Linux account permissions. Missing software and commands that exit with an error produce a refusal. Journal reads cover entries visible to the worker account. Journalctl can return a successful empty or partial result when that account lacks access to other journal files. An empty result does not establish that the unit logged nothing.
 
 | Kind | Arguments | What the worker reads |
 | --- | --- | --- |
