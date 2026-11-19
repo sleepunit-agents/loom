@@ -2,7 +2,7 @@
   "page": "tempo",
   "title": "Tempo",
   "ownerTask": "t-2238",
-  "sourceSha256": "0eb3e179a6b1ddbdc9ea97a0587a234ad1ad8af2ea2c72af06cd4e858ef97441",
+  "sourceSha256": "d164a999bbf7ad662fa9696fb975d8d62d6517b60c94ed168b73567a01bc6555",
   "promises": [
     {
       "id": "tempo-001",
@@ -21,61 +21,71 @@
     },
     {
       "id": "tempo-004",
-      "promise": "Fires on a time, a pull request changing, an answer arriving, a job stopping or an alert firing.",
+      "promise": "Shows how full each subscription was through the day, and what each run used.",
       "source": "docs/how-it-works/site/tempo.html"
     },
     {
       "id": "tempo-005",
-      "promise": "Drops an item in an inbox, or runs an operation that needs no agent.",
+      "promise": "Fires on a time, a pull request changing, an answer arriving, a job stopping or an alert firing.",
       "source": "docs/how-it-works/site/tempo.html"
     },
     {
       "id": "tempo-006",
-      "promise": "Holds an agent's triggers while the agent is paused.",
+      "promise": "Drops an item in an inbox, or runs an operation that needs no agent.",
       "source": "docs/how-it-works/site/tempo.html"
     },
     {
       "id": "tempo-007",
+      "promise": "Holds an agent's triggers while the agent is paused.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-008",
       "promise": "Tempo opens on today, in the household's time zone. Each trigger is a block at the time it fires, and a line marks now. Above the line a block says how its run ended. Below the line it says what is coming. The arrows move one day at a time. The list at the side narrows the calendar to one kind, one state, one agent or the household's own lanes. Week shows seven days, so a trigger that runs on Sundays or on Wednesdays is on its day. All triggers lists every one by its next time, and that is where a monthly one is found. A trigger that fires many times a day sits in one row above the hours.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-008",
+      "id": "tempo-009",
       "promise": "Each block is one of four kinds, with its own colour and its own word. Wakes an agent: a body of the agent does a job each time. A program decides: a small program of the household's runs with no model, and wakes an agent or tells a person only when there is something to do. Loom itself: no agent and no program of the household's, such as the nightly backup or watching model sign-ins on every machine. Once: it fires one time at a set time, and then it is spent.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-009",
+      "id": "tempo-010",
       "promise": "Some triggers fire when something happens, not at a time: a pull request changing, an answer arriving, a job stopping, an alert firing. They have no place on the hours. They sit in a strip above the day, each under what it waits for. When one fires, a block with a dashed edge appears at the time it happened.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-010",
+      "id": "tempo-011",
       "promise": "Most triggers are standing. A stopped trigger stays on the calendar, struck through. It says when it was stopped and when it would have run next. A trigger whose agent is paused is held, and says so the same way. A one-off that has fired is spent. A run that failed or was lost is marked on its block.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-011",
-      "promise": "Click a block and it opens beside the day. It says what the trigger is for in one sentence, when it runs and when it runs next. It says what it does: the words handed to the agent, or the program's name and what it checks. It says who it runs as and for which project, which machine it needs or prefers, and which model. Its recent runs are listed with the time, how each ended, how long it took, what it cost and a link to its conversation. Run now fires it once. Stop and Start turn it off and on. To change it, ask the agent: it proposes the change, and loom shows an approval card with before and after.",
-      "source": "docs/how-it-works/site/tempo.html#how-h"
-    },
-    {
       "id": "tempo-012",
-      "promise": "History lists everything that fired on the day being viewed, newest first: what fired, what it started and how that ended. A run that failed or was lost is in the list, with the reason. So is a trigger that was stopped or held at its time.",
+      "promise": "Click a block and it opens beside the day. It says what the trigger is for in one sentence, when it runs and when it runs next. It says what it does: the words handed to the agent, or the program's name and what it checks. It says who it runs as and for which project, which machine it needs or prefers, and which model. Its recent runs are listed with the time, how each ended, how long it took, what it used and a link to its conversation. It also says what share of the subscription's week it took over the last seven days. Run now fires it once. Stop and Start turn it off and on. To change it, ask the agent: it proposes the change, and loom shows an approval card with before and after.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
       "id": "tempo-013",
+      "promise": "History lists everything that fired on the day being viewed, newest first: what fired, what it started and how that ended. A run that failed or was lost is in the list, with the reason. So is a trigger that was stopped or held at its time.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-014",
+      "promise": "The household runs on subscriptions, so Tempo shows no money. It shows what is scarce: each subscription's 5-hour window and its week. Above the hours, one line for each subscription says how full its 5-hour window was at its fullest today and how much of the week is used. These are the provider's own readings, so they are exact. Hours with stripes are the hours when a 5-hour window was almost full: work scheduled there was competing with a person. Hours with no stripes had room that went unused. Each run says how long it took, how many tokens the model wrote and its largest context. A trigger's share of the week is an estimate. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens. The detail is in Subscriptions .",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-015",
       "promise": "Who set it: the household, an agent or a person.",
       "source": "docs/how-it-works/site/tempo.html#con-h"
     },
     {
-      "id": "tempo-014",
+      "id": "tempo-016",
       "promise": "A pull request changing can fire a trigger.",
       "source": "docs/how-it-works/site/tempo.html#con-h"
     },
     {
-      "id": "tempo-015",
+      "id": "tempo-017",
       "promise": "Waiting on an approval is a once-only trigger on that answer.",
       "source": "docs/how-it-works/site/tempo.html#con-h",
       "probe": {
@@ -84,62 +94,62 @@
       }
     },
     {
-      "id": "tempo-016",
+      "id": "tempo-018",
       "promise": "A job stopping can fire a trigger.",
       "source": "docs/how-it-works/site/tempo.html#con-h"
     },
     {
-      "id": "tempo-017",
+      "id": "tempo-019",
       "promise": "A trigger never wakes anyone directly. It drops an item in an inbox, with trigger as its source.",
       "source": "docs/how-it-works/site/tempo.html#con-h"
     },
     {
-      "id": "tempo-018",
+      "id": "tempo-020",
       "promise": "The agent's body starts in that conversation and takes everything waiting at once.",
       "source": "docs/how-it-works/site/tempo.html#con-h"
     },
     {
-      "id": "tempo-019",
+      "id": "tempo-021",
       "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-020",
+      "id": "tempo-022",
       "promise": "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-021",
+      "id": "tempo-023",
       "promise": "Each part contributes a short list of what is open and how long it has sat. One session per recipient sorts them. When nothing is open, no session starts.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-022",
+      "id": "tempo-024",
       "promise": "Each recipient sets a volume on an inbox item. Dim returns to full when the item changes or has sat long enough. Mute ends after a week by default. A change breaks dim but not mute. Being asked by name breaks both.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-023",
+      "id": "tempo-025",
       "promise": "The timings are settings a person can change, each with a default. Loom keeps a row only for a person or agent that has changed them.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
-      "id": "tempo-024",
+      "id": "tempo-026",
       "promise": "a What it carries. A trigger names who set it, the agent or person it is for, and its project.",
       "source": "docs/how-it-works/site/tempo.html#see-h"
     },
     {
-      "id": "tempo-025",
+      "id": "tempo-027",
       "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them.",
       "source": "docs/how-it-works/site/tempo.html#see-h"
     },
     {
-      "id": "tempo-026",
+      "id": "tempo-028",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
       "source": "docs/how-it-works/site/tempo.html#see-h"
     },
     {
-      "id": "tempo-027",
+      "id": "tempo-029",
       "promise": "The trigger detail shows its source, lifespan, target and words.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {
@@ -154,7 +164,7 @@
       }
     },
     {
-      "id": "tempo-028",
+      "id": "tempo-030",
       "promise": "The trigger offers Run now, Cancel and Pause agent.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {
@@ -168,7 +178,7 @@
       }
     },
     {
-      "id": "tempo-029",
+      "id": "tempo-031",
       "promise": "An answer arriving while the agent is paused does not fire its trigger.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {
@@ -177,7 +187,7 @@
       }
     },
     {
-      "id": "tempo-030",
+      "id": "tempo-032",
       "promise": "Resuming fires the held once-only answer trigger exactly once.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {
@@ -186,7 +196,7 @@
       }
     },
     {
-      "id": "tempo-031",
+      "id": "tempo-033",
       "promise": "Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {
@@ -195,7 +205,7 @@
       }
     },
     {
-      "id": "tempo-032",
+      "id": "tempo-034",
       "promise": "Cancelling a future trigger prevents delivery beyond its deadline.",
       "source": "docs/how-it-works/site/tempo.html",
       "probe": {

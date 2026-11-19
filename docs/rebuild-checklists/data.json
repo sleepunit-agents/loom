@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "e6e29310077affdfc9c8d88fc7c17d7e68af89876af8f0c606a7175f058774d4",
+  "sourceSha256": "2358e61c5a2d717caae441062e8829bcbe3b9ce88efd24ee82efd6082326bef7",
   "promises": [
     {
       "id": "data-001",
@@ -113,56 +113,86 @@
     },
     {
       "id": "data-017",
-      "promise": "migrations The list of changes already made to the database's shape, so each is applied once.",
+      "promise": "machine_reads Diagnostic request metadata for the machine owner’s history. The answer text is never stored here.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-018",
-      "promise": "operation_results The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice.",
+      "promise": "migrations The list of changes already made to the database's shape, so each is applied once.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-019",
-      "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
+      "promise": "operation_results The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-020",
-      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside.",
+      "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-021",
-      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
+      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-022",
-      "promise": "bridge_send_parts The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own.",
+      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-023",
-      "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
+      "promise": "bridge_send_parts The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-024",
-      "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
+      "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-025",
-      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
+      "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-026",
-      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "promise": "terminal_credentials The machine and member an enrolled credential may report terminal sessions for.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-027",
+      "promise": "terminal_sessions The private Comms thread and parent job for a harness session on a member’s machine.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-028",
+      "promise": "terminal_runs The parent job, run identifier and last transcript revision for each observed terminal run.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-029",
+      "promise": "program_firings Program occurrences with the frozen assignment, period, execution job and reported outcome.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-030",
+      "promise": "job_usage Usage counters for one job attempt. Missing counters stay unknown. The source identifies a report, transcript, program, or unknown counts.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-031",
+      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-032",
+      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-033",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {

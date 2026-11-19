@@ -2,7 +2,7 @@
   "page": "memory",
   "title": "Memory",
   "ownerTask": "t-2243",
-  "sourceSha256": "9ec2dcd85529bf5e7af1dd5bf842e5ad37c5a04b745991837c8872f8036c728a",
+  "sourceSha256": "f3000811af6cae7ea4c0eac94b2e74250f819fd97680bc9c231505fbf2ef2aec",
   "promises": [
     {
       "id": "memory-001",

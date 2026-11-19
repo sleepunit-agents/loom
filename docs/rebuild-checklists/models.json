@@ -1,41 +1,111 @@
 {
   "page": "models",
-  "title": "Models and accounts",
+  "title": "Subscriptions",
   "ownerTask": "t-2241",
-  "sourceSha256": "82769e9d600316c4f7a443bf7430b3783d57fe74961a4dc27a960d3b26e69e8a",
+  "sourceSha256": "612731da8fb0d53673f4118ead22cc7fe724610db3480bf7e67073cd3f67138a",
   "promises": [
     {
       "id": "models-001",
-      "promise": "Which model a body runs on, and the accounts it draws from. The runtime handles model accounts, harnesses and which model a body uses.",
+      "promise": "Every subscription to a model service, in one home. A service is who you subscribe to, such as Claude, Codex or Gemini. A subscription is one account with a service, and a household can hold several with the same one. This app says how full each is, where it is signed in and how it is set up. The rest of loom shows one small piece of this, and only when it matters.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
       "id": "models-002",
-      "promise": "Gives each agent a primary conversational model.",
+      "promise": "Lists every subscription to a model service, grouped by service, with how full it is.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
       "id": "models-003",
-      "promise": "Shares each account's capacity across the agents that draw on it.",
+      "promise": "Adds a subscription: choose the service, label it, choose its machines, sign in.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
       "id": "models-004",
-      "promise": "Starts each body in its model's harness, on a worker machine.",
+      "promise": "Opens one to show its usage, its sign-ins and its settings.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
       "id": "models-005",
-      "promise": "Records the model each job asked for and each turn used.",
+      "promise": "Shows where a week went, by trigger, by agent or by conversation.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
       "id": "models-006",
+      "promise": "Gives each agent a primary conversational model, and the models it may use in order.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-007",
+      "promise": "Shares each account's capacity across the agents that draw on it.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-008",
+      "promise": "Starts each body in its model's harness, on a worker machine.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-009",
+      "promise": "Records the model each job asked for and each turn used.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-010",
+      "promise": "One card for each subscription, under a heading for its service. A card has the label its owner gave it, whose it is, its fullest window and its sign-ins in one line. A heading can be closed. A closed heading says how many subscriptions it holds and how full the fullest is, and carries a sign-in mark if any of them needs attention. So the list reads the same with three subscriptions or with thirty-five across ten services. Search finds one by label, service, owner or machine. Needs attention shows only the ones with a sign-in that is gone or ending, or a window that is almost full.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-011",
+      "promise": "Add a subscription is at the top of the list. Choose the service from the ones loom knows how to use. Give it a label and say whose it is. Choose the machines it should be signed in on. Then sign in on each: loom gives a page to open and, where the service shows one, a code to paste. The subscription is in the list as soon as it is added, with each sign-in marked not signed in yet until it is done. The same thing can be asked for in chat. The agent proposes it and loom shows a card to allow. Signing in stays on the screen, because it needs a person at a page.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-012",
+      "promise": "The first part of an open subscription. Its windows are meters, each with when it resets. Loom reads how full each window is every five minutes, from the provider. The level is the fullest window in words: plenty, getting full or almost full. Under the meters is where the week went, by trigger, by agent or by conversation, biggest first. Opening a row goes to that trigger in Tempo or to that conversation. The shares are estimates. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens. Usage is shown once for each subscription, never for each sign-in, because every sign-in of a subscription draws on the same windows.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-013",
+      "promise": "The second part. One line for each sign-in: the machine, the harness, the place, its state and when it ends. In houses is the sign-in the houses on a machine use. On the machine itself is the machine user's own. A sign-in that is signed out, or ends in three days or less, has a Sign in action. A harness whose files give no end date, such as Codex, shows none. A machine that is not reporting shows its sign-ins in grey as last known, with no warning, because loom cannot tell.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-014",
+      "promise": "The third part: how the subscription is set up. Its label, whose it is, which machines it is enabled on, which agents may use it, how much of each window to keep free for the person, and how many days ahead to tell its owner that a sign-in is ending. To change one, ask an agent in chat: it proposes the change, and loom shows a card with before and after. Removing a subscription is a dangerous action, so it takes a second, explicit yes.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-015",
+      "promise": "The household's whole week, from the side list: every subscription together, by trigger, by agent or by conversation. Each bar says which subscription it drew on and its share of that subscription's week. These are the same estimates.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-016",
+      "promise": "Each agent has a list of the models it may use, in order of preference, and each model draws on one subscription. The first is its primary conversational model.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-017",
+      "promise": "One subscription's fullest window, as a tiny bar and a word, with the subscription's label so two with one service are told apart. It is in the desk's ticker only when a window is getting full or almost full. It is on a job's detail, and at the top of Tempo's day.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-018",
+      "promise": "A dot beside a machine or a harness. It shows only when a sign-in is signed out or ends in three days or less. It is on the Machines and jobs page beside a machine, and on a job that could not be placed because its machine is signed out.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-019",
+      "promise": "The notice the owner gets when a sign-in is gone or about to end. Sign in starts the provider's own sign-in on that machine, and loom shows the page to open and the code. There is one item for each sign-in. It closes itself when the sign-in is good again.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-020",
       "promise": "Each agent has a list of the models it may use, in order of preference. A member owns each account.",
       "source": "docs/how-it-works/site/models.html#con-h"
     },
     {
-      "id": "models-007",
+      "id": "models-021",
       "promise": "An account is signed in on particular worker machines.",
       "source": "docs/how-it-works/site/models.html#con-h",
       "probe": {
@@ -44,47 +114,47 @@
       }
     },
     {
-      "id": "models-008",
+      "id": "models-022",
       "promise": "A runner's token names its machine. It sees and reports only the jobs assigned to it.",
       "source": "docs/how-it-works/site/models.html#con-h"
     },
     {
-      "id": "models-009",
+      "id": "models-023",
       "promise": "Each of an agent's turns records the model that produced it.",
       "source": "docs/how-it-works/site/models.html#con-h"
     },
     {
-      "id": "models-010",
+      "id": "models-024",
       "promise": "The primary conversational model is per agent. Capacity is shared per actual subscription, account and window, so two agents on one account draw down the same allowance.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
-      "id": "models-011",
+      "id": "models-025",
       "promise": "An account's use is counted in windows that reset, such as five hours and seven days. A reserve of about five percent is the starting point. It can be lent near a reset when the forecast is safe, and is not a rigid floor.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
-      "id": "models-012",
+      "id": "models-026",
       "promise": "A harness is the program a model runs in, such as Claude Code or Codex. A worker starts each body in the harness its model needs; in a house, loom's own body program starts it. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
-      "id": "models-013",
+      "id": "models-027",
       "promise": "Signing in to a model account is handled by a separate private program. The runtime handles which account, which harness and which model a body uses.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
-      "id": "models-014",
+      "id": "models-028",
       "promise": "a The owner and household owners. They see everything about an account: usage, when it resets, and where it is signed in.",
       "source": "docs/how-it-works/site/models.html#see-h"
     },
     {
-      "id": "models-015",
+      "id": "models-029",
       "promise": "b Anyone else. They see only the account's label and a coarse level: plenty, getting full, or almost full.",
       "source": "docs/how-it-works/site/models.html#see-h"
     },
     {
-      "id": "models-016",
+      "id": "models-030",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
       "source": "docs/how-it-works/site/models.html#see-h"
     }

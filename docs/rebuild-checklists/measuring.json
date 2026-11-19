@@ -2,7 +2,7 @@
   "page": "measuring",
   "title": "Measuring",
   "ownerTask": "t-2234",
-  "sourceSha256": "6ebf35f3c5da728cf5f9e6c4575663eaba849ad14f3a4d90c182f4a992a2e150",
+  "sourceSha256": "442b48cb1858c4a1e6ab5297546627c6118c2314daafc6ac4a694cb7c60d6ae9",
   "promises": [
     {
       "id": "measuring-001",
