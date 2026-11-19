@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Household setup's icon is a table with its seats, and Bridges' is a plug meeting its socket.
 - Home has loom's own icon, a doorway with light on the floor: every key on the dock is now the household's own.
 - Fourteen more apps have loom's own icon: Agents, Knowledge, People, Projects, Activity, Sharing, Bridges, Settings, Appearance, Job usage, Household setup, Your account and the All apps key, with Approvals' redrawn clean. Home keeps its line icon for now.
 - loom has its own app icons. Inbox, Comms, Tasks, Tempo, Changes and Approvals wear them on their dock keys, their windows' title strips, the launcher's tiles and the app switcher, tinted to each key in every look, light or dark, and with Higher contrast; the current key shows its icon dark on the lit key. An app whose icon isn't drawn yet keeps its line icon. Appearance's "Pixel icons" switch is gone, with the household icon set it turned on (the saved choice is kept on the server, unused). Icons are matched to apps by id, so renaming an app keeps its icon. To add or replace one: `scripts/build-house-icons.py <directory of <app>-src.png>` (`web/src/assets/house-icons/README.md`).
