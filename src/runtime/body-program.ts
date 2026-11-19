@@ -22,7 +22,7 @@ import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
-import {saveBodyAttachments} from './body-attachments.js';
+import {saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
 import {bodyFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
 import { usageReport, type UsageReport } from './usage-report.js';
@@ -58,6 +58,7 @@ export async function bodyProgram(input: {
   sessions?: BodySessions;
   /** The same seam for the files sent with bridge messages. */
   saveAttachments?: typeof saveBodyAttachments;
+  showAttachments?: typeof showBodyAttachments;
   /** The same seam for a bridge channel's brief. */
   loadBrief?: typeof bodyChannelBrief;
   error: (text: string) => void;
@@ -196,7 +197,11 @@ export async function bodyProgram(input: {
     // the messages is written where it can open it, and it may name a file of its own for a post.
     const files=bridge&&hasFileTools(reach,policy);
     const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH],undefined,job.venue==='discord'?discordAttachments:undefined)
-      :discordAttachments.size?'You cannot open these attachments because this body has no file tools.':null;
+      // A body without file tools is still told what it was sent, and shown the files that are plain words
+      // (body-attachments.ts, showBodyAttachments). Discord's are fetched only for a job that is not held,
+      // so there it is told only that it cannot open them.
+      :discordAttachments.size?'You cannot open these attachments because this body has no file tools.'
+      :bridge?await (input.showAttachments??showBodyAttachments)(memoryClient,incoming):null;
     if(signal.aborted)throw new Error();
     if(sent){context.push(sent);continued.push(sent);}
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's

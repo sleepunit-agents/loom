@@ -476,3 +476,26 @@ it('answers picture-only Discord mail on a guest’s word with the file descript
  expect(saveAttachments).not.toHaveBeenCalled();
  expect(f.calls.find(row => row.path === 'reply')?.body.input).toMatchObject({incoming:'bi:image'});
 });
+
+it('shows a Slack job on a guest’s word what it was sent, since it cannot open a file, and saves nothing', async () => {
+ const f = fixture(), assignment = JSON.parse(f.input.toString());
+ Object.assign(assignment.job, {venue:'slack', thread:null});
+ assignment.job.run.policy.word = 'others';
+ const saveAttachments = vi.fn(async () => { throw Error('unexpected file access'); });
+ const asked: string[][] = [];
+ const showAttachments = vi.fn(async (_client: unknown, incoming: readonly string[]) => { asked.push([...incoming]); return 'Sent as files with these messages. SHOWN:' + incoming.join(','); });
+ f.native.mockResolvedValue({text:'I read the file you sent.', model:'observed', actions:[]});
+ const exit = await bodyProgram({...f.options, saveAttachments, showAttachments: showAttachments as never, stdin:async () => Buffer.from(JSON.stringify(assignment)),
+  fetch:async (url, options) => {
+   const response = await f.options.fetch(url, options);
+   if (!String(url).endsWith('/take')) return response;
+   const batch = await response.json();
+   Object.assign(batch.value.items[0], {source:'slack', refs:['bi:file'], words:'Check out what my VECTOR is now.'});
+   return Response.json(batch);
+  }});
+ expect(exit).toBe(0);
+ expect(showAttachments).toHaveBeenCalledOnce();
+ expect(asked).toEqual([['bi:file']]);
+ expect(f.native.mock.calls[0][1]).toContain('SHOWN:bi:file');
+ expect(saveAttachments).not.toHaveBeenCalled();
+});

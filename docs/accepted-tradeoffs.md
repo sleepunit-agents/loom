@@ -904,6 +904,21 @@ See `discord-files.ts`, `shared-daemon.ts` and `src/runtime/body-attachments.ts`
 - Would change it: wanting guests to stop work they started. That needs a job to record an outside
   account as who ended it.
 
+### A body with no file tools is shown the plain-text files it was sent, as words
+- What: a job on anybody else's word is held to loom's own tools and cannot open a file. Before this, such a
+  body on Slack was told nothing about files sent with its messages, and told the person nothing had
+  arrived. Now the body program lists what loom kept for the messages it took (`bridges.file`, as this
+  body) and puts into its mail the files that are plain words: named by extension as text, valid UTF-8,
+  with no control characters, at most 48 KiB each and 96 KiB for the run (`showBodyAttachments` in
+  `src/runtime/body-attachments.ts`; the sizes are in `src/pieces/bridges/attachment-limits.ts`). Every
+  other file is named with its size and why it is not shown, so the body can say so and ask for the words.
+  Nothing is written to disk. On Discord a held job is still only told it cannot open its attachments,
+  because Discord's are fetched only for a job that is not held.
+- Why accepted: a file of plain words is more of what the same person said. It is held to the same doubt
+  as their message, and the body has no more tools for having read it. The words sit between markers that
+  name the file, and a line in the file that looks like the closing marker is broken so it cannot pass for
+  it. The limits keep one message from filling a body's context.
+
 ### A body may say more during its run, a bounded number of times, with small files on Discord
 - What: `bridges.say` lets the body that holds a bridge conversation's job post one more message, to the
   channel and thread of the latest bridge message the job took. It goes through the send queue the reply
