@@ -16,7 +16,7 @@ it('draws the house icon for an app in the set, by its id, and the line icon for
   expect(tasks.type).toBe('img');
   expect(tasks.props).toMatchObject({ className: 'loom-house', 'data-app': 'tasks', width: 32, height: 32, alt: '', style: { width: 32, height: 32 } });
   expect(tasks.props.srcSet).toBe(`${HOUSE_ICONS.tasks.small} 1x, ${HOUSE_ICONS.tasks.art} 4x`);
-  const none = only(draw({ app: 'knowledge', name: 'book-open', size: 'sm' }));
+  const none = only(draw({ app: 'home-preview', name: 'book-open', size: 'sm' }));
   expect(none.type).toBe('line-icon');
   expect(none.props).toMatchObject({ name: 'book-open', size: 'sm' });
 });
