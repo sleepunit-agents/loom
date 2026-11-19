@@ -43,7 +43,7 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
    run(ctx,input){const notes=selected(ctx.viewer),identity=ctx.receipt;if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
     const result=notes.atomicWrite(db=>{const previous=receipt(notes,identity,ctx.now);if(previous)return previous;mindReceipts.expire(db,ctx.now);
      const only=commands.addsOnly?.(ctx.viewer);
-     if(only&&(input.expectedBody!==undefined||input.path.startsWith('lane-state/')))
+     if(only&&(input.expectedBody!==undefined||input.path.startsWith('lane-state/')||input.path.startsWith('alert-verdicts/')))
       throw new OperationError('denied','Only an owner-authorized job can claim or install lane state');
      if(only||input.expectedBody!==undefined){
       const current=notes.read(input.path);
