@@ -75,7 +75,7 @@ it('takes the outside asker from marked mail and checks the current project, acc
   db.insert(projectOutsidePeople).values({project:'pond',...address}).run();
   const read=async()=> (await (await root.http.request('/api/kits/available',{method:'POST',headers:{
     'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({input:{}})})).json()).value;
-  expect(await read()).toMatchObject({person:{kind:'outside',id:person},word:'others',projects:['pond'],tools:[]});
+  expect(await read()).toMatchObject({explanation:expect.stringContaining('currently granted'),person:{kind:'outside',id:person},word:'others',projects:['pond'],tools:[]});
   db.insert(agentKitProjects).values({agent:'art',kit:'weather',project:'pond'}).run();
   expect(await read()).toMatchObject({tools:[{kit:'weather',tool:'lookup',reasons:['grant to project pond']}]});
   expect((await post('authorize',call)).status).toBe(200);
