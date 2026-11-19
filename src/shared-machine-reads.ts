@@ -59,15 +59,18 @@ export function registerMachineReads(operations:Operations,db:DataDatabase,now:(
       const result= !permitted?{refusal:'Machine read refused'}:
         !available()?{refusal:'Machine is away or does not offer this read'}:
         await broker.ask(input.machine,kind,parameters,()=>mayInspect(viewer,input.machine)&&available(),signal);
-      db.update(machineReads).set({bytes:'lines' in result?Buffer.byteLength(result.lines.join('\n')):0,outcome:'refusal' in result?result.refusal:'Machine answer withheld'}).where(eq(machineReads.id,id)).run();
+      db.update(machineReads).set({bytes:0,outcome:'refusal' in result?result.refusal:'Machine answer withheld'}).where(eq(machineReads.id,id)).run();
       return {id,result};
     },
     run(ctx,input,prepared){
       if(!prepared)throw new OperationError('unavailable','Machine read requires an asynchronous request');
-      if(!mayInspect(ctx.viewer,input.machine))return {refusal:'Machine read refused'};
       const {id,result}=prepared as {id:string;result:import('./runtime/machine-read-broker.js').ReadAnswer};
+      if (!mayInspect(ctx.viewer,input.machine)) {
+        db.update(machineReads).set({bytes:0,outcome:'Machine read refused'}).where(eq(machineReads.id,id)).run();
+        return {refusal:'Machine read refused'};
+      }
       if('refusal' in result)return result;
-      db.update(machineReads).set({outcome:'answered'}).where(eq(machineReads.id,id)).run();
+      db.update(machineReads).set({outcome:'answered',bytes:Buffer.byteLength(result.lines.join('\n'))}).where(eq(machineReads.id,id)).run();
       return {source:'machine',machine:input.machine,read:input.read,lines:result.lines};
     }});
   operations.register({name:'machine.history',doors:['http'],input:z.object({machine:name}).strict(),output:z.array(z.unknown()),

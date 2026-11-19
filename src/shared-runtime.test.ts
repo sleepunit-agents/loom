@@ -556,10 +556,14 @@ it('a live report-only worker returns a memory sample to an authorized body over
   const answer=await post('machine/read',input,token);
   expect(answer).toMatchObject({ok:true,value:{lines:expect.arrayContaining([expect.stringContaining('Mem:')])}});
   expect(await post('machine/read',{...input,read:'disk'},token)).toMatchObject({value:{refusal:expect.stringContaining('does not offer')}});
-  f.db.update(boxes).set({readers:[]}).where(eq(boxes.id,'other')).run();
+  // Revoke after preparation, immediately before the operation delivers its result.
+  f.client.exec("CREATE TEMP TRIGGER revoke_before_delivery AFTER UPDATE ON machine_reads WHEN NEW.outcome='Machine answer withheld' BEGIN UPDATE boxes SET readers='[]' WHERE id='other'; END");
+  expect(await post('machine/read',input,token)).toMatchObject({value:{refusal:'Machine read refused'}});
+  const denied=f.client.prepare("SELECT outcome,bytes FROM machine_reads WHERE outcome<>'answered' AND outcome NOT LIKE '%does not offer%'").all();
+  expect(denied).toEqual([{outcome:'Machine read refused',bytes:0}]);
   expect(await post('machine/read',input,token)).toMatchObject({value:{refusal:'Machine read refused'}});
   const audit=await post('machine/history',{machine:'other'},ownerCredential);
-  expect(audit.value).toHaveLength(3);expect(JSON.stringify(audit)).not.toContain('Mem:');
+  expect(audit.value).toHaveLength(4);expect(JSON.stringify(audit)).not.toContain('Mem:');
   expect(audit.value).toContainEqual(expect.objectContaining({agent:'art',job:job.id,outcome:'answered',bytes:expect.any(Number)}));
   expect(f.db.select().from(operationResults).all().some(row=>JSON.stringify(row).includes('Mem:'))).toBe(false);
  }finally{stop();await running;bootstrap.erase?.();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}

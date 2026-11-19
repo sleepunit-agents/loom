@@ -14,7 +14,7 @@ A machine read selects one diagnostic by name. For example, `{"machine":"box-exa
 | `proxmox-vms`, `proxmox-containers` | None | Local Proxmox VM or container list |
 | `zfs`, `zpool` | None | Dataset names, types and space usage, or pool health from `zpool status -x` |
 
-Use `user` or `system` for `scope`. Specify a single literal unit name including its suffix. Journal reads accept 1–100 lines (default 30) and 1–1440 minutes for `since` (default 60). Unknown arguments are refused.
+Use `user` or `system` for `scope`. Specify a literal unit including its suffix. The name must start with an ASCII letter or digit and may contain letters, digits, dots, colons, underscores, hyphens and at signs. The root mount and backslash-escaped names are outside this subset. Journal reads accept 1–100 lines (default 30) and 1–1440 minutes for `since` (default 60). Unknown arguments are refused.
 
 Each diagnostic has a fixed executable, a four-second deadline and a 16,384-byte output limit. An oversized answer is refused in full. The worker checks output for its own credential in plain text and base64 and for recognizable credential formats before returning it. A matching answer is withheld in full. Programs' error output stays on the worker. By default journal output contains only timestamps and priorities. The operator may list exact scope/unit pairs in `journalUnits` to release their message text. Both worker unit names must be listed to release worker-log messages. A journal is as sensitive as what its programs log. An opaque or encoded credential can escape recognition. Choose message access only for units whose output the agent's authorized jobs may read.
 
