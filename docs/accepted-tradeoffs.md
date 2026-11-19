@@ -628,6 +628,10 @@ On success the body sends its report alongside settlement. A body with validated
   call, and it dies with the body. Another user cannot read either. Neither program offers another
   way in.
 - **What would change the answer.** Codex or agy accepting a bearer on a pipe or file descriptor.
+- **Not settled (t-2307, 2026-11-18).** "Why the rest is accepted" counts only the body's own model and
+  other users as readers. In process mode every other body on the machine is the same user, so it can read
+  this bearer, or the Claude Code one from its fd 3 pipe before Claude Code reads it, and use another job's
+  tools. See `docs/proof-reach.md`.
 
 ### A timezone change while loom is down is seen one firing late
 
