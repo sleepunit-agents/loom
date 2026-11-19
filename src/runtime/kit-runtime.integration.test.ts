@@ -3,7 +3,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {dirname,join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {Duplex} from 'node:stream';
 import {createServer} from 'node:http';
@@ -92,7 +92,7 @@ it.each([false,true])('keeps a held job fresh and runs exactly its granted mount
   const plan=join(dir,'body.json');
   await writeFile(plan,JSON.stringify({cwd:dir,command:resolve('test/fixtures/kit-model.mjs'),reach:'all'}));
   const errors=vi.fn();
-  const result=await bodyProgram({args:[plan],read:path=>readFile(path,'utf8'),stdin:async()=>envelope,env:{},signal,clock:f.clock,
+  const result=await bodyProgram({args:[plan],read:path=>readFile(path,'utf8'),stdin:async()=>envelope,env:{PATH:dirname(process.execPath)},signal,clock:f.clock,
     schedule:{every:()=>()=>{}},error:errors});
   expect(result,JSON.stringify(errors.mock.calls)).toBe(0);
   const report=JSON.parse(await readFile(join(dir,'model-report.json'),'utf8'));
