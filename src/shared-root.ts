@@ -466,6 +466,7 @@ export function sharedRoot(options: {
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {
     now, bodyJob, isProgram: viewer => !!credentials.program(viewer), words: comms?.service.words.bind(comms.service),
+    terminal: viewer => credentials.terminalMachine(viewer),
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);

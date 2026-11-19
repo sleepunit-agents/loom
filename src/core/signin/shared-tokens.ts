@@ -41,7 +41,7 @@ export function activeMemberToken(db:DataDatabase,clock:Clock,id:string){
 }
 export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
   /** The checks every new row passes, whoever made its secret, and the one insert. */
-  const add = (value: z.infer<typeof sharedTokenInput>, fingerprint: string, madeFrom?: string) => {
+  const add = (value: z.infer<typeof sharedTokenInput>, fingerprint: string, madeFrom?: string, by?: string) => {
     const now = clock.now();
     if (value.expiresAt && Date.parse(value.expiresAt) <= now) throw new OperationError('invalid', 'Expiry must be in the future');
     if (db.select().from(tokens).where(eq(tokens.label, value.label)).all().some(row => tokenLive(row, now))) throw new OperationError('conflict', 'A live token already has that label');
@@ -64,17 +64,20 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       const machine = db.select({owner:boxes.owner}).from(boxes)
         .where(and(eq(boxes.id, value.terminalMachine), isNull(boxes.revokedAt))).get();
       if (!machine?.owner) throw new OperationError('invalid', 'Choose an active machine with a signed-in owner');
-      db.insert(terminalCredentials).values({fingerprint, machine:value.terminalMachine, member:machine.owner}).run();
+      // Who made it is kept. A binding its own member made is the agent at their terminal: it reads that
+      // member's private talk with the agent and can answer for them there (policy.ts, Viewer.atTerminalOf).
+      // One made for them by another household owner reports that machine's sessions, as before, and no more.
+      db.insert(terminalCredentials).values({fingerprint, machine:value.terminalMachine, member:machine.owner, issuedBy:by ?? null}).run();
     }
   };
   return {
     /** Makes the bearer here and hands it back. For trusted callers; the sign-in door narrows what an owner
      * may ask for to ownerTokenInput. */
-    issue(input: z.input<typeof sharedTokenInput>) {
+    issue(input: z.input<typeof sharedTokenInput>, by?: string) {
       const value = sharedTokenInput.parse(input);
       return db.transaction(() => {
         const token = `loom_${randomBytes(32).toString('base64url')}`, fingerprint = credentialFingerprint(token);
-        add(value, fingerprint);
+        add(value, fingerprint, undefined, by);
         return { token, fingerprint };
       });
     },

@@ -66,6 +66,13 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       if (opened.matches === null) unreadable = true;
       return opened.matches;
     });
+    // The agent answering at the owner's terminal has no unverified form: the words are there, readable, or
+    // the answer is refused. Where they appear more than once, the newest message is the one (candidates
+    // come newest first).
+    if (terminal && candidates.every(candidate => candidate.verifiedOnly)) {
+      if (!matches.length) throw new OperationError('denied', unreadable ? 'What the owner said at this terminal cannot be read now.' : 'Those words do not appear in what the owner said at this terminal.');
+      return matches[0];
+    }
     if (terminal && (unreadable || matches.length !== 1)) return candidates.find(candidate => !candidate.sealed)!;
     if (!matches.length) throw new OperationError('denied','Those words do not appear in that message.');
     if (matches.length > 1) throw new OperationError('denied','Those words appear in more than one message. Quote a longer passage.');
@@ -77,7 +84,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer)) return false;
+      if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
       evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
       const merge = mergeTarget(row);
@@ -114,6 +121,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       // A dangerous action cannot be put back, so allowing one takes a second, explicit yes.
+      // The agent at the owner's terminal does not allow what cannot be put back: that yes is the owner's own hand.
+      if (row.kind === 'dangerous' && input.answer === 'allow' && proof.verifiedOnly)
+        throw new OperationError('denied', 'This cannot be undone. Its owner allows it themselves.');
       if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true && !basis)
         throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
@@ -129,7 +139,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       }
       if (basis && proof.through) {
         const loud = row.kind === 'dangerous' || (row.operation === 'household.change' && alwaysAsks.has(JSON.parse(row.details).change));
-        service.tellAnswer(row, proof.member, proof.through, input.answer, basis, loud);
+        // An answer the agent gave at the owner's terminal is always told in full: the owner sees, at once,
+        // everything answered in their name there.
+        service.tellAnswer(row, proof.member, proof.through, input.answer, basis, loud || !!proof.verifiedOnly);
       }
       return { id: input.id };
     },

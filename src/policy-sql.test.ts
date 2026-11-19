@@ -64,6 +64,9 @@ const viewers: Viewer[] = [
   // known, and a body of a removed agent.
   ...[['art', 'sam'], ['art', 'lee'], ['art', 'owner'], ['art', 'full'], ['art', 'gone'], ['art', 'ghost'], ['mark', 'lee'], ['mark', 'exowner'], ['old', 'full']]
     .map(([id, workingFor]) => ({ kind: 'agent' as const, id, workingFor })),
+  // The agent in a session at a member's own terminal: the same spread of members.
+  ...[['art', 'sam'], ['art', 'lee'], ['art', 'owner'], ['art', 'full'], ['art', 'gone'], ['art', 'ghost'], ['mark', 'sam'], ['mark', 'lee'], ['old', 'full']]
+    .map(([id, atTerminalOf]) => ({ kind: 'agent' as const, id, atTerminalOf })),
   // Workers and installed services read no list: both faces say no.
   { kind: 'runner', id: 'sam' }, { kind: 'service', id: 'owner' },
 ];
@@ -260,10 +263,49 @@ describe('a body working for a member', () => {
   });
   it('never becomes its member: nothing that is the member\'s own, and nothing of the owner role', () => {
     expect(both(rules.task, body('art', 'sam'), { project: null, ownerKind: 'member', owner: 'sam' })).toBe(false);
-    expect(both(rules.conversation, body('art', 'sam'), { member: 'sam', agent: 'art', project: 'pond', direct: false })).toBe(false);
     expect(both(rules.householdOwner, body('art', 'full'), {})).toBe(false);
     expect(both(tableRules.secrets, body('art', 'full'), {})).toBe(false);
     expect(both(rules.stopJob, body('art', 'full'), { agent: 'art' })).toBe(false);
+  });
+  it('reads its own private talk with a member only where that member is the one it could show it to', () => {
+    const at0 = '2026-11-19T00:00:00.000Z';
+    db.insert(s.conversations).values({ id: 'sams-talk', agent: 'art', member: 'sam', project: 'pond', venue: 'loom', place: 'sams-talk', label: 'sams-talk', startedAt: at0, lastAt: at0, turnCount: 0 }).onConflictDoNothing().run();
+    const talk = (member: string, agent = 'art') => ({ member, agent, project: 'pond', direct: false });
+    const at = (id: string, atTerminalOf: string): Viewer => ({ kind: 'agent', id, atTerminalOf });
+    // A body doing sam's own work, and a session at sam's own terminal, read what sam and art said to each other.
+    for (const viewer of [body('art', 'sam'), at('art', 'sam')]) {
+      expect(both(rules.conversation, viewer, talk('sam')), JSON.stringify(viewer)).toBe(true);
+      // Not another member's talk with the same agent, and not this member's talk with another agent.
+      expect(both(rules.conversation, viewer, talk('lee')), JSON.stringify(viewer)).toBe(false);
+      expect(both(rules.conversation, viewer, talk('full')), JSON.stringify(viewer)).toBe(false);
+      expect(both(rules.conversation, viewer, talk('sam', 'mark')), JSON.stringify(viewer)).toBe(false);
+      // The records of that conversation come with it: its turns, digests and findings.
+      for (const table of ['turns', 'digests', 'findings', 'conversationDays', 'conversationPeople'] as const)
+        expect(both(tableRules[table], viewer, { conversation: 'sams-talk' }), table + JSON.stringify(viewer)).toBe(true);
+      // What hangs off the conversation keeps the narrower rule: its jobs and its mail stay the member's,
+      // with or without the conversation named, and so does everything else that is the member's own.
+      for (const named of [null, 'sams-talk']) {
+        expect(both(tableRules.jobs, viewer, { ...talk('sam'), conversation: named }), JSON.stringify(viewer)).toBe(false);
+        expect(both(tableRules.inbox, viewer, { ...talk('sam'), conversation: named, toKind: 'person', to: 'sam', waitsOnKind: null, waitsOnId: null }), JSON.stringify(viewer)).toBe(false);
+      }
+    }
+    // The agent alone reads no private talk: a body woken by anyone else, in any room, is the agent alone.
+    expect(both(rules.conversation, art, talk('sam'))).toBe(false);
+    // Another agent at sam's terminal, or working for sam, does not read art's talk with sam.
+    expect(both(rules.conversation, at('mark', 'sam'), talk('sam'))).toBe(false);
+    expect(both(rules.conversation, body('mark', 'sam'), talk('sam'))).toBe(false);
+    // Only while the member has the agent on their own list and is in the household: lee does not have art,
+    // the owner role alone does not either, and a member who has left is nobody.
+    for (const member of ['lee', 'owner', 'gone', 'ghost', 'nobody-at-all']) {
+      expect(both(rules.conversation, at('art', member), talk(member)), member).toBe(false);
+      expect(both(rules.conversation, body('art', member), talk(member)), member).toBe(false);
+    }
+    // Being at a terminal narrows nothing and adds nothing else: the session is the agent, as before.
+    const room = { id: 'pond', project: 'pond', agent: 'mark', member: null, direct: false };
+    expect(both(rules.conversation, at('art', 'lee'), room)).toBe(both(rules.conversation, art, room));
+    expect(both(rules.task, at('art', 'sam'), { project: null, ownerKind: 'member', owner: 'sam' })).toBe(false);
+    expect(both(rules.householdOwner, at('art', 'full'), {})).toBe(false);
+    expect(both(tableRules.secrets, at('art', 'full'), {})).toBe(false);
   });
   it('sets the volume of its member\'s own mail on that member\'s word, and of nobody else\'s', () => {
     const to = (id: string) => ({ toKind: 'person', to: id });

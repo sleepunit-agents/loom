@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from './database.js';
 import { currentSession, dataAuthentication, presentedCredential, sessionEnds } from './authentication.js';
 import { dataHttp } from './http.js';
-import { agents, boxes, jobs, members, programTokens, tokens, sessions } from './schema.js';
+import { agents, boxes, jobs, members, programTokens, tokens, sessions, terminalCredentials } from './schema.js';
 import { readHouseholdSetup } from './household-read.js';
 const clients: Database.Database[] = [];
 afterEach(() => clients.splice(0).forEach(c => c.close()));
@@ -175,4 +175,37 @@ it('stops a machine\'s token, and a body running there, being current while the 
   expect(viewers()).toEqual([undefined, undefined]);
   db.update(members).set({ removedAt: null }).where(eq(members.id, 'sam')).run();
   expect(viewers()).toEqual([{ kind: 'runner', id: 'sams' }, { kind: 'agent', id: 'art' }]);
+});
+
+it('makes a machine-bound terminal credential the agent at that machine owner\'s terminal, from its record alone, and ends what was admitted when that changes', () => {
+  const { db, authenticate, request } = fixture();
+  const plain = 'c'.repeat(64), bound = 'd'.repeat(64);
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(members).values({ id: 'lee', role: 'member', joinedAt: at }).run();
+  db.insert(boxes).values({ id: 'box', name: 'box', owner: 'sam', sameMachineAsLoom: false, hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  for (const [key, label] of [[plain, 'plain'], [bound, 'bound']]) db.insert(tokens).values({ fingerprint: hash(key), label, kind: 'agent', agent: 'art', createdAt: at }).run();
+  db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam', issuedBy: 'sam' }).run();
+  const as = (key: string, extra: Record<string, string> = {}) => authenticate(request({ authorization: 'Bearer ' + key, ...extra }));
+  expect(as(plain)?.viewer).toEqual({ kind: 'agent', id: 'art' });
+  expect(as(bound)?.viewer).toEqual({ kind: 'agent', id: 'art', atTerminalOf: 'sam' });
+  // Nothing a request says sets it.
+  expect(as(plain, { 'x-loom-agent': 'art', 'x-loom-at-terminal-of': 'sam', 'x-at-terminal-of': 'sam' })?.viewer).toEqual({ kind: 'agent', id: 'art' });
+  const admitted = as(bound)!, alone = as(plain)!;
+  expect(admitted.valid() && alone.valid()).toBe(true);
+  const ends = (change: () => void, undo: () => void) => {
+    change();
+    expect(as(bound)?.viewer).toEqual({ kind: 'agent', id: 'art' });
+    // What was admitted as the agent at sam's terminal is no longer that, so it is no longer valid; the plain one is untouched.
+    expect(admitted.valid()).toBe(false);
+    expect(alone.valid()).toBe(true);
+    undo();
+    expect(admitted.valid()).toBe(true);
+  };
+  ends(() => db.update(boxes).set({ revokedAt: at }).run(), () => db.update(boxes).set({ revokedAt: null }).run());
+  ends(() => db.update(boxes).set({ owner: 'lee' }).run(), () => db.update(boxes).set({ owner: 'sam' }).run());
+  ends(() => db.update(members).set({ removedAt: at }).where(eq(members.id, 'sam')).run(), () => db.update(members).set({ removedAt: null }).where(eq(members.id, 'sam')).run());
+  ends(() => db.delete(terminalCredentials).run(), () => db.insert(terminalCredentials).values({ fingerprint: hash(bound), machine: 'box', member: 'sam', issuedBy: 'sam' }).run());
+  // A binding somebody else made for sam, or one made before the maker was recorded, is not the agent at sam's terminal.
+  ends(() => db.update(terminalCredentials).set({ issuedBy: 'lee' }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
+  ends(() => db.update(terminalCredentials).set({ issuedBy: null }).run(), () => db.update(terminalCredentials).set({ issuedBy: 'sam' }).run());
 });

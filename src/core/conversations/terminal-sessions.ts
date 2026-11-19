@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, lte } from 'drizzle-orm';
 import type { TerminalEvent } from '../../shared-terminal-input.js';
 import type { DataDatabase } from '../data/database.js';
-import { deletedThreads, jobs, jobUsage, terminalRuns, terminalSessions } from '../data/schema.js';
+import { boxes, deletedThreads, jobs, jobUsage, terminalRuns, terminalSessions } from '../data/schema.js';
 import { OperationError } from '../operations/index.js';
 import { CommsMessages } from './messages.js';
 import type { WordsKey } from './words.js';
@@ -91,7 +91,12 @@ export class TerminalSessions {
   }
 
   private open(scope: TerminalScope, event: Extract<TerminalEvent,{action:'open'}>, at: string): Session {
-    const title = [...(scope.machine + ' · ' + event.harness)].slice(0,60).join('');
+    // The machine by its name and the folder the session began in: what its person would call it. The
+    // machine's id says nothing to them. The whole path is on the session row; the title has its last part.
+    const machine = this.db.select({ name: boxes.name }).from(boxes).where(eq(boxes.id, scope.machine)).get()?.name ?? scope.machine;
+    // The last part of the path, whichever way its slashes lean, with nothing in it that is not printable.
+    const folder = event.cwd.split(/[\\/]/).filter(Boolean).pop()?.replace(/[\p{C}\u2028\u2029]/gu, '').trim();
+    const title = [...([machine, event.harness, ...(folder ? [folder] : [])].join(' · '))].slice(0,60).join('');
     const thread = this.messages.threads.open({agent:scope.agent,member:scope.member,venue:'terminal',title});
     const job = this.db.insert(jobs).values({agent:scope.agent,member:scope.member,box:scope.machine,
       id:'job-'+randomUUID(),conversation:thread.conversation,title,state:'running',brief:'',model:event.model ?? '',

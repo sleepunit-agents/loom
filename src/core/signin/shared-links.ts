@@ -97,7 +97,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return first&&{...first,still:()=>newProof(options.db,presented,options.clock.now())?.token===first.token};
   };
   const stale='Sign in again before making a token';
-  const issueForOwner=async(c:Context,issue:(input:unknown)=>{token:string;fingerprint:string})=>{
+  const issueForOwner=async(c:Context,issue:(input:unknown,by:string)=>{token:string;fingerprint:string})=>{
     const input=await c.req.json().catch(()=>null),auth=authenticate(c.req.raw),proof=proved(c.req.raw);
     if(!auth?.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
     // A token made here can last for ever. An aged or automated owner browser must not turn its short
@@ -107,7 +107,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       const value=write(()=>{
         if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))throw new OperationError('denied','Household owner required');
         if(!proof.still())throw new OperationError('denied',stale);
-        return issue(input);
+        return issue(input,auth.viewer.id);
       });
       if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
       if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
@@ -118,9 +118,9 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       throw error;
     }
   };
-  routes.post('/api/signin/token',c=>issueForOwner(c,input=>{
+  routes.post('/api/signin/token',c=>issueForOwner(c,(input,by)=>{
     const parsed=ownerTokenInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid token request');
-    return sharedTokens(options.db,options.clock).issue(parsed.data);
+    return sharedTokens(options.db,options.clock).issue(parsed.data,by);
   }));
   routes.post('/api/signin/program',c=>issueForOwner(c,input=>{
     if(!options.issueProgram)throw new OperationError('unavailable','Program tokens are unavailable');

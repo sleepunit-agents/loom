@@ -20,7 +20,7 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     const open = {...event,action:'open' as const,cwd:'/tmp',model:null};
     const first = await send(open);
     expect(await send(open)).toEqual(first);
-    expect(db.select().from(conversations).get()).toMatchObject({agent:'art',member:'sam',venue:'terminal',label:'box · claude'});
+    expect(db.select().from(conversations).get()).toMatchObject({agent:'art',member:'sam',venue:'terminal',label:'Box · claude · tmp'});
     const turn = {...event, action:'turn' as const,eventId:'m1',role:'member' as const,words:'secret'};
     await send(turn);
     await send(turn);

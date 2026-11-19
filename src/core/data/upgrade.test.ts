@@ -464,3 +464,10 @@ it('starts upgraded households with no sign-in records',()=>{
  const db=household(17);upgradeDataSchema(db);
  expect(db.prepare('select * from model_account_logins').all()).toEqual([]);
 });
+
+it('adds the maker of a terminal binding as a column nobody is written into, so bindings from before gain no new reach',()=>{
+ const db=household(18);upgradeDataSchema(db);
+ expect(db.prepare('select fingerprint, machine, member, issued_by from terminal_credentials').all()).toEqual([]);
+ const column=db.prepare("select \"notnull\" as required, dflt_value as fallback from pragma_table_info('terminal_credentials') where name='issued_by'").get();
+ expect(column).toEqual({required:0,fallback:null});
+});

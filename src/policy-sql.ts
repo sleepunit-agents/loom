@@ -37,6 +37,7 @@ function filter(rule: Rule, viewer: Viewer, fields: RuleFields, startDepth: numb
   const member = kind === 'member';
   // A body working for a member (policy.ts, Viewer): each of the agent's own terms also asks this of that member.
   const bound = viewer.kind === 'agent' ? viewer.workingFor : undefined;
+  const terminal = viewer.kind === 'agent' ? viewer.atTerminalOf : undefined;
   const current = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${member ? id : bound ?? null} and ${viewerRow.removedAt} is null)`;
   const itsOwner = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${bound ?? null} and ${viewerRow.role} = 'owner' and ${viewerRow.removedAt} is null)`;
   const onItsList = sql`(${current} and exists (select 1 from ${as(memberAgents, 'policy_member_agents')} where ${owned.agent} = ${id} and ${owned.member} = ${bound ?? null}))`;
@@ -89,6 +90,10 @@ function filter(rule: Rule, viewer: Viewer, fields: RuleFields, startDepth: numb
       }
       // The same rule, read for the member the body works for, while that member has the agent on their list.
       case 'forItsMember': return bound === undefined ? no : sql`(${onItsList} and ${filter(part.rule, { kind: 'member', id: bound }, row, depth)})`;
+      // The same rule, read for the member at whose terminal this session runs, while that member is in the
+      // household and has the agent on their list.
+      case 'atItsTerminal': return terminal === undefined ? no
+        : sql`(exists (select 1 from ${as(members, 'policy_named_member')} where ${namedMember.id} = ${terminal} and ${namedMember.removedAt} is null) and exists (select 1 from ${as(memberAgents, 'policy_member_agents')} where ${owned.agent} = ${id} and ${owned.member} = ${terminal}) and ${filter(part.rule, { kind: 'member', id: terminal }, row, depth)})`;
     }
   };
   return build(rule, fields, startDepth);
@@ -103,6 +108,6 @@ export function sqlHolds(db: { get<T>(query: SQL): T }, rule: Rule, viewer: View
 /** The read filters for these tables, in the shape the shared query door takes. */
 export function sqlVisibility<const T extends TableWithRule>(viewer: Viewer, tables: readonly T[]): Record<T, (fields: RuleFields) => SQL> {
   // Copy what the rules read of the viewer, once: a later change to the caller's object changes no filter.
-  const fixed: Viewer = viewer.kind === 'agent' ? { kind: viewer.kind, id: viewer.id, workingFor: viewer.workingFor } : { kind: viewer.kind, id: viewer.id };
+  const fixed: Viewer = viewer.kind === 'agent' ? { kind: viewer.kind, id: viewer.id, workingFor: viewer.workingFor, atTerminalOf: viewer.atTerminalOf } : { kind: viewer.kind, id: viewer.id };
   return Object.fromEntries(tables.map(name => [name, (fields: RuleFields) => sqlRule(tableRules[name], fixed, fields)])) as Record<T, (fields: RuleFields) => SQL>;
 }

@@ -1,10 +1,10 @@
-import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
 import { ageLimit, wordsKept } from './core/conversations/retention.js';
 import { commsKeepDays } from './core/data/comms-days.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, boxes, jobs, threads, terminalSessions, conversations, inbox, messages } from './core/data/schema.js';
+import { agents, boxes, jobs, memberAgents, threads, terminalSessions, conversations, inbox, messages } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
 import type { Viewer } from './policy.js';
@@ -25,9 +25,17 @@ export type EvidenceSources = {
   now(): string;
   isProgram(viewer: Viewer): boolean;
   bodyJob(viewer: Viewer): { job: Job } | undefined;
+  /** The agent's session at a member's own terminal: a machine-bound terminal credential (sharedCredentials.terminalMachine). */
+  terminal?(viewer: Viewer): { agent: string; member: string; machine: string } | undefined;
   words?(thread: string, seq: number): Promise<string | null>;
 };
-type Evidence = { member: string; basis?: string; through?: string } & (
+/** The fewest letters and digits a passage an agent quotes to answer for the owner may have: enough that a
+ * word in passing is not an answer. */
+export const terminalQuoteMin = 12;
+/** How long after the owner said something the agent may still answer on it. A session can stay open for
+ * days and be opened again after it ended; what was said in it does not stay an answer for as long. */
+export const terminalAnswerMs = 12 * 60 * 60 * 1000;
+type Evidence = { member: string; basis?: string; through?: string; verifiedOnly?: true } & (
   | { item: string; sealed: Buffer; thread: string; seq: number }
   | { sealed?: undefined }
 );
@@ -46,29 +54,46 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
     const agent = db.select({ id: agents.id }).from(agents).where(eq(agents.id, word.through)).get();
     if (!agent) refused('Name an agent in this household.');
     const now = sources.now();
-    const cutoff = new Date(Date.parse(now) - terminalSilenceMs).toISOString();
-    const retained = word.quote.trim() ? db.select({row:messages, conversation:threads.conversation, machine:terminalSessions.machine})
-      .from(terminalSessions).innerJoin(jobs,eq(jobs.id,terminalSessions.job))
-      .innerJoin(boxes,eq(boxes.id,terminalSessions.machine))
-      .innerJoin(threads,eq(threads.id,terminalSessions.thread))
-      .innerJoin(conversations,eq(conversations.id,threads.conversation))
-      .innerJoin(messages,and(eq(messages.thread,threads.id),eq(messages.run,terminalSessions.job)))
-      .where(and(eq(jobs.conversation,threads.conversation),eq(jobs.box,terminalSessions.machine),
-        eq(jobs.agent,terminalSessions.agent),eq(jobs.member,terminalSessions.member),eq(jobs.startedByKind,'terminal'),
-        eq(terminalSessions.member,viewer.id),eq(terminalSessions.agent,agent.id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt),
-        eq(conversations.member,viewer.id),eq(conversations.agent,agent.id),eq(conversations.venue,'terminal'),
-        eq(jobs.state,'running'),sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`,
-        eq(messages.sender,viewer.id),eq(messages.kind,'message'),isNotNull(messages.words))).all() : [];
-    const days = commsKeepDays(db);
+    const retained = word.quote.trim() ? terminalWords(db, now, { member: viewer.id, agent: agent.id }) : [];
     const candidates: Evidence[] = retained.flatMap(({row,conversation,machine}) =>
-      row.words && wordsKept(row,days,now) ? [{
-        member:viewer.id, through:agent.id, item:JSON.stringify([row.thread,row.seq]), sealed:row.words, thread:row.thread, seq:row.seq,
+      [{
+        member:viewer.id, through:agent.id, item:JSON.stringify([row.thread,row.seq]), sealed:row.words!, thread:row.thread, seq:row.seq,
         basis:`${viewer.id} as told to ${agent.id} at the terminal: “${word.quote}” (conversation ${conversation}, turn ${row.seq}, machine ${machine})`,
-      }] : []);
+      }]);
     return [...candidates, {
       member: viewer.id, through: agent.id,
       basis: `${viewer.id} as told to ${agent.id} at the terminal (unverified): “${word.quote}”`,
     }];
+  }
+
+  // The agent itself, in a session at a household owner's own terminal, answers for that owner when asked
+  // to there. The answer stands only on words loom has on record from that owner in a terminal session with
+  // this agent on that machine that is still running, said in the last twelve hours, and there is no
+  // unverified form of it. The newest message that carries the quote is the one answered on.
+  //
+  // This is a record, not proof that a person spoke. Those words reach loom from the hook on that machine,
+  // on this same credential, so the agent could write them itself. What the rule buys is that an honest
+  // agent cannot answer by mistake on words that were never said, that every such answer names the words
+  // it stands on, and that the owner is told of each one at once (shared-work-commands.ts). An action
+  // that cannot be undone is not answered this way at all.
+  const terminal = sources.terminal?.(viewer);
+  // Only a binding its own member made (authentication.ts): one another owner made for them answers nothing.
+  if (terminal && viewer.kind === 'agent' && viewer.id === terminal.agent && viewer.atTerminalOf === terminal.member) {
+    const owner = { kind: 'member' as const, id: terminal.member };
+    if (!workAnswersAllowed(db, owner)) refused('The person at this terminal is not a household owner.');
+    // As for reading their talk: only while that owner has the agent on their own list.
+    if (!db.select({ agent: memberAgents.agent }).from(memberAgents).where(and(eq(memberAgents.member, terminal.member), eq(memberAgents.agent, terminal.agent))).get())
+      refused('The person at this terminal no longer has this agent.');
+    if (!word || !('venue' in word) || word.through !== terminal.agent) refused('Quote what the owner said to you at this terminal.');
+    if (word.quote !== word.quote.trim() || (word.quote.match(/[\p{L}\p{N}]/gu) ?? []).length < terminalQuoteMin) refused('Quote a longer passage of what the owner said.');
+    const now = sources.now(), since = Date.parse(now) - terminalAnswerMs;
+    const found = terminalWords(db, now, { member: terminal.member, agent: terminal.agent, machine: terminal.machine })
+      .filter(({ row }) => Date.parse(row.at) > since);
+    if (!found.length) refused('Those words do not appear in what the owner said at this terminal.');
+    return found.map(({ row, conversation, machine }) => ({
+      member: terminal.member, through: terminal.agent, verifiedOnly: true as const, item: JSON.stringify([row.thread, row.seq]), sealed: row.words!, thread: row.thread, seq: row.seq,
+      basis: `${terminal.member} as told to ${terminal.agent} at the terminal: “${word.quote}” (conversation ${conversation}, turn ${row.seq}, machine ${machine})`,
+    }));
   }
 
   const job = sources.bodyJob(viewer)?.job;
@@ -87,6 +112,27 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
   }
   if (!candidates.length) refused('Those words do not appear in that message.');
   return candidates;
+}
+
+/** What a member said to an agent in terminal sessions that are still running, on their own machines (one
+ * machine when named), whose words are still kept: newest first. */
+function terminalWords(db: DataDatabase, now: string, who: { member: string; agent: string; machine?: string }) {
+  const cutoff = new Date(Date.parse(now) - terminalSilenceMs).toISOString(), days = commsKeepDays(db);
+  return db.select({row:messages, conversation:threads.conversation, machine:terminalSessions.machine})
+    .from(terminalSessions).innerJoin(jobs,eq(jobs.id,terminalSessions.job))
+    .innerJoin(boxes,eq(boxes.id,terminalSessions.machine))
+    .innerJoin(threads,eq(threads.id,terminalSessions.thread))
+    .innerJoin(conversations,eq(conversations.id,threads.conversation))
+    .innerJoin(messages,and(eq(messages.thread,threads.id),eq(messages.run,terminalSessions.job)))
+    .where(and(eq(jobs.conversation,threads.conversation),eq(jobs.box,terminalSessions.machine),
+      eq(jobs.agent,terminalSessions.agent),eq(jobs.member,terminalSessions.member),eq(jobs.startedByKind,'terminal'),
+      eq(terminalSessions.member,who.member),eq(terminalSessions.agent,who.agent),eq(boxes.owner,who.member),isNull(boxes.revokedAt),
+      who.machine === undefined ? undefined : eq(terminalSessions.machine,who.machine),
+      eq(conversations.member,who.member),eq(conversations.agent,who.agent),eq(conversations.venue,'terminal'),
+      eq(jobs.state,'running'),sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`,
+      eq(messages.sender,who.member),eq(messages.kind,'message'),isNotNull(messages.words)))
+    .orderBy(sql`julianday(${messages.at}) desc`, desc(messages.seq)).all()
+    .filter(({row}) => !!row.words && wordsKept(row,days,now));
 }
 
 function mailEvidence(db: DataDatabase, sources: EvidenceSources, job: Job, item: typeof inbox.$inferSelect, quote: string): Evidence {
