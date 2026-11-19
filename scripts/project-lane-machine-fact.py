@@ -65,6 +65,7 @@ def project(kind, stream, now):
     result['since'] = since
     counts = Counter()
     reasons = Counter()
+    false_causes = Counter()
     entries = []
     runs = []
     removed_heads = []
@@ -72,6 +73,12 @@ def project(kind, stream, now):
         at = row['ts' if alerts else 'at']
         if type(at) not in (int, float) or not math.isfinite(at) or at <= 0 or int(at) > now:
             raise ValueError()
+        if (alerts and at > now - 30 * DAY and row.get('kind') == 'verdict'
+                and row.get('verdict') == 'false-alarm'):
+            cause = row.get('cause', '')
+            if not isinstance(cause, str):
+                raise ValueError()
+            false_causes[row['source'], ' '.join(cause.lower().split())] += 1
         if at < since:
             continue
         if alerts:
@@ -110,7 +117,9 @@ def project(kind, stream, now):
                     raise ValueError()
                 reasons[row['reason']] += 1
     if alerts:
-        return dict(result, entries=entries)
+        active = {entry['source'] for entry in entries}
+        tune = sorted({source for (source, _), n in false_causes.items() if source in active and n >= 2})
+        return dict(result, entries=entries, tuneSources=tune)
     return dict(result, started=counts['start'], finished=counts['finish'],
                 kept=counts['keep'], removed=counts['removed'],
                 wouldRemove=counts['would-remove'], reasons=dict(reasons), runs=runs, removedHeads=removed_heads)
