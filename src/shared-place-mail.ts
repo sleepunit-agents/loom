@@ -11,6 +11,7 @@ import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
 import type { ChannelTarget } from './core/conversations/channel-target.js';
+import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
 import { conversationPlace, discordPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
 import { jobMail, waitingMail } from './runtime/body-policy.js';
@@ -129,6 +130,9 @@ export function jobWord(db: DataDatabase, job: { id: string; agent: string; conv
  * mail may still use the ordinary held-job doors, but inherits no individual's kit. */
 export function kitRoom(db: DataDatabase, job: {id:string; agent:string; conversation:string|null}) {
   const offer=offered(db,job), room=offer.room(), word=offer.word(room);
+  const linked=db.select({id:inbox.id,source:inbox.source,sourceId:inbox.sourceId,fromId:inbox.fromId}).from(inbox)
+    .where(and(inArray(inbox.id,room.mail??[]),eq(inbox.fromKind,'person'),inArray(inbox.source,['slack','discord']))).all();
+  if (linked.some(item=>!linkedBridgeReceipt(db,job,item))) return {room,word:{woke:'others' as const}};
   if (word.woke==='others' && word.person) {
     const asker=word.person, kind=asker.kind==='member'?'person':'outside';
     const member=job.conversation && db.select({member:conversations.member}).from(conversations).where(eq(conversations.id,job.conversation)).get()?.member;

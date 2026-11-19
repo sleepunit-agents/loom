@@ -63,7 +63,7 @@ export function currentKitJob(db:DataDatabase, credentials:Pick<ReturnType<typeo
   const job = db.select().from(jobs).where(and(eq(jobs.id,body.job),eq(jobs.agent,body.agent),
     eq(jobs.box,body.box),eq(jobs.state,'running'))).get();
   if (!job || !db.select({id:agents.id}).from(agents).where(and(eq(agents.id,body.agent),isNull(agents.removedAt))).get()) return;
-  const {word,room} = kitRoom(db,job), denials=deniedTools(room);
+  const {word,room} = kitRoom(db,job), denials=deniedTools({...room,word:word.woke});
   const access=kitAccess(db,job.agent,word);
   const tools = access.kits.flatMap(({kit,tools,reasons})=>tools.filter(tool=>!kitToolDenied(tool.name,denials,kit)).map(tool=>({
     kit,tool,reasons,definition:createHash('sha256').update(JSON.stringify(tool)).digest('hex'),
