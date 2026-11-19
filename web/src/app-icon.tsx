@@ -1,36 +1,42 @@
-// An app's icon wherever it stands for the app at a key's size (Jonathan, 2026-11-05: "Pixel icons", Appearance's, off
-// unless turned on): the household's pixel icon when the person wears them and the set has one for the app, else its
-// line icon. Everything pixel is in its own chunk (pixel-icons.tsx), loaded only then: this file is what the first page
-// carries, and it's small.
+// An app's icon wherever it stands for the app (Jonathan, 2026-11-19: loom's own icons are the standard ones, no
+// switch, and "the same icon for the small one here too", so the dock and the app never show two different things).
+// loom's house icon when the set has one for the app (assets/house-icons/, by the app's id), else the app's line icon:
+// the set fills in app by app, and an app whose art isn't drawn yet looks as it did. Never a line icon at one size and
+// the house icon at another for the same app.
 //
-// Where: the dock's keys, the launcher's tiles (Places, and Setup, a phone's More), an app's tile in its header and in
-// Find, and a desktop window's title strip: each 36 px or more, room for the 32 px icon at 1×. A row's 16 px icon (the
-// side, the More list) keeps its line icon: 2:1 down, the pixel art turns to mush on a 1× screen, so it doesn't read.
-import { createContext, lazy, Suspense, useContext } from 'react';
+// By id, not by title: a title is renamed ("Project sharing" became "Sharing"), an id isn't. The dock's two keys that
+// aren't apps have ids of their own here: `home` and `launcher`.
+//
+// How big is the slot's to say (`house`, in px): the dock's keys 32 (in a 44 px key), the launcher's and the switcher's
+// tiles 40 (in 56), a window's title-strip key 24 (in a 32 px strip). Unsaid, it's 32, or 16 wherever the line icon
+// would be small (`size="sm"`: a row, your account's key in the launcher). The same art at every size: an app never
+// shows its house icon in the dock and a line icon in a row.
+import { useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
-import { useTint } from './tint';
+import { HOUSE_ICONS } from './assets/house-icons';
+import { installHouseTint } from './house-tint';
+import './house-icons.css';
 
-/** The household's set (chrome.shell.icons) while the person wears it; none otherwise. */
-export type PixelIcons = { v: string; apps: Record<string, { line?: true }> } | null;
-export const PixelIconsContext = createContext<PixelIcons>(null);
+installHouseTint();
 
-const PixelIcon = lazy(() => import('./pixel-icons'));
-
-/** The app an icon is for, from a label as the page shows it: src/icon-set.ts iconApp's rule, which names the file
- * (src/ui/pixel-ramp.test.ts holds the two to each other). */
-export const pixelApp = (label: string): string => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+/** The set's two files' sizes in px (scripts/build-house-icons.py). */
+const ART = 128, SMALL = 32;
 
 type Size = Parameters<typeof AnimatedIcon>[0]['size'];
 
-/** An app's icon: its pixel icon (lit on the current key) when worn and there is one, else its line icon. `size` is the
- * line icon's: a pixel icon is always 32 px, its art's own size at 1×, so it's used only where a slot has that room. */
-export function AppIcon({ label, name, size, active, lit }: { label: string; name: string; size?: Size; active?: boolean; lit?: boolean }) {
-  const set = useContext(PixelIconsContext);
-  const tint = useTint();
-  // `name` is a line icon's name from App.tsx's ICON table or a piece's manifest, as iconFor passes it everywhere.
-  const line = <AnimatedIcon name={name as never} size={size} active={active} />;
-  const app = pixelApp(label);
-  const has = set && Object.hasOwn(set.apps, app) ? set.apps[app] : undefined;
-  if (!set || !has) return line;
-  return <Suspense fallback={line}><PixelIcon app={app} v={set.v} tint={tint(label)} lit={lit} line={!!has.line} fallback={line} /></Suspense>;
+/** loom's own icon for an app id, if its art is in the set. */
+export const houseIcon = (app: string | undefined): { art: string; small: string } | undefined => (app !== undefined && Object.hasOwn(HOUSE_ICONS, app) ? HOUSE_ICONS[app] : undefined);
+
+/** An app's icon: its house icon when `app` (its id) has one, else its line icon `name` (and that if the file won't
+ * load). `size` and `active` are the line icon's; `house` is the house icon's size in px (whole pixels). A house
+ * icon's tint, and whether it's on a lit key, are its key's (house-tint.ts). */
+export function AppIcon({ app, name, size, active, house: px = size === 'sm' ? 16 : 32 }: { app?: string; name: string; size?: Size; active?: boolean; house?: number }) {
+  const house = houseIcon(app);
+  const [broken, setBroken] = useState<string>();
+  if (!house || broken === app) return <AnimatedIcon name={name as never} size={size} active={active} />;
+  // The 32 px file wherever it covers the slot's device pixels (a 16 px slot up to 2x, the dock's 32 px at 1x: one
+  // image pixel per screen pixel there), the 128 px master past that. The browser picks; nothing is measured here.
+  const fits = px <= SMALL;
+  return <img className="loom-house" src={fits ? house.small : house.art} srcSet={fits ? `${house.small} ${+(SMALL / px).toFixed(3)}x, ${house.art} ${+(ART / px).toFixed(3)}x` : undefined}
+    width={px} height={px} style={{ width: px, height: px }} alt="" draggable={false} decoding="async" data-app={app} onError={() => setBroken(app)} />;
 }

@@ -13,7 +13,7 @@ export default function Switcher({ apps, switching, pick }: { apps: readonly Reg
     {switching && <div className="next-switcher" role="listbox" aria-label="Switch apps" aria-orientation="horizontal" aria-activedescendant={selected ? `next-switch-${selected.id}` : undefined}>
       {items.map(app => <div key={app.id} id={`next-switch-${app.id}`} role="option" aria-selected={app === selected} className="loom-lapp next-switch-item" data-tint={tintOf(app.title)}
         onPointerDown={e => e.preventDefault()} onMouseDown={e => e.preventDefault()} onClick={() => pick(app.id)}>
-        <span className="loom-lapp__ico loom-launch-tile" data-tint={tintOf(app.title)}><AppIcon label={app.title} name={app.icon} /></span><span className="next-switch-name">{app.title}</span>
+        <span className="loom-lapp__ico loom-launch-tile" data-tint={tintOf(app.title)}><AppIcon app={app.id} name={app.icon} house={40} /></span><span className="next-switch-name">{app.title}</span>
       </div>)}
     </div>}
   </>;
