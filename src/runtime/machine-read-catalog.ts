@@ -15,13 +15,13 @@ const window = {
   lines: z.number().int().min(1).max(100).default(30),
   since: z.number().int().min(1).max(1440).default(60),
 };
-const simpleKinds = [...laneFactKinds, 'disk', 'memory', 'load', 'swap', 'uptime', 'boots', 'containers', 'proxmox-vms', 'proxmox-containers', 'zfs', 'zpool'] as const;
+const simpleKinds = ['cleanup-week-journal', ...laneFactKinds, 'disk', 'memory', 'load', 'swap', 'uptime', 'boots', 'containers', 'proxmox-vms', 'proxmox-containers', 'zfs', 'zpool'] as const;
 export const machineReadKinds = [...simpleKinds, 'unit-state', 'unit-journal', 'failed-units', 'restarting-units', 'worker-log'] as const;
 const request = z.union([
   z.strictObject({ kind: z.enum(simpleKinds) }),
   z.strictObject({ kind: z.enum(['failed-units', 'restarting-units']), scope }),
   z.strictObject({ kind: z.literal('unit-state'), scope, unit }),
-  z.strictObject({ kind: z.literal('unit-journal'), scope, unit, ...window, since: z.number().int().min(1).max(10080).default(60) }),
+  z.strictObject({ kind: z.literal('unit-journal'), scope, unit, ...window }),
   z.strictObject({ kind: z.literal('worker-log'), ...window }),
 ]);
 
@@ -49,6 +49,8 @@ export function machineReadCommand(read: MachineReadRequest, journalText = true)
     case 'restarting-units':
       return ['/usr/bin/systemctl', '--' + read.scope, '--no-pager', '--no-legend', '--plain', 'list-units',
         '--state=' + (read.kind === 'failed-units' ? 'failed' : 'auto-restart')];
+    case 'cleanup-week-journal':
+      return ['/usr/bin/journalctl','--quiet','--no-pager',journalText ? '--output=short-iso' : '--output=json',...(journalText ? [] : ['--output-fields=PRIORITY']), '--lines=100','--since=10080 minutes ago','_SYSTEMD_USER_UNIT=art-worktree-cleanup.service'];
     case 'worker-log':
     case 'unit-journal': {
       const user = read.kind === 'worker-log' || read.scope === 'user';
@@ -107,7 +109,7 @@ export async function runMachineRead(input: unknown, workerToken: string, execut
     return { ok: false, output: 'Machine reads require an unprivileged Linux worker' };
   if (!workerToken) return { ok: false, output: 'Worker credential unavailable' };
   const allowed=(scope:string,unit:string)=>journalUnits.some(entry=>entry.scope===scope && entry.unit===unit);
-  const journalText = read.kind==='unit-journal' ? allowed(read.scope,read.unit)
+  const journalText = read.kind==='cleanup-week-journal' ? allowed('user','art-worktree-cleanup.service') : read.kind==='unit-journal' ? allowed(read.scope,read.unit)
     : read.kind==='worker-log' ? ['loom-new-worker.service','loom-worker.service'].every(unit=>allowed('user',unit)) : true;
   const [file, ...argv] = machineReadCommand(read,journalText);
   try {

@@ -22,7 +22,7 @@ REASONS = {
     'dirty', 'ignored-data', 'git-lock', 'recent', 'in-use-or-unreadable-process',
     'registration-changed', 'error',
 }
-ALERT_KINDS = {'unit', 'unit-suppressed', 'message', 'triage', 'triage-skipped',
+ALERT_KINDS = {'unit', 'unit-suppressed', 'message', 'triage', 'triage-joined','triage-skipped',
                'clear', 'alert', 'verdict'}
 
 
