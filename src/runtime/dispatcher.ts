@@ -8,7 +8,7 @@ import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agentHousePorts, boxes, boxFacts, programFirings, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
@@ -19,6 +19,8 @@ export const UNHELD_NOTE = 'Never started: this job is not working for the agent
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
+  // A protocol handshake belongs to the connected worker. Owner labels describe machines and cannot supply it.
+  private readonly programBoxes = new Set<string>();
   /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
    * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
    * file imports may. */
@@ -42,9 +44,8 @@ export class Dispatcher {
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       // Capability is negotiated by this poll. A downgraded worker clears its previous advertisement.
-      const capability = { box, fact: 'program-step:v1', fromOwner: false };
-      if (programs) this.db.insert(boxFacts).values(capability).onConflictDoNothing().run();
-      else this.db.delete(boxFacts).where(and(eq(boxFacts.box, box), eq(boxFacts.fact, capability.fact), eq(boxFacts.fromOwner, false))).run();
+      if (programs) this.programBoxes.add(box);
+      else this.programBoxes.delete(box);
       if (machine.reportOnly) return;
       const at = this.now(), roles = this.roles();
       const queued = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
@@ -59,7 +60,7 @@ export class Dispatcher {
           const firing = this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
           if (firing?.status !== 'pending') continue;
           const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, roles: [],
-            program: true, needs: [...needs, 'program-step:v1'], prefers: job.prefers ?? [] });
+            programBoxes: this.programBoxes, needs, prefers: job.prefers ?? [] });
           if (placement?.box !== box || !this.jobs.claim(job.id, box)) continue;
           this.db.update(jobs).set({ placementDecision: decision }).where(eq(jobs.id, job.id)).run();
           return { id: job.id, box, agent: job.agent, conversation: job.conversation, model: '', account: '',

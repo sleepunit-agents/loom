@@ -15,6 +15,7 @@ import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
+import { BridgeQueueRefusal } from './pieces/bridges/sends.js';
 import { followBridgeReply } from './pieces/bridges/presence.js';
 import { SEND_FILES,SEND_FILES_BYTES } from './pieces/bridges/send-file-limit.js';
 import type { SharedBridges } from './pieces/bridges/shared-daemon.js';
@@ -35,7 +36,11 @@ export function queueAgentPost(db: DataDatabase, conversations: Conversations, s
    // Its own posts there: each wrote a reply turn of this job's in that conversation.
    const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,job),eq(turns.kind,'reply'))).all();
    if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
-   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}
+   catch(error){
+     if(error instanceof BridgeQueueRefusal) throw new OperationError('invalid','Bridge message could not be queued');
+     throw error;
+   }
    if(!existing){const turn=conversations.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:agent,run:job,model:input.model,outcome:'progressed'});changed('turns',`${cv.id}:${turn.seq}`);changed('conversations',cv.id);}
    changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
 }

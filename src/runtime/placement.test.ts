@@ -184,9 +184,8 @@ it('records why each configured machine was passed even when none can claim', ()
 it('places a clock program by machine capabilities while every account is unavailable', () => {
   const { db, input } = fixture();
   db.delete(modelAccountBoxes).run();
-  db.insert(boxFacts).values({ box: 'remote', fact: 'program-step:v1', fromOwner: false }).run();
-  const criteria = { ...input, roles: [], program: true, needs: ['program-step:v1'] };
+  const criteria = { ...input, roles: [], programBoxes: new Set(['remote']) };
   expect(decidePlacement(db, criteria).placement?.box).toBe('remote');
-  expect(decidePlacement(db, { ...criteria, needs: ['program-step:v1', 'gpu'] }).placement).toBeUndefined();
+  expect(decidePlacement(db, { ...criteria, needs: ['gpu'] }).placement).toBeUndefined();
   expect(selectPlacement(db, input)).toBeUndefined();
 });

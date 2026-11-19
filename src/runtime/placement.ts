@@ -25,7 +25,8 @@ interface PlacementInput {
   agent: string; now: string; roles: readonly ModelRole[]; needs?: readonly string[]; prefers?: readonly string[];
   /** A model name or a tag carried by an allowed model. */
   wants?: string | null;
-  program?: boolean;
+  /** Machines that advertised the clock-program protocol on their most recent poll. */
+  programBoxes?: ReadonlySet<string>;
   cannotRun?: (harness: string) => boolean;
 }
 
@@ -45,12 +46,12 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
   const sharing = sharedSharing(db);
   const listed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box, row]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
-  const models = input.program ? [] : db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
+  const models = input.programBoxes ? [] : db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   // A removed member's account pays for nothing, like their machine runs nothing.
-  const accounts = input.program ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
+  const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
     .filter(account => namesCurrent('member', account.owner, sharing) && currentAccountCapacity(db, account.id, input.now).hasRoom);
-  const signedIn = input.program ? [] : db.select().from(modelAccountBoxes).all();
+  const signedIn = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
   const roles = models.flatMap(model => {
     const role = input.roles.find(role => role.model === model.model);
     return role && !input.cannotRun?.(role.harness) ? [role] : [];
@@ -70,7 +71,8 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
         ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).get()!.n;
       if (occupied >= box.slots) return { box: id, reason: `No free worker slot (${occupied}/${box.slots} in use).` };
     }
-    if (input.program) return { box: id, placement: { box: id, model: '', account: '', harness: 'house-program' },
+    if (input.programBoxes && !input.programBoxes.has(id)) return { box: id, reason: 'Worker has not advertised house programs.' };
+    if (input.programBoxes) return { box: id, placement: { box: id, model: '', account: '', harness: 'house-program' },
       missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
     if (!roles.length) return { box: id, reason: 'No allowed model and harness can run this job.' };
     for (const role of roles) {
