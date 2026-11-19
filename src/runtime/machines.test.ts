@@ -129,3 +129,32 @@ it('says a report moved only the last-seen time when the machine was already rep
   db.update(boxes).set({ lastSeenAt: new Date(Date.parse(now()) + 5000).toISOString() }).where(eq(boxes.id, 'box')).run();
   expect(service.report('box', [], null).stampOnly).toBe(false);
 });
+
+it('writes nothing for a report that repeats a fact the owner labelled, and stores the fact once the label is gone', () => {
+  const { db, service, add, advance } = fixture();
+  add('box');
+  db.insert(boxFacts).values({ box: 'box', fact: 'gpu', fromOwner: true }).run();
+  const stored = () => db.select().from(boxFacts).all().map(row => `${row.fact}:${row.fromOwner ? 'owner' : 'worker'}`).sort();
+  const written = () => (db.$client.prepare('SELECT total_changes()').pluck().get() as number);
+  expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:owner', 'os:linux:worker']);
+  // The same report again, poll after poll: the label and the worker's row stay as they are, and only the
+  // machine's own row (its last-seen time) is written.
+  for (let poll = 0; poll < 3; poll++) {
+    advance(1000); const before = written();
+    expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(true);
+    expect(written() - before).toBe(1);
+  }
+  expect(stored()).toEqual(['gpu:owner', 'os:linux:worker']);
+  // A fact that is the worker's alone still changes as before.
+  expect(service.report('box', ['os:linux', 'gpu', 'arm64'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['arm64:worker', 'gpu:owner', 'os:linux:worker']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:owner']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(true);
+  // The owner takes the label away: the worker's next report stores the fact as its own, which is a change.
+  db.delete(boxFacts).where(eq(boxFacts.fact, 'gpu')).run();
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:worker']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(true);
+});

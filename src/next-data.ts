@@ -94,10 +94,14 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   // Times loom stamps as it is used (a machine's last report, a credential's last use, how long a call took)
   // are written many times a second and decide nothing about who reads what. Open selections are read again
   // for them at most once in STAMP_WAKE_MS, and not at all while none is written.
-  let cancelStamps: (() => void) | undefined;
+  let cancelStamps: (() => void) | undefined, stampsDue = 0;
   const stamped = () => {
-    if (stopped || cancelStamps) return;
-    cancelStamps = clock.at(clock.now() + STAMP_WAKE_MS, () => { cancelStamps = undefined; if (!stopped) live.metadataChanged(); });
+    if (stopped) return;
+    // A wake waits for the wall clock to reach its time. After the clock is set back, the one already waiting
+    // is further off than any wake should be: the next stamp sets it again, a whole interval from now.
+    if (cancelStamps && stampsDue - clock.now() <= STAMP_WAKE_MS) return;
+    cancelStamps?.(); stampsDue = clock.now() + STAMP_WAKE_MS;
+    cancelStamps = clock.at(stampsDue, () => { cancelStamps = undefined; if (!stopped) live.metadataChanged(); });
   };
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); }, stamped });
   const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());

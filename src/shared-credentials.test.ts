@@ -270,11 +270,21 @@ it('wakes safe live credential metadata after incoming use without publishing be
  const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
  next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'usage',payload:{query:'subscription { observe(query:"{ householdSetup { tokens { label lastUsedAt } sessions { device seenAt } } }") { patches { path value } } }'}}));await next;
  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
- f.clock.advance(1000);next=once(ws,'message');f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));
- // A last-used time decides nothing about who reads what: open selections are read again for it within a minute, not at each use.
- const used=new Date(f.clock.now()).toISOString(),before=frames.length;await new Promise(resolve=>setTimeout(resolve,50));expect(frames).toHaveLength(before);
- f.clock.advance(60_000);
- expect(String((await next)[0])).toContain(used);
+ // A last-used time decides nothing about who reads what: open selections are read again for it within a minute of
+ // its being written, not at each use. The desk's clock also has every selection read at each whole minute
+ // (desk-time.ts), so the times below are placed to tell the two apart: twenty seconds past a minute, with nothing waiting.
+ const iso=()=>new Date(f.clock.now()).toISOString(),has=(at:string)=>frames.some(frame=>frame.includes(at));
+ const still=async()=>{await new Promise(resolve=>setTimeout(resolve,50));return frames.length;};
+ f.clock.advance(120_000-f.clock.now()%60_000+20_000);await still();
+ f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));const first=iso(),before=frames.length;
+ expect(await still()).toBe(before);
+ // The minute turns 40 s later: the desk's reading shows the first use.
+ f.clock.advance(45_000);await vi.waitFor(()=>expect(has(first)).toBe(true));
+ // A second use, 15 s before the first one's minute is up. No whole minute falls in those 15 s, so only the stamp's own wake can show it.
+ f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));const second=iso(),shown=await still();
+ expect(has(second)).toBe(false);
+ f.clock.advance(14_999);expect(await still()).toBe(shown);
+ f.clock.advance(1);await vi.waitFor(()=>expect(has(second)).toBe(true),{timeout:3000});
  const stored=JSON.stringify({tokens:f.db.select().from(tokens).all(),sessions:f.db.select().from(sessions).all()});
  for(const secret of Object.values(raw)){expect(stored).not.toContain(secret);expect(frames.join(' ')).not.toContain(secret);}
 });

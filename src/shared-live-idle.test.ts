@@ -1,9 +1,11 @@
-/** An open window costs an idle household nothing: what a worker with no work writes does not make loom read
+/** An open window costs an idle household little: what a worker with no work writes does not make loom read
  * every live selection again, and a change of who may see what still reaches them at once.
  *
  * On 2026-11-19 two idle workers, each asking for work about once a second, had every open selection read
  * again twice for each poll: once for the credential's last-used time and once for the machine's last-seen
- * time. scripts/live-idle-cost.ts counts the same on a larger household. */
+ * time. What remains in an idle household is about four readings of each selection a minute: one after each
+ * thirty-second runtime sweep, one for the desk's clock and one for such times. scripts/live-idle-cost.ts
+ * counts the same on a larger household. */
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
@@ -82,11 +84,25 @@ it('does not read an open selection again for a poll that found no work, and sho
   expect(f.seen()).toBe(f.now()); expect(f.seen()).not.toBe(first);
   expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
   expect(f.reads()).toBe(after); expect(window.frames()).toBe(frames); expect(window.closed()).toBe(false);
-  // The time is still shown, late: within a minute of the first poll it was kept back for (next-data.test.ts
-  // counts that reading; here the desk's clock also turns its minute).
-  const latest = f.seen();
-  f.clock.advance(STAMP_WAKE_MS);
-  await vi.waitFor(() => expect(window.data()).toMatchObject({ boxes: [{ id: 'worker', lastSeenAt: latest }] }));
+  // The time is still shown, late: within a minute of the earlier poll it was kept back for. The desk's clock also has
+  // every selection read at each whole minute (desk-time.ts), so the polls below are placed to tell the two apart.
+  f.clock.advance(120_000 - f.clock.now() % 60_000 + 20_000); await f.settle();
+  await f.poll(); await f.settle();
+  const kept = f.reads(), earlier = f.seen();
+  expect(window.data()).not.toMatchObject({ boxes: [{ lastSeenAt: earlier }] });
+  // The minute turns 40 s later, and the desk's reading shows that poll.
+  f.clock.advance(45_000);
+  await vi.waitFor(() => expect(window.data()).toMatchObject({ boxes: [{ lastSeenAt: earlier }] }));
+  expect(f.reads()).toBe(kept + 1);
+  // A second poll, 15 s before the earlier one's minute is up. No whole minute falls in those 15 s: only the
+  // wake kept for the stamps can show it, and it does, exactly then.
+  await f.poll(); await f.settle();
+  const latest = f.seen(); expect(latest).not.toBe(earlier);
+  f.clock.advance(14_999); await f.settle();
+  expect(f.reads()).toBe(kept + 1); expect(window.data()).toMatchObject({ boxes: [{ lastSeenAt: earlier }] });
+  f.clock.advance(1);
+  await vi.waitFor(() => expect(window.data()).toMatchObject({ boxes: [{ lastSeenAt: latest }] }), { timeout: 3000 });
+  expect(f.reads()).toBe(kept + 2);
 });
 
 it('reads an open selection again at once when a poll changes more than the last-seen time', async () => {

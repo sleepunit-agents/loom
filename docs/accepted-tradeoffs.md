@@ -604,6 +604,9 @@ On success the body sends its report alongside settlement. A body with validated
   a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and
   every change of who may see what, is told to every selection at once, as before
   (`DataWrites.run`). A machine heard from again after a silence is told at once.
+- **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
+  was waiting is set again by the next such time written, a minute from then; with nothing more written it
+  waits until the clock has caught up, as every other deadline of this program does.
 - **Why accepted.** Reading every selection again for each of them is what took the server to all of one
   processor with one person's browser open (2026-11-19), and no screen shows these times to the second.
 - **What would change the answer.** A screen that counts up from a last-seen time, which would then keep

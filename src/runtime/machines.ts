@@ -33,12 +33,15 @@ export class Machines {
       if (reported !== undefined) {
         // Owner labels are a separate source of truth, including a fact that
         // overlaps a report. Omitted facts preserve the previous report.
-        const kept = this.db.select({ fact: boxFacts.fact }).from(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).all().map(row => row.fact);
-        const wanted = new Set(reported);
-        // A worker reports the same facts on every poll: the rows are written again only when they differ.
+        // One row holds a machine's fact, so a fact the owner labelled is never also stored as the worker's.
+        // What the worker's report would store is what it reports less the owner's labels: a worker reports
+        // the same facts on every poll, and the rows are written again only when that differs from what is kept.
+        const rows = this.db.select({ fact: boxFacts.fact, fromOwner: boxFacts.fromOwner }).from(boxFacts).where(eq(boxFacts.box, id)).all();
+        const labelled = new Set(rows.filter(row => row.fromOwner).map(row => row.fact)), kept = rows.filter(row => !row.fromOwner).map(row => row.fact);
+        const wanted = new Set(reported.filter(fact => !labelled.has(fact)));
         if (kept.length !== wanted.size || kept.some(fact => !wanted.has(fact))) {
           this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).run();
-          if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
+          if (wanted.size) this.db.insert(boxFacts).values([...wanted].map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
         }
       }
       new Conversations(this.db, () => at, lateMailWaits).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
