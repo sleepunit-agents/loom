@@ -7,7 +7,7 @@ it('refuses unknown kinds, foreign keys, option injection and out-of-budget read
   for (const input of [
     {kind:'worker-log',since:1441}, {kind:'cleanup-receipt',path:'/tmp/input'}, null, {kind: 'command'}, {kind: 'disk', path: '/etc'}, {kind:'failed-units'},
     ...['--all', '../other.service', 'unit*.service', 'foo.service\n', '$(id).service'].map(unit => ({kind:'unit-state',scope:'user',unit})),
-    ...[{lines:0},{lines:101},{since:10081},{since:'today'},{scope:'remote'}].map(extra => ({kind:'unit-journal',scope:'system',unit:'a.service',...extra})),
+    ...[{lines:0},{lines:101},{since:1441},{since:'today'},{scope:'remote'}].map(extra => ({kind:'unit-journal',scope:'system',unit:'a.service',...extra})),
   ]) expect(() => parseMachineRead(input)).toThrow();
 });
 
@@ -73,9 +73,9 @@ it('projects only timestamps and severity unless the operator lists the exact jo
 });
 
 it('accepts seven days of one journal under the same line cap', () => {
-  const cmd = machineReadCommand(parseMachineRead({kind:'unit-journal',scope:'user',unit:'cleanup.service',since:10080}));
+  const cmd = machineReadCommand(parseMachineRead({kind:'cleanup-week-journal'}));
   expect(cmd).toContain('--since=10080 minutes ago');
-  expect(cmd).toContain('--lines=30');
+  expect(cmd).toContain('--lines=100');
 });
 
 it('releases only current fixed-shape operator projections', async () => {

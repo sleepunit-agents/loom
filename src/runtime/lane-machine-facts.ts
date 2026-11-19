@@ -6,7 +6,7 @@ export const factDirectory = '/var/lib/loom/machine-facts';
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const stamp = count.positive();
 const reason = z.enum(['outside-scope-or-primary','missing-symlink-locked-or-prunable','protected-branch','open-pr','no-exact-merged-pr','head-changed','dirty','ignored-data','git-lock','recent','in-use-or-unreadable-process','registration-changed','error']);
-const alertKind = z.enum(['unit','unit-suppressed','message','triage','triage-skipped','clear','alert','verdict']);
+const alertKind = z.enum(['unit','unit-suppressed','message','triage','triage-joined','triage-skipped','clear','alert','verdict']);
 const identifier = z.string().max(96).regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:@-]*$/);
 const alert = z.strictObject({
   at: stamp, kind: alertKind, source: identifier, id: identifier.optional(),

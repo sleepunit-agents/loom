@@ -14,7 +14,7 @@ A machine read selects one diagnostic by name. For example, `{"machine":"box-exa
 | `proxmox-vms`, `proxmox-containers` | None | Local Proxmox VM or container list |
 | `zfs`, `zpool` | None | Dataset names, types and space usage, or pool health from `zpool status -x` |
 
-Use `user` or `system` for `scope`. Specify a literal unit including its suffix. The name must start with an ASCII letter or digit and may contain letters, digits, dots, colons, underscores, hyphens and at signs. The root mount and backslash-escaped names are outside this subset. Journal reads accept 1–100 lines (default 30) and a default `since` of 60 minutes. The maximum lookback is 10,080 minutes for one unit and 1,440 for the worker log (minimum 1). Unknown arguments are refused.
+Use `user` or `system` for `scope`. Specify a literal unit including its suffix. The name must start with an ASCII letter or digit and may contain letters, digits, dots, colons, underscores, hyphens and at signs. The root mount and backslash-escaped names are outside this subset. Journal reads accept 1–100 lines (default 30) and a default `since` of 60 minutes. The maximum lookback is 1,440 minutes (minimum 1). Unknown arguments are refused.
 
 Each diagnostic has a fixed executable, a four-second deadline and a 16,384-byte output limit. An oversized answer is refused in full. The worker checks output for its own credential in plain text and base64 and for recognizable credential formats before returning it. A matching answer is withheld in full. Programs' error output stays on the worker. By default journal output contains only timestamps and priorities. The operator may list exact scope/unit pairs in `journalUnits` to release their message text. Both worker unit names must be listed to release worker-log messages. A journal is as sensitive as what its programs log. An opaque or encoded credential can escape recognition. Choose message access only for units whose output the agent's authorized jobs may read.
 
@@ -23,6 +23,8 @@ Open **Your account → Your machines** and select a machine you own to view its
 Use **Request read grant** or **Request revocation** under the machine's explicit grants. Review the named agent and machine on the pending card, then choose **Allow** or **Deny**. Allowing a revocation removes the explicit grant. An agent may still qualify through its existing permission to run on the machine. The reader list gives an agent inspection access only.
 
 ### Art lane observations
+
+Separately enabling `cleanup-week-journal` releases at most 100 visible entries from the past week for art-worktree-cleanup.service. Run on the intended single-user journal source. Message text requires that exact user unit in journalUnits. A full page or incomplete journal visibility cannot establish complete coverage.
 
 The optional reads `mirror-freshness`, `alert-ledger`, `cleanup-receipt`, and `login-expiry` take empty arguments. Their inputs are operator-published JSON files named for the read under `/var/lib/loom/machine-facts/`. Keep that directory and its ancestors outside house mounts and writable only by the publishing account or root. Give the worker read access to the projections. Enable the corresponding read names only on the machine that actually owns these records. Every agent authorized to inspect that machine can request its enabled reads.
 
