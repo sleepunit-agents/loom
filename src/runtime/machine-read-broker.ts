@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { looksLikeCredential, machineReadOutputBytes } from './machine-read-catalog.js';
+// Allow the body’s 15-second HTTP request to receive a deadline refusal.
+const readDeadlineMs = 10_000;
+
 export type ReadAnswer = {lines: string[]} | {refusal: string};
 type Request = {id: string; read: string; args: Record<string, string | number>};
 type Pending = {
@@ -26,9 +29,9 @@ export class MachineReadBroker {
         resolve(answer);
       };
       const cancel = () => end({refusal: 'Machine read cancelled'});
-      const timer = setTimeout(() => end({refusal: 'Machine read timed out'}), 30000);
+      const timer = setTimeout(() => end({refusal: 'Machine read timed out'}), readDeadlineMs);
       signal?.addEventListener('abort',cancel,{once:true});
-      this.pending.set(machine, {request: {id: randomUUID(), read, args}, deadline: Date.now()+30000, permitted, taken: false, end});
+      this.pending.set(machine, {request: {id: randomUUID(), read, args}, deadline: Date.now()+readDeadlineMs, permitted, taken: false, end});
     });
   }
 

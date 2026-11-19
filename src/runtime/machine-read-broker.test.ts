@@ -18,7 +18,8 @@ it('expires unanswered reads and refuses late answers',async()=>{
   const broker=new MachineReadBroker();
   const answer=broker.ask('east','disk',{},()=>true);
   const work=broker.next('east')!;
-  await vi.advanceTimersByTimeAsync(30001);
+  await vi.advanceTimersByTimeAsync(10_001);
+  expect(broker.finish('east',work.id,'already expired')).toBe(false);
   expect(await answer).toEqual({refusal:'Machine read timed out'});
   expect(broker.finish('east',work.id,'late')).toBe(false);
  }finally{vi.useRealTimers();}
