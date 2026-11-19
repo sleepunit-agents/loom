@@ -591,6 +591,28 @@ On success the body sends its report alongside settlement. A body with validated
 - **What would change the answer.** Stamping reports with a count that only moves forward instead of a
   time, which is a schema change.
 
+### A watched path can be swapped under the worker for one read
+
+- **What.** A worker reads the room on each watched path (`src/runtime/machine-check.ts`). It looks at every
+  step from `/` down as it is and requires a real directory, asks for the room of the path, then looks at
+  every step again and requires the same directory (device and inode) at each. A step that is swapped for
+  a link after the first look and swapped back before the second is not seen, and the room reported under
+  the watched name is then the room of whatever the link pointed at.
+- **Why it cannot be closed.** The room of a filesystem can only be asked by path (`statfs`), and the
+  kernel follows links at every step of a path. Asking by an open directory (`fstatfs`) would close it,
+  and Node has no such call; opening the directory at all is something a worker may not be allowed where
+  the container runtime keeps its own.
+- **What it allows.** Somebody who can write in a parent of a watched directory, and who wins that race,
+  makes that machine's reading for that one path wrong for one round: a full disk shown as not full (its
+  notice closed, and raised again by the next honest reading), or the reverse.
+- **What bounds it.** Only the numbers of that one path, on that one machine, for as long as the race is
+  won again at every read. Nothing is read from or written to what the link points at. The paths every
+  worker watches without being told (`/`, its state directory, the container runtime's directory) are
+  not writable by bodies.
+- **The rule.** Do not put a watched path (`watchPaths`) inside a tree bodies can write
+  (`docs/runtime/worker.md`).
+- **What would change the answer.** An `fstatfs` in Node, or a reason to watch a directory bodies write in.
+
 ### A last-seen time reaches an open window up to a minute late
 
 - **What.** Three kinds of time are written far more often than anything a person does: a machine's last

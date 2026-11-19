@@ -357,9 +357,11 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   boxAgents: first([[viewerIs('agent'), ownsAgent('agent')]], seenWith('boxes', 'box')),
   boxFacts: seenWith('boxes', 'box'),
   // What a machine's worker last read on it is seen with the machine. The lines those readings are held to are
-  // the household's, read by its owners as its other settings are.
+  // no secret: a machine's owner, who need not be a household owner, is told them in every notice
+  // ("Alerts at 85%."). Any member who is in the household now reads them; only a household owner changes
+  // them (machine.setAlertLines). No agent reads them: no rule lets an agent read household settings of this kind.
   boxReadings: seenWith('boxes', 'box'),
-  boxAlertSettings: householdOwner,
+  boxAlertSettings: currentMember,
   timingDays: any(householdOwner, all(viewerIs('agent'), currentViewer)),
   measuringSettings: householdOwner,
 };

@@ -3,6 +3,7 @@ import {useDataQuery} from '../../data/graphql';
 import {memberOperation} from '../../data/operation';
 import {Button, Error as ErrorView, Loading} from '../../kit';
 import {conditionLine, readingLine, readingsOf, type Reading} from './machine-readings';
+import {useHouseholdZone} from '../../data/zone';
 
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
@@ -11,12 +12,13 @@ const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } b
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
 function MachineReadings({readings}: {readings:Reading[]}) {
+ const zone=useHouseholdZone();
  if(!readings.length)return null;
  const disks=readings.filter(reading=>reading.kind==='disk').length,now=Date.now();
  const open=readings.map(conditionLine).filter((line):line is string=>!!line);
  return <div className="grid gap-1">
   {open.map(line=><p key={line} role="status"><strong>{line}</strong></p>)}
-  <p className="text-muted-foreground">{readings.map(reading=>readingLine(reading,disks,now)).join(' · ')}</p>
+  <p className="text-muted-foreground">{readings.map(reading=>readingLine(reading,disks,now,zone)).join(' · ')}</p>
  </div>;
 }
 

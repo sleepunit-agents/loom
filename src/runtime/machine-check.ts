@@ -3,20 +3,27 @@
  * the worker's own slow timer; no program is run and no model takes part.
  *
  * Only numbers and fixed words leave this file. Whether a number is a fault is loom's to decide
- * (machine-conditions.ts), and so is every sentence about it. The one name sent is the path watched, in
- * the letters `watchedPath` allows.
+ * (machine-conditions.ts), and so is every sentence about it. The one name sent is the path watched. That
+ * text has three sources: `/`, the worker's own configuration (its state directory and `watchPaths`), and
+ * what the container runtime answers as `DockerRootDir`. All three are held to the same bound (`watchedPath`).
  *
  * Absent means "no longer watched", and nothing else. A thing this worker is set to watch and cannot give
  * numbers for this time (it did not answer, it is not there, it is reached through a link, it is no disk of
  * its own) is named as unknown, and loom leaves what it last learned about it as it was. Not knowing is not
  * a fault, and it is not a thing put right either.
  *
- * A watched path is followed through no link: every step from the root down is looked at as it is and must
- * be a real directory (as unfollowed.ts does for a body's files). A directory a body can write in could
- * otherwise be swapped for a link to another filesystem, and that one's room reported under this name.
- * What is at the path is looked at again after its room is read and must be the same directory. A link put
- * in and taken out again between those two looks is not seen; nothing here can close that without opening
- * the directory, which a worker may not be allowed to do where the container runtime keeps its own. */
+ * A watched path is followed through no link that is there when it is checked. Every step from the root
+ * down is looked at as it is and must be a real directory (as unfollowed.ts does for a body's files); the
+ * room is then asked for; and every step is looked at again and must be the same directory it was. A
+ * directory a body can write in could otherwise be swapped for a link to another filesystem, and that
+ * one's room reported under this name. What remains: Node cannot ask for the room of a directory it holds
+ * open, only of a path, so a step swapped for a link after the first look and swapped back before the
+ * second is not seen (docs/accepted-tradeoffs.md, "A watched path can be swapped under the worker for one
+ * read"). The rule that keeps it from mattering: no watched path inside a tree bodies can write.
+ *
+ * Two watched paths on one filesystem are one disk. The first in the order given stands for it and the
+ * other is named as the same disk as that one, a fixed word: loom keeps one record and one notice for a
+ * disk whichever path it first knew it by. */
 import { lstat, statfs } from 'node:fs/promises';
 import { freemem, totalmem } from 'node:os';
 
@@ -25,18 +32,22 @@ import { freemem, totalmem } from 'node:os';
 export type ReadingKind = 'disk' | 'memory' | 'containers';
 /** One thing read. `thing` is the watched path of a disk and absent otherwise. `unknown` names a thing this
  * machine watches and could not read this time. A disk's size is what its user can fill (used and
- * available), so that the fullness loom works out is the one `df` shows. */
-export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; answers?: boolean }
+ * available): the two numbers `df` works its percentage out from, as loom then does (machine-conditions.ts). */
+export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; answers?: boolean;
+  /** For a disk that is on the filesystem another watched path stands for: that path. No numbers come with it. */
+  sameAs?: string }
 /** How often a worker reads its machine, unless its configuration says. */
 export const MACHINE_CHECK_MS = 5 * 60_000;
 /** The longest one call to the machine may take. A filesystem that does not answer (a network mount whose server is gone) is unknown. */
 export const MACHINE_READ_MS = 5_000;
 /** The most paths one worker watches. */
 export const WATCHED_PATHS_MAX = 16;
-/** The most calls that have stopped being waited for and have still not come back. Each holds one of the
- * four threads every file read and name lookup in the worker shares, for as long as the filesystem under
- * it does not answer. At this many the reader asks the machine's filesystems nothing more until one has. */
-export const UNANSWERED_MAX = 2;
+/** The threads the worker process gives every file read and name lookup in it (`UV_THREADPOOL_SIZE`, set in
+ * src/worker.ts before anything uses one). Node's own default is four. */
+export const WORKER_THREADS = 8;
+/** How many calls may be out, no longer waited for and still not back, before the reader holds back. Each
+ * holds one of those threads for as long as the filesystem under it does not answer. Half of them. */
+export const UNANSWERED_MAX = WORKER_THREADS / 2;
 /** The largest size sent. loom keeps sizes in whole mebibytes and serves them as a GraphQL `Int`, which ends
  * at 2^31 - 1: a size of 2^51 bytes or more would make every query that selects it fail for its reader.
  * The door refuses one (shared-machine-readings.ts); a filesystem that large is named as unknown here, so
@@ -44,10 +55,13 @@ export const UNANSWERED_MAX = 2;
 export const SIZE_BYTES_MAX = 2 ** 51 - 1;
 /** The longest watched path. */
 export const WATCHED_PATH_LENGTH = 120;
-/** A path loom will keep and write into a notice. loom cannot know what a worker was set to watch, so this
- * shape is all that stands between a worker and the words an owner reads: absolute, at most
- * WATCHED_PATH_LENGTH long, each step beginning with a letter, a digit, a dot or an underscore and going on
- * in those and `@ + -`, with no empty step, no `.` or `..`, and no colon anywhere. */
+/** A path loom will keep and write into a notice: absolute, at most WATCHED_PATH_LENGTH long, each step
+ * beginning with a letter, a digit, a dot or an underscore and going on in those and `@ + -`, with no empty
+ * step, no `.` or `..`, and no colon anywhere. loom cannot know what a worker was set to watch, so it cannot
+ * tell a real path from words written to look like one: `/your_disk_is_failing.call.0800-555-0199.now`
+ * passes. What protects a reader is that the text is short, has no spaces or punctuation beyond those
+ * letters, is shown only to that machine's owner and household owners, and that every other word of the
+ * notice is loom's own. */
 export const watchedPath = (value: string) => value.length <= WATCHED_PATH_LENGTH &&
   (value === '/' || /^(\/[A-Za-z0-9._][A-Za-z0-9._@+-]*)+$/.test(value)) && !value.split('/').some(step => step === '.' || step === '..');
 
@@ -84,6 +98,14 @@ const SAID = {
 } as const;
 class NotRead extends Error { constructor(readonly why?: keyof typeof SAID) { super('Path not read'); } }
 
+/** The directory a call that does not come back makes suspect: the last step that did answer, its parent.
+ * Everything at or under it is left alone while the call is out, so every watched path on one dead mount
+ * waits behind the one call. A step directly under the root is the exception: its parent is the root, and
+ * holding back everything under the root would stop every disk being read for one dead mount. There the
+ * step itself is the suspect. */
+const suspectOf = (target: string) => { const parent = target.slice(0, target.lastIndexOf('/')); return parent === '' ? target : parent; };
+const within = (path: string, directory: string) => directory === '/' || path === directory || path.startsWith(directory + '/');
+
 /** A reader of this machine. `paths` are watched in the order given, the first on a filesystem standing
  * for it. `engine` asks the container runtime something small; what it answers is looked at only for
  * where it keeps its containers (`DockerRootDir`), which is then watched too, and goes on being watched
@@ -91,63 +113,74 @@ class NotRead extends Error { constructor(readonly why?: keyof typeof SAID) { su
  * (That is remembered in memory only. A worker started while the engine is down learns the directory
  * when the engine first answers.) Left out, no container runtime is watched.
  *
- * Each call reads everything again and returns every thing watched, as numbers or as unknown.
+ * Each call reads everything again and returns every thing watched, as numbers, as the same disk as
+ * another path, or as unknown. `unanswered()` on the reader says how many calls are out.
  *
  * The filesystem is asked one thing at a time, never two at once, across every path. A call that has not
- * answered in `timeoutMs` is no longer waited for, but it is still out, holding its thread: what it asked
- * about is asked nothing more until it comes back, nor is any watched path that lies through it, and with
- * UNANSWERED_MAX such calls out nothing at all is asked. So a dead mount holds one thread for as long as
- * it is dead, however many watched paths are on it, and two dead mounts hold two and no more. */
+ * answered in `timeoutMs` is no longer waited for, but it is still out, holding its thread, and nothing at
+ * or under its suspect directory (suspectOf) is asked until it comes back. So one dead mount holds one
+ * thread however many watched paths are on it. With UNANSWERED_MAX calls out the reader holds back
+ * further: it then asks only about paths that answered on the round before, which are the ones least
+ * likely to hang, so that dead mounts do not stop the healthy disks being read. The worst case: each
+ * further mount that answered a round ago and has died since takes one more thread, up to the number of
+ * watched paths (WATCHED_PATHS_MAX) on distinct dead mounts. Nothing in process can end such a call. */
 export function machineReader(input: { paths: readonly string[]; engine?: (signal: AbortSignal) => Promise<unknown>; probe?: Partial<MachineProbe>; timeoutMs?: number;
   /** The worker stopping: nothing more is asked of the machine once it has. */
   signal?: AbortSignal;
   /** The worker's own log, for a path that will not be read however often it is tried. Each line is said once for a path. */
   say?: (line: string) => void }) {
   const probe = { ...machine, ...input.probe }, timeoutMs = input.timeoutMs ?? MACHINE_READ_MS;
-  // What was asked about by each call that is out and no longer waited for: a watched path or a step on the
-  // way to one. Two watched paths under one dead mount stop at the same step, so they hold one thread, not two.
-  const unanswered = new Set<string>();
+  // What each call that is out and no longer waited for asked about, and the directory it makes suspect.
+  const unanswered = new Map<string, string>();
+  const suspect = (path: string) => [...unanswered.values()].some(directory => within(path, directory));
   // The paths that have stood for a filesystem. While an earlier path is unknown, a later one cannot be told
   // from it by its device, and is only said again if it stood for one of its own before.
   const stood = new Set<string>();
+  // The paths whose every call answered on the round before this one.
+  let answered = new Set<string>();
   const said = new Set<string>();
   const sayOnce = (why: keyof typeof SAID, path: string) => { if (!said.has(why + path)) { said.add(why + path); input.say?.(SAID[why]); } };
   // Where the engine last said it keeps its containers.
   let engineRoot: string | undefined;
   let reading = false;
-  /** One call to the filesystem, about `path`. Never started while another is being waited for (read, below,
-   * awaits each) or while an earlier call about the same path is still out, and given up on, not ended,
-   * when it is slow or the worker stops. */
-  const ask = <T>(path: string, call: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
-    if (unanswered.has(path)) { reject(new NotRead()); return; }
+  /** One call to the filesystem, about `target`. Never started while another is being waited for (read,
+   * below, awaits each), and given up on, not ended, when it is slow or the worker stops. */
+  const ask = <T>(target: string, call: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+    if (suspect(target)) { reject(new NotRead()); return; }
     const work = call();
     let waiting = true;
-    const leave = () => { if (!waiting) return; waiting = false; unanswered.add(path); clearTimeout(timer); input.signal?.removeEventListener('abort', leave); reject(new NotRead()); };
+    const leave = () => { if (!waiting) return; waiting = false; unanswered.set(target, suspectOf(target)); clearTimeout(timer); input.signal?.removeEventListener('abort', leave); reject(new NotRead()); };
     const timer = setTimeout(leave, timeoutMs);
     input.signal?.addEventListener('abort', leave, { once: true });
-    const back = (settle: () => void) => { unanswered.delete(path); if (!waiting) return; waiting = false; clearTimeout(timer); input.signal?.removeEventListener('abort', leave); settle(); };
+    const back = (settle: () => void) => { unanswered.delete(target); if (!waiting) return; waiting = false; clearTimeout(timer); input.signal?.removeEventListener('abort', leave); settle(); };
     work.then(value => back(() => resolve(value)), error => back(() => reject(error)));
   });
+  /** Every step from the root down to a path, each as it is. A step that is not a real directory throws. */
+  async function walk(path: string): Promise<{ device: number; node: number }[]> {
+    const steps = ['/'];
+    for (const step of path === '/' ? [] : path.slice(1).split('/')) steps.push(steps.at(-1) === '/' ? `/${step}` : `${steps.at(-1)}/${step}`);
+    const seen: { device: number; node: number }[] = [];
+    for (const step of steps) {
+      const found = await ask(step, () => probe.look(step));
+      if (!found.directory) throw new NotRead('link');
+      seen.push({ device: found.device, node: found.node });
+    }
+    return seen;
+  }
   /** The room on the filesystem under a path that is a real directory at every step, or a throw. */
   async function disk(path: string): Promise<{ device: number; reading: MachineReading } | 'no-disk'> {
-    const steps = path === '/' ? [] : path.slice(1).split('/');
-    let at = '/', seen = await ask('/', () => probe.look('/'));
-    for (const step of steps) {
-      if (!seen.directory) throw new NotRead('link');
-      at = at === '/' ? `/${step}` : `${at}/${step}`;
-      const here = at;
-      seen = await ask(here, () => probe.look(here));
-    }
-    if (!seen.directory) throw new NotRead('link');
+    const before = await walk(path);
     const found = await ask(path, () => probe.statfs(path));
-    const again = await ask(path, () => probe.look(path));
-    if (!again.directory || again.device !== seen.device || again.node !== seen.node) throw new NotRead('link');
+    // Every step again, not only the last: a middle step swapped for a link while the room was read shows
+    // here as another directory, unless it was swapped back in the same moment.
+    const after = await walk(path);
+    if (after.some((step, index) => step.device !== before[index].device || step.node !== before[index].node)) throw new NotRead('link');
     if (PSEUDO.has(found.type) || !found.blocks) return 'no-disk';
     const size = (found.blocks - found.bfree + found.bavail) * found.bsize, free = found.bavail * found.bsize;
     if (!whole(size) || !whole(free) || !size || free > size || size > SIZE_BYTES_MAX) throw new NotRead();
-    return { device: seen.device, reading: { kind: 'disk', thing: path, sizeBytes: size, freeBytes: free } };
+    return { device: before.at(-1)!.device, reading: { kind: 'disk', thing: path, sizeBytes: size, freeBytes: free } };
   }
-  return async function read(): Promise<MachineReading[]> {
+  async function read(): Promise<MachineReading[]> {
     // One reading at a time: two would ask the filesystem two things at once.
     if (reading) throw new Error('Machine is being read');
     reading = true;
@@ -161,7 +194,7 @@ export function machineReader(input: { paths: readonly string[]; engine?: (signa
         const root = answers && answer !== null && typeof answer === 'object' ? (answer as Record<string, unknown>).DockerRootDir : undefined;
         if (typeof root === 'string') engineRoot = root;
       }
-      const devices = new Set<number>(), named = new Set<string>();
+      const devices = new Map<number, string>(), named = new Set<string>(), now = new Set<string>();
       let unsure = false;
       for (const path of [...input.paths, ...(engineRoot === undefined ? [] : [engineRoot])]) {
         if (input.signal?.aborted) break;
@@ -170,13 +203,17 @@ export function machineReader(input: { paths: readonly string[]; engine?: (signa
         if (!watchedPath(path)) { sayOnce('name', path); continue; }
         named.add(path);
         const unknown = () => { readings.push({ kind: 'disk', thing: path, unknown: true }); };
-        if (unanswered.size >= UNANSWERED_MAX) { unknown(); unsure ||= stood.has(path); continue; }
+        // Behind a call that is out; or, with as many out as may be, not one of the paths that answered last time.
+        if (suspect(path) || (unanswered.size >= UNANSWERED_MAX && !answered.has(path))) { unknown(); unsure ||= stood.has(path); continue; }
         try {
           const found = await disk(path);
-          // No disk of its own: a filesystem kept in memory, or the same one an earlier path stands for.
-          if (found === 'no-disk' || devices.has(found.device)) { unknown(); continue; }
-          devices.add(found.device);
+          now.add(path);
+          // A filesystem kept in memory is no disk; nothing stands for it.
+          if (found === 'no-disk') { unknown(); continue; }
+          const first = devices.get(found.device);
+          if (first !== undefined) { readings.push({ kind: 'disk', thing: path, sameAs: first }); continue; }
           if (unsure && !stood.has(path)) { unknown(); continue; }
+          devices.set(found.device, path);
           if (!unsure) stood.add(path);
           readings.push(found.reading);
         } catch (error) {
@@ -186,6 +223,7 @@ export function machineReader(input: { paths: readonly string[]; engine?: (signa
           unknown(); unsure ||= stood.has(path);
         }
       }
+      answered = now;
       try {
         const memory = probe.memory();
         if (!whole(memory.sizeBytes) || !whole(memory.freeBytes) || !memory.sizeBytes || memory.sizeBytes > SIZE_BYTES_MAX) throw new Error('Memory unreadable');
@@ -193,5 +231,7 @@ export function machineReader(input: { paths: readonly string[]; engine?: (signa
       } catch { readings.push({ kind: 'memory', unknown: true }); }
       return readings;
     } finally { reading = false; }
-  };
+  }
+  /** How many calls are out and no longer waited for. A process with one does not end by itself (worker-exit.ts). */
+  return Object.assign(read, { unanswered: () => unanswered.size });
 }

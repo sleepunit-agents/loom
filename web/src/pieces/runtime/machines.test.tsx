@@ -7,7 +7,7 @@ vi.mock('../../data/graphql',()=>({useDataQuery:()=>f.feed}));
 vi.mock('../../data/operation',()=>({memberOperation:f.call}));
 vi.mock('../../kit',()=>({Button:(props:object)=>h('button',props),Error:()=>null,Loading:()=>null}));
 import {OwnerMachines} from './machines';
-import {shortTime} from './machine-readings';
+import {briefTime} from '../../kit/time';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.clearAllMocks();});
@@ -66,8 +66,8 @@ it('shows what each machine last read on itself quietly, and an open condition p
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
  // The disk that is still raised keeps its plain line; the stale one, whose notice loom closed, has none.
  expect(text()).toEqual(['/srv is running out of room: 91% full, 18 GB free.',
-  `Disk / 71% · 60 GB free · Disk /old 40% · 120 GB free (as of ${shortTime(old,now)}) · Disk /srv 91% · 18 GB free (as of ${shortTime(lost,now)}) · Disk /was 96% · 8 GB free (not read since ${shortTime(dead,now)})`]);
- expect(shortTime(dead,now)).not.toBe(shortTime(new Date(now).toISOString(),now));
+  `Disk / 71% · 60 GB free · Disk /old 40% · 120 GB free (as of ${briefTime(old,undefined,now)}) · Disk /srv 91% · 18 GB free (as of ${briefTime(lost,undefined,now)}) · Disk /was 96% · 8 GB free (not read since ${briefTime(dead,undefined,now)})`]);
+ expect(briefTime(dead,undefined,now)).not.toBe(briefTime(new Date(now).toISOString(),undefined,now));
  // A machine with no reading yet (an older worker, or none reporting) shows no line at all.
  f.feed={status:'live',data:before} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));

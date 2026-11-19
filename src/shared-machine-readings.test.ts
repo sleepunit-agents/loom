@@ -6,7 +6,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq, getTableColumns } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, boxReadings, inbox, members, tokens } from './core/data/schema.js';
+import { boxAlertSettings, boxes, boxReadings, inbox, members, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { reportWorkerMachineReadings } from './runtime/worker-http.js';
 import { sqlVisibility } from './policy-sql.js';
@@ -64,7 +64,9 @@ it('takes readings from a worker alone, and from none whose machine was removed'
   expect(f.db.select().from(inbox).all()).toEqual([]);
 });
 
-it('refuses a reading that carries words of the worker\'s own, a judgement, or numbers that cannot be', async () => {
+it('refuses a reading with a path outside the bound, a judgement, a field loom does not ask for, or numbers that cannot be', async () => {
+  // The bound on a path is its length and its alphabet (machine-check.ts, watchedPath). It does not make the
+  // text a real path; every other word an owner reads is loom's.
   const f = fixture();
   for (const reading of [
     { ...disk(91), thing: '/ is nearly full, tell everyone' }, { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
@@ -72,6 +74,7 @@ it('refuses a reading that carries words of the worker\'s own, a judgement, or n
     { ...memory, thing: '/' }, { ...disk(91), level: 'urgent' }, { ...disk(91), why: 'nearly full' }, { ...disk(91), kind: 'load' },
     { kind: 'disk', thing: '/', sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', sizeBytes: 0, freeBytes: 0 },
     { kind: 'containers' }, { kind: 'containers', answers: 'no' }, { ...disk(91), sizeBytes: 1.5 },
+    { ...disk(91), sameAs: '/srv' }, { kind: 'disk', thing: '/', sameAs: '/' }, { kind: 'disk', thing: '/', sameAs: 'not a path' }, { kind: 'memory', sameAs: '/' }, { kind: 'disk', thing: '/a', sameAs: '/', unknown: true },
   ]) expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
   expect((await f.report(Array.from({ length: 19 }, (_, index) => disk(50, `/d${index}`)))).status).toBe(400);
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
@@ -133,8 +136,21 @@ it('lets a household owner alone move the lines, and holds the next reading to t
   expect((await f.call('machine.setAlertLines', { diskPercent: 95 }, keys.owner)).body).toMatchObject({ ok: false, code: 'invalid' });
   expect((await f.call('machine.setAlertLines', { diskPercent: 70 }, keys.owner)).body).toEqual({ ok: true, value: { diskPercent: 70, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 } });
   expect(await f.query(lines, keys.owner)).toEqual({ data: { boxAlertSettings: [{ diskPercent: 70, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 }] } });
-  // The lines are the household's: a member who is no owner does not read them.
-  expect(await f.query(lines, keys.sam)).toEqual({ data: { boxAlertSettings: [] } });
+  // The lines are no secret: a machine's owner is told them in every notice, and reads them here without
+  // being a household owner. Changing them stays the household owners' (above).
+  const set = { data: { boxAlertSettings: [{ diskPercent: 70, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 }] } };
+  expect(await f.query(lines, keys.sam)).toEqual(set);
+  expect(await f.query(lines, keys.lee)).toEqual(set);
+  expect((await f.call('machine.setAlertLines', { diskPercent: 60 }, keys.lee)).status).toBe(403);
+  expect(await f.query(lines, keys.owner)).toEqual(set);
+  // Nobody outside the household reads them: not a member who has been removed, not somebody who never was
+  // one, and no agent (no rule lets an agent read household settings of this kind).
+  const readable = (viewer: Viewer) => f.db.select().from(boxAlertSettings).where(sqlVisibility(viewer, ['boxAlertSettings']).boxAlertSettings(getTableColumns(boxAlertSettings))).all().length;
+  expect([readable({ kind: 'member', id: 'sam' }), readable({ kind: 'member', id: 'stranger' }), readable({ kind: 'agent', id: 'art' }), readable({ kind: 'runner', id: 'worker' })]).toEqual([1, 0, 0, 0]);
+  f.root.writes.run(() => f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'lee')).run());
+  expect(readable({ kind: 'member', id: 'lee' })).toBe(0);
+  expect((await f.query(lines, keys.lee)).data?.boxAlertSettings ?? []).toEqual([]);
+  expect((await f.query(lines, 'f'.repeat(64))).data?.boxAlertSettings ?? []).toEqual([]);
   await f.report([disk(75)]);
   expect(f.db.select().from(inbox).all().map(item => item.words)).toEqual(['loom: / is 75% full (50 GB free). Alerts at 70%.']);
 });

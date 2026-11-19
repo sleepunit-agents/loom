@@ -1050,9 +1050,12 @@ program run:
 - **Disks.** The room on the filesystem under `/`, under each path in
   `watchPaths`, under the worker's state directory (a worker that takes jobs),
   and under the place the container runtime keeps its containers (what the
-  engine answers as `DockerRootDir`). The size is what a user can fill, so the
-  fullness is the one `df` shows. A filesystem mounted read-only is read like
-  any other; being read-only is not itself a condition.
+  engine answers as `DockerRootDir`). So the text of a watched path has three
+  sources: `/`, the worker's configuration, and the engine's answer; all three
+  are held to the same bound, below. Fullness is worked out as `df` does: used
+  over used and available, rounded up to a whole percent (84.2% is 85%), and
+  that number is the one held to the lines. A filesystem mounted read-only is
+  read like any other; being read-only is not itself a condition.
 - **Memory.** What is available to start something new with (on Linux,
   `MemAvailable`), and the total.
 - **The container runtime.** Whether the engine at `container.socket` answers
@@ -1063,27 +1066,36 @@ System load is not read: no line is drawn on it.
 
 Not every path becomes a disk of its own:
 
-- Two paths on one filesystem are one disk, under the first. The state
-  directory is usually on the filesystem `/` is on, and is then not a second
-  disk.
+- Two paths on one filesystem are one disk. The first in order stands for it
+  and the other is reported as the same disk as that one. loom keeps one
+  record and one notice for a disk, under the name it first knew it by, also
+  when the path that stands for it changes. The state directory is usually on
+  the filesystem `/` is on, and is then not a second disk.
 - A filesystem kept in memory or made up by the kernel, or an image mounted to
   be read (squashfs, an ISO), has no room worth watching. The default state
   directory is under the temporary directory, which is often such a
   filesystem.
-- A path is followed through no link: every step from `/` down must be a real
-  directory. If the engine's directory or a watched path is a link (a
-  `/var/lib/docker` linked to another disk), name the real directory in
-  `watchPaths`.
+- A path is followed through no link that is there when it is checked: every
+  step from `/` down must be a real directory before the room is read, and the
+  same directory after. If the engine's directory or a watched path is a link
+  (a `/var/lib/docker` linked to another disk), name the real directory in
+  `watchPaths`. **Do not put a watched path inside a tree bodies can write.**
+  A step swapped for a link and back within one read is not seen
+  ([accepted trade-offs](../accepted-tradeoffs.md), "A watched path can be
+  swapped under the worker for one read").
 - A path whose name loom does not take is not watched at all, and the worker
   says so once in its log. A watched path is absolute, at most 120 long, each
   step beginning with a letter, a digit, a dot or an underscore and going on in
-  those and `@ + -`: no spaces, no colon. A `watchPaths` entry written
+  those and `@ + -`: no spaces, no colon. That bounds the text; it does not
+  make it a real path, and loom cannot tell. The text is shown only to the
+  machine's owner and household owners, and every other word of a notice is
+  loom's. A `watchPaths` entry written
   otherwise stops the worker as a file that is not valid; a state directory or
   an engine directory written otherwise is only left unwatched.
 
 **Unknown is not absent.** Everything the worker is set to watch is named in
 every report, as numbers or as unknown: a path that did not answer, is not
-there just now, is reached through a link, or is no disk of its own. loom
+there just now, is reached through a link, or is a filesystem kept in memory. loom
 keeps what it last read of an unknown thing, with the time it was read, and
 raises and clears nothing for it. A thing is dropped (and its notices closed
 `No longer watched`) only when the worker no longer names it, which means it
@@ -1095,14 +1107,29 @@ does not name the directory until the engine first answers.
 **A filesystem that never answers.** The worker asks the filesystem one thing
 at a time, never two at once. A call that has not answered in five seconds is
 no longer waited for, but the kernel still holds it, and it holds one of the
-four threads every file read and name lookup in the worker shares. Nothing
-more is asked about that path, or about any watched path that lies through
-it, until the call comes back: a dead mount holds one thread however many
-watched paths are on it. With two such calls out the worker asks no filesystem
-anything until one returns, so two threads are always left for its other work;
-every disk is then unknown. A stopped worker exits even with such a call out:
-once the worker program has ended its bodies and loops, the process is given
-two seconds to end by itself and is then ended (`src/worker.ts`).
+threads every file read and name lookup in the worker shares. The worker
+process has eight of those (`UV_THREADPOOL_SIZE`, set by the worker's entry
+file before anything uses one, unless whoever starts the worker set their own;
+Node's default is four; loom's server is not touched).
+
+- While such a call is out, the directory it was reached from is suspect, and
+  no watched path at or under it is asked anything. So one dead mount holds one
+  thread however many watched paths are on it. (For a directory directly under
+  `/` the suspect is that directory itself, not `/`.)
+- With four such calls out, half the pool, the worker asks only about paths
+  that answered on the round before, which are the ones least likely to hang.
+  The healthy disks go on being read; a path not yet read waits.
+- The worst case: each further mount that answered a round ago and has died
+  since takes one more thread, up to one per watched path on distinct dead
+  mounts. Nothing in the process can end such a call.
+
+A stopped worker ends even with such a call out, which it would not by itself
+and would not by `process.exit` either (Node waits for its file threads on the
+way out). Only then, two seconds after the worker program has ended its bodies
+and loops, the process signals itself: SIGTERM after a clean stop, SIGKILL
+after any other, since its exit code can no longer be delivered and a failed
+worker must not look like a clean stop (`src/runtime/worker-exit.ts`). With no
+call out the process ends by itself with its own code.
 
 ```json
 "machineCheckMs": 300000,
@@ -1117,8 +1144,11 @@ readings unavailable` and is tried again at the next interval.
 
 ### The lines, and when a condition is raised and cleared
 
-The lines are the household's (`box_alert_settings`; an owner sets them with
-`machine.setAlertLines`), and the defaults stand until one is set:
+The lines are the household's (`box_alert_settings`), and the defaults stand
+until one is set. A household owner sets them (`machine.setAlertLines`). Any
+member who is in the household may read them (`boxAlertSettings`): they are no
+secret, since a machine's owner is told them in every notice. No agent reads
+them.
 
 | Line | Default | Bounds | Condition |
 | --- | --- | --- | --- |
@@ -1158,11 +1188,24 @@ free), under the 85% line.` A notice its reader closed by hand is not sent
 again for the same occasion; a condition that cleared and came back is a new
 occasion with a notice of its own.
 
+Every closing sentence says why the notice closed. A reading that recovered
+names the line it is clear of. Lines an owner changed while the notice was
+open say that instead (`The lines changed: alerts are now at 96% or under 5 GB
+free; / is at 91% (18 GB free).`, `The memory floor is now 8.7 GB, which is
+not asked of a machine with 16 GB of memory; 310 MB is available.`), because
+nothing about the machine got better.
+
 Unknown raises nothing, and it does not hold a notice open for ever either.
-When a thing has been unknown for a day loom closes its notices with `/ can no
-longer be read; last read 19 Nov, 08:05 at 91%.` (the household's time), keeps
-the last numbers, and marks the record stale: it is held to no line until it is
-read again, and a reading then over a line is a new occasion.
+When one thing has been unknown for a day while other disks of the machine are
+read, loom closes its notices with `/srv can no longer be read; last read Nov
+19, 8:05 AM at 91%.` (the household's time), keeps the last numbers, and marks
+the record stale: it is held to no line until it is read again, and a reading
+then over a line is a new occasion.
+
+When every disk of a machine is unknown at once, the worker is not seeing its
+filesystems, which says nothing about any one of them. No disk's notice is
+closed for that. After a day the owner gets one notice, `loom: its disks have
+not been readable since Nov 19, 8:10 AM.`, closed when any disk is read again.
 
 A machine that stops reporting keeps its conditions and their notices as they
 were; its silence is its own notice. A machine taken out of the household has

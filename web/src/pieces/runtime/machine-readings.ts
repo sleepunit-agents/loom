@@ -1,3 +1,4 @@
+import {briefTime} from '../../kit/time';
 /** What a machine's worker last read on it, as the short lines "Your machines" shows. The numbers and the
  * level are loom's (`boxReadings`); nothing is judged here. */
 export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:string; usedPercent:number|null; sizeMib:number|null; freeMib:number|null; answers:boolean|null; level:'ok'|'raised'|'urgent'; readAt:string; unknownSince:string|null; stale:boolean};
@@ -11,24 +12,19 @@ export function room(mib:number):string {
  const gb=mib/1024;
  return `${gb<10?Math.floor(gb*10)/10:Math.floor(gb)} GB`;
 }
-/** A time, short: the hour and minute today, with the day before that. */
-export function shortTime(iso:string,now:number):string {
- const at=new Date(iso),today=new Date(now).toDateString()===at.toDateString();
- return at.toLocaleString(undefined,today?{hour:'2-digit',minute:'2-digit'}:{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-}
 /** How old a reading is, where that needs saying: nothing for one just read. A number the machine can no
  * longer read, or has not sent for a while, is never shown as if it were current. */
-export function readingAge(reading:Reading,now:number):string {
- if(reading.stale)return ` (not read since ${shortTime(reading.readAt,now)})`;
+export function readingAge(reading:Reading,now:number,zone?:string):string {
+ if(reading.stale)return ` (not read since ${briefTime(reading.readAt,zone,now)})`;
  const age=now-Date.parse(reading.readAt);
- return reading.unknownSince||!(age<=READING_OLD_MS)?` (as of ${shortTime(reading.readAt,now)})`:'';
+ return reading.unknownSince||!(age<=READING_OLD_MS)?` (as of ${briefTime(reading.readAt,zone,now)})`:'';
 }
 /** One reading, quietly. A disk is named by its path only when the machine has more than one watched. */
-export function readingLine(reading:Reading,disks:number,now:number):string {
+export function readingLine(reading:Reading,disks:number,now:number,zone?:string):string {
  const said=reading.kind==='containers'?(reading.answers?'Container runtime answering':'Container runtime not answering')
   :reading.kind==='memory'?`Memory ${room(reading.freeMib??0)} available`
   :`Disk${disks>1?' '+reading.thing:''} ${reading.usedPercent??0}% · ${room(reading.freeMib??0)} free`;
- return said+readingAge(reading,now);
+ return said+readingAge(reading,now,zone);
 }
 /** An open condition, plainly. Nothing for a reading that is fine. */
 export function conditionLine(reading:Reading):string|undefined {

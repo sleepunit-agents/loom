@@ -115,6 +115,9 @@ export async function workerProgram(input: {
   reportReadings?: typeof reportWorkerMachineReadings;
   /** The wait between two reads of the machine. */
   machinePause?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Told once, as the program returns, how many calls to a filesystem that never answered are still out
+   * (machine-check.ts). A process with one does not end by itself; whoever runs the program ends it (worker-exit.ts). */
+  unanswered?: (count: number) => void;
   signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
   reportUsage?: typeof reportWorkerAccountUsage;
@@ -131,6 +134,7 @@ export async function workerProgram(input: {
   const stop = () => abort.abort();
   let executor: WorkerExecutor | undefined;
   let diagnostics: Promise<void> | undefined, loginChecks: Promise<void> | undefined, machineChecks: Promise<void> | undefined;
+  let callsOut: (() => number) | undefined;
   // The stage the worker is in: what a failure there is reported as (worker-stop.ts).
   let stage: WorkerStopStage = 'usage';
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
@@ -238,6 +242,7 @@ export async function workerProgram(input: {
       const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.reportOnly ? [] : [config.state ?? defaultWorkerState(config.box)]), ...(config.watchPaths ?? [])], signal: abort.signal,
         say: line => input.error(line),
         ...(socket === undefined ? {} : { engine: (signal: AbortSignal) => dockerEngine(socket).json('GET', '/info', undefined, signal) }) });
+      callsOut = (read as { unanswered?: () => number }).unanswered;
       return poll(everyMs, 'Worker machine readings unavailable\n', async () => {
         const readings = await read();
         if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings, everyMs);
@@ -346,5 +351,5 @@ export async function workerProgram(input: {
     const at = error instanceof WorkerStop ? error.stage : stage;
     input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
-  } finally { abort.abort(); await diagnostics; await loginChecks; await machineChecks; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
+  } finally { abort.abort(); await diagnostics; await loginChecks; await machineChecks; input.unanswered?.(callsOut?.() ?? 0); executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

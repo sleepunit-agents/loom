@@ -16,7 +16,12 @@
  * A thing the worker names as unknown raises nothing and clears nothing: what was last read stands, with
  * the time it was read. But not for ever. Once a thing has been unknown for STALE_MS loom closes what it
  * said about it, saying that it can no longer be read, and marks the record stale; a later reading that is
- * over a line is then a new occasion.
+ * over a line is then a new occasion. That is for one thing among others that are read. When every disk
+ * of a machine is unknown at once, the worker is not seeing its filesystems, which says nothing of any
+ * one of them: no disk's notice is closed, and after a day the owner gets one notice that the machine's
+ * disks have not been readable, closed when any of them is read again.
+ *
+ * A filesystem is one thing. Two watched paths on it are one record under the name loom first knew it by.
  *
  * Nothing here knows that the reading came from a worker on the machine itself. `evaluate` turns numbers
  * into a level; the record and the notices go by the level alone. A reader on another host that reports a
@@ -68,14 +73,16 @@ const MIB = 1024 * 1024;
 type Level = Reading['level'];
 type Values = Pick<Reading, 'usedPercent' | 'sizeMib' | 'freeMib' | 'answers'>;
 const none: Values = { usedPercent: null, sizeMib: null, freeMib: null, answers: null };
-/** A reading as loom keeps it: whole mebibytes, and a disk's fullness as a whole percent rounded down, so
- * that the number shown and the number held to the line are the same number. */
+/** A reading as loom keeps it: whole mebibytes, and a disk's fullness as `df` works it out, used over used
+ * and available, rounded up to a whole percent (84.2% is 85%), because `df` is what an owner will hold a
+ * notice against. That whole number is the one shown and the one held to the lines. In whole numbers
+ * throughout: a fraction that is a hair over a whole percent in floating point must not round up a point. */
 function values(reading: MachineReading): Values {
   if (reading.kind === 'containers') return { ...none, answers: reading.answers === true };
   const size = Math.floor((reading.sizeBytes ?? 0) / MIB), free = Math.min(size, Math.floor((reading.freeBytes ?? 0) / MIB));
   if (reading.kind === 'memory') return { ...none, sizeMib: size, freeMib: free };
   const bytes = reading.sizeBytes ?? 0, used = Math.max(0, bytes - (reading.freeBytes ?? 0));
-  return { ...none, sizeMib: size, freeMib: free, usedPercent: bytes > 0 ? Math.min(100, Math.floor(100 * used / bytes)) : 0 };
+  return { ...none, sizeMib: size, freeMib: free, usedPercent: bytes > 0 ? Math.min(100, Number((100n * BigInt(used) + BigInt(bytes) - 1n) / BigInt(bytes))) : 0 };
 }
 const floorOf = (floor: number, size: number) => size >= floor * FLOOR_APPLIES ? floor : 0;
 
@@ -100,7 +107,7 @@ export function evaluate(kind: Reading['kind'], now: Values, before: Pick<Readin
   return was !== 'ok' && (percent > lines.diskPercent - CLEAR_POINTS || free < floor * CLEAR_ROOM) ? 'raised' : 'ok';
 }
 
-/** An amount of room as a person reads it. The units are binary, written as `df -h` writes them. */
+/** An amount of room as a person reads it, in binary units, rounded down: never more room than there is. */
 export function roomWords(mib: number): string {
   if (mib < 1024) return `${mib} MB`;
   const gb = mib / 1024;
@@ -110,29 +117,53 @@ export function roomWords(mib: number): string {
 // notice already closed under an id is never sent again (Conversations.send), so each id names the occasion.
 const raisedId = (row: Reading) => `machine-condition:${JSON.stringify([row.box, row.kind, row.thing, row.since])}`;
 const urgentId = (row: Reading) => `machine-condition-urgent:${JSON.stringify([row.box, row.kind, row.thing, row.urgentSince])}`;
+// One notice per time a machine's disks all became unreadable together.
+const blindId = (box: string, since: string) => `machine-blind:${JSON.stringify([box, since])}`;
 const where = (key: Pick<Reading, 'box' | 'kind' | 'thing'>) => and(eq(boxReadings.box, key.box), eq(boxReadings.kind, key.kind), eq(boxReadings.thing, key.thing));
 
-/** Whether a disk is raised for its free room and not for how full it is: the notice then speaks of the floor.
- * Never for a disk too small to be held to the floor (floorOf): the notice says only what is true of that disk. */
-const underFloor = (row: Reading, lines: AlertLines) => (row.usedPercent ?? 0) < lines.diskPercent && (row.freeMib ?? 0) < floorOf(lines.diskFreeMib, row.sizeMib ?? 0);
-/** The sentence a machine's owner reads when a condition is raised. */
-export function raisedWords(machine: string, row: Reading, lines: AlertLines): string {
+type Numbers = Pick<Reading, 'kind' | 'thing' | 'level' | 'usedPercent' | 'sizeMib' | 'freeMib'>;
+/** The sentence a machine's owner reads when a condition is raised. `row` is the record as just written:
+ * the sentence names the line the reading is on the wrong side of, as the lines now are. Each is true of
+ * its reading whichever way the condition came to be raised:
+ * - urgent: sent only on reaching the urgent line, so the reading is at or over it.
+ * - raised at or over the percent line, from fine or from urgent.
+ * - raised under the free-room floor, which is only ever asked of a disk it applies to (floorOf).
+ * - raised and under both, which only a disk coming down from urgent can be: it is inside the margin a
+ *   line clears by, and the sentence says that and no more.
+ * - memory: raised only under a floor that applies, which is then the household's own number. */
+export function raisedWords(machine: string, row: Numbers, lines: AlertLines): string {
   if (row.kind === 'containers') return `${machine}: the container runtime is not answering.`;
   const free = roomWords(row.freeMib ?? 0);
   if (row.kind === 'memory') return `${machine}: ${free} of memory is available. Alerts under ${roomWords(lines.memoryFreeMib)}.`;
-  if (row.level === 'urgent') return `${machine}: ${row.thing} is ${row.usedPercent}% full (${free} free). Urgent at ${lines.diskUrgentPercent}%.`;
-  if (underFloor(row, lines)) return `${machine}: ${row.thing} has ${free} free (${row.usedPercent}% full). Alerts under ${roomWords(lines.diskFreeMib)} free.`;
-  return `${machine}: ${row.thing} is ${row.usedPercent}% full (${free} free). Alerts at ${lines.diskPercent}%.`;
+  const percent = row.usedPercent ?? 0, floor = floorOf(lines.diskFreeMib, row.sizeMib ?? 0);
+  if (row.level === 'urgent') return `${machine}: ${row.thing} is ${percent}% full (${free} free). Urgent at ${lines.diskUrgentPercent}%.`;
+  if (percent >= lines.diskPercent) return `${machine}: ${row.thing} is ${percent}% full (${free} free). Alerts at ${lines.diskPercent}%.`;
+  if ((row.freeMib ?? 0) < floor) return `${machine}: ${row.thing} has ${free} free (${percent}% full). Alerts under ${roomWords(floor)} free.`;
+  return `${machine}: ${row.thing} is ${percent}% full (${free} free). Not yet clear of the alert lines (${lines.diskPercent}%${floor ? `, ${roomWords(floor)} free` : ''}).`;
 }
-/** What changed, as the reason a notice is closed with: the reading as it now is, and the line it is back
- * on the right side of. `before` is the record the notice was open for. */
-export function clearedWords(before: Reading, row: Reading, lines: AlertLines): string {
+/** Why a notice is closed by a reading, as the sentence its reader finds on it. `before` is the record the
+ * notice was open for and `row` the record as just written. There are two causes and the sentence says
+ * which. The reading recovered: `before`, held to the lines as they now are, would still be raised, so it
+ * is the numbers that moved, and the sentence names the line they are now clear of. Or the lines changed:
+ * `before` would not be raised by the lines as they now are, so nothing about the machine got better, and
+ * the sentence says the line moved (or is no longer asked of this machine) and what the reading is.
+ * (A notice closed for any other reason, no longer watched or no longer readable, is not closed here.) */
+export function clearedWords(before: Numbers, row: Numbers, lines: AlertLines): string {
   if (row.kind === 'containers') return 'The container runtime is answering again.';
-  const free = roomWords(row.freeMib ?? 0);
-  if (row.kind === 'memory') return `${free} of memory is available, over the ${roomWords(lines.memoryFreeMib)} floor.`;
-  // Raised and not held there by how full it was: it was its free room that kept it raised.
-  if (row.level === 'ok' && before.level === 'raised' && (before.usedPercent ?? 0) <= lines.diskPercent - CLEAR_POINTS && floorOf(lines.diskFreeMib, row.sizeMib ?? 0) > 0) return `${row.thing} has ${free} free (${row.usedPercent}% full), over the ${roomWords(lines.diskFreeMib)} floor.`;
-  return `${row.thing} is at ${row.usedPercent}% (${free} free), under the ${row.level === 'ok' ? lines.diskPercent : lines.diskUrgentPercent}% line.`;
+  const free = roomWords(row.freeMib ?? 0), was = before.freeMib ?? 0;
+  if (row.kind === 'memory') {
+    const floor = floorOf(lines.memoryFreeMib, row.sizeMib ?? 0);
+    if (!floor) return `The memory floor is now ${roomWords(lines.memoryFreeMib)}, which is not asked of a machine with ${roomWords(row.sizeMib ?? 0)} of memory; ${free} is available.`;
+    if (was < floor * CLEAR_ROOM) return `${free} of memory is available, over the ${roomWords(floor)} floor.`;
+    return `The memory floor is now ${roomWords(floor)}; ${free} of memory is available.`;
+  }
+  const percent = row.usedPercent ?? 0, full = before.usedPercent ?? 0, said = `${row.thing} is at ${percent}% (${free} free)`;
+  // The urgent notice of a disk that is still raised: only the urgent line is spoken of.
+  if (row.level !== 'ok') return full > lines.diskUrgentPercent - CLEAR_POINTS ? `${said}, under the ${lines.diskUrgentPercent}% line.` : `The urgent line is now ${lines.diskUrgentPercent}%; ${said}.`;
+  const floor = floorOf(lines.diskFreeMib, row.sizeMib ?? 0), wasFloor = floorOf(lines.diskFreeMib, before.sizeMib ?? 0);
+  if (full > lines.diskPercent - CLEAR_POINTS) return `${said}, under the ${lines.diskPercent}% line.`;
+  if (floor && wasFloor && was < wasFloor * CLEAR_ROOM) return `${row.thing} has ${free} free (${percent}% full), over the ${roomWords(floor)} floor.`;
+  return `The lines changed: alerts are now at ${lines.diskPercent}%${floor ? ` or under ${roomWords(floor)} free` : ''}; ${said}.`;
 }
 
 /** The reason a notice is closed with when its thing has been unknown for STALE_MS: that it can no longer
@@ -168,9 +199,18 @@ export class MachineConditions {
       fromKind: 'unknown', words: raisedWords(machine.name, after, lines), refs: [machine.id] });
   }
 
-  /** The time of a reading as the household writes times, for the words of a notice. */
+  /** A time in the household's zone as loom's screens say one ("Nov 19, 8:05 AM"; web/src/kit/time.ts), for the words of a notice. */
   private when(iso: string): string {
-    return new Intl.DateTimeFormat('en-GB', { timeZone: householdTimezone(this.db), day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+    return new Intl.DateTimeFormat('en-US', { timeZone: householdTimezone(this.db), month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)).replace(/\u202f/g, ' ');
+  }
+
+  /** Since when every disk of a machine has been unknown, or nothing while any is read (or it has none).
+   * That is one condition of the machine and not one of each disk: the worker cannot see its filesystems
+   * (its reader is held up by one that does not answer), which says nothing about any one of them. */
+  private blindSince(box: string): string | null {
+    const disks = this.db.select().from(boxReadings).where(and(eq(boxReadings.box, box), eq(boxReadings.kind, 'disk'))).all();
+    if (!disks.length || disks.some(disk => disk.unknownSince === null)) return null;
+    return disks.map(disk => disk.unknownSince!).sort().at(-1)!;
   }
 
   /** Everything a worker watches on its machine, whole: a thing it no longer names is no longer watched,
@@ -184,19 +224,39 @@ export class MachineConditions {
     return this.db.transaction(() => {
       const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();
       if (!machine || machine.revokedAt) throw new Error('Machine not available');
-      const lines = alertLines(this.db), seen = new Set<string>();
+      const lines = alertLines(this.db), seen = new Set<string>(), notices = new Conversations(this.db, () => at, lateMailWaits);
       const name = (key: Pick<Reading, 'kind' | 'thing'>) => JSON.stringify([key.kind, key.thing]);
+      const kept = new Set(this.db.select().from(boxReadings).where(eq(boxReadings.box, box)).all().map(name));
+      const disk = (thing: string) => name({ kind: 'disk', thing });
+      const blindBefore = this.blindSince(box);
+      // A filesystem is one thing, whichever watched path the worker has stand for it this time. Where it
+      // says path B is the same disk as path A, gives A's numbers, and loom knows the disk as B and knows
+      // no A, the numbers are B's: the record and its open notice go on under the name they have.
+      const numbered = new Set(readings.filter(reading => reading.kind === 'disk' && !reading.unknown && reading.sameAs === undefined).map(reading => reading.thing ?? ''));
+      const knownAs = new Map<string, string>();
+      for (const reading of readings) {
+        const stands = reading.sameAs, thing = reading.thing ?? '';
+        if (reading.kind === 'disk' && stands !== undefined && numbered.has(stands) && kept.has(disk(thing)) && !kept.has(disk(stands)) && !knownAs.has(stands)) knownAs.set(stands, thing);
+      }
+      const renamed = new Set(knownAs.values());
+      // With no disk read at all, the worker is not seeing its filesystems: no one of them is given up on for that.
+      const sees = numbered.size > 0;
       let changed = false;
       for (const reading of readings) {
-        const key = { box, kind: reading.kind, thing: reading.kind === 'disk' ? reading.thing ?? '' : '' };
+        const thing = reading.kind === 'disk' ? reading.thing ?? '' : '';
+        // The disk's numbers arrive under the other path, and are written to this record there.
+        if (reading.sameAs !== undefined && renamed.has(thing)) continue;
+        const key = { box, kind: reading.kind, thing: reading.sameAs === undefined ? knownAs.get(thing) ?? thing : thing };
         if (seen.has(name(key))) continue;
         seen.add(name(key));
         const before = this.db.select().from(boxReadings).where(where(key)).get();
-        if (reading.unknown) {
+        // A path that is the same disk as another, where loom has a record under each (two disks once, one
+        // now: a mount that is not there) is not a reading of the disk this record was: it is unknown.
+        if (reading.unknown || reading.sameAs !== undefined) {
           // Never read, or already given up on: there is nothing to keep and nothing more to close.
           if (!before || before.stale) continue;
           if (before.unknownSince === null) { this.db.update(boxReadings).set({ unknownSince: at }).where(where(key)).run(); changed = true; continue; }
-          if (now - Date.parse(before.unknownSince) < STALE_MS) continue;
+          if (now - Date.parse(before.unknownSince) < STALE_MS || (key.kind === 'disk' && !sees)) continue;
           const after = this.db.update(boxReadings).set({ stale: true, level: 'ok', since: null, urgentSince: null }).where(where(key)).returning().get()!;
           this.settle(machine, before, after, lines, at, staleWords(before, this.when(before.readAt)));
           changed = true;
@@ -217,6 +277,13 @@ export class MachineConditions {
         if (seen.has(name(row))) continue;
         this.drop([row], lines, at); changed = true;
       }
+      // The machine's own condition: every disk unknown, for a day. One notice for the occasion, closed
+      // when any disk is read again (or none is watched any more). No disk's own notice is closed for it.
+      const blind = this.blindSince(box);
+      if (blindBefore !== null && blind !== blindBefore && notices.resolveSource('notice', blindId(box, blindBefore),
+        this.db.select().from(boxReadings).where(and(eq(boxReadings.box, box), eq(boxReadings.kind, 'disk'))).get() ? 'Its disks are being read again.' : 'No longer watched').length) changed = true;
+      if (blind !== null && now - Date.parse(blind) >= STALE_MS && notices.send({ toKind: 'person', to: machine.owner, member: machine.owner, source: 'notice', sourceId: blindId(box, blind),
+        fromKind: 'unknown', words: `${machine.name}: its disks have not been readable since ${this.when(blind)}.`, refs: [machine.id] }).at === at) changed = true;
       return { changed };
     }, { behavior: 'immediate' });
   }
@@ -231,7 +298,11 @@ export class MachineConditions {
    * here; a condition is raised by the reading that finds it (read, above). */
   sweep(): boolean {
     const at = this.at();
-    return this.db.transaction(() => this.drop(this.db.select({ reading: boxReadings }).from(boxReadings).innerJoin(boxes, eq(boxes.id, boxReadings.box))
-      .where(isNotNull(boxes.revokedAt)).all().map(row => row.reading), alertLines(this.db), at), { behavior: 'immediate' });
+    return this.db.transaction(() => {
+      const rows = this.db.select({ reading: boxReadings }).from(boxReadings).innerJoin(boxes, eq(boxes.id, boxReadings.box)).where(isNotNull(boxes.revokedAt)).all().map(row => row.reading);
+      const notices = new Conversations(this.db, () => at, lateMailWaits);
+      for (const box of new Set(rows.map(row => row.box))) { const blind = this.blindSince(box); if (blind !== null) notices.resolveSource('notice', blindId(box, blind), 'No longer watched'); }
+      return this.drop(rows, alertLines(this.db), at);
+    }, { behavior: 'immediate' });
   }
 }

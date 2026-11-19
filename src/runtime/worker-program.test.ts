@@ -532,6 +532,18 @@ it('reads its own machine on a slow clock of its own and reports everything it w
   expect(waits).toEqual([300_000, 300_000, 300_000]);
   expect(f.error).not.toHaveBeenCalled();
 });
+it('tells whoever runs it, as it returns, how many calls to a filesystem that never answered are still out', async () => {
+  for (const [reader, out] of [[Object.assign(async () => [], { unanswered: () => 2 }), 2], [Object.assign(async () => [], { unanswered: () => 0 }), 0], [async () => [], 0]] as const) {
+    const f = fixture(), unanswered = vi.fn();
+    expect(await workerProgram({ ...f, machineReader: (() => reader) as never, unanswered })).toBe(0);
+    expect(unanswered).toHaveBeenCalledExactlyOnceWith(out);
+  }
+  // Also when the worker never got as far as reading its machine.
+  const f = fixture(), unanswered = vi.fn();
+  f.read.mockImplementation(async () => 'not a configuration');
+  expect(await workerProgram({ ...f, unanswered })).toBe(WORKER_STOP.config[0]);
+  expect(unanswered).toHaveBeenCalledExactlyOnceWith(0);
+});
 it('goes on working when its machine cannot be read or the report is not taken, and says one fixed line', async () => {
   const f = fixture();
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, machineCheckMs: 60_000 }) : 'private-token');

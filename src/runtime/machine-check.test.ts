@@ -2,36 +2,39 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { SIZE_BYTES_MAX, UNANSWERED_MAX, machineReader, watchedPath, type MachineProbe } from './machine-check.js';
+import { SIZE_BYTES_MAX, UNANSWERED_MAX, WORKER_THREADS, machineReader, watchedPath, type MachineProbe } from './machine-check.js';
 
 const GIB = 1024 ** 3, EXT4 = 0xef53, TMPFS = 0x01021994, PROC = 0x9fa0, SQUASHFS = 0x73717368;
 /** A filesystem mounted at a path. Sizes are in GiB; `reserved` is room only root may fill; `hangs` never answers. */
 type Fs = { type?: number; size?: number; free?: number; reserved?: number; hangs?: boolean; fails?: string };
-/** A machine: its mounts by path (`/` always), names that are links, and names that are not there. Every
- * call is counted while it is out, so a test can say how many were out at once. */
+/** A machine: its mounts by path (`/` always), names that are links, names that are not there, directories
+ * that never answer though the mount above them does (`hung`, with everything under them), and directories
+ * that have been swapped for another (`moved`). Every call is counted while it is out, so a test can say
+ * how many were out at once. */
 function machine(mounts: Record<string, Fs>, memory = { sizeBytes: 16 * GIB, freeBytes: 12 * GIB }) {
-  const links = new Set<string>(), missing = new Set<string>(), calls: string[] = [];
+  const links = new Set<string>(), missing = new Set<string>(), hung = new Set<string>(), moved = new Set<string>(), calls: string[] = [];
   let out = 0, most = 0;
   const mount = (path: string) => Object.keys(mounts).filter(at => path === at || at === '/' || path.startsWith(at + '/')).sort((a, b) => b.length - a.length)[0];
   const counted = <T>(name: string, path: string, answer: () => T): Promise<T> => {
     calls.push(`${name} ${path}`); out++; most = Math.max(most, out);
     const fs = mounts[mount(path)];
-    const work = fs.hangs ? new Promise<never>(() => {}) : new Promise<T>((resolve, reject) => setImmediate(() => { try { resolve(answer()); } catch (error) { reject(error); } }));
+    const work = fs.hangs || [...hung].some(at => path === at || path.startsWith(at + '/')) ? new Promise<never>(() => {}) : new Promise<T>((resolve, reject) => setImmediate(() => { try { resolve(answer()); } catch (error) { reject(error); } }));
     void work.then(() => { out--; }, () => { out--; });
     return work;
   };
   const there = (path: string) => { if (missing.has(path)) throw Object.assign(new Error('no such file'), { code: 'ENOENT' }); const fs = mounts[mount(path)]; if (fs.fails) throw Object.assign(new Error('refused'), { code: fs.fails }); return fs; };
   const probe: MachineProbe = {
-    look: path => counted('look', path, () => { there(path); return { directory: !links.has(path), device: Object.keys(mounts).indexOf(mount(path)) + 1, node: path.length * 1000 + path.charCodeAt(path.length - 1) }; }),
+    look: path => counted('look', path, () => { there(path); return { directory: !links.has(path), device: Object.keys(mounts).indexOf(mount(path)) + 1, node: path.length * 1000 + path.charCodeAt(path.length - 1) + (moved.has(path) ? 7 : 0) }; }),
     statfs: path => counted('statfs', path, () => { const fs = there(path), bsize = 4096, per = GIB / bsize, free = fs.free ?? 0;
       return { type: fs.type ?? EXT4, bsize, blocks: (fs.size ?? 0) * per, bfree: (free + (fs.reserved ?? 0)) * per, bavail: free * per }; }),
     memory: () => memory,
   };
-  return { probe, mounts, links, missing, calls, out: () => out, most: () => most };
+  return { probe, mounts, links, missing, hung, moved, calls, out: () => out, most: () => most };
 }
 const root = { size: 100, free: 29 };
 const rootReading = { kind: 'disk', thing: '/', sizeBytes: 100 * GIB, freeBytes: 29 * GIB }, memoryReading = { kind: 'memory', sizeBytes: 16 * GIB, freeBytes: 12 * GIB };
 const unknown = (thing: string) => ({ kind: 'disk', thing, unknown: true });
+const same = (thing: string, sameAs: string) => ({ kind: 'disk', thing, sameAs });
 
 it('reads a normal disk and a full one as the numbers df shows, and the memory available', async () => {
   // Five of its hundred are kept for root: what a user can fill is 95, and none of it is left.
@@ -43,19 +46,20 @@ it('names what it is set to watch and cannot give numbers for as unknown, never 
   const m = machine({ '/': root, '/mnt/nas': { fails: 'EIO' }, '/srv/data': { size: 50, free: 40 }, '/run': { type: TMPFS, size: 2, free: 2 }, '/proc': { type: PROC }, '/snap/core': { type: SQUASHFS, size: 1, free: 0 } });
   m.missing.add('/gone');
   const read = machineReader({ paths: ['/', '/mnt/nas', '/srv/data', '/run', '/proc', '/snap/core', '/gone', '/var/lib/loom-worker'], probe: m.probe });
-  // One that refuses, one kept in memory, one the kernel makes up, an image, one that is not there, and one
-  // that is on a filesystem an earlier path already stands for: each is named, and none has numbers.
+  // One that refuses, one kept in memory, one the kernel makes up, an image and one that is not there: each
+  // is named, and none has numbers. One on a filesystem an earlier path stands for is named as that disk.
   expect(await read()).toEqual([rootReading, unknown('/mnt/nas'), { kind: 'disk', thing: '/srv/data', sizeBytes: 50 * GIB, freeBytes: 40 * GIB },
-    unknown('/run'), unknown('/proc'), unknown('/snap/core'), unknown('/gone'), unknown('/var/lib/loom-worker'), memoryReading]);
+    unknown('/run'), unknown('/proc'), unknown('/snap/core'), unknown('/gone'), same('/var/lib/loom-worker', '/'), memoryReading]);
 });
 
 it('goes on naming a disk it read before when the path is briefly not there or has become part of another filesystem', async () => {
   const m = machine({ '/': root, '/mnt/nas': { size: 500, free: 20 } });
   const read = machineReader({ paths: ['/', '/mnt/nas'], probe: m.probe });
   expect((await read())[1]).toEqual({ kind: 'disk', thing: '/mnt/nas', sizeBytes: 500 * GIB, freeBytes: 20 * GIB });
-  // Unmounted: the directory is now root's own. It is not a second root, and it is not "no longer watched".
+  // Unmounted: the directory is now root's own. It is not a second root, and it is not "no longer watched":
+  // it is said to be the same disk as root, and loom, which has a record of each, takes that for unknown.
   delete m.mounts['/mnt/nas'];
-  expect(await read()).toEqual([rootReading, unknown('/mnt/nas'), memoryReading]);
+  expect(await read()).toEqual([rootReading, same('/mnt/nas', '/'), memoryReading]);
   m.missing.add('/mnt/nas');
   expect(await read()).toEqual([rootReading, unknown('/mnt/nas'), memoryReading]);
   m.missing.clear(); m.mounts['/mnt/nas'] = { size: 500, free: 20 };
@@ -69,32 +73,59 @@ it('does not let a path that never gave numbers keep the paths after it from bei
   for (let round = 0; round < 2; round++) expect((await read()).map(reading => [reading.thing, reading.unknown])).toEqual([['/gone', true], ['/', undefined], ['/srv/data', undefined], [undefined, undefined]]);
 });
 
-it('asks the filesystem one thing at a time, and holds one thread and no more for a mount that never answers, however many paths are on it', async () => {
-  const m = machine({ '/': root, '/mnt/nas': { hangs: true }, '/srv/data': { size: 50, free: 40 } });
-  const read = machineReader({ paths: ['/', '/mnt/nas', '/mnt/nas/backups', '/mnt/nas/media/films', '/srv/data'], timeoutMs: 15, probe: m.probe });
+it('asks the filesystem one thing at a time, and holds one thread for a dead mount whose own directory still answers, however many paths are on it', async () => {
+  // The mount point answers (the kernel remembers it); everything inside it never does.
+  const m = machine({ '/': root, '/mnt/nas': { size: 500, free: 20 }, '/srv/data': { size: 50, free: 40 } });
+  for (const inside of ['/mnt/nas/a', '/mnt/nas/b', '/mnt/nas/c']) m.hung.add(inside);
+  const read = machineReader({ paths: ['/', '/mnt/nas/a', '/mnt/nas/b', '/mnt/nas/c/films', '/srv/data'], timeoutMs: 15, probe: m.probe });
   const data = { kind: 'disk', thing: '/srv/data', sizeBytes: 50 * GIB, freeBytes: 40 * GIB };
   for (let round = 0; round < 4; round++) {
-    // Root and the disk after the dead mount are read every time; the three paths on the dead mount are unknown.
-    expect(await read()).toEqual([rootReading, unknown('/mnt/nas'), unknown('/mnt/nas/backups'), unknown('/mnt/nas/media/films'), data, memoryReading]);
-    // One call is out for good, whatever the round.
-    expect(m.out()).toBe(1);
+    // Root and the disk after the dead mount are read every time; the three paths inside it are unknown.
+    expect(await read()).toEqual([rootReading, unknown('/mnt/nas/a'), unknown('/mnt/nas/b'), unknown('/mnt/nas/c/films'), data, memoryReading]);
+    // One call is out for good, whatever the round, and the reader says so.
+    expect(m.out()).toBe(1); expect(read.unanswered()).toBe(1);
   }
-  // It was asked once, by the first path to reach it. Nothing was asked again of it or through it.
-  expect(m.calls.filter(call => call.includes('/mnt/nas'))).toEqual(['look /mnt/nas']);
+  // The first path to go in was asked once. The directory it went in from is suspect while that call is
+  // out: nothing else inside it was asked anything, then or since.
+  expect(m.calls.filter(call => call.startsWith('look /mnt/nas/') || call.startsWith('statfs /mnt/nas'))).toEqual(['look /mnt/nas/a']);
   // Never two calls being waited for: the one given up on, and one at a time beside it.
   expect(m.most()).toBe(2);
 });
 
-it('asks no filesystem anything more while two mounts that never answer hold two of the worker\'s threads', async () => {
-  const m = machine({ '/': root, '/mnt/nas': { hangs: true }, '/mnt/other': { hangs: true }, '/srv/data': { size: 50, free: 40 } });
-  const read = machineReader({ paths: ['/', '/mnt/nas', '/mnt/other', '/srv/data'], timeoutMs: 15, probe: m.probe });
-  expect(await read()).toEqual([rootReading, unknown('/mnt/nas'), unknown('/mnt/other'), unknown('/srv/data'), memoryReading]);
-  expect(m.out()).toBe(UNANSWERED_MAX);
-  const asked = m.calls.length;
-  for (let round = 0; round < 5; round++) expect(await read()).toEqual([unknown('/'), unknown('/mnt/nas'), unknown('/mnt/other'), unknown('/srv/data'), memoryReading]);
-  // Not root, not the dead paths again: no third thread is ever taken.
-  expect(m.calls).toHaveLength(asked);
-  expect(m.most()).toBe(UNANSWERED_MAX);
+it('holds one thread for a mount whose own directory never answers', async () => {
+  const m = machine({ '/': root, '/mnt/nas': { hangs: true }, '/srv/data': { size: 50, free: 40 } });
+  const read = machineReader({ paths: ['/', '/mnt/nas', '/mnt/nas/backups', '/srv/data'], timeoutMs: 15, probe: m.probe });
+  for (let round = 0; round < 3; round++) {
+    expect((await read()).map(reading => [reading.thing, reading.unknown])).toEqual([['/', undefined], ['/mnt/nas', true], ['/mnt/nas/backups', true], ['/srv/data', undefined], [undefined, undefined]]);
+    expect(m.out()).toBe(1);
+  }
+  expect(m.calls.filter(call => call.includes('/mnt/nas'))).toEqual(['look /mnt/nas']);
+});
+
+it('goes on reading the disks that answered last time with as many calls out as may be, and asks nothing new', async () => {
+  expect(UNANSWERED_MAX).toBe(WORKER_THREADS / 2);
+  const m = machine({ '/': root, '/srv/data': { size: 50, free: 40 } });
+  const dead = Array.from({ length: UNANSWERED_MAX }, (_, index) => `/dead${index}/x`);
+  for (const path of dead) m.hung.add(path.slice(0, -2));
+  // After the dead ones: a path on a fifth dead mount, and a healthy path that has never yet been read.
+  m.hung.add('/late'); m.mounts['/fresh'] = { size: 10, free: 9 };
+  const read = machineReader({ paths: ['/', '/srv/data', ...dead, '/late/x', '/fresh'], timeoutMs: 10, probe: m.probe });
+  const data = { kind: 'disk', thing: '/srv/data', sizeBytes: 50 * GIB, freeBytes: 40 * GIB };
+  for (let round = 0; round < 4; round++) {
+    // Root and the healthy disk are read on every round, with half the worker's threads held.
+    expect(await read()).toEqual([rootReading, data, ...dead.map(unknown), unknown('/late/x'), unknown('/fresh'), memoryReading]);
+    expect(read.unanswered()).toBe(UNANSWERED_MAX);
+  }
+  // Each dead mount was asked once. With that many out, a path that had not answered before was not asked
+  // at all: not the one that would have hung, and not the healthy one either, which waits its turn.
+  expect(m.calls.filter(call => call.includes('/dead'))).toHaveLength(UNANSWERED_MAX);
+  expect(m.calls.filter(call => call.includes('/late') || call.includes('/fresh'))).toEqual([]);
+  // The worst case, as it is: a disk that answered a round ago and has died since takes one more thread,
+  // once, and then it too is left alone.
+  m.hung.add('/srv');
+  for (let round = 0; round < 3; round++) expect(await read()).toEqual([rootReading, unknown('/srv/data'), ...dead.map(unknown), unknown('/late/x'), unknown('/fresh'), memoryReading]);
+  expect(read.unanswered()).toBe(UNANSWERED_MAX + 1);
+  expect(m.out()).toBe(UNANSWERED_MAX + 1);
 });
 
 it('stops waiting at once when the worker stops, and refuses to read the machine twice at the same time', async () => {
@@ -128,10 +159,23 @@ it('reads no path through a link: one planted at the last step or at a middle st
   expect(say.mock.calls).toEqual([['Worker machine check: a watched path is not a directory reached without a link, and is not read\n'], ['Worker machine check: a watched path is not a directory reached without a link, and is not read\n']]);
 });
 
-it('does not take a directory swapped while its room was being read for the one it looked at', async () => {
+it('does not take a directory swapped while its room was being read for the one it looked at, at the last step or at one above it', async () => {
   const m = machine({ '/': root, '/srv/shared': { size: 50, free: 1 } });
-  const statfs = m.probe.statfs, read = machineReader({ paths: ['/srv/shared'], probe: { ...m.probe, statfs: async path => { const found = await statfs(path); m.links.add('/srv/shared'); return found; } } });
-  expect(await read()).toEqual([unknown('/srv/shared'), memoryReading]);
+  const statfs = m.probe.statfs;
+  let during = () => {};
+  const read = machineReader({ paths: ['/srv/shared/houses/data'], probe: { ...m.probe, statfs: async path => { const found = await statfs(path); during(); return found; } } });
+  expect(await read()).toEqual([{ kind: 'disk', thing: '/srv/shared/houses/data', sizeBytes: 50 * GIB, freeBytes: 1 * GIB }, memoryReading]);
+  // The last step is a link by the time the room has been read.
+  during = () => { m.links.add('/srv/shared/houses/data'); };
+  expect(await read()).toEqual([unknown('/srv/shared/houses/data'), memoryReading]);
+  // A step above it is another directory by then (swapped for a link and for a directory again), and the
+  // last step looks as it did: every step is compared, not only the last.
+  m.links.clear(); during = () => { m.moved.add('/srv/shared/houses'); };
+  expect(await read()).toEqual([unknown('/srv/shared/houses/data'), memoryReading]);
+  m.moved.clear(); during = () => { m.moved.add('/srv'); };
+  expect(await read()).toEqual([unknown('/srv/shared/houses/data'), memoryReading]);
+  m.moved.clear(); during = () => {};
+  expect((await read())[0]).toMatchObject({ sizeBytes: 50 * GIB });
 });
 
 const made: string[] = [];
@@ -174,7 +218,9 @@ it('names memory it could not read as unknown', async () => {
   expect(await machineReader({ paths: [], probe: { memory: () => { throw new Error('no /proc'); } } })()).toEqual([{ kind: 'memory', unknown: true }]);
 });
 
-it('sends only a short path of plain steps, and never one a program wrote sentences or an address into', async () => {
+it('sends only a path that is short, absolute and of plain steps, which is a bound on the text and not a test of whether it is a path', async () => {
+  // What the shape cannot do: tell a real directory from words written to look like one.
+  expect(watchedPath('/your_disk_is_failing.call.0800-555-0199.now')).toBe(true);
   for (const path of ['/', '/var/lib/docker', '/srv/data-2/houses_a', '/home/art/.local/share/docker', '/mnt/nas+b@c', '/' + 'a'.repeat(119)]) expect(watchedPath(path), path).toBe(true);
   for (const path of ['', 'relative', '/has space', '/new\nline', '/up/../etc', '/./here', '/quote"d', '/' + 'a'.repeat(120), '/https://evil.example/pay-now', '/mnt/nas:backup', '//double', '/trailing/',
     '/-rf', '/srv/-now-pay', '/srv/+x', '/srv/@x']) expect(watchedPath(path), path).toBe(false);

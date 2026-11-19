@@ -15,13 +15,18 @@ import { MachineConditions, alertLines, setAlertLines } from './runtime/machine-
 // A worker names a filesystem that large as unknown (machine-check.ts), so the rest of its report is taken.
 const bytes = z.number().int().min(0).max(SIZE_BYTES_MAX);
 /** What a worker read about one thing on its own machine: numbers, a yes or no, and for a disk the path
- * watched, in the letters loom will write into a notice. No words of the worker's own, and no judgement:
- * whether a number is a fault is decided here (MachineConditions). `unknown` names a thing the worker
- * watches and could not read. */
-export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(),
+ * watched, held to a short length and a plain alphabet (`watchedPath`, which says what that does and does
+ * not protect). No judgement: whether a number is a fault is decided here (MachineConditions), and every
+ * word of a notice but the path is loom's. `unknown` names a thing the worker watches and could not read. */
+export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(), sameAs: z.string().refine(watchedPath).optional(),
   sizeBytes: bytes.optional(), freeBytes: bytes.optional(), answers: z.boolean().optional() }).strict().superRefine((reading, context) => {
   const issue = (message: string) => context.addIssue({ code: 'custom', message });
   if ((reading.kind === 'disk') !== (reading.thing !== undefined)) issue('A disk is named by its path, and nothing else is named');
+  // A disk on the filesystem another watched path stands for: named by that path, a fixed word and nothing more.
+  if (reading.sameAs !== undefined) {
+    if (reading.kind !== 'disk' || reading.sameAs === reading.thing || reading.unknown || reading.sizeBytes !== undefined || reading.freeBytes !== undefined || reading.answers !== undefined) issue('The same disk as another path carries nothing else');
+    return;
+  }
   if (reading.unknown) return;
   if (reading.kind === 'containers') { if (reading.answers === undefined) issue('Say whether the container runtime answers'); return; }
   if (!reading.sizeBytes || reading.freeBytes === undefined || reading.freeBytes > reading.sizeBytes) issue('Say how much there is and how much of it is free');
