@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { boxes, inbox, members, modelAccountBoxes, modelAccountLogins, modelAccounts } from '../core/data/schema.js';
 import { AccountLogins, LOGIN_ENDING_MS } from './account-logins.js';
@@ -18,7 +19,7 @@ function fixture() {
   db.insert(modelAccounts).values({ id: 'sub', owner: 'owner', provider: 'anthropic', label: 'Claude subscription', hasRoom: true }).run();
   for (const box of ['loom', 'one']) db.insert(modelAccountBoxes).values({ account: 'sub', box }).run();
   const service = new AccountLogins(db, now);
-  const seen = (box: string) => db.update(boxes).set({ lastSeenAt: now() }).run() && box;
+  const seen = (box: string) => db.update(boxes).set({ lastSeenAt: now() }).where(eq(boxes.id, box)).run();
   const at = (ms: number) => new Date(time + ms).toISOString();
   return { db, now, service, seen, at, advance: (ms: number) => { time += ms; }, rows: () => db.select().from(modelAccountLogins).all(),
     mail: () => db.select().from(inbox).all() };
@@ -45,16 +46,15 @@ it('keeps two places on one machine as two sign-ins, each with its own end', () 
 
 it('tells the owner once that a sign-in is gone, and closes it when the sign-in is back', () => {
   const f = fixture();
-  f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out', why: 'There is no sign-in file.' }]);
+  f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out', why: 'no-file' }]);
   const [notice] = f.service.sweep();
   expect(notice).toMatchObject({ toKind: 'person', to: 'owner', source: 'notice', state: 'waiting',
     words: 'Claude subscription is signed out on one (claude in houses). There is no sign-in file.' });
   f.advance(60_000); f.seen('one');
-  f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out', why: 'There is no sign-in file.' }]);
+  f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out', why: 'no-file' }]);
   expect(f.service.sweep().map(row => row.id)).toEqual([notice.id]);
   expect(f.mail()).toHaveLength(1);
-  expect(f.service.gone('sub', 'one', 'claude')).toBe(true);
-  expect(f.service.gone('sub', 'loom', 'claude')).toBe(false);
+  expect(f.rows()[0]).toMatchObject({ state: 'signed-out', why: 'There is no sign-in file.' });
   f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: f.at(20 * DAY) }]);
   expect(f.mail()[0].state).not.toBe('waiting');
   expect(f.service.sweep()).toEqual([]);
@@ -78,32 +78,57 @@ it('tells the owner when a sign-in is about to end, and closes that when it is r
   expect(f.service.sweep()).toEqual([]);
 });
 
-it('raises nothing for a machine that has stopped reporting, and keeps what it last learned', () => {
+it('raises nothing for a machine that has stopped reporting, keeps what it last learned, and still speaks for the others', () => {
   const f = fixture();
   f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out' }]);
-  f.advance(10 * 60_000);
-  f.db.update(boxes).set({ lastSeenAt: f.now() }).run();
-  f.db.update(boxes).set({ lastSeenAt: f.at(-10 * 60_000) }).run();
-  expect(f.service.sweep()).toEqual([]);
-  expect(f.rows()).toHaveLength(1);
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-out' }]);
+  f.advance(10 * 60_000); f.seen('loom');
+  expect(f.service.sweep().map(row => row.words)).toEqual(['Claude subscription is signed out on loom (claude in houses).']);
+  expect(f.rows()).toHaveLength(2);
   f.seen('one');
-  expect(f.service.sweep()).toHaveLength(1);
+  expect(f.service.sweep()).toHaveLength(2);
 });
 
-it('takes a model reply as proof of the house sign-in without touching its end, and never over a check that found it gone', () => {
+it('leaves a sign-in the worker could not read as it was, and still records the ones it could', () => {
+  const f = fixture();
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-out', why: 'no-file' }, { ...claude, place: 'host', state: 'signed-in', expiresAt: f.at(9 * DAY) }]);
+  const [notice] = f.service.sweep();
+  f.advance(60_000); f.seen('loom');
+  // The machine's own file cannot be read this round; the houses' sign-in is back.
+  expect(f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: f.at(20 * DAY) }, { ...claude, place: 'host', state: 'unknown' }])).toEqual(['sub']);
+  expect(f.rows().map(row => [row.place, row.state, row.expiresAt])).toEqual([['containers', 'signed-in', f.at(20 * DAY)], ['host', 'signed-in', f.at(9 * DAY - 60_000)]]);
+  expect(f.mail().find(row => row.id === notice.id)!.state).not.toBe('waiting');
+  // Unknown about a sign-in never recorded records nothing.
+  expect(f.service.checked('one', [{ ...claude, place: 'host', state: 'unknown' }])).toEqual([]);
+  expect(f.rows().filter(row => row.box === 'one')).toEqual([]);
+});
+
+it('closes what was said about a machine taken out of the household', () => {
+  const f = fixture();
+  f.service.checked('one', [{ ...claude, place: 'containers', state: 'signed-out' }, { ...claude, place: 'host', state: 'signed-in', expiresAt: f.at(DAY) }]);
+  expect(f.service.sweep()).toHaveLength(2);
+  f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'one')).run();
+  expect(f.service.sweep()).toEqual([]);
+  expect(f.rows()).toEqual([]);
+  expect(f.mail().filter(row => row.state === 'waiting')).toEqual([]);
+});
+
+it('takes a model reply as proof that a watched house sign-in still works, without touching its end, adding one, or overruling a check that found it gone', () => {
   const f = fixture();
   const job = { account: 'sub', box: 'loom', harness: 'claude' };
-  expect(f.service.replied(job)).toBe(true);
-  expect(f.rows()[0]).toMatchObject({ place: 'containers', state: 'signed-in', expiresAt: null, learnedFrom: 'job' });
-  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: f.at(9 * DAY) }]);
+  // Nothing the worker watches: a reply adds no record of its own, so the worker's list stays the whole record.
+  expect(f.service.replied(job)).toBe(false);
+  expect(f.rows()).toEqual([]);
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: f.at(9 * DAY) }, { ...claude, place: 'host', state: 'signed-in' }]);
   f.advance(1000);
+  expect(f.service.replied(job)).toBe(true);
+  expect(f.rows()).toMatchObject([{ place: 'containers', expiresAt: f.at(9 * DAY - 1000), learnedFrom: 'job', checkedAt: f.now() }, { place: 'host', learnedFrom: 'check' }]);
+  expect(f.rows()[0].since).not.toBe(f.now());
+  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-out', why: 'ended' }]);
   expect(f.service.replied(job)).toBe(false);
-  expect(f.rows()[0]).toMatchObject({ expiresAt: f.at(9 * DAY - 1000), learnedFrom: 'job', checkedAt: f.now() });
-  f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-out' }]);
-  expect(f.service.replied(job)).toBe(false);
-  expect(f.rows()[0].state).toBe('signed-out');
+  expect(f.rows()).toMatchObject([{ state: 'signed-out', why: 'The sign-in has ended.' }]);
   expect(f.service.replied({ account: 'sub', box: null, harness: 'claude' })).toBe(false);
-  expect(f.service.replied({ account: 'other', box: 'loom', harness: 'claude' })).toBe(false);
+  expect(f.service.replied({ account: 'sub', box: 'loom', harness: 'other' })).toBe(false);
 });
 
 it('stops watching a sign-in the worker no longer names or whose account is no longer enabled there, and closes its notices', () => {

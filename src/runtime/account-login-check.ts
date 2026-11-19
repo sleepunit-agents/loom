@@ -10,22 +10,27 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export interface LoginRead { state: 'signed-in' | 'signed-out'; expiresAt?: string; why?: string }
+/** Why a sign-in is not there, as one of a fixed set of words. Loom writes the sentence (account-logins.ts). */
+export const LOGIN_REASONS = ['no-file', 'no-sign-in', 'ended'] as const;
+export type LoginReason = typeof LOGIN_REASONS[number];
+export interface LoginRead { state: 'signed-in' | 'signed-out'; expiresAt?: string; why?: LoginReason }
 type Read = (path: string) => Promise<string>;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const filled = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
-const out = (why: string): LoginRead => ({ state: 'signed-out', why });
+const out = (why: LoginReason): LoginRead => ({ state: 'signed-out', why });
 
 /** The file as written, or why there is no sign-in to read from it. */
 async function file(read: Read, path: string): Promise<{ json: Record<string, unknown> } | { none: LoginRead }> {
   let text: string;
   try { text = await read(path); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { none: out('There is no sign-in file.') };
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { none: out('no-file') };
     // Unreadable is not signed out: the caller leaves what was last learned as it is.
     throw new Error('Sign-in file unreadable');
   }
-  try { return { json: object(JSON.parse(text)) }; } catch { return { none: out('The sign-in file cannot be read as written.') }; }
+  // A harness rewrites this file when it renews a token, so a read can land on half of it. That is not
+  // knowing either, and the next read settles it.
+  try { return { json: object(JSON.parse(text)) }; } catch { throw new Error('Sign-in file unreadable'); }
 }
 
 const readers: Record<string, (directory: string, read: Read, now: number) => Promise<LoginRead>> = {
@@ -34,23 +39,23 @@ const readers: Record<string, (directory: string, read: Read, now: number) => Pr
     const found = await file(read, join(directory, '.credentials.json'));
     if ('none' in found) return found.none;
     const login = object(found.json.claudeAiOauth);
-    if (!filled(login.refreshToken)) return out('The sign-in file holds no sign-in.');
+    if (!filled(login.refreshToken) && !filled(login.accessToken)) return out('no-sign-in');
     const ends = login.refreshTokenExpiresAt;
     if (typeof ends !== 'number' || !Number.isFinite(ends) || ends <= 0 || ends > 8.64e15) return { state: 'signed-in' };
     const expiresAt = new Date(ends).toISOString();
-    return ends <= now ? out(`The sign-in ended on ${expiresAt.slice(0, 10)}.`) : { state: 'signed-in', expiresAt };
+    return ends <= now ? out('ended') : { state: 'signed-in', expiresAt };
   },
   /** Codex keeps no end time for a sign-in: it is there or it is not. */
   async codex(directory, read) {
     const found = await file(read, join(directory, 'auth.json'));
     if ('none' in found) return found.none;
-    return filled(object(found.json.tokens).refresh_token) || filled(found.json.OPENAI_API_KEY) ? { state: 'signed-in' } : out('The sign-in file holds no sign-in.');
+    return filled(object(found.json.tokens).refresh_token) || filled(found.json.OPENAI_API_KEY) ? { state: 'signed-in' } : out('no-sign-in');
   },
 };
 
 /** Whether this harness's sign-in is one the worker can read. */
 export const watchesLogin = (harness: string) => Object.hasOwn(readers, harness);
-/** Throws when the file is there and cannot be read: that is not knowing, which is not signed out. */
+/** Throws when the file is there and cannot be read or is not whole: that is not knowing, which is not signed out. */
 export function readLogin(harness: string, directory: string, options: { read?: Read; now?: () => number } = {}): Promise<LoginRead> {
   if (!watchesLogin(harness)) throw new Error('Sign-in of this harness is not watched');
   return readers[harness](directory, options.read ?? (path => readFile(path, 'utf8')), (options.now ?? Date.now)());

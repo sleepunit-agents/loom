@@ -1,3 +1,4 @@
+import type { LoginReason } from './account-login-check.js';
 import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. Claims are never replayed. */
 import { randomUUID } from 'node:crypto';
@@ -135,7 +136,7 @@ async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attemp
   throw new WorkerOperationFailure(name, true);
 }
 export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
-export interface WorkerLoginCheck { account: string; harness: string; place: 'containers' | 'host'; state: 'signed-in' | 'signed-out'; expiresAt?: string | null; why?: string | null }
+export interface WorkerLoginCheck { account: string; harness: string; place: 'containers' | 'host'; state: 'signed-in' | 'signed-out' | 'unknown'; expiresAt?: string | null; why?: LoginReason | null }
 export function readWorkerAccountBasis(input: WorkerHttpOptions, identity: WorkerAccountIdentity) {
   return operationCaller(input)('accountUsageBasis', identity, z.object({ basis: z.uuid() }).strict());
 }
@@ -147,7 +148,7 @@ export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: 
 }
 /** What this machine's files say about each sign-in it watches (account-login-check.ts), all of them each time. */
 export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: readonly WorkerLoginCheck[]) {
-  return operationCaller(input)('accountLogins', { logins }, z.object({ changed: z.number().int().nonnegative() }).strict());
+  return operationCaller(input)('signInState', { logins }, z.object({ changed: z.number().int().nonnegative() }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

@@ -89,7 +89,7 @@ const configSchema = z.object({
   if ((typeof config.accountSlots === 'number' ? [config.accountSlots] : Object.values(config.accountSlots ?? {})).some(count => count > most)) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
 });
 /** How long the worker lets an unchanged answer about its sign-ins stand before saying it again. */
-const LOGIN_REPORT_MS = 15 * 60_000;
+const LOGIN_REPORT_MS = 5 * 60_000;
 export async function workerProgram(input: {
   args: readonly string[];
   read: (path: string) => Promise<string>;
@@ -264,22 +264,24 @@ export async function workerProgram(input: {
     });
     // What the sign-in files on this machine say, for every sign-in houses mount and every one of the machine's
     // own that is named. Loom is told when that changes, and again every so often so that it knows the answer
-    // is still current. A file that cannot be read leaves that sign-in out of this round: loom keeps what it
-    // last learned only when nothing is sent, so a round with an unreadable file is not sent at all.
+    // is still current and so that a record loom dropped meanwhile comes back. The list is everything this
+    // worker watches, also when that is nothing: loom stops watching what is no longer named. A file that
+    // cannot be read is named as unknown, so that it alone keeps what loom last learned and the others are told.
     const watched = [['containers', config.accountLogins], ['host', config.hostLogins]] as const;
     let lastLogins: string | undefined, lastLoginsAt = -Infinity;
-    const loginChecks = watched.some(([, logins]) => Object.values(logins ?? {}).some(harnesses => Object.keys(harnesses).some(watchesLogin)))
-      ? poll(config.loginCheckMs ?? 60_000, 'Worker sign-in state unavailable\n', async () => {
-        const logins: WorkerLoginCheck[] = [];
-        for (const [place, accounts] of watched) for (const [account, harnesses] of Object.entries(accounts ?? {})) for (const [harness, login] of Object.entries(harnesses)) {
-          if (!watchesLogin(harness)) continue;
-          logins.push({ account, harness, place, ...await (input.readLogin ?? readLogin)(harness, login.source) });
-        }
-        const said = JSON.stringify(logins);
-        if (abort.signal.aborted || (said === lastLogins && performance.now() - lastLoginsAt < LOGIN_REPORT_MS)) return;
-        await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
-        lastLogins = said; lastLoginsAt = performance.now();
-      }) : undefined;
+    const loginChecks = poll(config.loginCheckMs ?? 60_000, 'Worker sign-in state unavailable\n', async () => {
+      const logins: WorkerLoginCheck[] = [];
+      for (const [place, accounts] of watched) for (const [account, harnesses] of Object.entries(accounts ?? {})) for (const [harness, login] of Object.entries(harnesses)) {
+        if (!watchesLogin(harness)) continue;
+        let read: Awaited<ReturnType<typeof readLogin>> | { state: 'unknown' };
+        try { read = await (input.readLogin ?? readLogin)(harness, login.source); } catch { read = { state: 'unknown' }; }
+        logins.push({ account, harness, place, ...read });
+      }
+      const said = JSON.stringify(logins);
+      if (abort.signal.aborted || (said === lastLogins && performance.now() - lastLoginsAt < LOGIN_REPORT_MS)) return;
+      await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
+      lastLogins = said; lastLoginsAt = performance.now();
+    });
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).

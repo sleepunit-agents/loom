@@ -229,3 +229,52 @@ commands record its result, without accepting credentials or invoking it inside
 Loom. A fresh sign-in or removed association invalidates pending usage reports
 only after the complete write and receipt commit. Replaying a receipt does not
 invalidate a newer observation; remove/re-add cannot revive an older read.
+
+## What loom knows about each sign-in
+
+Usage belongs to the account and is read once, however many machines use it. A
+sign-in does not: it is one account, on one machine, for one harness, in one
+place, and each ends on its own. The place is where the token lives on that
+machine: `containers` is the directory houses mount (`accountLogins` in the
+worker's config), `host` is the machine user's own (`hostLogins`). Tokens are
+never copied between places, so a place that needs one gets its own sign-in.
+
+`model_account_logins` holds the last thing learned about each: `signed-in` or
+`signed-out`, when it ends where the harness's files say, when that was last
+confirmed, since when it has been in that state, and whether a check or a job
+said so. It holds no credential. No model takes part in any of this.
+
+What is learned, and from where:
+
+- The worker reads the sign-in files on its own machine every `loginCheckMs`
+  (a minute unless set) and sends `runtime.signInState {logins}`: everything it
+  watches, each time it changes and again every five minutes. A Claude sign-in
+  has an end (the end of its renewing token); a Codex sign-in is there or not.
+  A file that is missing or holds no sign-in is `signed-out` with one of three
+  reason words (`no-file`, `no-sign-in`, `ended`); loom writes the sentence. A
+  file that cannot be read, or is caught half written, is `unknown`: that
+  sign-in keeps what was last learned. A sign-in the worker no longer names is
+  no longer watched.
+- A job that got words back from the model confirms the house sign-in it ran
+  under. This is the only evidence that a provider still honours a sign-in; the
+  files cannot say a sign-in was withdrawn early. It never changes a known end.
+
+The operation takes its machine from the worker's credential, never from its
+input, and keeps nothing about an account that is not enabled on that machine.
+
+What follows from it:
+
+- Placement passes over a machine whose houses were last found signed out of an
+  account, for that harness, and the job's placement record says so. The
+  machine user's own sign-in does not affect placement.
+- The account's owner gets one inbox notice each time a sign-in is found gone,
+  and one for each end date that comes within three days. A notice closes when
+  the sign-in is good again, is renewed, is no longer watched, or its machine
+  is taken out of the household.
+- Nothing is raised for a machine that has stopped reporting. Its sign-ins keep
+  what was last learned, and the machine being away is its own notice, for the
+  machines marked always on.
+
+`modelAccounts { ... on RuntimeAccountDetail { logins { box { id name } harness
+place state expiresAt checkedAt since learnedFrom why } } }` reads them, under
+the same rule as the account's other private fields.

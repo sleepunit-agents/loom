@@ -972,6 +972,28 @@ yet signed in or renewed from there.
 With a rootless engine the worker's user is the container's root, so the
 image's `USER` must be one that can write the directory; the core house's is.
 
+### Watching the sign-ins on the machine
+
+A worker that takes jobs reads the sign-in files on its machine and tells loom
+what they say (`runtime.signInState`; [accounts](accounts.md#what-loom-knows-about-each-sign-in)
+has what loom does with it). It watches every directory in `accountLogins`
+without being asked, as place `containers`. The machine user's own sign-ins are
+watched only when named:
+
+```json
+"hostLogins": { "<account id>": { "claude": { "source": "/home/art/.claude" } } },
+"loginCheckMs": 60000
+```
+
+`hostLogins` has the shape of `accountLogins`: by account, then harness, the
+directory that harness keeps its sign-in in. A directory named here is only
+read; no body is given it. The worker knows the files of `claude`
+(`.credentials.json`) and `codex` (`auth.json`); another harness is not watched.
+It opens that one file and sends a state, an end time and a reason word. No
+token and no text of the file leaves the function that reads it, and a failure
+to read is one fixed line (`Worker sign-in state unavailable`) with nothing of
+the error in it.
+
 ## Home current-job selection
 
 The shared GraphQL door mounts `currentJobs(agent: String!)` for an agent's Home
