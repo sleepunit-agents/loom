@@ -50,6 +50,16 @@ it('mints only for the admitted bearer and spends one link into a shared fingerp
   const html = await page.text();
   expect(html).not.toContain(code);
   expect(html).toContain('<form method="post">'); expect(html).toContain('<button>Sign in</button>');
+  // The page is whole in one answer and knows nobody: no script, nothing to fetch, no handler or style attribute, no
+  // member, token label or household word; its one style block is the only thing its policy lets in.
+  expect(html).toContain('<h1>Sign in to loom</h1>'); expect(html).toContain('LOOM<i>//</i>OS');
+  expect(html).not.toMatch(/<script|<link|<img|<iframe|@import|url\((?!#weave\))|\son\w+=|\sstyle=|\ssrc=|\shref=|javascript:/i);
+  for (const word of ['other', 'owner', credential, other, hash(credential), 'household']) expect(html, word).not.toContain(word);
+  expect(html.replace(/<style>[\s\S]*?<\/style>|<svg[\s\S]*?<\/svg>|<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()).toBe('Sign in to loom LOOM // OS Sign in to loom Sign in This link works once and signs in this browser.');
+  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+  expect(html.match(/<style>/g)).toHaveLength(1);
+  expect(page.headers.get('content-security-policy')).toBe(`default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`);
+  expect(style).toContain('prefers-color-scheme:light'); expect(style).not.toMatch(/animation|transition/);
   expect(f.db.select().from(signinLinks).all()).toEqual(before); // navigation/prefetch spends nothing
   const signed = await f.redeem(path);
   expect(signed.status).toBe(303); expect(signed.headers.get('cache-control')).toBe('no-store');
