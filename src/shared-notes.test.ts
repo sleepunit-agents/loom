@@ -19,7 +19,8 @@ it('restarts with an existing Notes source byte-for-byte and refuses to prepare 
 });
 
 it('atomically chooses one claimant and fences the former holder after takeover',async()=>{
- const p=await sharedUiProgram({clock:new FakeClock(Date.now()),seed(db){
+ const p=await sharedUiProgram({clock:new FakeClock(Date.now()),seed(db,now){
+  db.insert(s.members).values({id:"alice",role:"owner",joinedAt:now()}).run();
   db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
  }});
  try{
