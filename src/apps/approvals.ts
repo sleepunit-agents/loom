@@ -59,14 +59,14 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     return row;
   };
   return {
-    request(input: ApprovalRequest) {
+    request(input: ApprovalRequest, machineOwner?: string) {
       const value = request.parse(input);
       if (value.kind === 'merge' && !parseMergeTarget(value.target)) throw new Error('A merge approval must name one exact commit');
       if ((value.kind === 'setting' || value.kind === 'dangerous') && (!value.operation || !value.changeSummary)) throw new Error('A proposed change needs an operation and before/after summary');
       if (value.operation && !operations.has(value.operation)) throw new Error('Unknown approved operation');
       return db.transaction(() => {
         const row = db.insert(approvals).values({ ...value, id: `a-${randomUUID()}`, state: 'pending', askedAt: now() }).returning().get();
-        const owners = householdOwners(db);
+        const owners = machineOwner ? [machineOwner] : householdOwners(db);
         if (!owners.length) throw new Error('No household owner can answer this approval');
         for (const owner of owners) mail.send({ toKind: 'person', to: owner, source: 'approval', sourceId: row.id,
           fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,

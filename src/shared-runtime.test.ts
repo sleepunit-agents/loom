@@ -612,3 +612,48 @@ it('posts a prepared draft once after the worker loses its committed finish ackn
  expect(f.db.select().from(bridgeSends).all()).toHaveLength(1);
  expect(f.db.select().from(jobs).all()).toHaveLength(3);
 });
+
+it('accepts diagnostic polls from the named worker and refuses an unbound body read',async()=>{
+ const f=fixture();
+ expect(await (await f.call('machineReadNext',{reads:['memory']})).json()).toEqual({ok:true,value:null});
+ expect((await f.call('machineReadNext',{reads:['shell']})).status).toBe(400);
+ const request=await f.root.http.request('http://loom/api/machine/read',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+agentCredential},body:JSON.stringify({input:{machine:'worker',read:'memory',args:{}}})});
+ expect(request.status).toBe(403);
+});
+
+it('a live report-only worker returns a memory sample to an authorized body over loopback',async()=>{
+ const {createServer}=await import('node:http'),{getRequestListener}=await import('@hono/node-server');
+ const f=fixture(),job=f.send('wake');
+ await f.control.next();const bootstrap=await f.control.enrollBody!(job.id,new AbortController().signal);
+ await f.control.started(job.id,'image');
+ f.db.update(boxes).set({reportOnly:true,readers:['art']}).where(eq(boxes.id,'other')).run();
+ const server=createServer(getRequestListener(f.root.http.fetch));
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const address=server.address();if(!address||typeof address==='string')throw Error('Missing port');
+ const url='http://127.0.0.1:'+address.port;
+ const post=async(path:string,input:unknown,token:string)=>await (await fetch(url+'/api/'+path,{method:'POST',
+  headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id:crypto.randomUUID()})})).json();
+ let stop=()=>{},polled!:()=>void;
+ const ready=new Promise<void>(resolve=>{polled=resolve;});
+ const running=workerProgram({args:['config'],on:(_event,handler)=>{stop=handler;},off:()=>{},error:()=>{},
+  read:async path=>path==='config'?JSON.stringify({url,box:'other',tokenFile:'token',reportOnly:true,reads:['memory']}):otherCredential,
+  pause:async()=>{polled();await new Promise(resolve=>setTimeout(resolve,30));}});
+ try{
+  await ready;
+  expect(f.db.select().from(boxes).where(eq(boxes.id,'other')).get()?.slots).toBe(0);
+  const input={machine:'other',read:'memory',args:{}},token=bootstrap.token.toString();
+  const answer=await post('machine/read',input,token);
+  expect(answer).toMatchObject({ok:true,value:{lines:expect.arrayContaining([expect.stringContaining('Mem:')])}});
+  expect(await post('machine/read',{...input,read:'disk'},token)).toMatchObject({value:{refusal:expect.stringContaining('does not offer')}});
+  // Revoke after preparation, immediately before the operation delivers its result.
+  f.client.exec("CREATE TEMP TRIGGER revoke_before_delivery AFTER UPDATE ON machine_reads WHEN NEW.outcome='Machine answer withheld' BEGIN UPDATE boxes SET readers='[]' WHERE id='other'; END");
+  expect(await post('machine/read',input,token)).toMatchObject({value:{refusal:'Machine read refused'}});
+  const denied=f.client.prepare("SELECT outcome,bytes FROM machine_reads WHERE outcome<>'answered' AND outcome NOT LIKE '%does not offer%'").all();
+  expect(denied).toEqual([{outcome:'Machine read refused',bytes:0}]);
+  expect(await post('machine/read',input,token)).toMatchObject({value:{refusal:'Machine read refused'}});
+  const audit=await post('machine/history',{machine:'other'},ownerCredential);
+  expect(audit.value).toHaveLength(4);expect(JSON.stringify(audit)).not.toContain('Mem:');
+  expect(audit.value).toContainEqual(expect.objectContaining({agent:'art',job:job.id,outcome:'answered',bytes:expect.any(Number)}));
+  expect(f.db.select().from(operationResults).all().some(row=>JSON.stringify(row).includes('Mem:'))).toBe(false);
+ }finally{stop();await running;bootstrap.erase?.();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});

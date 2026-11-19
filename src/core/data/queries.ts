@@ -154,8 +154,8 @@ export function dataQueries(client: Database.Database, options: {
     const fields = output.getFields();
     if (name === 'triggers') for (const key of programColumns) delete fields[key];
     // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
-    if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings') {
-      for (const key of name === 'triggers' ? ['needs', 'prefers'] : ['prefers']) {
+    if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings' || name === 'boxes') {
+      for (const key of name === 'triggers' ? ['needs', 'prefers'] : name === 'boxes' ? ['readers'] : ['prefers']) {
         fields[key].type = new GraphQLList(new GraphQLNonNull(GraphQLString));
       }
     }

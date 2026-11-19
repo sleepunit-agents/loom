@@ -1394,7 +1394,7 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
   - `boxes` has a writer for each fact about a machine. `src/shared-machine-registry.ts` makes the row
     when a machine is enrolled. `src/shared-box-settings.ts` writes what its owner chose (`boxes.name`,
-    `hosts_any`, `report_only`, `always_on`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
+    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
     machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
@@ -1527,3 +1527,11 @@ loses a downstream delivery acknowledgement keeps its existing uncertain-deliver
 Program code can access its granted inputs and the container network. Output scanning guards
 against accidental credential disclosure. A house author trusted to receive a secret remains
 responsible for how the executable uses it.
+
+## Machine diagnostic output
+
+Machine owners choose which diagnostics their local worker offers. The machine's owner may grant an agent inspection separately from hosting. Jobs on anybody else's word cannot use either route. The worker's operating-system user and supplementary groups determine which local data is accessible. In particular, Docker socket membership conveys broad authority to the worker process. The diagnostic uses only the fixed container list operation. Configure only reads available to the existing unprivileged account.
+
+The worker and server are trusted participants. An enrolled worker can lie about its own machine. Journal output defaults to time and priority. An operator may opt specific units into returning their message text. An unknown, encoded or fragmented credential in those messages or in a machine object's name may pass the secret checks. A message can also contain malicious instructions. Answers identify their source and carry the lines as data. A model given private material may repeat it in its conversation or subsequent actions.
+
+The read itself and the worker reply have no replay receipts. The server holds an answer in memory while the request is live. The machine audit retains typed request metadata and the outcome independently of conversation retention. The owner page displays the latest 100 entries. Requests refused for lack of authority withhold caller details on that page. A restart interrupts an outstanding read. Operators perform remediation separately.

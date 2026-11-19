@@ -1,6 +1,7 @@
+import { looksLikeCredential } from './fixed-program.js';
 import {testProgramPin} from './pinned-program.fixture.js';
 import { expect, it } from 'vitest';
-import { parseProgramResult, houseProgramSchema, assertSafeProgramOutput } from './house-program.js';
+import { parseProgramResult, houseProgramSchema } from './house-program.js';
 
 it('accepts a quiet observation and an explicit wake with state and post', () => {
   for (const value of [{ version: 1, wake: false }, { version: 1, wake: true, line: 'ready', payload: [0], state: null, post: { channel: 'news', text: 'ready' } }])
@@ -30,5 +31,5 @@ it('bounds each JSON field, nesting and receipt lines independently of the stdou
 });
 
 it('recognizes JSON-escaped credentials inside a text tool response', () => {
-  expect(() => assertSafeProgramOutput('details: {"value":"my-\\u0073ecret"}', ['my-secret'])).toThrow();
+  expect(looksLikeCredential('details: {"value":"my-\\u0073ecret"}', ['my-secret'])).toBe(true);
 });

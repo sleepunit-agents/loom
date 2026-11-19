@@ -931,6 +931,7 @@ export const boxes = sqliteTable('boxes', {
   lastSeenAt: text('last_seen_at'),
   revokedAt: text('revoked_at'),
   slots: integer('slots'),
+  readers: text('readers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -2107,9 +2108,25 @@ export const kitUses = sqliteTable('kit_uses', {
   primaryKey({columns:[t.id]}),
 ]);
 
+export const machineReads = sqliteTable('machine_reads', {
+  id: text('id').primaryKey().notNull(),
+  machine: text('machine').notNull(),
+  agent: text('agent').notNull(),
+  job: text('job').notNull(),
+  conversation: text('conversation'),
+  word: text('word').notNull(),
+  person: text('person'),
+  read: text('read').notNull(),
+  args: text('args').notNull(),
+  askedAt: text('asked_at').notNull(),
+  bytes: integer('bytes').notNull(),
+  outcome: text('outcome').notNull(),
+}, t => [index('machine_reads_machine_time').on(t.machine,t.askedAt)]);
+
 export const plumbing = {
   agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,
   programFirings,
+  machineReads,
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };

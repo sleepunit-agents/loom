@@ -528,7 +528,8 @@ area("runtime", "Machines and jobs",
     ("report_only", "yes/no", "Reports its health but never runs agents.", ""),
     ("always_on", "yes/no", "The owner expects it to be up; loom raises an alert when it goes quiet.", ""),
     ("enrolled_at, last_seen_at, revoked_at", "time", "Added, last heard from, and removed.", ""),
-    ("slots", "number", "Worker-reported capacity for concurrent jobs. Empty until reported.", "")]),
+    ("slots", "number", "Worker-reported capacity for concurrent jobs. Empty until reported.", ""),
+    ("readers", "list", "Agents explicitly allowed by the machine owner to request diagnostics.", "")]),
   T("box_agents", "Which agents may run on a box.", [
     ("box", "id", "The machine.", "boxes"),
     ("agent", "id", "An agent allowed there.", "agents"),
@@ -778,6 +779,7 @@ area("measuring", "Measuring",
 
 # Things kept that no screen reads: explained briefly, not column by column.
 PLUMBING = [
+ ("machine_reads", "Diagnostic request metadata for the machine owner’s history. The answer text is never stored here."),
  ("migrations", "The list of changes already made to the database's shape, so each is applied once."),
  ("operation_results", "The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice."),
  ("notification_queue", "Notifications waiting to be sent to each device, and whether each arrived."),

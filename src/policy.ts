@@ -429,6 +429,12 @@ export function machineMayHost(machine: { owner: string; hostsAny: boolean }, li
   return listed ? has || listed.lent : machine.hostsAny && has;
 }
 
+export function mayInspectMachine(machine: {owner:string;hostsAny:boolean;reportOnly:boolean;readers:string[]|null},
+  listed:{lent:boolean}|undefined, agent:string, sharing:Sharing, word:Woke):boolean {
+  if(word==='others' || !entry(sharing.members,machine.owner) || !sharing.agents?.includes(agent)) return false;
+  return !!machine.readers?.includes(agent) || (!machine.reportOnly && machineMayHost(machine,listed,agent,sharing));
+}
+
 /** Nobody: the principal of work with no member behind it that is not the agent's own. It reads no rule. */
 export const NOBODY = 'unknown';
 /** Is this principal nobody? Empty, and an older card's `?`, are too. */

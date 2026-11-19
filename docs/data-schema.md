@@ -5,7 +5,8 @@ schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their name
 columns, `model_account_windows`, the ten internal bookkeeping tables listed there,
 and the programme restriction and grant tables. Schema 15 added six tables for kit
 definitions, person and project grants, outside project membership and use history.
-Schema 16 adds the scheduled program firing ledger. Total: 106 tables. The programme
+Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
+grants and request history. Total: 107 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
@@ -87,6 +88,7 @@ Step 12 adds `job_usage` and backfills each ended job with its model, harness an
 
 Step 13 adds the terminal conversation venue and tables for machine-bound credential grants, observed sessions and their individual runs. Existing conversations retain their IDs and contents. Existing agent credentials receive no machine grant.
 
+Step 15 adds the nullable explicit reader list on each machine and an empty diagnostic history table. Existing machines keep their hosting settings. No diagnostic answer text is stored in the household database.
 
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).

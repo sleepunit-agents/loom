@@ -346,6 +346,10 @@ const upgrades: readonly (readonly string[])[] = [
    "INSERT INTO job_usage (job, source, tokens_in, tokens_out, cache_read, cache_written, model_calls, tool_calls, tools, largest_context, wall_ms, harness, model) SELECT job, source, tokens_in, tokens_out, cache_read, cache_written, model_calls, tool_calls, tools, largest_context, wall_ms, harness, model FROM old_job_usage",
    "DROP TABLE old_job_usage"],
 
+  // 17: machine inspection grants and metadata-only history.
+  ['ALTER TABLE boxes ADD COLUMN readers text',
+   "CREATE TABLE `machine_reads` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`machine` text NOT NULL,\n\t`agent` text NOT NULL,\n\t`job` text NOT NULL,\n\t`conversation` text,\n\t`word` text NOT NULL,\n\t`person` text,\n\t`read` text NOT NULL,\n\t`args` text NOT NULL,\n\t`asked_at` text NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`outcome` text NOT NULL\n);",
+   "CREATE INDEX `machine_reads_machine_time` ON `machine_reads` (`machine`,`asked_at`);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

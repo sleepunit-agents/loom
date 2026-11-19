@@ -850,6 +850,7 @@ CREATE TABLE `boxes` (
 	`last_seen_at` text,
 	`revoked_at` text,
 	`slots` integer,
+	`readers` text,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
 	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),
@@ -1383,6 +1384,22 @@ CREATE TABLE `program_firings` (
 CREATE UNIQUE INDEX `program_firings_job` ON `program_firings` (`job`);
 CREATE UNIQUE INDEX `program_firings_pending` ON `program_firings` (`trigger`) WHERE "program_firings"."status" = 'pending';
 CREATE UNIQUE INDEX `program_firings_period` ON `program_firings` (`trigger`,`period`);
+CREATE TABLE `machine_reads` (
+	`id` text PRIMARY KEY NOT NULL,
+	`machine` text NOT NULL,
+	`agent` text NOT NULL,
+	`job` text NOT NULL,
+	`conversation` text,
+	`word` text NOT NULL,
+	`person` text,
+	`read` text NOT NULL,
+	`args` text NOT NULL,
+	`asked_at` text NOT NULL,
+	`bytes` integer NOT NULL,
+	`outcome` text NOT NULL
+);
+
+CREATE INDEX `machine_reads_machine_time` ON `machine_reads` (`machine`,`asked_at`);
 CREATE TABLE `terminal_credentials` (
 	`fingerprint` text PRIMARY KEY NOT NULL,
 	`machine` text NOT NULL,

@@ -60,7 +60,7 @@ export interface Operation<I = unknown> {
    * This is NOT an external-effect commit protocol: concurrent preparations may
    * run and a later transaction/authentication check may still fail. A writer to
    * another store needs its own durable reconciliation and idempotency protocol. */
-  prepare?(input: I, context: { readonly viewer: Viewer; readonly receipt?: Readonly<WriteReceipt> }): Promise<unknown>;
+  prepare?(input: I, context: { readonly viewer: Viewer; readonly receipt?: Readonly<WriteReceipt>; readonly signal?: AbortSignal }): Promise<unknown>;
   /** Reserve external work synchronously in the preflight transaction, after
    * recovery and permission checks. Commit metadata only, never external effects.
    * A piece must guard this reservation in its global recovery hook and retain it
@@ -231,11 +231,11 @@ export class Operations {
   }
   measureWith(measuring: Pick<Measuring, 'run' | 'runAsync'> | undefined): void { this.measuring = measuring; }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
-  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
-    if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid);
-    return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid));
+  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true, signal?: AbortSignal): Promise<Result> {
+    if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid, signal);
+    return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid, signal));
   }
-  private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+  private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true, signal?: AbortSignal): Promise<Result> {
     if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     if (!valid()) return failure('denied', 'Authentication ended');
     if(!this.outsideAllowed(door,viewer,name))return failure('denied','Permission denied');
@@ -256,7 +256,7 @@ export class Operations {
         receipt = prior.receipt;
       } else if (!this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
       if(!valid()||!this.outsideAllowed(door,viewer,name))return failure('denied','Authentication ended');
-      const prepared = await op.prepare?.(parsed.data, {viewer, receipt});
+      const prepared = await op.prepare?.(parsed.data, {viewer, receipt, ...(signal ? {signal} : {})});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
     } catch (error) { return thrown(error, op.refuses); }
