@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { COMMIT } from '../apps/merge-target.js';
 
 export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry','cleanup-week-journal','mirror-unit-state'] as const;
 export type LaneFact = typeof laneFactKinds[number];
@@ -28,7 +29,7 @@ const schemas = {
     observedAt: stamp, since: stamp, started: count, finished: count, kept: count,
     removed: count, wouldRemove: count, reasons: z.partialRecord(reason, count),
     runs: z.array(z.strictObject({at:stamp,event:z.enum(['start','finish']),count,apply:z.boolean()})).max(100),
-    removedHeads: z.array(z.string().regex(/^[a-f0-9]{40}$/)).max(100),
+    removedHeads: z.array(z.string().regex(COMMIT)).max(100),
   }),
 };
 
