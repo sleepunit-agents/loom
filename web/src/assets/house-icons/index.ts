@@ -32,8 +32,6 @@ import setup from './setup.png?no-inline';
 import setupSmall from './setup.small.png?no-inline';
 import sharing from './sharing.png?no-inline';
 import sharingSmall from './sharing.small.png?no-inline';
-import staging from './staging.png?no-inline';
-import stagingSmall from './staging.small.png?no-inline';
 import tasks from './tasks.png?no-inline';
 import tasksSmall from './tasks.small.png?no-inline';
 import tempo from './tempo.png?no-inline';
@@ -61,7 +59,6 @@ export const HOUSE_ICONS: Readonly<Record<string, { art: string; small: string }
   settings: { art: settings, small: settingsSmall },
   setup: { art: setup, small: setupSmall },
   sharing: { art: sharing, small: sharingSmall },
-  staging: { art: staging, small: stagingSmall },
   tasks: { art: tasks, small: tasksSmall },
   tempo: { art: tempo, small: tempoSmall },
   usage: { art: usage, small: usageSmall },
