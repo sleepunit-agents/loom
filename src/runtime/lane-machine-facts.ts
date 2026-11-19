@@ -15,7 +15,7 @@ const alert = z.strictObject({
 const schemas = {
   'login-expiry': z.strictObject({ observedAt: stamp, refreshExpiresAt: stamp.max(253402300799) }),
   'mirror-freshness': z.strictObject({ observedAt: stamp, trackedMax: count, liveMax: stamp }),
-  'alert-ledger': z.strictObject({ observedAt: stamp, since: stamp, entries: z.array(alert).max(100) }),
+  'alert-ledger': z.strictObject({ observedAt: stamp, since: stamp, entries: z.array(alert).max(100), tuneSources: z.array(identifier).max(100) }),
   'cleanup-receipt': z.strictObject({
     observedAt: stamp, since: stamp, started: count, finished: count, kept: count,
     removed: count, wouldRemove: count, reasons: z.partialRecord(reason, count),
