@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import { looksLikeCredential, programDeadline, PROGRAM_OUTPUT_BYTES } from './fixed-program.js';
 
+import { factDirectory, isLaneFact, laneFactKinds, laneFactOutput } from './lane-machine-facts.js';
+
 const scope = z.enum(['system', 'user']);
 const unit = z.string().max(255).regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.(?:service|socket|timer|target|mount|automount|swap|slice|scope|path|device)(?![\s\S])/);
 export const journalUnit = z.strictObject({scope,unit});
@@ -13,13 +15,13 @@ const window = {
   lines: z.number().int().min(1).max(100).default(30),
   since: z.number().int().min(1).max(1440).default(60),
 };
-const simpleKinds = ['disk', 'memory', 'load', 'swap', 'uptime', 'boots', 'containers', 'proxmox-vms', 'proxmox-containers', 'zfs', 'zpool'] as const;
+const simpleKinds = [...laneFactKinds, 'disk', 'memory', 'load', 'swap', 'uptime', 'boots', 'containers', 'proxmox-vms', 'proxmox-containers', 'zfs', 'zpool'] as const;
 export const machineReadKinds = [...simpleKinds, 'unit-state', 'unit-journal', 'failed-units', 'restarting-units', 'worker-log'] as const;
 const request = z.union([
   z.strictObject({ kind: z.enum(simpleKinds) }),
   z.strictObject({ kind: z.enum(['failed-units', 'restarting-units']), scope }),
   z.strictObject({ kind: z.literal('unit-state'), scope, unit }),
-  z.strictObject({ kind: z.literal('unit-journal'), scope, unit, ...window }),
+  z.strictObject({ kind: z.literal('unit-journal'), scope, unit, ...window, since: z.number().int().min(1).max(10080).default(60) }),
   z.strictObject({ kind: z.literal('worker-log'), ...window }),
 ]);
 
@@ -35,6 +37,10 @@ export function parseMachineRead(input: unknown): MachineReadRequest {
 
 export function machineReadCommand(read: MachineReadRequest, journalText = true): [string, ...string[]] {
   switch (read.kind) {
+    case 'mirror-freshness':
+    case 'alert-ledger':
+    case 'cleanup-receipt':
+      return ['/usr/bin/cat', '--', factDirectory + '/' + read.kind + '.json'];
     case 'unit-state':
       return ['/usr/bin/systemctl', '--' + read.scope, '--no-pager', 'show',
         '--property=Id,LoadState,ActiveState,SubState,Result,NRestarts,ExecMainCode,ExecMainStatus', '--', read.unit];
@@ -86,6 +92,7 @@ export function offeredMachineReads(configured: readonly MachineReadRequest['kin
     try {
       accessSync('/usr/bin/setpriv', constants.X_OK);
       accessSync(machineReadCommand(sample)[0], constants.X_OK);
+      if (isLaneFact(kind)) accessSync(factDirectory + '/' + kind + '.json', constants.R_OK);
       if (kind === 'containers') accessSync(NESTED_SOCKET_TARGET, constants.W_OK);
       return true;
     } catch { return false; }
@@ -109,7 +116,7 @@ export async function runMachineRead(input: unknown, workerToken: string, execut
         DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/' + uid + '/bus', SYSTEMD_COLORS: '0' },
     });
     if (Buffer.byteLength(stdout) > machineReadOutputBytes) return tooLarge();
-    let output = stdout.trim();
+    let output = isLaneFact(read.kind) ? laneFactOutput(read.kind, stdout) : stdout.trim();
     if (!journalText && output) {
       output = output.split('\n').map(line => {
         const record=JSON.parse(line);
