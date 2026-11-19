@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, readFileSync, renameSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setImmediate as nextTurn} from 'node:timers/promises';
@@ -42,22 +42,34 @@ function seed(file: string, pendingMail: boolean) {
 /** The first process exercises an actual claim and leaves the body running. Preserve that household
  * in the last shipped shape, as it would have been on disk at an upgrade. The replacement process
  * must recognise it, migrate it and accept the surviving worker and body's existing credentials. */
-function leaveVersion13(file: string) {
-  const sqlite = new Database(file);
+function leavePreviousVersion(file: string) {
+  const version = dataSchemaNumber - 1;
+  const snapshot = file + '.previous';
+  const old = new Database(snapshot);
   try {
-    sqlite.transaction(() => {
-      sqlite.exec(`
-        ALTER TABLE boxes DROP COLUMN slots;
-        ALTER TABLE agent_run_settings DROP COLUMN prefers;
-        ALTER TABLE jobs DROP COLUMN prefers;
-        ALTER TABLE jobs DROP COLUMN placement_decision;
-        ALTER TABLE triggers DROP COLUMN needs;
-        ALTER TABLE triggers DROP COLUMN prefers;
-        DELETE FROM migrations WHERE number = 14;
-      `);
-      expect(recogniseDataSchema(sqlite)).toBe(13);
+    old.exec(readFileSync(new URL(`../core/data/shipped-shapes/${version}.sql`, import.meta.url), 'utf8'));
+    old.prepare('ATTACH DATABASE ? AS live').run(file);
+    // Copy the live fixture's data into the actual previous installation. Table creation order
+    // need not be reference order. Restore every reference check before handing it to the server.
+    const checks = old.prepare("SELECT name,sql FROM main.sqlite_schema WHERE type='trigger'").all() as {name:string;sql:string}[];
+    const tables = old.prepare("SELECT name FROM main.sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as {name:string}[];
+    const quote = (name:string) => '"' + name.replaceAll('"','""') + '"';
+    old.pragma('foreign_keys = OFF');
+    old.transaction(() => {
+      for (const check of checks) old.exec('DROP TRIGGER main.' + quote(check.name));
+      for (const {name} of tables) {
+        const table = quote(name);
+        const columns = (old.pragma(`main.table_info(${table})`) as {name:string}[]).map(c => quote(c.name)).join(',');
+        const where = name === 'migrations' ? ` WHERE number <= ${version}` : '';
+        old.exec(`INSERT INTO main.${table} (${columns}) SELECT ${columns} FROM live.${table}${where}`);
+      }
+      for (const check of checks) old.exec(check.sql);
     })();
-  } finally { sqlite.close(); }
+    old.exec('DETACH DATABASE live');
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+    expect(recogniseDataSchema(old)).toBe(version);
+  } finally { old.close(); }
+  renameSync(snapshot,file);
 }
 
 function fixtureProcess(name: string, directory: string, args: string[] = []) {
@@ -138,7 +150,7 @@ it.each([
     await reach(committed.then(reply => {expect(reply).toBe('committed');}));
   }
   await first.stop();
-  if (schema) leaveVersion13(file);
+  if (schema) leavePreviousVersion(file);
   for (let elapsed = 0; elapsed < seconds*1000; elapsed += REPORT_MS) {
     time = start + elapsed; report = undefined; tick();
     if (report) await Promise.resolve(report).catch(() => {});
