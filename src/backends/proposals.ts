@@ -1,25 +1,15 @@
 /**
- * Capture-propose queue — the loom-side staging area for drafted memory writes.
+ * Drafted memory writes waiting for a person to accept them.
  *
- * THE INTEGRITY INVARIANT: a proposal is NOT authored canon. Proposals live in
- * a SEPARATE table (`proposals`) and are INVISIBLE to recall / memory_list / the
- * salience digest / find_similar. A background lane drafts memory writes here;
- * Art ratifies them before they become real memories. There is no auto-commit —
- * a proposal becomes canon only via an explicit `ratifyProposal`, which routes
- * through the existing remember() tool path so it is validated like any write.
+ * A proposal is not a memory. Proposals live in their own table (`proposals`), which recall, the memory
+ * list, the salience digest and find-similar never read. A draft can be rough; it becomes a memory only when
+ * it is ratified, and ratifying writes it through the same checks as any other memory write.
  *
- * This keeps loom's "one writer, authored" model intact while getting
- * auto-capture ergonomics: drafts can be rough; ratification is the gate.
- *
- * The store is opened raw (like salience.ts) — no embedder needed for the
- * staging table itself. Embedding happens at ratify-time, through remember().
+ * Both functions here work on the caller's connection, inside the caller's transaction, so the draft, the
+ * memory and the command's receipt are saved together.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
-import { runMigrations } from './migrations.js';
-import { remember } from '../tools/remember.js';
+import type { Database } from 'better-sqlite3';
 import type { MemoryInput, MemoryRef } from './types.js';
 import { retryWrite } from './retry.js';
 
@@ -72,35 +62,13 @@ export class UnknownProposalError extends Error {
   }
 }
 
-// ─── DB plumbing ──────────────────────────────────────────────────────────────
-
-function hasTable(db: Database, table: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name: string } | undefined;
-  return row !== undefined;
-}
-
-/**
- * Open memories.db raw (no vector/embedder stack) and ensure the proposals
- * table exists. Self-heals a store that predates the proposals migration —
- * migrations are idempotent, so this is safe on any store.
- */
-function openProposalsDb(contextDir: string, selection?: MemorySelection): Database {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  const db = new BetterSqlite3(dbPath);
-  db.pragma('busy_timeout = 5000');
-  if (!hasTable(db, 'proposals')) runMigrations(db, { strict: false });
-  return db;
-}
-
 // ─── Queue operations ─────────────────────────────────────────────────────────
 
 /**
- * Stage a pending proposal. A draft can be rough, so this does NOT run the
- * full validateMemoryInput gate — but it DOES require a non-empty
- * title + content + category so the row is at least shaped like a memory.
- * Hard validation is deferred to ratify.
+ * Stage a pending proposal. A draft can be rough, so it is not held to the
+ * `remember` shape a memory is, but it does need a non-empty title, content
+ * and category so the row is at least shaped like a memory. Ratifying it
+ * holds it to the full shape.
  */
 function validateProposal(input:ProposalInput){
   if (typeof input.title !== 'string' || input.title.trim() === '') {
@@ -143,101 +111,6 @@ export function proposeOnConnection(db:Database,input:ProposalInput):ProposalRef
   if(!db.inTransaction)throw Error('Proposal command needs its source transaction');
   validateProposal(input);return writeProposal(db,input);
 }
-export function propose(contextDir:string,input:ProposalInput,selection?:MemorySelection):ProposalRef {
-  validateProposal(input);
-  const db=openProposalsDb(contextDir,selection);
-  try{return writeProposal(db,input);}finally{db.close();}
-}
-
-/** All pending proposals, newest first. */
-export function listProposals(contextDir: string, selection?: MemorySelection): ProposalRow[] {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return [];
-  const db = openProposalsDb(contextDir, selection);
-  try {
-    return db
-      .prepare(
-        `SELECT id, uuid, category, title, content, project, ttl, metadata, source, created, status
-         FROM proposals WHERE status = 'pending' ORDER BY id DESC`,
-      )
-      .all() as ProposalRow[];
-  } finally {
-    db.close();
-  }
-}
-
-/** Fetch a single proposal by id (any status), or null if not found. */
-export function getProposal(contextDir: string, id: number, selection?: MemorySelection): ProposalRow | null {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return null;
-  const db = openProposalsDb(contextDir, selection);
-  try {
-    const row = db
-      .prepare(
-        `SELECT id, uuid, category, title, content, project, ttl, metadata, source, created, status
-         FROM proposals WHERE id = ?`,
-      )
-      .get(id) as ProposalRow | undefined;
-    return row ?? null;
-  } finally {
-    db.close();
-  }
-}
-
-/** Delete a pending proposal. Returns false if no pending row with that id. */
-export function rejectProposal(contextDir: string, id: number, selection?: MemorySelection): boolean {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return false;
-  const db = openProposalsDb(contextDir, selection);
-  try {
-    const result = retryWrite(() =>
-      db
-        .prepare("DELETE FROM proposals WHERE id = ? AND status = 'pending'")
-        .run(id),
-    );
-    return result.changes > 0;
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * Ratify a pending proposal into a REAL memory.
- *
- * Loads the proposal, applies optional Art-on-accept overrides, then commits it
- * via the existing remember() path — so validateMemoryInput runs. If the
- * resulting memory is invalid, remember() throws its typed reason, NOTHING is
- * committed, and the proposal row STAYS pending (the throw propagates before the
- * delete). On success the memory is authored and the proposal row is removed.
- *
- * Throws UnknownProposalError if the id isn't in the queue.
- */
-export async function ratifyProposal(
-  contextDir: string,
-  id: number,
-  overrides: ProposalOverrides = {},
-  selection?: MemorySelection,
-): Promise<MemoryRef> {
-  const proposal = getProposal(contextDir, id, selection);
-  if (!proposal) throw new UnknownProposalError(id);
-
-  // remember() validates (validateMemoryInput) and throws on an invalid write
-  // BEFORE anything is committed — so an invalid proposal is refused with its
-  // typed reason and, because the throw happens before the delete below, the
-  // proposal stays pending for a later fix.
-  const ref = await remember(contextDir, proposalInput(proposal,overrides), selection);
-
-  // Committed as canon — drop the staging row.
-  const db = openProposalsDb(contextDir, selection);
-  try {
-    retryWrite(() => db.prepare('DELETE FROM proposals WHERE id = ?').run(id));
-  } finally {
-    db.close();
-  }
-
-  return ref;
-}
-
 function proposalInput(proposal:ProposalRow,overrides:ProposalOverrides):MemoryInput {
   return {category:overrides.category??proposal.category??'',title:overrides.title??proposal.title??'',content:overrides.content??proposal.content??'',project:overrides.project??proposal.project??undefined,ttl:overrides.ttl??proposal.ttl??undefined,metadata:parseMetadata(proposal.metadata)};
 }

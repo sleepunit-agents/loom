@@ -180,4 +180,4 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(errors).toEqual([]);
     await context.close();
   } finally { await browser.close(); await app.close(); }
-}, 60_000);
+});

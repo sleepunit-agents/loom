@@ -18,7 +18,7 @@ it('uses the scoped projection, preserves queued order and concurrent titles, an
   ],boxes:[{id:'worker',name:'Workshop'}]}};
   await act(async()=>{tree=create(h(CurrentJobs,{agent:'art',name:'Art'}));});
   expect(f.query).toHaveBeenCalledWith(currentJobsQuery,{agent:'art'});
-  expect(currentJobsQuery).toContain('currentJobs(agent: $agent) { id agent title state box queuedAt }');expect(currentJobsQuery).toContain('boxes { id name }');
+  expect(currentJobsQuery).toContain('currentJobs(agent: $agent) { id agent title state kind box queuedAt }');expect(currentJobsQuery).toContain('boxes { id name }');
   expect(tree.root.findAllByType('li').map((node:any)=>node.findAllByType('p')[0].children.join(''))).toEqual(['queued · Unassigned','running · Box Workshop']);
   expect(tree.root.findAllByType('h4').map((node:any)=>node.children.join(''))).toEqual(['<script>same</script>','<script>same</script>']);
   expect(tree.root.findAllByType('script')).toHaveLength(0);
@@ -56,4 +56,14 @@ it('drops a machine label when its visible lookup disappears and never substitut
  f.snapshot={...f.snapshot,status:'denied'};
  await act(async()=>tree.update(h(CurrentJobs,{agent:'art',name:'Art'})));
  expect(JSON.stringify(tree.toJSON())).not.toContain('Public job');expect(JSON.stringify(tree.toJSON())).not.toContain('Assigned machine');
+});
+
+it('labels a terminal as controlled on its machine on both home surfaces',async()=>{
+ const job={id:'one',agent:'art',kind:'terminal',title:'Terminal',state:'running',box:'b',queuedAt:'2026-11-14T01:00:00Z'};
+ f.snapshot={status:'live',data:{currentJobs:[job],boxes:[{id:'b',name:'Workshop'}]}};
+ await act(async()=>{tree=create(h(CurrentJobs,{agent:'art',name:'Art',compact:true}));});
+ expect(JSON.stringify(tree.toJSON())).toContain('Terminal · Box Workshop · Controlled on the machine');
+ await act(async()=>tree.update(h(CurrentJobs,{agent:'art',name:'Art'})));
+ expect(JSON.stringify(tree.toJSON())).toContain('Terminal · Box Workshop · Controlled on the machine');
+ expect(tree.root.findAllByType('button')).toHaveLength(0);
 });

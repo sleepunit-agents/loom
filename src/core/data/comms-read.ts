@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { conversations, threads } from './schema.js';
+import { commsKeepDays } from './comms-days.js';
 
 function visibleThread(id:SQL,allowed:SQL){return sql`exists(select 1 from ${threads} inner join ${conversations} on ${conversations.id}=${threads.conversation} where ${threads.id}=${id} and ${allowed})`;}
 /** Generated metadata page: filter current conversation authority in SQL,
@@ -26,7 +27,7 @@ export function readCommsSet(db:DataDatabase,thread:string,seqs:number[],allowed
   const rows=db.query.messages.findMany({columns:words?undefined:{words:false},
     where:f=>and(eq(f.thread,thread),inArray(f.seq,seqs),sql`${{getSQL:()=>visibleThread(sql`${f.thread}`,allowed)}}`),orderBy:f=>asc(f.seq),
   }).sync().map(row=>({...row,words:words?row.words:null}));
-  const days=db.query.household.findFirst({columns:{commsDays:true}}).sync()?.commsDays??14;
+  const days=commsKeepDays(db);
   const entries=new Map(rows.flatMap(message=>{
     const cv=scope?.conversationRow;
     return cv?[[message.seq,{message,conversation:cv.id,agent:cv.agent,project:cv.project,member:cv.member}] as const]:[];
@@ -40,7 +41,7 @@ function visibleConversation(id: SQL, allowed: SQL) {
 }
 export function readCommsThreads(db: DataDatabase, allowed: SQL, input: { id?: string; member?: string; agent?: string; archived?: boolean; search?: string; count: number; offset: number }) {
   return db.query.threads.findMany({
-    with: { conversationRow: { columns: { agent: true, project: true, member: true } } },
+    with: { conversationRow: { columns: { agent: true, project: true, member: true, venue: true } } },
     where: f => {
       const scope = sql`exists(select 1 from ${conversations} where ${conversations.id}=${f.conversation} and ${allowed}
         ${input.member ? sql`and ${conversations.member}=${input.member}` : sql``}

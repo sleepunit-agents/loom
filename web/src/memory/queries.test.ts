@@ -10,7 +10,7 @@ import { dataHttp } from '../../../src/core/data/http.js';
 import { agents, members, tasks, conversationPeople } from '../../../src/core/data/schema.js';
 import { FakeClock, type Sharing } from '../../../src/core/index.js';
 import { Conversations } from '../../../src/core/conversations/index.js';
-import { SqliteKnowledgeBackend } from '../../../src/backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
 import { PeopleStore } from '../../../src/backends/people.js';
 import { ProjectsStore } from '../../../src/backends/projects.js';
 import { createProjectsReader } from '../../../src/pieces/mind/projects.js';
@@ -24,7 +24,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   db.insert(members).values(['owner','peer'].map(id => ({id, role: id === 'owner' ? 'owner' as const : 'member' as const, joinedAt: new Date(now).toISOString()}))).run();
   db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
   db.insert(tasks).values({id:'work',title:'Fictional task',ownerKind:'household',createdByKind:'member',createdBy:'owner',createdAt:new Date(now).toISOString(),changedAt:new Date(now).toISOString()}).run();
-  const knowledge = new SqliteKnowledgeBackend({dbPath:join(home,'knowledge.db')}); cleanup.push(() => knowledge.close());
+  const knowledge = new KnowledgePages({dbPath:join(home,'knowledge.db')}); cleanup.push(() => knowledge.close());
   await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'pond',body:'The fictional pump takes a hose.'});
   const people = new PeopleStore({dbPath:join(home,'memories.db'),actor:'fiction'}); cleanup.push(() => people.close());
   people.write({slug:'friend',name:'Fictional Friend'});
@@ -37,7 +37,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   const conversations = new Conversations(db, () => new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
-  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
+  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,timezone:'America/Chicago',conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
   const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),projects:projectReader,activity,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
   let valid = true, admitted = false;
   const http = dataHttp(db, request => {

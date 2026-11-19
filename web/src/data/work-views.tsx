@@ -8,6 +8,8 @@ import { refreshChanges } from './work-refresh';
 import { alwaysInput, alwaysLabel, sendWorkAlways, type WorkAlwaysInput, type RulePerson, type MergeRequest } from './work-always';
 import { sendApprovalRule } from './work-rule';
 import { sendWorkAnswer } from './work-answer';
+import { readProposal, type ProposalNow } from './work-proposal';
+import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
 const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner workChangesRefresh members { id role } }';
@@ -19,7 +21,23 @@ function useWorkAccess() {
     members:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true ? snapshot.data?.members ?? [] : []};
 }
 function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): ApprovalActions | undefined {
-  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),setRule:sendApprovalRule,allow:id=>sendWorkAnswer({piece:'approvals',id,answer:'allow'}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),setRule:sendApprovalRule,allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+}
+
+/** A household owner who opens a waiting household card is shown what it would replace and anything that
+ * already stands against it. Neither is on the card (work-proposal.ts), so it is read when the card opens. */
+function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owner: boolean): ApprovalSnapshot {
+  const card = owner && snapshot.status === 'live' ? snapshot.approvals.find(row => row.id === id && row.state === 'pending' && row.operation === 'household.change') : undefined;
+  const key = card?.id;
+  const [now, setNow] = useState<ProposalNow & { id: string }>();
+  useEffect(() => {
+    if (!key) return;
+    let current = true;
+    void readProposal(key).then(value => { if (current && value) setNow({ id: key, ...value }); });
+    return () => { current = false; };
+  }, [key]);
+  if (!card || now?.id !== card.id) return snapshot;
+  return { ...snapshot, approvals: snapshot.approvals.map(row => row.id === card.id ? { ...row, changeSummary: now.summary, problem: now.problem } : row) };
 }
 
 // The root may supply household time. The browser's own timezone is a display
@@ -34,7 +52,7 @@ export function useChangeSnapshot(timezone = localTimezone()) {
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
 export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
-  const access=useWorkAccess(), snapshot=useApprovalSnapshot(timezone), changes=useChangeSnapshot(timezone);
+  const access=useWorkAccess(), read=useApprovalSnapshot(timezone), changes=useChangeSnapshot(timezone);
   const base = '/p/approvals-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -49,6 +67,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
     try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
+  const snapshot = useProposalNow(read, selected, access.owner);
   const folder = ['history', 'rules', 'notices'].find(id => currentPath === `${base}/${id}`) ?? 'pending';
   const visit = (next: string) => {
     if (go) go(next);
@@ -120,8 +139,8 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const snapshot=useApprovalSnapshot(timezone);
-  const defaultActions=ownerApprovalActions(useWorkAccess().owner);
+  const owner=useWorkAccess().owner, snapshot=useProposalNow(useApprovalSnapshot(timezone),id,owner);
+  const defaultActions=ownerApprovalActions(owner);
   return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {

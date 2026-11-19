@@ -2,7 +2,7 @@
   "page": "outside",
   "title": "Outside programs",
   "ownerTask": "t-2236",
-  "sourceSha256": "00f079084d8ee4a3f9af133996c0a98ba07a07becba57b594235120a9386297c",
+  "sourceSha256": "23941fcf8a20b025611e71693e46be9ab0e5a8d3f1e1e122ba02f649441c5ba7",
   "promises": [
     {
       "id": "outside-001",
@@ -61,7 +61,7 @@
     },
     {
       "id": "outside-012",
-      "promise": "There is one loom per home: one program and one data folder. Beyond Node and npm nothing is required. A restart is an acceptable deploy.",
+      "promise": "There is one loom per home: one program and one data folder. Loom itself needs nothing beyond Node and npm. A machine whose worker runs houses also needs git and a container engine. A restart is an acceptable deploy.",
       "source": "docs/how-it-works/site/outside.html#how-h"
     },
     {

@@ -158,3 +158,13 @@ it('clears a remounted composer when its earlier send acknowledges, preserving l
  await act(async()=>finish());
  expect(tree.root.findByType('Textarea').props.value).toBe('Newer unsent words');
 });
+
+it('reads a terminal thread without offering to send or stop it', async () => {
+  const a = actions();
+  await draw(a);
+  await act(async () => { tree.update(h(CommsView, { snapshot, detail: { ...detail, thread: { ...thread, venue: 'terminal' } },
+    selected: thread.id, select: vi.fn(), actions: a })); });
+  expect(named('Send')).toBeUndefined();
+  expect(named('Stop')).toBeUndefined();
+  expect(tree.root.findAllByType('Textarea')).toHaveLength(0);
+});

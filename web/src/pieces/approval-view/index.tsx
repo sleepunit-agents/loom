@@ -1,7 +1,7 @@
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
-import { folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
+import { quotedDecision, folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
 export type { ApprovalSnapshot } from './model';
 
 export type RenderApprovalChange = (approval: Approval) => ReactNode;
@@ -14,7 +14,8 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
 export interface ApprovalActions {
   setRule?: SaveRule;
   supports?(approval: Approval): boolean;
-  allow(id: string): Promise<void>;
+  /** confirm is the second, explicit yes a dangerous action needs. */
+  allow(id: string, confirm?: boolean): Promise<void>;
   deny(id: string): Promise<void>;
   always?: { label: string; approval: string; run(id: string): Promise<void> };
 }
@@ -23,17 +24,26 @@ function Unavailable({ status }: { status: ApprovalSnapshot['status'] }) {
     : <Error text={status === 'denied' ? 'Sign in with access to see Approvals.' : 'Waiting for connection.'} />;
 }
 function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalActions }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
+  const dangerous = approval.kind === 'dangerous';
   const active = useRef(false);
   async function send(action: () => Promise<void>) {
     if (active.current) return;
     active.current = true; setBusy(true); setError('');
-    try { await action(); } catch { setError('Could not save your answer. Reconnect and try again.'); }
+    // A refusal is the program's own answer, in words written for the person answering: say it as it is.
+    try { await action(); } catch (error) {
+      const refused = error as { name?: unknown; message?: unknown } | null;
+      setError(refused?.name === 'WorkRefused' && typeof refused.message === 'string' ? refused.message : 'Could not save your answer. Reconnect and try again.');
+    }
     finally { active.current = false; setBusy(false); }
   }
   return <>
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
-      <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id))}>Allow</Button>
+      {dangerous && confirming
+        ? <><p className="basis-full">This cannot be undone.</p>
+          <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
+          <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
+        : <Button disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
       {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
     </div>}
@@ -43,6 +53,9 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
 }
 function Details({ approval: a, snapshot, actions, renderChange, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean } & ChangePresentation) {
   const change = renderChange?.(a);
+  const decision = snapshot.record.filter(r => r.approval === a.id && (r.event === 'allow' || r.event === 'deny'))
+    .reduce<(typeof snapshot.record)[number] | undefined>((last, row) => !last || row.seq > last.seq ? row : last, undefined);
+  const attribution = quotedDecision(decision);
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
@@ -51,9 +64,10 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
     <section><h3>If you deny</h3><p>{a.ifNo}</p></section>
     {!change && a.changeSummary && <section><h3>Exactly what will change</h3><p className="whitespace-pre-wrap">{a.changeSummary}</p></section>}
     {change}
+    {a.problem && <section><h3>This cannot be allowed as it stands</h3><p>{a.problem}</p></section>}
     <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
     <Answer key={a.id} approval={a} actions={actions} />
-    {a.decidedBy && <p>Answered by {a.decidedBy}</p>}
+    {a.decidedBy && <p>{attribution ?? 'Answered by '+a.decidedBy}</p>}
     {a.expiresAt && <p>Allowance ends {time(a.expiresAt)} · {snapshot.timezone}</p>}
     {!inline && <>
       {!change && a.details && <section><h3>Details</h3><p className="whitespace-pre-wrap">{a.details}</p></section>}

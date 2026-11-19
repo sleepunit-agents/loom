@@ -82,7 +82,7 @@ export async function* walkthroughSteps(output) {
   // or installed configuration. The ordinary startup loads its existing port.
   prepareAcceptanceHome(home);
   clock=new FakeClock(Date.parse(report.example.createdAt));
-  let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
+  let link='';app=await startSharedHome({home,port:0,clock,stdout:()=>{},reportError:error=>report.errors.push(String(error))});link=app.signinLink();
   retention=await prepareRetention({app,example:report.example,home});
 
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});

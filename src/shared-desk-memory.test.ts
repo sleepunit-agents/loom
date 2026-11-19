@@ -26,7 +26,7 @@ it('feeds Home directory and recent steps from the actual shared Memory listener
   const app = await serveShared({ db, clock, memory: { sources: memory.sources, checkingAgent: 'art' }, originAllowed: () => true, reportError: error => { throw error; } });
   closes.push(() => app.close());
   const { value: digest } = app.writes.run(() => {
-    const conversation = app.services.conversations.open({ agent: 'art', member: 'peer', venue: 'wake', place: 'desk-fixture', label: 'Actual Home step' });
+    const conversation = app.services.conversations.open({ agent: 'art', venue: 'wake', place: 'desk-fixture', label: 'Actual Home step' });
     app.services.conversations.turn({ conversation: conversation.id, kind: 'reply', fromKind: 'agent', fromId: 'art' });
     return app.services.conversations.digest({ conversation: conversation.id, run: 'fictional-step', summary: 'The shared Activity source supplied this step.' });
   });

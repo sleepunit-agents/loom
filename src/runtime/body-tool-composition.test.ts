@@ -10,16 +10,16 @@ import * as privateTools from './body-secret-tools.js';
 import {bodyProgram} from './body-program.js';
 import type {WorkerAssignment} from './worker.js';
 import {bodySecretTools} from './body-secret-tools.js';
-import type {BodyModelTool} from './body-model-tools.js';
+import {BODY_EXTENSION_TOOLS_MAX,type BodyModelTool} from './body-model-tools.js';
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
 async function fixture(extraTools:BodyModelTool[]){
  const abort=new AbortController(),root=vi.fn<typeof fetch>(),tools=await bodySecretTools({url:'https://root.invalid',token:'PRIVATE_ROOT_BEARER',job:'job',conversation:'cv',signal:abort.signal,fetch:root,extraTools});clean.push(()=>tools.close());
- const connection=JSON.parse(tools.config.toString()).mcpServers.loom_secrets,client=new Client({name:'composed-model',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));clean.push(()=>client.close());return{abort,root,tools,client};
+ const connection=JSON.parse(tools.config.toString()).mcpServers.loom,client=new Client({name:'composed-model',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));clean.push(()=>client.close());return{abort,root,tools,client};
 }
 it('shares one authenticated MCP listener and exactly advertises the snapped extension names',async()=>{
  const execute=vi.fn(async(input:Record<string,unknown>)=>({content:[{type:'text' as const,text:JSON.stringify(input)}]})),tool={name:'command',description:'Canonical command',inputSchema:z.object({command:z.string()}).strict(),execute},f=await fixture([tool]);tool.name='changed';tool.execute=vi.fn();
- expect(f.tools.allowedTools).toEqual(['mcp__loom_secrets__request_secret','mcp__loom_secrets__use_secret','mcp__loom_secrets__command']);expect((await f.client.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret','command']);
+ expect(f.tools.allowedTools).toEqual(['mcp__loom__request_secret','mcp__loom__use_secret','mcp__loom__command']);expect((await f.client.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret','command']);
  expect(await f.client.callTool({name:'command',arguments:{command:'list'}})).toMatchObject({content:[{type:'text',text:'{"command":"list"}'}]});expect(execute).toHaveBeenCalledOnce();
  await f.client.callTool({name:'command',arguments:{command:'list',agent:'foreign'}}).catch(()=>undefined);expect(execute).toHaveBeenCalledOnce();const undeclared=await f.client.callTool({name:'undeclared',arguments:{}}).catch(()=>undefined);expect(undeclared===undefined||undeclared.isError===true).toBe(true);expect(execute).toHaveBeenCalledOnce();expect(f.root).not.toHaveBeenCalled();expect(f.tools.config.includes(Buffer.from('PRIVATE_ROOT_BEARER'))).toBe(false);
 });
@@ -37,7 +37,7 @@ it('cancels extension work and keeps close pending until the callback actually s
 });
 it('rejects invalid extension catalogues before any HTTP listener is bound',async()=>{
  const listen=vi.spyOn(Server.prototype,'listen'),valid:BodyModelTool={name:'command',description:'Canonical command',inputSchema:z.object({}),execute:async()=>({content:[]})};
- for(const extraTools of [[{...valid,name:'use_secret'}],[valid,valid],[{...valid,name:'invalid!'}],Array.from({length:33},(_,i)=>({...valid,name:'tool'+i}))]){
+ for(const extraTools of [[{...valid,name:'use_secret'}],[valid,valid],[{...valid,name:'invalid!'}],Array.from({length:BODY_EXTENSION_TOOLS_MAX+1},(_,i)=>({...valid,name:'tool'+i}))]){
   await expect(bodySecretTools({url:'https://root.invalid',token:'private',job:'job',conversation:'cv',signal:new AbortController().signal,extraTools})).rejects.toThrow('Body model tools unavailable');
  }
  expect(listen).not.toHaveBeenCalled();
@@ -46,7 +46,7 @@ it('passes the exact composed listener tool names through the actual default bod
  const original=privateTools.bodySecretTools;vi.spyOn(privateTools,'bodySecretTools').mockImplementation(input=>original({...input,extraTools:[{name:'command',description:'Canonical command',inputSchema:z.object({}).strict(),execute:async()=>({content:[]})}]}));
  const job:WorkerAssignment={id:'job',box:'box',agent:'art',conversation:'cv',thread:'thread',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
  vi.mocked(spawn).mockImplementation((_command,args)=>{
-  expect(args).toContain('mcp__loom_secrets__command');
+  expect(args).toContain('mcp__loom__command');
   const session=args[args.indexOf('--session-id')+1],output=new PassThrough(),child=Object.assign(new EventEmitter(),{stdin:new Writable({write(_bytes,_encoding,done){done();}}),stdout:output,stderr:new PassThrough(),stdio:[null,null,null,new Writable({write(_bytes,_encoding,done){done();}})],kill:vi.fn(()=>true)}) as unknown as ChildProcessWithoutNullStreams;
   child.stdin.once('finish',()=>{output.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'done'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'done'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);});return child;
  });

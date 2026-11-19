@@ -1,3 +1,4 @@
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
 import { inboxContentChanged } from '../tempo/volume.js';
@@ -6,15 +7,19 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
-import type { DigestInput } from './index.js';
+import { expirePrivateBridgeWords } from './private-bridge-words.js';
+import { expireConversationSessions } from './sessions.js';
+import { acceptAnswer, type Answer } from './answer-rule.js';
+import { lateMailWaits, type DigestInput, type LateJoins } from './index.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 type Message = typeof messages.$inferSelect;
 type TurnDetails = Partial<Pick<typeof turns.$inferInsert, 'model' | 'outcome' | 'latencyMs'>>;
-type Answer = NonNullable<typeof inbox.$inferSelect.answer>;
+
 export type PrivateQuestion = { words: string; answers: 'yes-no' | 'words'; why?: string; ifYes?: string; ifNo?: string; link?: string; waitsOnKind?: 'approval' | 'task'; waitsOnId?: string; refs?: string[] };
 export type MessageInput = {
   thread: string; sender: string; kind: 'message' | 'reply' | 'card' | 'notice'; words: string;
@@ -24,8 +29,10 @@ export type MessageInput = {
 
 export class CommsMessages {
   readonly threads: Threads;
-  constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly now: () => string = () => new Date().toISOString()) {
-    this.threads = new Threads(db, now);
+  /** `lateJoins` is the conversations service's (index.ts): bodies take their mail through this one's, so the
+   * composition gives it the rule; closed otherwise. */
+  constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly now: () => string = () => new Date().toISOString(), lateJoins: LateJoins = lateMailWaits) {
+    this.threads = new Threads(db, now, lateJoins);
   }
 
   private context(id: string) {
@@ -40,17 +47,19 @@ export class CommsMessages {
 
   private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}): Message {
     const { thread, cv } = this.context(input.thread), at = this.now();
-    const days = this.db.select().from(household).get()?.commsDays ?? 14;
-    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
+    const days = commsKeepDays(this.db);
+    if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
     const seq = (this.db.select({ seq: max(messages.seq) }).from(messages).where(eq(messages.thread, thread.id)).get()?.seq ?? 0) + 1;
-    const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: new Date(Date.parse(at) + days * 86400000).toISOString() }).returning().get();
+    const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: keepUntilFor(at, days) }).returning().get();
+    // threads.last_at and conversations.last_at are two columns for one fact. They are
+    // only ever written here, together, from the one time read above.
     this.db.update(threads).set({ lastAt: at }).where(eq(threads.id, thread.id)).run();
     const person = input.kind === 'message' || input.kind === 'answer';
     this.threads.conversations.turn({ conversation: cv.id,
       kind: person ? 'message' : input.kind === 'reply' ? 'reply' : input.kind === 'card' ? 'action' : 'note',
       fromKind: person ? 'person' : 'agent', fromId: input.sender,
       run: person ? null : input.run, ...detail,
-    });
+    }, at);
     for (const ref of new Set(refs)) this.db.insert(threadRefs).values({ thread: thread.id, ref, messageSeq: seq })
       .onConflictDoUpdate({ target: [threadRefs.thread, threadRefs.ref], set: { messageSeq: seq } }).run();
     return row;
@@ -58,6 +67,21 @@ export class CommsMessages {
 
   private attach(message: Message, item: typeof inbox.$inferSelect): Message {
     return this.db.update(messages).set({ inboxItem: item.id }).where(and(eq(messages.thread, message.thread), eq(messages.seq, message.seq))).returning().get()!;
+  }
+
+  /** A turn already delivered in the terminal. Record it without queueing another delivery. */
+  recordObserved(thread: string, role: 'member' | 'agent', clientId: string, words: Buffer, run: string): boolean {
+    return this.db.transaction(() => {
+      const { cv } = this.context(thread);
+      const sender = role === 'member' ? cv.member : cv.agent;
+      if (!sender) throw new Error('A private thread is required');
+      if (this.retry(thread, sender, clientId)) return false;
+      this.append({
+        thread, sender, clientId, kind: role === 'member' ? 'message' : 'reply', words, run,
+        delivery: null,
+      }, []);
+      return true;
+    });
   }
 
   async send(input: MessageInput): Promise<Message> {
@@ -139,7 +163,7 @@ export class CommsMessages {
     if(input.question&&cv.member&&!privateThread){
       const question=input.question;
       if(question.to!==cv.member)throw Error('Private question needs its member');
-      const words=await sealPrivateInbox(this.key,JSON.stringify({words:question.words,why:question.why??null,ifYes:question.ifYes??null,ifNo:question.ifNo??null,link:question.link??null}),this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+      const words=await sealPrivateInbox(this.key,JSON.stringify({words:question.words,why:question.why??null,ifYes:question.ifYes??null,ifNo:question.ifNo??null,link:question.link??null}),this.now(),commsKeepDays(this.db));
       return ()=>this.db.transaction(()=>{
         const kept=validate();if(kept)return kept;
         const item=cvs.send({conversation:cv.id,toKind:'person',to:question.to,source:'thread',sourceId:`digest:${randomUUID()}`,fromKind:'agent',fromId:cv.agent,words,answers:question.answers,waitsOnKind:question.waitsOnKind,waitsOnId:question.waitsOnId,refs:question.refs});
@@ -175,20 +199,14 @@ export class CommsMessages {
       const item = this.threads.conversations.item(itemId);
       if (!item.thread || item.messageSeq == null || item.toKind !== 'person' || !item.answers) throw new Error('Not a private question');
       const { cv } = this.context(item.thread);
-      if (item.conversation !== cv.id) throw new Error('Question differs from thread');
-      if (item.source !== 'thread' || item.waitsOnKind) throw new Error('Answer at the linked source');
-      return { item, cv };
+      if (item.conversation !== cv.id || item.source !== 'thread') throw new Error('Question differs from thread');
+      return { item, cv, verdict: acceptAnswer(item, member, answer, text, true) };
     };
-    const { item } = check();
-    if (item.state === 'answered') return () => check().item;
-    if (item.state !== 'waiting') throw new Error('Question is already settled');
-    if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
-    if ((answer === 'words' || answer === 'replied') && !text?.trim()) throw new Error('Answer needs words');
+    if (check().verdict === 'repeat') return () => check().item;
     const words = await this.key.seal(text?.trim() || answer), refs = refsIn(text ?? '');
     return () => this.db.transaction(() => {
-      const { item, cv } = check();
-      if (item.state === 'answered') return item;
-      if (item.state !== 'waiting') throw new Error('Question is already settled');
+      const { item, cv, verdict } = check();
+      if (verdict === 'repeat') return item;
       const row = this.append({ thread: item.thread!, sender: member, kind: 'answer', words,
         verdict: answer === 'yes' || answer === 'no' ? answer : null }, refs);
       const mail = this.threads.conversations.send({ toKind: 'agent', to: cv.agent, conversation: cv.id, source: 'answer', sourceId: item.id,
@@ -206,16 +224,12 @@ export class CommsMessages {
     const check=()=>{
       const item=cvs.item(itemId),cv=item.conversation?cvs.conversation(item.conversation):undefined;
       if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!hasPrivateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
-      if(item.waitsOnKind)throw Error('Answer at the linked source');
-      return {item,cv};
+      return {item,cv,verdict:acceptAnswer(item,member,answer,text,true)};
     };
-    const before=check();if(before.item.state==='answered')return()=>check().item;
-    if(before.item.state!=='waiting')throw Error('Question is already settled');
-    if((answer==='yes'||answer==='no')&&before.item.answers!=='yes-no')throw Error('Question needs words');
-    if((answer==='words'||answer==='replied')&&!text?.trim())throw Error('Answer needs words');
-    const words=await sealPrivateInbox(this.key,text?.trim()||answer,this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+    const before=check();if(before.verdict==='repeat')return()=>check().item;
+    const words=await sealPrivateInbox(this.key,text?.trim()||answer,this.now(),commsKeepDays(this.db));
     return ()=>this.db.transaction(()=>{
-      const live=check();if(live.item.state==='answered')return live.item;
+      const live=check();if(live.verdict==='repeat')return live.item;
       if(JSON.stringify(live)!==JSON.stringify(before))throw Error('Question changed during preparation');
       const {item,cv}=live,at=this.now();
       cvs.send({conversation:cv.id,toKind:'agent',to:cv.agent,source:'answer',sourceId:item.id,fromKind:'person',fromId:member,words,refs:[item.id,...refsIn(text??'')]});
@@ -228,10 +242,8 @@ export class CommsMessages {
   /** Expired words stay unavailable even before the periodic sweep runs. */
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-    const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
-      && Number.isInteger(days) && days >= 1 && days <= 14
-      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    const keepDays = () => commsKeepDays(this.db);
+    const retained = (message: Message | undefined, days: number) => !!message?.words && wordsKept(message, days, this.now());
     const days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
@@ -241,11 +253,14 @@ export class CommsMessages {
   }
 
   expire(): number {
-    const days = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
-    const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
+    const days = commsKeepDays(this.db);
+    if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
+    const at = this.now(), cutoff = ageCutoff(at, days);
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
+    expired+=expirePrivateBridgeWords(this.db,cutoff);
+    // A kept harness session holds its conversation's words: it goes at the same keep time.
+    expired+=expireConversationSessions(this.db,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;

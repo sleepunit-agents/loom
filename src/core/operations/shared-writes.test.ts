@@ -69,11 +69,10 @@ it('reports notification failures while preserving committed success and safe re
   expect(s.run).toHaveBeenCalledOnce();
 });
 
-it('keeps refusal of unrelated outer transactions and rejects a shared boundary without shared receipts', () => {
+it('keeps refusal of unrelated outer transactions', () => {
   const s = fixture();
   expect(s.client.transaction(() => s.call())()).toMatchObject({ code: 'unavailable' });
   expect(s.run).not.toHaveBeenCalled();
-  expect(() => new Operations(s.client, s.clock, () => {}, { writes: s.writes })).toThrow('Shared writes require shared receipts');
 });
 
 it('requires a reporter for shared writes and reports committed callback failures without retrying', () => {

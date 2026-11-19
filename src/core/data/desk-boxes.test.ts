@@ -19,10 +19,14 @@ it('executes the minimal enrollment selection and reapplies current visibility w
       {...row,id:'gone',name:'Removed machine',revokedAt:at},
       {...row,id:'hidden',name:'Other machine',owner:'other'},
     ]).run();
+    db.update(boxes).set({readers:['fern']}).where(sql`${boxes.id} = 'live'`).run();
     let visible = true;
     // Fixture SQL predicate only; production Runtime visibility and root mounting belong to their owner.
     const schema = dataQueries(client, {tables:['boxes'],visibility:{boxes:f=>visible ? sql`${f.owner} = 'member'` : sql`false`}});
     const read = () => graphql({schema,source:deskBoxesQuery});
+    const settings = await graphql({schema,source:'{ boxes { id readers } }'});
+    expect(settings.errors).toBeUndefined();
+    expect(settings.data?.boxes).toContainEqual({id:'live',readers:['fern']});
     const result = await read();
     expect(result.errors).toBeUndefined();
     expect(result.data?.boxes).toEqual(expect.arrayContaining([{id:'live',revokedAt:null},{id:'gone',revokedAt:at}]));

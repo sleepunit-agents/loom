@@ -1,4 +1,3 @@
-import { notifyWrites } from '../core/touched/writes.js';
 /**
  * SQLite + sqlite-vec memory backend.
  *
@@ -9,6 +8,7 @@ import { notifyWrites } from '../core/touched/writes.js';
  *   memories       — regular table, one row per memory (payload, TTL, etc.)
  *   vec_memories   — sqlite-vec virtual table, rowid = memories.id
  */
+import { DAY_MS } from '../core/day.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -38,7 +38,6 @@ import type {
   ArchiveResult,
   RestoreInput,
   RestoreResult,
-  RecallObservation,
   MemoryRevisionMeta,
   MemoryRevision,
   MemoryRevisionRestoreInput,
@@ -51,7 +50,8 @@ import type {
 import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
-import { runMigrations } from './migrations.js';
+import { refuseNewerStore, runMigrations } from './migrations.js';
+import { MAX_REVISIONS } from './cards.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
@@ -75,21 +75,11 @@ function slugify(text: string): string {
 export interface SqliteVecConfig {
   /** Absolute path to the SQLite database file */
   dbPath: string;
-  /** An independently owned command connection publishes only after its receipt. */
-  notifyWrites?: boolean;
   busyTimeout?: number;
   /** A source command includes lazy schema work in its effect transaction. */
   deferSchema?: boolean;
-  /**
-   * Observer for the recall observation log. Called once per recall with
-   * the search's telemetry; errors it throws are swallowed — a failed
-   * observation never fails a search.
-   */
-  onRecall?: (obs: RecallObservation) => void;
 }
 
-/** Body snapshots retained per memory; oldest pruned beyond this cap (mirrors knowledge wing). */
-const MAX_REVISIONS_PER_MEMORY = 10;
 
 interface MemoryRow {
   id: number;
@@ -144,6 +134,8 @@ export class SqliteVecBackend implements MemoryBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
     try{
+    // Whatever this connection goes on to do, reads that leave a mark included: not on a newer program's file.
+    refuseNewerStore(this.db);
     if(!config.deferSchema)this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent
@@ -152,7 +144,6 @@ export class SqliteVecBackend implements MemoryBackend {
     this.db.pragma(`busy_timeout = ${config.busyTimeout ?? 5000}`);
     sqliteVec.load(this.db);
     if(!config.deferSchema)this.initSchema();
-    if(config.notifyWrites!==false)notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
     }catch(error){this.db.close();throw error;}
   }
 
@@ -214,6 +205,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const confidence = isFeedback ? FEEDBACK_CONFIDENCE_DEFAULT : null;
     const evidenceCount = isFeedback ? 1 : 0;
 
+    // `salience` is stored and not read: heat is worked out at each read (docs/accepted-tradeoffs.md).
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
@@ -268,7 +260,6 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async recall(input: RecallInput): Promise<MemoryMatch[]> {
-    const startedAt = performance.now();
     const limit = input.limit ?? 10;
     const diversity = clamp01(input.diversity ?? DEFAULT_DIVERSITY);
 
@@ -297,7 +288,6 @@ export class SqliteVecBackend implements MemoryBackend {
     // blended score is just the raw similarity (see rowToMatch).
     let hits = candidates;
     let blended: number[] | null = null;
-    let diversityDrops = 0;
     if (diversity > 0 && candidates.length > limit) {
       const vectors = this.loadVectors(candidates.map((c) => c.mem.id));
       const pool = candidates.map((hit) => ({
@@ -308,7 +298,6 @@ export class SqliteVecBackend implements MemoryBackend {
       const picked = mmrSelect(pool, limit, diversity);
       hits = picked.selected.map((c) => c.hit);
       blended = picked.scores;
-      diversityDrops = picked.diversityDrops;
     }
 
     const results = hits.map((h, i) => rowToMatch(h.mem, h.distance, blended?.[i]));
@@ -334,22 +323,6 @@ export class SqliteVecBackend implements MemoryBackend {
       retryWrite(() => tx(hitIds));
     }
 
-    this.observeRecall({
-      ts: new Date().toISOString(),
-      tool: 'recall',
-      query: input.query,
-      category: categoryFilter ?? undefined,
-      project: projectFilter ?? undefined,
-      limit,
-      diversity,
-      candidates: candidates.length,
-      returned: results.length,
-      topScore: results.length > 0 ? results[0].relevance : null,
-      threshold: null,
-      diversityDrops,
-      latencyMs: Math.round(performance.now() - startedAt),
-      hit: results.length > 0,
-    });
 
     return results;
   }
@@ -506,7 +479,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const staleDays = options?.staleDays ?? 30;
     const now = new Date();
     const staleThreshold = new Date(
-      now.getTime() - staleDays * 24 * 60 * 60 * 1000,
+      now.getTime() - staleDays * DAY_MS,
     );
 
     const rows = this.db
@@ -663,7 +636,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const maxDuplicates = options?.maxDuplicates ?? 20;
 
     const now = new Date();
-    const staleThreshold = new Date(now.getTime() - staleDays * 24 * 60 * 60 * 1000);
+    const staleThreshold = new Date(now.getTime() - staleDays * DAY_MS);
 
     const rows = this.db
       .prepare(
@@ -1154,7 +1127,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
   /**
    * Insert a content snapshot into memory_revisions and prune beyond the per-memory
-   * cap. Mirrors the knowledge wing's snapshotRevision() in sqlite-knowledge.ts.
+   * cap, as snapshotKnowledgeRevision (knowledge-revisions.ts) does for a knowledge page.
    */
   private snapshotRevision(
     memoryId: number,
@@ -1177,7 +1150,7 @@ export class SqliteVecBackend implements MemoryBackend {
              SELECT id FROM memory_revisions WHERE memory_id = ? ORDER BY id DESC LIMIT ?
            )`,
         )
-        .run(memoryId, memoryId, MAX_REVISIONS_PER_MEMORY),
+        .run(memoryId, memoryId, MAX_REVISIONS),
     );
     return Number(result.lastInsertRowid);
   }
@@ -1254,15 +1227,6 @@ export class SqliteVecBackend implements MemoryBackend {
     return out;
   }
 
-  private observeRecall(obs: RecallObservation): void {
-    if (!this.config.onRecall) return;
-    try {
-      this.config.onRecall(obs);
-    } catch {
-      // Telemetry never fails a search.
-    }
-  }
-
   /** Stored embeddings for a set of memory ids (point lookups; pools are small). */
   private loadVectors(ids: number[]): Map<number, Float32Array> {
     const stmt = this.db.prepare(
@@ -1278,6 +1242,8 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   private initSchema(): void {
+    // Before the first CREATE: a store a newer program has changed is left exactly as it is.
+    refuseNewerStore(this.db);
     const statements = [
       `CREATE TABLE IF NOT EXISTS memories (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,

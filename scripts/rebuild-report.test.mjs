@@ -70,7 +70,7 @@ it('keeps the measured revision and every page count in both regenerated reports
   const report=rebuildReport({source,example:{gaps:[]},apps:[],signin:{ok:false},live:{dataFrames:0,errors:[]}},out);
   const json=JSON.parse(readFileSync(join(out,'report.json'),'utf8')),md=readFileSync(join(out,'report.md'),'utf8');
   expect(json.source).toEqual(source);expect(md).toContain('Tested commit: '+source.commit);expect(md).toContain('Attempt: 2');
-  expect(report.summary).toHaveLength(19);
+  expect(report.summary).toHaveLength(20);
   expect(report.summary.map(p=>p.page).sort()).toEqual(report.pages.map(p=>p.page).sort());
   for(const status of ['met','not met','not checkable yet'])expect(report.summary.reduce((sum,page)=>sum+page.counts[status],0)).toBe(report.counts[status]);
   for(const page of report.summary)expect(md).toContain('](#page-'+page.page+')');

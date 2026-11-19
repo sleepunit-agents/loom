@@ -4,12 +4,21 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { boxes, modelAccountBoxes, modelAccounts } from './core/data/schema.js';
+import { modelAccountBoxes, modelAccounts } from './core/data/schema.js';
+import { liveWorker } from './shared-worker.js';
 import type { Operations, Context } from './core/operations/index.js';
 import { accountCompletion, accountObservationCommitted } from './runtime/account-completion.js';
 import { quotaWindows } from './runtime/account-observation.js';
 import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { recordAccountWindows, readAccountWindows } from './runtime/account-windows.js';
+import { AccountLogins, LOGIN_PLACES } from './runtime/account-logins.js';
+import { LOGIN_HARNESSES, LOGIN_REASONS } from './runtime/account-login-check.js';
+
+/** What a worker read about one sign-in on its own machine. Never a credential, and no words of the worker's
+ * own: a state, an end time, a reason from a fixed list, and a harness from the list of those whose
+ * sign-in a worker can read, because the harness is written into the notice its owner reads. `unknown` names a sign-in the worker watches and could not read. */
+export const loginCheck = z.object({ account: z.string().min(1).max(200), harness: z.enum(LOGIN_HARNESSES), place: z.enum(LOGIN_PLACES),
+  state: z.enum(['signed-in', 'signed-out', 'unknown']), expiresAt: z.iso.datetime({ offset: true }).nullish(), why: z.enum(LOGIN_REASONS).nullish() }).strict();
 export function registerSharedAccountReports(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{box: string}> | undefined) {
   const identity = z.object({ account: z.string().min(1), owner: z.string().min(1), provider: z.string().min(1) }).strict();
   // Concurrency witnesses, never credentials or authority. Keep only a random
@@ -21,11 +30,10 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
     windows: readAccountWindows(db, account).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
   })).digest('hex');
   const canReport = (viewer: Viewer, input: z.infer<typeof identity>) => {
-    if (viewer.kind !== 'runner' || runner(viewer)?.box !== viewer.id) return false;
-    const box = db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, viewer.id)).get();
+    if (!liveWorker(db, viewer, runner(viewer))) return false;
     const account = db.select().from(modelAccounts).where(eq(modelAccounts.id, input.account)).get();
     const membership = db.select().from(modelAccountBoxes).where(and(eq(modelAccountBoxes.account, input.account), eq(modelAccountBoxes.box, viewer.id))).get();
-    return !!box && box.revokedAt === null && !!membership && account?.owner === input.owner && account?.provider === input.provider;
+    return !!membership && account?.owner === input.owner && account?.provider === input.provider;
   };
   const matches = (input: z.infer<typeof identity> & { basis: string }) => {
     const basis = bases.get(input.account);
@@ -68,6 +76,20 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
     // has a new input object and must not invalidate a newer read witness.
     // A fresh identical provider success still invalidates older failures.
     after(input) { committed(input); },
+  });
+  // The worker names every sign-in it watches each time, so the record of its machine is replaced whole.
+  // Which machine it speaks for comes from its credential alone, and a sign-in of an account that is not
+  // enabled there is left out (AccountLogins.checked), so a worker cannot write about another machine or
+  // an account it was never given.
+  const logins = new AccountLogins(db, now);
+  operations.register({ name: 'runtime.signInState', write: true, recheckPolicy: true, doors: ['http'],
+    input: z.object({ logins: z.array(loginCheck).max(64) }).strict(), output: z.object({ changed: z.number().int().nonnegative() }).strict(),
+    may: viewer => !!liveWorker(db, viewer, runner(viewer)),
+    run(ctx, input) {
+      const changed = logins.checked(liveWorker(db, ctx.viewer, runner(ctx.viewer))!, input.logins);
+      for (const account of changed) ctx.changed('modelAccount', account);
+      return { changed: changed.length };
+    },
   });
   return { close() { bases.clear(); } };
 }

@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "daaa6f6ba5541c288501a62d4acd3c58a59a31abd1e38028fb3d5722ace3a46e",
+  "sourceSha256": "69a52983b010c45a06977e7e27eeed200cf80e14f3b176a308e82bef4a8879c5",
   "promises": [
     {
       "id": "machines-001",
@@ -56,7 +56,7 @@
     },
     {
       "id": "machines-011",
-      "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be waiting, stopped or lost.",
+      "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost.",
       "source": "docs/how-it-works/site/machines.html#how-h"
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "id": "machines-014",
-      "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given.",
+      "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the Houses page.",
       "source": "docs/how-it-works/site/machines.html#how-h"
     },
     {

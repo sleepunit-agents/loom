@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -76,7 +76,7 @@ it('flushes the shared send queue through the current bot credential and confirm
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();
  const incoming=f.db.select().from(bridgeIncoming).get()!;f.request.mockImplementation(async(url)=>{expect(String(url)).toBe('https://slack.com/api/chat.postMessage');expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(bridgeSends).get()?.state).toBe('sending');return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});});
  f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'Hi <@everyone>'});f.daemon.changed();await f.daemon.idle();
- expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',postedId:'1794432000.000009'});expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent'});expect(f.db.select().from(bridgeSendParts).all()).toEqual([{send:f.db.select().from(bridgeSends).get()!.id,part:0,postedId:'1794432000.000009'}]);expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);
 });
 it('drains an in-flight post during close and records uncertainty without a second network attempt',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;
@@ -94,7 +94,9 @@ it('refuses the next part when connection identity changes during its fresh cred
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;let reads=0;
  f.source.read.mockImplementation(async()=>{const bytes=Buffer.from('synthetic:TOKEN');f.buffers.push(bytes);if(++reads===2)f.writes.run(()=>f.db.update(bridgeConnections).set({botUser:'UREPLACED'}).run());return bytes;});
  f.request.mockImplementation(async()=>Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));
- f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);expect(f.db.select().from(bridgeSends).get()?.state).toBe('uncertain');expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+ // The first part is out and on record. The second was refused before any request, so it has not left: the reply waits to go on from it, and is not in doubt.
+ expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state,row.text.length])).toEqual([['reply','pending',4000]]);expect(f.db.select().from(bridgeSendParts).all()).toEqual([{send:'reply',part:0,postedId:'1794432000.000009'}]);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
 it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
  const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});
@@ -110,6 +112,17 @@ it('fetches attachments only after committed delivery, stores private bytes, and
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');return new Response('DATA',{headers:{'content-type':'application/octet-stream'}});}return original(url,options);});
  const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'../image x',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/image'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));expect(f.db.select().from(bridgeFiles).all()).toEqual([]);f.clock.advance(0);await f.daemon.idle();
  expect(f.db.select().from(bridgeFiles).get()).toMatchObject({file:'FABC',name:'image_x',contents:Buffer.from('DATA')});expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);f.clock.advance(1);await f.daemon.idle();expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+});
+it('lists a Slack file that is already kept under the second message that shares it, without fetching it again',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;let fetches=0;
+ f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){fetches++;return new Response('DATA',{headers:{'content-type':'application/octet-stream'}});}return original(url,options);});
+ const share=async(event:string,ts:string)=>{const frame=JSON.parse(f.raw(event,event).toString());frame.payload.event.ts=ts;frame.payload.event.files=[{id:'FABC',name:'image',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/image'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();f.clock.advance(1);await f.daemon.idle();};
+ await share('first','1794432000.000001');await share('second','1794432000.000002');
+ const messages=f.db.select({id:bridgeIncoming.id}).from(bridgeIncoming).all().map(row=>row.id);expect(messages).toHaveLength(2);
+ expect(fetches).toBe(1);expect(f.db.select().from(bridgeFiles).all()).toHaveLength(1);
+ expect(f.db.select().from(bridgeFileMessages).all().map(row=>row.incoming).sort()).toEqual([...messages].sort());
+ // Nothing was left to fetch for the second message, so its frame is not kept waiting.
+ expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);
 });
 it.each([{state:'dropped' as const},{channel:'OTHER'},{member:null}])('revokes an attachment fetch when its saved incoming proof changes: %j',async change=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){f.writes.run(()=>f.db.update(bridgeIncoming).set(change).run());return new Response('DATA');}return original(url,options);});const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'file',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/file'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();expect(f.db.select().from(bridgeFiles).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
@@ -138,6 +151,41 @@ it('connects Discord through its owned live cursor and durably retains raw befor
  const f=fixture({discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(gateway).toBeDefined();
  const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateway!.commit({type:'READY',data:{},seq:1},checkpoint,raw);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);expect(gateway!.load()).toEqual(checkpoint);await gateway!.reset();expect(gateway!.load()).toBeUndefined();
 });
+it('keeps the Discord resume cursor across a restart and gives it to no lifetime under a changed secret, however the change and a stop were ordered',async()=>{
+ type Gateway=Parameters<NonNullable<SharedBridgeOptions['discord']>>[0];const gateways:Gateway[]=[];
+ const discord:SharedBridgeOptions['discord']=options=>{gateways.push(options);return {close:async()=>{}};};
+ const f=fixture({discord});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();
+ const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateways[0].commit({type:'READY',data:{},seq:1},checkpoint,raw);
+ // A stop is not a reason to lose the place: the next process resumes from it.
+ await f.daemon.close();expect(f.db.select().from(bridgeResume).all()).toHaveLength(1);
+ const second=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>second.close());
+ await second.ready();await second.idle();expect(gateways).toHaveLength(2);expect(gateways[1].load()).toEqual(checkpoint);
+ // The token was replaced: the old session belongs to the old credential, so the next lifetime is given no cursor.
+ f.db.insert(secretChanges).values({id:'change-1',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();second.changed(true);await second.idle();
+ expect(gateways).toHaveLength(3);expect(gateways[2].load()).toBeUndefined();
+ // The same holds when the program stopped between the secret write and noticing it: the cursor row
+ // names the credential it was made under, so nothing has to run at the right moment to forget it.
+ await gateways[2].commit({type:'READY',data:{},seq:1},{...checkpoint,session:'later'},Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})));
+ expect(gateways[2].load()).toEqual({...checkpoint,session:'later'});await second.close();
+ f.db.insert(secretChanges).values({id:'change-2',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();
+ const third=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>third.close());
+ await third.ready();await third.idle();expect(gateways).toHaveLength(4);expect(gateways[3].load()).toBeUndefined();
+});
+it('goes on receiving for the connection when one channel has details it cannot classify',async()=>{
+ const f=fixture(),usual=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('/conversations.info')&&new URLSearchParams(String(init?.body)).get('channel')==='CODD'
+  ?Response.json({ok:true,channel:{id:'CODD',is_group:true}}):usual(url,init));
+ await f.daemon.ready();await f.daemon.idle();
+ await f.transports[0].receive({},Buffer.from(f.raw('odd','ack-odd').toString().replace('CROOM','CODD').replace('000001','000002')));
+ await f.transports[0].receive({},f.raw());
+ f.clock.advance(0);await f.daemon.idle();
+ // The message in the readable room is delivered; the other waits, and the trouble is reported once.
+ expect(f.db.select().from(bridgeIncoming).all().map(row=>[row.channel,row.state])).toEqual([['CROOM','delivered']]);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
+ expect(f.errors).toHaveLength(1);
+ f.clock.advance(5000);await f.daemon.idle();f.clock.advance(5000);await f.daemon.idle();
+ expect(f.errors).toHaveLength(1);
+});
 it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';
  await f.transports[0].receive({},Buffer.from(JSON.stringify(first)));await f.transports[0].receive({},Buffer.from(JSON.stringify(bad)));f.published.length=0;f.clock.advance(0);await f.daemon.idle();
@@ -150,7 +198,7 @@ it('does not publish an empty drain during ordinary reconciliation',async()=>{
 it('keeps the authenticated connection state when only channel filters change',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const before=f.db.select().from(bridgeConnections).get()!;
  expect(before.state).toBe('connected');f.clock.advance(1000);
- const {state:_state,stateAt:_at,...connection}=before;
+ const {state:_state,stateAt:_at,removedAt:_removed,...connection}=before;
  new BridgeSettings(f.db,()=>new Date(f.clock.now()).toISOString(),write=>f.writes.run(write).value).change({action:'connection',...connection,only:['CROOM'],ignore:['COTHER']});
  f.daemon.changed();await f.daemon.idle();
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({state:'connected',stateAt:before.stateAt});expect(f.transports).toHaveLength(1);expect(f.closed).not.toHaveBeenCalled();

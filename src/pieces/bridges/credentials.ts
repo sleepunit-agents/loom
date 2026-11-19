@@ -1,3 +1,4 @@
+import { isHolderGeneration } from '../secrets/role.js';
 import type { Clock } from '../../core/clock.js';
 import type { HolderGeneration } from '../secrets/role.js';
 
@@ -27,8 +28,7 @@ export function bridgeCredentials(source: HolderGeneration, clock: Clock) {
     const value=await Promise.race([read,timeout]);
     cancelRead?.();cancelRead=undefined;abandon=undefined;
     if (closed) return;
-    const valid=!expired && typeof value === 'string' && value.length === 36
-      && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    const valid=!expired && isHolderGeneration(value);
     publish(valid ? value : undefined);
     if (closed) return;
     cancelPoll=clock.at(clock.now()+5000,()=>{cancelPoll=undefined;void poll();});

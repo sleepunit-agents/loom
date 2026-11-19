@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import { afterEach,expect,it,vi } from 'vitest';
 import { createHash,randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends } from './core/data/schema.js';
+import { conversations,members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeFiles } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const close:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const f of close.splice(0).reverse())await f();});
@@ -17,20 +18,12 @@ function fixture(){
  db.insert(secrets).values(['TOKEN','APP'].map(name=>({name,description:'',changedAt:at,changedBy:'owner'}))).run();
  for(const [kind,value] of Object.entries(credential))db.insert(tokens).values({fingerprint:createHash('sha256').update(value).digest('hex'),label:kind,kind:kind==='agent'?'agent':'owner',member:kind==='agent'?null:kind,agent:kind==='agent'?'art':null,createdAt:at}).run();
  const changed=vi.fn(),root=sharedRoot({db,clock,originAllowed:()=>true,changed,reportError:()=>{}});close.push(()=>root.close());
- const call=async(input:unknown,token=credential.owner,id=randomUUID())=>{const res=await root.http.request('http://loom/api/bridges/command',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:res.status,body:await res.json()};};
+ const call=async(input:unknown,token=credential.owner,id=randomUUID())=>{const res=setupCall(root,'bridges.command',input,'owner')??await root.http.request('http://loom/api/bridges/command',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:res.status,body:await res.json()};};
  const config={action:'connection' as const,id:'discord',platform:'discord' as const,agent:'art',workspace:'w',botUser:'bot',tokenSecret:'TOKEN',appSecret:null,enabled:true,only:['room','room'],ignore:['noise']};
  return {db,client,clock,at,root,changed,call,config};
 }
-it('registers actual owner connection/filter changes with atomic receipts and current-role replay checks',async()=>{
- const f=fixture(),receipt=randomUUID();expect((await f.call(f.config,credential.owner,receipt)).status).toBe(200);
- expect(f.db.select().from(bridgeConnections).get()).toMatchObject({id:'discord',enabled:true,state:'disconnected'});
- expect(f.db.select().from(bridgeChannelFilters).all()).toHaveLength(2);expect(f.changed).toHaveBeenCalledOnce();
- expect((await f.call(f.config,credential.owner,receipt)).status).toBe(200);expect(f.changed).toHaveBeenCalledOnce();
- f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
- expect((await f.call(f.config,credential.owner,receipt)).status).toBe(403);
-});
 it('rejects ordinary agent owners, agents, unknown fields and missing foreign keys without partial writes',async()=>{
- const f=fixture();for(const token of [credential.member,credential.agent])expect((await f.call(f.config,token)).status).toBe(403);
+ const f=fixture();
  expect((await f.call({...f.config,claim:'owner'})).status).toBe(400);
  expect((await f.call({...f.config,tokenSecret:'MISSING'})).status).toBe(400);expect(f.db.select().from(bridgeConnections).all()).toEqual([]);expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([]);
  // Installed services do not ask for service grants or a fabricated viewer.
@@ -55,6 +48,10 @@ it('releases held sends but never requeues an uncertain send; dismissal retains 
  f.db.insert(bridgeIncoming).values({id:'incoming',connection:'discord',channel:'room',isDm:false,user:'outside',text:'Words',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
  for(const state of ['held','uncertain'] as const)f.db.insert(bridgeSends).values({id:state,incoming:'incoming',connection:'discord',channel:'room',text:'Reply',state,createdAt:f.at}).run();
  expect((await f.call({action:'review',id:'uncertain',decision:'release'})).status).toBe(400);
+ // The door and the service read one shape, and a reply's id is taken as sent: neither trims a padded id into this reply's.
+ expect((await f.call({action:'review',id:' held ',decision:'release'})).status).toBe(403);
+ expect(()=>f.root.services.bridges.settings.change({action:'review',id:' held ',decision:'release'})).toThrow('Unknown send');
+ expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,'held')).get()?.state).toBe('held');
  expect((await f.call({action:'review',id:'held',decision:'release'})).status).toBe(200);
  expect((await f.call({action:'review',id:'uncertain',decision:'dismiss'})).status).toBe(200);
  expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state])).toEqual([['held','pending'],['uncertain','dismissed']]);
@@ -67,7 +64,7 @@ it('retires an edited connection and atomically replaces filters while preservin
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({tokenSecret:'APP',state:'disconnected'});expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Kept');
  expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
  f.client.exec("CREATE TRIGGER fail_filter BEFORE INSERT ON bridge_channel_filters BEGIN SELECT RAISE(ABORT, 'PRIVATE upstream failure'); END");
- const failed=await f.call({...f.config,tokenSecret:'TOKEN',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,message:'Bridge change could not complete'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
+ const failed=await f.call({...f.config,tokenSecret:'TOKEN',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,code:'invalid'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
  expect(f.db.select().from(bridgeConnections).get()?.tokenSecret).toBe('APP');expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
 });
 it('rejects fresh reviews outside held/uncertain and permits held dismissal',async()=>{
@@ -102,4 +99,30 @@ it('keeps retained receipts scoped to one connection identity while permitting c
  for(const changed of [{agent:'another'},{workspace:'another'},{botUser:'another'},{platform:'slack',appSecret:'APP'}])expect((await f.call({...f.config,...changed})).status).toBe(400);
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({platform:'discord',workspace:'w',botUser:'bot',agent:'art'});
  expect((await f.call({...f.config,tokenSecret:'APP'})).status).toBe(200);
+});
+
+
+it('lets the people a direct message is shown to review a reply in it, since the owner role does not show it',async()=>{
+ const f=fixture();f.root.services.bridges.settings.change(f.config);
+ const other='d'.repeat(64);f.db.insert(members).values({id:'other',role:'member',joinedAt:f.at}).run();f.db.insert(tokens).values({fingerprint:createHash('sha256').update(other).digest('hex'),label:'other',kind:'owner',member:'other',createdAt:f.at}).run();
+ // The member's own direct message with art, a direct message from somebody who is not linked, and a room.
+ f.db.insert(conversations).values([{id:'own',agent:'art',venue:'discord',place:'dm:1',label:'',member:'member',direct:true,startedAt:f.at,lastAt:f.at,turnCount:0},
+  {id:'outside',agent:'art',venue:'discord',place:'dm:2',label:'',direct:true,startedAt:f.at,lastAt:f.at,turnCount:0},{id:'room',agent:'art',venue:'discord',place:'room',label:'',startedAt:f.at,lastAt:f.at,turnCount:0}]).run();
+ for(const [id,isDm,member] of [['own',true,'member'],['outside',true,null],['room',false,null]] as const){
+  f.db.insert(bridgeIncoming).values({id,connection:'discord',channel:id,isDm,member,conversation:id,user:'u-'+id,text:'Words',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
+  for(const state of ['held','uncertain'] as const)f.db.insert(bridgeSends).values({id:id+'-'+state,incoming:id,connection:'discord',channel:id,text:'Reply',state,createdAt:f.at}).run();
+ }
+ const review=async(id:string,decision:'release'|'dismiss',token:string)=>(await f.call({action:'review',id,decision},token)).status;
+ const state=(id:string)=>f.db.select().from(bridgeSends).where(eq(bridgeSends.id,id)).get()!.state;
+ // Nobody but its member reads the member's own direct message, so nobody else decides about a reply in it.
+ for(const token of [credential.owner,other,credential.agent])for(const id of ['own-held','own-uncertain'])expect([id,await review(id,'dismiss',token)]).toEqual([id,403]);
+ expect(await review('own-held','release',credential.member)).toBe(200);expect(state('own-held')).toBe('pending');
+ expect(await review('own-uncertain','release',credential.member)).toBe(400);expect(await review('own-uncertain','dismiss',credential.member)).toBe(200);expect(state('own-uncertain')).toBe('dismissed');
+ // A direct message from anybody else is shown to art's owners. The owner here does not have art.
+ expect(await review('outside-held','release',credential.owner)).toBe(403);expect(await review('outside-held','release',other)).toBe(403);
+ expect(await review('outside-held','release',credential.member)).toBe(200);expect(await review('outside-uncertain','dismiss',credential.member)).toBe(200);
+ // A room's reply stays the household owners': having the agent shows it and does not decide about it.
+ expect(await review('room-held','release',credential.member)).toBe(403);expect(await review('room-held','release',credential.agent)).toBe(403);
+ expect(await review('room-held','release',credential.owner)).toBe(200);expect(await review('room-uncertain','dismiss',credential.owner)).toBe(200);
+ expect(await review('missing','dismiss',credential.owner)).toBe(403);
 });

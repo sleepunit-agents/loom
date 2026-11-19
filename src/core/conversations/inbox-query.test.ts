@@ -5,7 +5,8 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, household, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
+import { actionResults, agents, bridgeConnections, bridgeIncoming, conversations, household, inbox, inboxReads, memberAgents, members, messages, secrets, threads } from '../data/schema.js';
+import { talkVisibility } from '../data/conversation-visibility.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
 const clients: Database.Database[] = [];
@@ -93,6 +94,12 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   ]).run();
   expect(f.service.results(alice).map(r => r.id)).toEqual(['r1']);
   expect(f.service.results({ kind: 'agent', id: 'art' })).toEqual([]);
+  // One rule (policy.ts, ownNotice) for this read and for marking a notice read: an agent working for alice is not alice,
+  // and a member who has been removed reads nothing.
+  expect(f.service.results({ kind: 'agent', id: 'art', workingFor: 'alice' })).toEqual([]);
+  f.db.update(members).set({ removedAt: '2026-11-14T18:02:00.000Z' }).where(eq(members.id, 'bob')).run();
+  expect(f.service.results({ kind: 'member', id: 'bob' })).toEqual([]);
+  f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'bob')).run();
   expect(() => f.service.results(alice, 51)).toThrow('Invalid action result limit');
   const encoded=await sealHandoff(f.key,'A brief','2026-11-14T18:00:00.000Z',14);
   const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: encoded });
@@ -504,4 +511,27 @@ it('retries a private Inbox read when an overlapping read-marker write invalidat
     expect((await stream.next()).value).toMatchObject({revision:1,patches:[{path:[],value:{inboxItems:[{id:f.ask.inboxItem,read:true,body:{words:'Order the private pump?'}}]}}]});
     expect(f.opens()).toBe(2);
   } finally {await stream.return?.();live.close();}
+});
+it('gives a bridge direct message to the agent\'s owners and not to the agent\'s own token', async () => {
+  const f = await fixture(), at = '2026-11-14T18:00:00.000Z', cvs = f.comms.threads.conversations;
+  // The Inbox rule as production states it: an item in a conversation is read with that conversation.
+  const service = new InboxQueries(f.db, f.key, (viewer, row) => talkVisibility(viewer).inbox(row), () => at);
+  f.db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: at }).run(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const owner = { kind: 'member' as const, id: 'owner' };
+  f.db.insert(secrets).values({ name: 'TOKEN', description: '', changedAt: at, changedBy: 'alice' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'slack', agent: 'art', workspace: 'w', botUser: 'bot', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: at }).run();
+  const mail = (id: string, isDm: boolean) => {
+    const cv = cvs.open({ agent: 'art', venue: 'slack', place: id, label: id });
+    f.db.update(conversations).set({ direct: isDm }).where(eq(conversations.id, cv.id)).run();
+    f.db.insert(bridgeIncoming).values({ id, connection: 'c', channel: id, isDm, user: 'stranger', text: id, postedAt: at, receivedAt: at, state: 'delivered', conversation: cv.id }).run();
+    return cvs.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'slack', sourceId: id, fromKind: 'unknown', words: `${id} words`, refs: [id] });
+  };
+  const dm = mail('dm', true), room = mail('room', false), art = { kind: 'agent' as const, id: 'art' };
+  expect(await service.body(art, room.id)).toMatchObject({ words: 'room words' });
+  // The agent's token reads its rooms. A direct message is not on its list at all: a body gets one as its mail.
+  expect(service.item(art, dm.id)).toBeNull();
+  expect(await service.body(art, dm.id)).toBeNull();
+  expect(await service.body(alice, dm.id)).toMatchObject({ words: 'dm words' });
+  // The owner role alone does not own the agent.
+  expect(service.item(owner, dm.id)).toBeNull(); expect(service.item(owner, room.id)?.id).toBe(room.id);
 });

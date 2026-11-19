@@ -2,7 +2,7 @@
   "page": "tempo",
   "title": "Tempo",
   "ownerTask": "t-2238",
-  "sourceSha256": "8fc075f44e55796ea00a9af1122d16b938c1223b74459e6cee15e1e8d8269cd7",
+  "sourceSha256": "3460c670e04e106fb9847665c65f4d2ee2c58e8634e5b7a4c3de836e39e0de69",
   "promises": [
     {
       "id": "tempo-001",
@@ -65,7 +65,7 @@
     },
     {
       "id": "tempo-012",
-      "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer.",
+      "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "id": "tempo-018",
-      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own.",
+      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them.",
       "source": "docs/how-it-works/site/tempo.html#see-h"
     },
     {
@@ -172,6 +172,7 @@
   "modelTables": [
     "triggers",
     "trigger_log",
+    "trigger_edits",
     "agent_pauses",
     "tempo_settings"
   ]

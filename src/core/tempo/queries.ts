@@ -1,11 +1,34 @@
 /** Safe household display projection for Tempo; never expose settings wholesale. */
-import { GraphQLString } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import { GraphQLInt, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import { and, desc, eq } from 'drizzle-orm';
+import { triggerLog, triggers } from '../data/schema.js';
+import { dataValue } from '../data/subscriptions.js';
+import { sharedSharing } from '../../shared-sharing.js';
+import { isHouseholdOwner, rules, type Viewer } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
-import { household } from '../data/schema.js';
-export function tempoQueryFields(db: DataDatabase, viewer: Viewer) {
- return { tempoTimezone: { type: GraphQLString,
-   resolve: () => viewer.kind === 'member' || viewer.kind === 'agent'
-     ? db.select({zone:household.timezone}).from(household).get()?.zone ?? 'UTC' : null,
+import { householdTimezone } from '../data/household-settings.js';
+import { readTimings } from './volume.js';
+const timings = new GraphQLObjectType({ name: 'TempoTimings', fields: Object.fromEntries(['settleSeconds', 'dimDays', 'muteDays'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])) });
+export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgram: () => boolean = () => true) {
+ // Someone in the household now (rules.currentViewer): a removed member's token, or a body whose member has left, reads neither.
+ const current = () => sqlHolds(db, rules.currentViewer, viewer);
+ return { tempoProgram: { type: dataValue, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { id }: { id: string }) => {
+     if (!current() || !canReadProgram()) return null;
+     const row = db.select().from(triggers).where(eq(triggers.id, id)).get();
+     if (!row?.program || !(isHouseholdOwner(viewer, sharedSharing(db)) || (viewer.kind === 'agent' && !viewer.workingFor && viewer.id === row.to))) return null;
+     const result = db.select({ note: triggerLog.note }).from(triggerLog).where(and(eq(triggerLog.trigger, id), eq(triggerLog.event, 'program'))).orderBy(desc(triggerLog.seq)).limit(1).get();
+     return { lastResult: result?.note ?? null, program: row.program, readStateFrom: row.readStateFrom, programPeriod: row.programPeriod, programState: row.programState };
+   },
+ }, tempoTimezone: { type: GraphQLString,
+   resolve: () => current() ? householdTimezone(db) : null,
+ },
+ // The caller's own timings: a person's or an agent's. Defaults when it has changed none.
+ tempoTimings: { type: timings,
+   resolve: () => {
+     if ((viewer.kind !== 'member' && viewer.kind !== 'agent') || !current()) return null;
+     return readTimings(db, { kind: viewer.kind === 'member' ? 'person' : 'agent', id: viewer.id });
+   },
  } };
 }

@@ -16,8 +16,7 @@ import {CommsMessages} from '../core/conversations/messages.js';
 import {wordsKey} from '../pieces/comms/crypto.js';
 import {serveShared} from '../shared-serve.js';
 import {storeDeskSprite} from '../desk-sprites.js';
-import {manifestFromPixelLab} from '../household.js';
-import {sheet} from './pixel-sheet.fixture.js';
+import {manifestFromPixelLab,sheet} from './pixel-sheet.fixture.js';
 import {deskMemoryFixture} from './desk-memory.fixture.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Desk evidence needs Chrome and the built app');
@@ -31,7 +30,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  db.insert(memberAgents).values(ids.map(agent=>({member:'owner',agent}))).run();
  db.insert(agentStatus).values(ids.map(agent=>({agent,state:agent==='art'?'working' as const:'idle' as const,work:agent==='art'?'Rebuilding the shared desk':'',changedAt:now()}))).run();
  db.insert(tokens).values({fingerprint,label:'Disposable desk fixture',kind:'owner',member:'owner',createdAt:now()}).run();
- const privateBrief='PRIVATE JOB INSTRUCTIONS OMITTED';db.insert(jobs).values({id:'desk-current-job',agent:'art',member:'owner',state:'waiting',title:'Fixture current desk work',brief:privateBrief,model:'fixture-model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ const privateBrief='PRIVATE JOB INSTRUCTIONS OMITTED';db.insert(jobs).values({id:'desk-current-job',agent:'art',member:'owner',state:'running',title:'Fixture current desk work',brief:privateBrief,model:'fixture-model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  const machine={owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()};
  db.insert(boxes).values([{...machine,id:'desk-box',name:'Disposable worker'},{...machine,id:'retired-box',name:'Retired worker',revokedAt:now()}]).run();
  const picture=sheet(),layout=manifestFromPixelLab(JSON.parse(picture.json.toString()));storeDeskSprite(db,'art',layout,{'sheet.png':picture.png});

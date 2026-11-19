@@ -5,14 +5,12 @@ import { and, eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { sharedRoot } from './shared-root.js';
-import { registerBuiltinService } from './core/services.js';
 import * as s from './core/data/schema.js';
 const privateCalls=vi.hoisted(()=>{
  const fail=()=>{throw new Error('Provider execution forbidden in metadata commands');};
- return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail),signIn:vi.fn(fail)};
+ return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail)};
 });
 vi.mock('node:child_process',async original=>{const api={...await original<typeof import('node:child_process')>(),...privateCalls};return{...api,default:api};});
-vi.mock('./runtime/account-signin.js',()=>({signInAccount:privateCalls.signIn}));
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.unstubAllGlobals();});
 const raw={alice:'a'.repeat(64),bob:'b'.repeat(64),admin:'h'.repeat(64),runner:'r'.repeat(64),agent:'g'.repeat(64),runnerTwo:'t'.repeat(64)};
@@ -64,6 +62,12 @@ it('requires access to both the account and a live box for a sign-in report',asy
  expect(f.db.select().from(s.modelAccountBoxes).all()).toHaveLength(2);
  expect((await f.post('accountSignedOut',{account,box:'two'})).status).toBe(200);
  expect(f.db.select().from(s.modelAccountBoxes).all()).toEqual([{account,box:'one'}]);
+ // What was learned about its sign-ins on that machine goes with the binding, and only that machine's.
+ const at='2026-11-19T14:00:00.000Z',login={account,harness:'claude',place:'containers',state:'signed-out',checkedAt:at,since:at,learnedFrom:'check'} as const;
+ f.db.insert(s.modelAccountBoxes).values({account,box:'two'}).run();
+ f.db.insert(s.modelAccountLogins).values([{...login,box:'one'},{...login,box:'two'}]).run();
+ expect((await f.post('accountSignedOut',{account,box:'two'})).status).toBe(200);
+ expect(f.db.select().from(s.modelAccountLogins).all().map(row=>row.box)).toEqual(['one']);
 });
 it('uses the current household role rather than agent ownership or a retained owner label',async()=>{
  const f=fixture(),account=await f.create();
@@ -120,8 +124,8 @@ it('lets a current household owner remove another member account association',as
  expect((await f.post('accountSignedOut',{account,box:'one'},'admin')).status).toBe(200);
  expect(f.db.select().from(s.modelAccountBoxes).all()).toEqual([]);
 });
-it('refuses an installed service even when its namespace and record types match the account commands',async()=>{
- const f=fixture(),account=await f.create(),service=registerBuiltinService(f.root.operations,'owner-looking-service',['runtime.model-account','runtime.box'],'runtime');
+it('refuses a caller that only says it is a service for every account command',async()=>{
+ const f=fixture(),account=await f.create(),service={kind:'service' as const,id:'runtime'};
  for(const [name,input]of [
   ['accountCreate',{provider:'provider',label:'Service account'}],
   ['accountRename',{account,label:'Service edit'}],

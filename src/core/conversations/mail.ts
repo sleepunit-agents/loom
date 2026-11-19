@@ -1,3 +1,4 @@
+import { wordsKept } from './retention.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from './private-inbox-words.js';
 /** Trusted in-process body delivery. Decrypted words are ephemeral output:
@@ -5,11 +6,13 @@ import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from '
  * External runner doors must recheck their current authentication after await
  * and before committing. This service does not authenticate a machine. */
 import {prepareHistoryContext,type HistoryLine} from './history-context.js';
+import {prepareBridgeHistory} from './bridge-history.js';
 import {prepareAnswerContext,type AnswerContext} from './answer-context.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
+import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { mailWords } from './volume.js';
 import { CommsMessages } from './messages.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 type Item = typeof inbox.$inferSelect;
 export type Delivery = { item: Item; words: string | null; answerContext?:AnswerContext; history?:HistoryLine[] };
@@ -35,11 +38,10 @@ export class ConversationMail {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid mail batch size');
     const { db, key, now, threads: { conversations } } = this.comms;
     if (db.$client.inTransaction) throw new Error('Prepare mail outside a transaction');
-    const keepDays = () => db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const keepDays = () => commsKeepDays(db);
     const retained = (message: typeof messages.$inferSelect) => {
       const days = keepDays();
-      return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-        && Date.parse(message.keepUntil) > Date.parse(now()) && Date.parse(message.at) + days * 86400000 > Date.parse(now());
+      return !!message.words && wordsKept(message, days, now());
     };
     const items = conversations.pending(conversation, job).slice(0,limit), privateRows = this.privateMessages(items);
     const refs = () => items.length ? db.select().from(inboxRefs).where(inArray(inboxRefs.item, items.map(item => item.id)))
@@ -64,6 +66,11 @@ export class ConversationMail {
     const ordinary=(item:Item,words:string|null|undefined)=>item.source==='thread'&&!!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
     const cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
     const history=items.some(item=>ordinary(item,prepared.get(item.id)))?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
+    // A bridge conversation has no thread; what was said earlier in it is its own kept words (bridge-history.ts).
+    // A firing or a note in a bridge's conversation starts a job there like any message, and that body is told what was said there too.
+    const venue=conversations.conversation(conversation).venue,inBridge=venue==='discord'||venue==='slack';
+    const bridged=(item:Item,words:string|null|undefined)=>(item.source==='discord'||item.source==='slack'||inBridge&&(item.source==='trigger'||item.source==='handoff'))&&!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
+    const earlier=items.some(item=>bridged(item,prepared.get(item.id)))?prepareBridgeHistory(db,now,conversation):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
@@ -83,26 +90,62 @@ export class ConversationMail {
           throw new Error('Private message changed; prepare again');
       }
       const answerContexts=new Map(items.map(item=>[item.id,contexts.get(item.id)?.()]));
-      const dialogue=history();
+      const dialogue=history(),said=earlier();
       const taken=conversations.take(conversation, job, items.map(item => item.id));
       if(taken.length)db.update(messages).set({delivery:'sending'}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,taken.map(item=>item.id)))).run();
       let historyAttached=false;
-      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null,includeHistory=!historyAttached&&ordinary(item,visible)&&dialogue.length>0;if(includeHistory)historyAttached=true;return {item,words:visible,...(answerContext?{answerContext}:{}),...(includeHistory?{history:dialogue}:{})};});
+      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null,includeHistory=!historyAttached&&ordinary(item,visible)&&dialogue.length>0,includeSaid=!historyAttached&&!includeHistory&&bridged(item,visible)&&said.length>0;if(includeHistory||includeSaid)historyAttached=true;return {item,words:visible,...(answerContext?{answerContext}:{}),...(includeHistory?{history:dialogue}:includeSaid?{history:said}:{})};});
     });
   }
 
-  /** Call only after the body accepts the mail, never on enqueue or take. */
+  /** The checks every report about one taken item shares: it is this conversation's agent mail, and a private
+   * item still points at the message it carried. Whether this job holds it is the caller's next check. */
+  private held(conversation: string, job: string, itemId: string): Item {
+    const { threads: { conversations } } = this.comms;
+    conversations.pending(conversation, job); // also validates done-item retries
+    const item = conversations.item(itemId), cv = conversations.conversation(conversation);
+    if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
+    if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
+    return item;
+  }
+  private delivered(item: Item): void {
+    if (item.thread && item.messageSeq !== null) this.comms.db.update(messages).set({ delivery: 'delivered' })
+      .where(and(eq(messages.thread, item.thread), eq(messages.seq, item.messageSeq), eq(messages.inboxItem, item.id), eq(messages.kind, 'message'))).run();
+  }
+
+  /** The body has the mail: its sender sees it delivered. Call only after the body accepts the mail, never
+   * on enqueue or take. This settles nothing. Mail is settled by its answer (settle, confirm), so a body
+   * that dies before answering leaves it to the job's next attempt, where it shows as held again. So an
+   * agent can be handed the same mail twice, and is never left with mail nobody answered
+   * (docs/accepted-tradeoffs.md, "Mail is delivered at least once"). */
+  accept(conversation: string, job: string, itemId: string): Item {
+    return this.comms.db.transaction(() => {
+      const item = this.held(conversation, job, itemId);
+      if (item.job !== job || !['taken', 'done'].includes(item.state)) throw new Error('Item is not held by this job');
+      this.delivered(item);
+      return item;
+    });
+  }
+
+  /** The mail is dealt with: done, and never handed to another body. A body calls this once the answer to
+   * the mail is recorded, or for mail that needs none. */
   confirm(conversation: string, job: string, itemId: string): Item {
     const { db, threads: { conversations } } = this.comms;
     return db.transaction(() => {
-      conversations.pending(conversation, job); // also validates done-item retries
-      const item = conversations.item(itemId), cv = conversations.conversation(conversation);
-      if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
-      if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
+      const item = this.held(conversation, job, itemId);
       const result = conversations.confirm(itemId, job);
-      if (item.thread && item.messageSeq !== null) db.update(messages).set({ delivery: 'delivered' })
-        .where(and(eq(messages.thread, item.thread), eq(messages.seq, item.messageSeq), eq(messages.inboxItem, item.id), eq(messages.kind, 'message'))).run();
+      this.delivered(item);
       return result;
     });
+  }
+
+  /** A recorded reply is the answer to everything this job took before it. Settling that mail in the reply's
+   * own write means a body that dies before its own confirmation cannot have it answered a second time.
+   * Mail still waiting (it arrived while the body worked) is not touched. Returns the items settled. */
+  settle(conversation: string, job: string): string[] {
+    const { db } = this.comms;
+    return db.transaction(() => db.select({ id: inbox.id }).from(inbox)
+      .where(and(eq(inbox.conversation, conversation), eq(inbox.job, job), eq(inbox.state, 'taken'))).all()
+      .map(({ id }) => this.confirm(conversation, job, id).id));
   }
 }

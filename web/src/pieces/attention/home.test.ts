@@ -97,7 +97,7 @@ const runtimeJob=(id:string,fields:Partial<CurrentJob>={}):CurrentJob=>({id,agen
 it('shows generated current jobs independently of reports and preserves server order and concurrent titles',async()=>{
   f.snapshots['generated.jobs']=live([
     {id:'first',agent:'art',title:'Same work',state:'running',box:'worker',queuedAt:'2026-11-14T01:00:00Z'},
-    {id:'second',agent:'art',title:'Same work',state:'waiting',box:'worker',queuedAt:'2026-11-14T02:00:00Z'},
+    {id:'second',agent:'art',title:'Same work',state:'running',box:'worker',queuedAt:'2026-11-14T02:00:00Z'},
     {id:'queued',agent:'art',title:'Runtime queued',state:'queued',box:null,queuedAt:'2026-11-14T03:00:00Z'},
     {id:'starting',agent:'art',title:'Runtime starting',state:'starting',box:'worker',queuedAt:'2026-11-14T04:00:00Z'},
   ]);

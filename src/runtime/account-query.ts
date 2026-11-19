@@ -9,17 +9,22 @@ const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
   resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
+const machine = new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: { id: { type: text }, name: { type: text } } });
+/** One sign-in of the account as loom last learned it (account-logins.ts). Usage is the account's, not a sign-in's. */
+const login = new GraphQLObjectType({ name: 'RuntimeAccountLogin', fields: {
+  box: { type: new GraphQLNonNull(machine) }, harness: { type: text }, place: { type: text }, state: { type: text },
+  expiresAt: { type: GraphQLString }, checkedAt: { type: text }, since: { type: text }, learnedFrom: { type: text }, why: { type: GraphQLString },
+} });
 const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces: [account], fields: {
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
   hasRoom: column('hasRoom', new GraphQLNonNull(GraphQLBoolean)),
-  signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: {
-    id: { type: text }, name: { type: text },
-  } }))))),
+  signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
+  logins: column('logins', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(login)))),
 } });
 // The union registers both concrete types with the generated schema. Their
 // shared interface lets clients select label/level with one common fragment.

@@ -53,8 +53,11 @@ export function retainedInboxItem(row: InboxItem, now: number): InboxItem {
 
 export function inboxSourcePath(row: InboxItem): string | undefined {
   const kind = row.waitsOnKind ?? row.source, id = row.waitsOnId ?? row.sourceId;
+  if (kind === 'approval') {
+    const card = row.waitsOnId ?? row.refs.find(ref => ref.startsWith('a-')) ?? id;
+    return card ? `/p/approvals-preview/approval/${encodeURIComponent(card)}` : undefined;
+  }
   if (!id) return undefined;
-  if (kind === 'approval') return `/p/approvals-preview/approval/${encodeURIComponent(id)}`;
   if (kind === 'secret-request') return `/p/settings-preview/requests/${encodeURIComponent(id)}`;
   if (kind === 'task') return `/p/tasks-preview/task/${taskSegment(id)}`;
 }

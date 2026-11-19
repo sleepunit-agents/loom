@@ -28,8 +28,11 @@ async function create(f:Awaited<ReturnType<typeof fixture>>,id='handoff'){
 function receive(f:Awaited<ReturnType<typeof fixture>>,cv:string){
  const row=f.db.select().from(s.jobs).where(eq(s.jobs.conversation,cv)).get()!;expect(row).toBeDefined();
  const token='body_'+'d'.repeat(64);
+ // These tests move the clock by days with no worker reporting. They are about the brief, not about a silent
+ // job, so the silence sweep is stopped. (A report stamped in the future no longer hides a job from it.)
+ f.root.services.runtime.close();
  f.root.writes.run(()=>{
-  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()+100*86400000).toISOString()}).where(eq(s.jobs.id,row.id)).run();
+  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()).toISOString()}).where(eq(s.jobs.id,row.id)).run();
   f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional child',kind:'agent',agent:'mark',job:row.id,createdAt:new Date(f.clock.now()).toISOString()}).run();
  });
  const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:row.id,conversation:cv,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init))});clean.push(()=>sdk.close());return{sdk,job:row.id,token};
@@ -48,15 +51,18 @@ it('hands a real private brief through one inherited conversation, settled job a
  const {sdk,job}=receive(f,cv.id);
  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:'alice',project:'pond',brief:''});
  expect(await sdk.takeAndAccept(async item=>{expect(item).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',words:brief.words,keepUntil:new Date(handoffDeadline(stored,14)).toISOString()});})).toMatchObject({accepted:1});
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('taken');await sdk.settle();
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('done');
  for(const table of [s.inbox,s.jobs,s.operationResults,s.conversations,s.turns])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(brief.words);
  expect(f.db.$client.serialize().includes(Buffer.from(brief.words))).toBe(false);
 });
-it.each(['ordinary-agent','member','missing-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
+it.each(['ordinary-agent','member','missing-agent','removed-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
  const f=await fixture();let token=bodyCredentials.body,input:unknown=brief;
  if(mode==='ordinary-agent')token=bodyCredentials.agent;
  if(mode==='member')token=bodyCredentials.member;
  if(mode==='missing-agent')input={...brief,agent:'missing'};
+ // A removed agent keeps its rows, and the lists that named it; it is nobody to hand work to.
+ if(mode==='removed-agent')f.root.writes.run(()=>f.db.update(s.agents).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.agents.id,'mark')).run());
  if(mode==='foreign-project')f.root.writes.run(()=>f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run());
  if(mode==='foreign-owner')f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());
  if(mode==='spoofed-parent')input={...brief,parent:'other-job'};
@@ -215,10 +221,10 @@ it.each(['project','owner'] as const)('withholds a pending public brief after %s
  release();const response=await pending;expect(response.status).toBe(403);expect(await response.text()).not.toContain(brief.words);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('waiting');
 });
-it('keeps private handoff body words visible to a household owner who is not its member',async()=>{
+it('keeps private handoff body words from a household owner who is not its member',async()=>{
  const f=await fixture(),created=await create(f),token='fictional-owner-body-read-'.repeat(4);
  f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();});
- const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toEqual({data:{inboxItem:null}});
 });
 
 it.each(['project','owner'] as const)('withdraws published public handoff originals and clones after %s assignment changes',async kind=>{
@@ -227,4 +233,16 @@ it.each(['project','owner'] as const)('withdraws published public handoff origin
  const response=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(response.status).toBe(200);const copy=response.clone();
  if(kind==='project')f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();else f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();
  await expect(response.text()).rejects.toThrow('Data access ended');await expect(copy.text()).rejects.toThrow('Data access ended');
+});
+
+it('keeps a handed-off direct message direct, so its words reach no wider audience than the message had',async()=>{
+ // An unlinked sender's direct message: nobody's private thread, in no project, shown only to the agent's owners.
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,project:null,direct:true}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f,'direct');
+ expect(f.db.select({direct:s.conversations.direct,member:s.conversations.member,project:s.conversations.project}).from(s.conversations).where(eq(s.conversations.id,created.conversation)).get()).toEqual({direct:true,member:null,project:null});
+ // The same brief sent again finds the same conversation, still direct.
+ expect((await create(f,'direct')).conversation).toBe(created.conversation);
+ // The agent it was handed to still takes it.
+ f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });

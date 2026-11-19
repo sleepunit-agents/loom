@@ -34,9 +34,23 @@ it('registers only the locally generated fingerprint and returns metadata, with 
  f.db.insert(secrets).values({name:'TOKEN',description:'',changedAt:f.now(),changedBy:'owner'}).run();f.db.insert(secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'owner',at:f.now()}).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'TOKEN'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
  const recipient=privateSecretClient({url:'https://loom.test',token:body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>f.root.http.request(String(url),options)});try{const values=await recipient.startup();expect(values.get('API_TOKEN')?.toString()).toBe('PRIVATE_STARTUP');for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
 });
-it('rotates prior job body tokens atomically and never revives a revoked fingerprint through a new id or old receipt',async()=>{
+it('ends a body with the machine token that enrolled it: revoking a leaked machine token leaves none of its bodies signed in',async()=>{
+ const f=fixture(),body=f.credential();expect((await f.call({job:'job',fingerprint:hash(body)})).status).toBe(200);
+ const asBody=()=>f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}})),held=asBody()!;expect(held.valid()).toBe(true);
+ const revoked=await f.root.http.request('http://loom/api/token/revoke',{method:'POST',headers:{authorization:'Bearer '+raw.owner,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{fingerprint:hash(raw.runner)}})});expect(revoked.status).toBe(200);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()).toMatchObject({revokedAt:null,madeFrom:hash(raw.runner)});
+ expect(held.valid()).toBe(false);expect(asBody()).toBeUndefined();
+});
+it('refuses a second body for a job that has a live one, and never revives a revoked fingerprint through a new id or old receipt',async()=>{
  const f=fixture(),first=f.credential(),second=f.credential(),id=randomUUID();expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(200);const proof=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))!;
- expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);expect(proof.valid()).toBe(false);expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
+ // Whoever holds the machine's token cannot put a body of their own in the place of the one the job has.
+ expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(403);expect(proof.valid()).toBe(true);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()).toBeUndefined();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(first))).get()?.revokedAt).toBeNull();
+ // The same fingerprint again is the same body, said twice.
+ expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(200);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(200);
+ // Once that body's token is revoked the job has no live body, and another may be enrolled; the revoked one never comes back.
+ f.root.writes.run(()=>f.db.update(tokens).set({revokedAt:f.now()}).where(eq(tokens.fingerprint,hash(first))).run());expect(proof.valid()).toBe(false);
+ expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);
  expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()?.revokedAt).toBeNull();
 });
 it.each(['worker','foreign'])('enrolls independent concurrent and subsequent jobs on %s without revoking another body',async box=>{
@@ -61,7 +75,7 @@ it('rejects other roles, foreign worker, cookie, forged labels and identity clai
  for(const extra of [{agent:'art'},{box:'worker'},{token:f.credential()},{member:'owner'}])expect((await f.call({...input,...extra})).status).toBe(400);
  expect(await f.root.operations.callAsync('http',{kind:'runner',id:'worker'},'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.root.credentials.runnerEnrollment({kind:'runner',id:'worker'})).toBeUndefined();expect((await f.call({job:'other',fingerprint:input.fingerprint})).status).toBe(403);
 });
-it.each(['queued','running','waiting','done','failed','stopped','lost'] as const)('refuses enrollment/replay after job state becomes %s',async state=>{
+it.each(['queued','running','done','failed','stopped','lost'] as const)('refuses enrollment/replay after job state becomes %s',async state=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);f.root.writes.run(()=>f.db.update(jobs).set({state}).where(eq(jobs.id,'job')).run());expect((await f.call(input,raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(f.credential())})).status).toBe(403);
 });
 it.each(['owner','agent','runner','other-job','expired','future','revoked'] as const)('never repurposes a %s fingerprint and leaves the current body usable',async kind=>{
@@ -69,8 +83,10 @@ it.each(['owner','agent','runner','other-job','expired','future','revoked'] as c
  if(!['owner','agent','runner'].includes(kind))f.db.insert(tokens).values({fingerprint,label:'Collision',kind:'agent',agent:'art',job:kind==='other-job'?'other':'job',createdAt:kind==='future'?new Date(f.clock.now()+1000).toISOString():f.now(),expiresAt:kind==='expired'?f.now():null,revokedAt:kind==='revoked'?f.now():null}).run();
  expect((await f.call({job:'job',fingerprint})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();
 });
-it('rolls token rotation back with a refused receipt and publishes no partial registration',async()=>{
- const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});const next=hash(f.credential());expect(f.changes.some(change=>change.type==='token')).toBe(true);f.changes.length=0;f.client.exec("CREATE TRIGGER refuse_body_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.enrollBody' BEGIN SELECT RAISE(ABORT,'synthetic'); END");expect((await f.call({job:'job',fingerprint:next})).status).toBe(503);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,next)).get()).toBeUndefined();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();expect(f.changes.filter(change=>change.type==='token')).toEqual([]);
+it('rolls a registration back with a refused receipt and publishes no partial registration',async()=>{
+ const f=fixture(),next=hash(f.credential());f.client.exec("CREATE TRIGGER refuse_body_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.enrollBody' BEGIN SELECT RAISE(ABORT,'synthetic'); END");expect((await f.call({job:'job',fingerprint:next})).status).toBe(503);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,next)).get()).toBeUndefined();expect(f.changes.filter(change=>change.type==='token')).toEqual([]);
+ // Nothing was left behind to stand in the way: the same enrolment succeeds once the receipt can be written.
+ f.client.exec('DROP TRIGGER refuse_body_receipt');expect((await f.call({job:'job',fingerprint:next})).status).toBe(200);expect(f.changes.some(change=>change.type==='token')).toBe(true);
 });
 it('rechecks captured worker proof after token rebinding, job reassignment, revocation and shutdown',async()=>{
  const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!;expect(f.root.credentials.runnerEnrollment(auth.viewer)).toMatchObject({box:'worker',fingerprint:hash(raw.runner)});
@@ -95,19 +111,12 @@ it('preserves the entire matching active credential across replay and fresh ids 
 it.each([{member:'owner'},{box:'foreign'}])('schema refuses a mixed-subject body row without revoking the existing body: %j',async extra=>{
  const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});expect(()=>f.db.update(tokens).set(extra).where(eq(tokens.fingerprint,hash(body))).run()).toThrow(/tokens_identity/);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
 });
-it('retains existing job-body authority when only its issuing runner credential is revoked',async()=>{
- const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});const started=await f.root.http.request('http://loom/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{job:'job',build:'artifact'}})});expect(started.status).toBe(200);
- f.root.writes.run(()=>f.db.update(tokens).set({revokedAt:f.now()}).where(eq(tokens.fingerprint,hash(raw.runner))).run());expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
- f.db.insert(secrets).values({name:'TOKEN',description:'',changedAt:f.now(),changedBy:'owner'}).run();f.db.insert(secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'owner',at:f.now()}).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'TOKEN'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
- const recipient=privateSecretClient({url:'https://loom.test',token:body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>f.root.http.request(String(url),options)});try{const values=await recipient.startup();expect(values.get('API_TOKEN')?.toString()).toBe('PRIVATE_STARTUP');for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
-});
-
 it('derives a different actual job agent instead of a caller or default agent',async()=>{
  const f=fixture(),body=f.credential();f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({agent:'mark'}).where(eq(jobs.id,'job')).run();expect((await f.call({job:'job',fingerprint:hash(body)})).status).toBe(200);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()).toMatchObject({kind:'agent',agent:'mark',job:'job'});expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.viewer).toEqual({kind:'agent',id:'mark'});
 });
 
 it('rejects non-HTTP doors even for an actual authenticated worker proof',async()=>{
- const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!,input={job:'job',fingerprint:hash(f.credential())};expect(f.root.credentials.runnerEnrollment(auth.viewer)).toBeDefined();for(const door of ['mcp','direct'] as const)expect(await f.root.operations.callAsync(door,auth.viewer,'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toEqual([]);expect((await f.call(input)).status).toBe(200);
+ const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!,input={job:'job',fingerprint:hash(f.credential())};expect(f.root.credentials.runnerEnrollment(auth.viewer)).toBeDefined();for(const door of ['direct'] as const)expect(await f.root.operations.callAsync(door,auth.viewer,'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toEqual([]);expect((await f.call(input)).status).toBe(200);
 });
 it.each(['conversation','project'] as const)('binds enrollment receipt to the current saved %s',async field=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);
@@ -116,4 +125,10 @@ it.each(['conversation','project'] as const)('binds enrollment receipt to the cu
 });
 it.each(['expired','future'] as const)('refuses a cached enrollment receipt after its body hash becomes %s',async state=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);f.db.update(tokens).set(state==='expired'?{expiresAt:f.now()}:{createdAt:new Date(f.clock.now()+1000).toISOString()}).where(eq(tokens.fingerprint,input.fingerprint)).run();const before=f.db.select().from(tokens).where(eq(tokens.fingerprint,input.fingerprint)).get();expect((await f.call(input,raw.runner,id)).status).toBe(403);expect((await f.call(input)).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,input.fingerprint)).get()).toEqual(before);
+});
+
+it('refuses to mint a body credential for a house program', async () => {
+ const f = fixture();
+ f.db.update(jobs).set({ startedByKind: 'program' }).where(eq(jobs.id, 'job')).run();
+ expect((await f.call({ job: 'job', fingerprint: hash(f.credential()) })).status).toBe(403);
 });

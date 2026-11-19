@@ -176,8 +176,109 @@ sign-in location. Recording a sign-in also requires access to the live box as
 its owner or a household owner. Agents, runners and services cannot administer
 these records, and a token label is never ownership.
 
+### Signing in from anywhere
+
+`runtime.accountSignIn {account, box}` asks the worker on that machine to run
+the provider's sign-in program (`accountSignIn.programs` in the worker's config,
+one per provider). This is the one way a worker signs an account in. The program is started in a private directory and talks to
+the worker through files there: it writes `link` (the page to open) and, for a
+device flow, `user-code`; for a paste-code flow the worker writes `code`. Exit 0
+means the provider's own program says the account is signed in.
+
+On failure the program writes one reason word in `why`. Loom shows its own
+sentence for the word and never the program's text, because what a provider's
+program prints could repeat a code or a token:
+
+| Word | Shown as |
+|---|---|
+| `refused` | The provider refused the sign-in |
+| `wrong-code` | The provider did not accept the code |
+| `expired` | The page or the code ran out before the sign-in finished |
+| `unreachable` | The provider could not be reached from this machine |
+| `not-installed` | The provider's program is not installed on this machine |
+
+Anything else, or nothing, is shown as "The provider's program says the account
+is not signed in". The worker has a few words of its own for how the relay went
+(`no-page`, `no-program`, `cannot-run`, `ended`, `timed-out`, `stopped`). The
+whole list is in `src/runtime/account-signin-reasons.ts`. Loom keeps the rule
+itself: `runtime.signInDone` stores its own sentence for a word in the list and
+"The sign-in did not finish" for any other text a worker sends.
+
+A pasted code is handed over once. The worker of that machine takes it
+(`runtime.signInTake`), which blanks it in the database and keeps it in the
+program's memory under that take; only the same take can read it
+(`runtime.signInCode`), again if a reply was lost. No second take and no other
+reader gets it. If loom restarts between the take and the read the code is
+gone: the sign-in fails and is asked for again. The code is forgotten when the
+sign-in ends, however it ends. A request nobody finishes ends after 20 minutes;
+the program's periodic sweep closes it even when no worker is polling. The
+worker gives up first, after 15 minutes (`RELAY_MS`; `accountSignIn.timeoutMs`
+can shorten it, not lengthen it), so loom is told why.
+
+There was a second way, `loom-worker --account-signin <file>`, which ran a
+program of a different protocol (the account's identity on stdin,
+`{"signedIn":true}` on stdout) at the machine and told loom nothing. It is
+removed: the worker now refuses that argument with exit code 51 and a line
+naming this section. A program written for it has to be rewritten to the
+files above. Someone at the machine who wants no request through loom runs the
+provider's own sign-in by hand and then records it with
+`runtime.accountSignedIn {account, box}`.
+
 The separate private program performs the actual provider sign-in/out. These
 commands record its result, without accepting credentials or invoking it inside
 Loom. A fresh sign-in or removed association invalidates pending usage reports
 only after the complete write and receipt commit. Replaying a receipt does not
 invalidate a newer observation; remove/re-add cannot revive an older read.
+
+## What loom knows about each sign-in
+
+Usage belongs to the account and is read once, however many machines use it. A
+sign-in does not: it is one account, on one machine, for one harness, in one
+place, and each ends on its own. The place is where the token lives on that
+machine: `containers` is the directory houses mount (`accountLogins` in the
+worker's config), `host` is the machine user's own (`hostLogins`). Tokens are
+never copied between places, so a place that needs one gets its own sign-in.
+
+`model_account_logins` holds the last thing learned about each: `signed-in` or
+`signed-out`, when it ends where the harness's files say, when that was last
+confirmed, since when it has been in that state, and whether a check or a job
+said so. It holds no credential. No model takes part in any of this.
+
+What is learned, and from where:
+
+- The worker reads the sign-in files on its own machine every `loginCheckMs`
+  (a minute unless set) and sends `runtime.signInState {logins}`: everything it
+  watches, each time it changes and again every five minutes. A Claude sign-in
+  has an end (the end of its renewing token); a Codex sign-in is there or not.
+  A file that is missing or holds no sign-in is `signed-out` with one of three
+  reason words (`no-file`, `no-sign-in`, `ended`); loom writes the sentence. A
+  file that cannot be read, or is caught half written, is `unknown`: that
+  sign-in keeps what was last learned. A sign-in is said to be gone only when
+  two reads in a row found it gone, so a file being replaced is not a sign-out.
+  A sign-in the worker no longer names is no longer watched, and a worker that
+  only reports says what it watches too. The harness is one of those whose
+  files a worker can read (`claude`, `codex`); loom refuses any other name.
+- A job that got words back from the model confirms the house sign-in it ran
+  under. This is the only evidence that a provider still honours a sign-in; the
+  files cannot say a sign-in was withdrawn early. It never changes a known end.
+
+The operation takes its machine from the worker's credential, never from its
+input, and keeps nothing about an account that is not enabled on that machine.
+
+What follows from it:
+
+- Placement passes over a machine whose houses were last found signed out of an
+  account, for that harness, and the job's placement record says so. The
+  machine user's own sign-in does not affect placement.
+- The account's owner gets one inbox notice each time a sign-in is found gone,
+  and one for each end date that comes within three days (again if the sign-in
+  was gone in between and came back with the same end). A notice closes when
+  the sign-in is good again, is renewed, is no longer watched, or its machine
+  is taken out of the household.
+- Nothing is raised for a machine that has stopped reporting. Its sign-ins keep
+  what was last learned, and the machine being away is its own notice, for the
+  machines marked always on.
+
+`modelAccounts { ... on RuntimeAccountDetail { logins { box { id name } harness
+place state expiresAt checkedAt since learnedFrom why } } }` reads them, under
+the same rule as the account's other private fields.

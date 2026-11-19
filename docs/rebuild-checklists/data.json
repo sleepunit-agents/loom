@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "3784ae68e14bae9ba8dc01121dee5b83c45f6becb80b2f9cb258d238460ab07e",
+  "sourceSha256": "e6e29310077affdfc9c8d88fc7c17d7e68af89876af8f0c606a7175f058774d4",
   "promises": [
     {
       "id": "data-001",
@@ -123,36 +123,46 @@
     },
     {
       "id": "data-019",
-      "promise": "outside_effects Things that reach outside loom (a push notification, a send to Discord, starting a body). On a staging copy these wait here to be let through by hand.",
-      "source": "docs/how-it-works/site/data.html"
-    },
-    {
-      "id": "data-020",
       "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
+      "id": "data-020",
+      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
       "id": "data-021",
-      "promise": "signin_challenges Passkey challenges in flight. Each lives a few minutes.",
+      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-022",
-      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept up to an hour until they are turned into incoming messages. The one place loom stores something it does not look inside.",
+      "promise": "bridge_send_parts The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-023",
-      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart.",
+      "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-024",
-      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "promise": "bridge_send_files The files a post carries, kept only until the post is sent, dismissed or left in doubt.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
       "id": "data-025",
+      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-026",
+      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-027",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {

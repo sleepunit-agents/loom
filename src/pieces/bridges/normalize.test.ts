@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { discordAttachmentLabels, discordBodyWords } from './discord-link.js';
 import { normalizeDiscord, normalizeSlack } from './normalize.js';
 
 const discord = { id: 'dc', workspace: 'guild' };
@@ -14,11 +15,74 @@ const sl = (changes = {}) => ({ type: 'event_callback', team_id: 'team', event: 
 } });
 
 describe('authenticated Discord message normalisation', () => {
+  it('takes a written ping of a bot\'s own role as a mention of that bot, and no other role as anyone\'s', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    const botRoles = new Map([['role-art', 'bot-art'], ['role-mark', 'bot-mark']]);
+    const mentions = (changes: object) => normalizeDiscord(discord, dc({ mentions: [], ...changes }), channel, botRoles)?.mentions;
+    expect(mentions({ content: 'hey <@&role-art>', mention_roles: ['role-art'] })).toEqual(['bot-art']);
+    // Both bots' roles, and a user mention of one of them, name each bot once.
+    expect(mentions({ content: '<@&role-art> <@&role-mark> <@bot-art>', mention_roles: ['role-art', 'role-mark'], mentions: [{ id: 'bot-art' }] })).toEqual(['bot-art', 'bot-mark']);
+    // A role that is no bot's, written or not; a bot's role Discord did not resolve (in a code block); one resolved and not written.
+    expect(mentions({ content: '<@&crew> hello', mention_roles: ['crew'] })).toEqual([]);
+    expect(mentions({ content: '`<@&role-art>`', mention_roles: [] })).toEqual([]);
+    expect(mentions({ content: 'hello', mention_roles: ['role-art'] })).toEqual([]);
+    expect(mentions({ content: '@everyone @here <@&guild>', mention_roles: [], mention_everyone: true })).toEqual([]);
+    // With no roles read, a role ping is nobody's.
+    expect(normalizeDiscord(discord, dc({ mentions: [], content: '<@&role-art>', mention_roles: ['role-art'] }), channel)?.mentions).toEqual([]);
+  });
+  it('takes a message in a thread as answering whoever wrote the message the thread was started from', () => {
+    const thread = { id: 'thread', guild: 'guild', kind: 'thread', parent: 'parent', starter: 'bot' } as const;
+    const inThread = (changes = {}) => normalizeDiscord(discord, dc({ channel_id: 'thread', mentions: [], ...changes }), thread);
+    expect(inThread()).toMatchObject({ repliesTo: 'bot', mentions: [] });
+    // A reply inside the thread answers the message it points at, not the thread's root.
+    expect(inThread({ type: 19, referenced_message: { author: { id: 'someone' } } })).toMatchObject({ repliesTo: 'someone' });
+    expect(inThread({ type: 19, referenced_message: null })).not.toHaveProperty('repliesTo');
+    // A thread whose starter is not known, and a channel, answer nobody.
+    expect(normalizeDiscord(discord, dc({ channel_id: 'thread', mentions: [] }), { id: 'thread', guild: 'guild', kind: 'thread', parent: 'parent' })).not.toHaveProperty('repliesTo');
+    expect(normalizeDiscord(discord, dc({ mentions: [] }), { id: 'channel', guild: 'guild', kind: 'channel' })).not.toHaveProperty('repliesTo');
+  });
+  it('lists a message\'s attachments after its words, so a picture alone has words', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    const words = (changes: object) => normalizeDiscord(discord, dc({ mentions: [], ...changes }), channel)?.text;
+    const cat = { filename: 'cat.png', size: 2048, content_type: 'image/png', url: 'https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1&is=2&hm=3' };
+    expect(words({ content: '', attachments: [cat] })).toBe('[attachment: cat.png (image/png, 2048 bytes)]');
+    expect(words({ content: 'look', attachments: [cat, { filename: 'notes.txt', size: 3, url: 'https://media.discordapp.net/attachments/1/2/notes.txt' }] }))
+      .toBe('look\n[attachment: cat.png (image/png, 2048 bytes)]\n[attachment: notes.txt (unknown type, 3 bytes)]');
+    // A link that is not on Discord's file hosts is not passed on, and a name cannot close the line or run on.
+    expect(words({ content: '', attachments: [{ filename: 'a]\n[attachment: b', size: 1, content_type: 'text/plain', url: 'https://evil.example/cdn.discordapp.com/x' }] }))
+      .toBe('[attachment: a_attachment: b (text/plain, 1 bytes)]');
+    expect(words({ content: '', attachments: [{ ...cat, filename: 'n'.repeat(500) }] })).toContain(`[attachment: ${'n'.repeat(200)} (`);
+    // A malformed CDN link still leaves the name and kind in the transcript.
+    expect(words({ content: '', attachments: [{ ...cat, url: 'https://cdn.discordapp.com/attachments/1/2/..\\cat.png' }] })).toBe('[attachment: cat.png (image/png, 2048 bytes)]');
+    // No more are listed than one Discord message can carry.
+    expect(words({ content: '', attachments: Array(12).fill(cat) })).toContain('[2 additional attachments exceed the message attachment limit]');
+    expect(words({ content: 'plain' })).toBe('plain');
+  });
   it('preserves platform identity and text, and normalises timestamps and mentions', () => {
-    expect(normalizeDiscord(discord, dc(), { id: 'channel', guild: 'guild', kind: 'channel' })).toEqual({
+    expect(normalizeDiscord(discord, dc({ content: '<@bot> hello <@!bot>' }), { id: 'channel', guild: 'guild', kind: 'channel' })).toEqual({
       id: 'message', connection: 'dc', channel: 'channel', isDm: false, user: 'person',
-      text: 'hello', postedAt: '2026-11-14T16:00:00.000Z', mentions: ['bot'], bot: false, webhook: false,
+      text: '<@bot> hello <@!bot>', postedAt: '2026-11-14T16:00:00.000Z', mentions: ['bot'], bot: false, webhook: false,
     });
+  });
+  it('says whose message an explicit reply answers, with or without the reply ping', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    const reply = (changes = {}) => normalizeDiscord(discord, dc({ type: 19, content: 'hello', referenced_message: { author: { id: 'bot' } }, ...changes }), channel);
+    // Ping on: Discord also lists the bot among the mentions. Ping off: it does not. Either way the reply answers the bot.
+    expect(reply()).toMatchObject({ repliesTo: 'bot', mentions: [] });
+    expect(reply({ mentions: [] })).toMatchObject({ repliesTo: 'bot', mentions: [] });
+    // The message replied to was deleted, or this is no reply at all: nobody is answered.
+    expect(reply({ referenced_message: null })).not.toHaveProperty('repliesTo');
+    expect(normalizeDiscord(discord, dc({ content: 'hello', referenced_message: { author: { id: 'bot' } } }), channel)).not.toHaveProperty('repliesTo');
+    // Slack's reply is a reply in a thread: it answers whoever wrote the thread's root. The root itself answers nobody.
+    expect(normalizeSlack(slack, sl({ ts: '1794672002.000001', thread_ts: '1794672000.000001', parent_user_id: 'UBOT' }))).toMatchObject({ repliesTo: 'UBOT' });
+    expect(normalizeSlack(slack, sl({ ts: '1794672000.000001', thread_ts: '1794672000.000001', parent_user_id: 'UBOT' }))).not.toHaveProperty('repliesTo');
+  });
+  it('does not count the reply ping, or an unresolved mention in the text, as a written mention', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    // A reply to the bot's message: Discord lists the bot although nobody wrote its mention.
+    expect(normalizeDiscord(discord, dc({ type: 19, content: 'hello' }), channel)?.mentions).toEqual([]);
+    // Mention text Discord did not resolve (inside a code block, say) summons nobody.
+    expect(normalizeDiscord(discord, dc({ content: '`<@other>` and <@bot>' }), channel)?.mentions).toEqual(['bot']);
   });
   it('uses the resolved thread parent for filters and retains the actual thread', () => {
     expect(normalizeDiscord(discord, dc({ channel_id: 'thread', type: 19 }),
@@ -127,4 +191,12 @@ it('carries authenticated group-DM classification without accepting a claimed pr
  expect(normalizeDiscord(discord, dc({guild_id:undefined,groupDm:true}), {id:'channel',kind:'dm'})).not.toHaveProperty('groupDm');
  expect(normalizeSlack(slack, sl({channel_type:'mpim'}))).toMatchObject({isDm:true,groupDm:true});
  expect(normalizeSlack(slack, sl({channel_type:'im',groupDm:true}))).not.toHaveProperty('groupDm');
+});
+
+it('treats only whole normalized lines as attachment hints',()=>{
+ expect(discordAttachmentLabels('I saw [attachment: x (image/png, 3 bytes)] in chat.')).toEqual([]);
+ const raw='[attachment: x (image/png, 3 bytes) https://media.discordapp.net/attachments/1/2/x?hm=sign]';
+ expect(discordAttachmentLabels(raw)).toEqual([{name:'x',bytes:3}]);
+ expect(discordBodyWords(raw)).toBe('[attachment: x (image/png, 3 bytes)]');
+ expect(discordBodyWords('website: https://example.com')).toBe('website: https://example.com');
 });

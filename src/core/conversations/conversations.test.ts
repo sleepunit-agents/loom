@@ -12,7 +12,8 @@ function fixture() {
   const db = createDataSchema(client, () => now);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now }).run();
   for (const id of ['art', 'mark']) db.insert(agents).values({ id, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  const service = new Conversations(db, () => now);
+  // These tests are about the mail itself, not whose word it is on: late mail from a person joins a running job here.
+  const service = new Conversations(db, () => now, () => () => true);
   const cv = service.open({ agent: 'art', venue: 'loom', place: 'thread-1', label: 'Pond pump', member: 'jonathan' });
   return { db, service, cv, advance: () => { now = '2026-11-14T18:01:00.000Z'; } };
 }
@@ -42,7 +43,6 @@ it('deduplicates all sources and lets only the running conversation job take and
   expect(db.select().from(inboxRefs).all()).toHaveLength(5);
   expect(() => service.take(cv.id, 'wrong-job')).toThrow('not running');
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual(ids);
   expect(service.take(cv.id, 'job-1').map(i => i.seq)).toEqual([1, 2, 3, 4, 5]);
   expect(() => service.confirm(ids[0], 'wrong-job')).toThrow('not held');
@@ -54,13 +54,13 @@ it('deduplicates all sources and lets only the running conversation job take and
 });
 it('leaves muted mail waiting when a running job takes other mail in the same conversation', () => {
   const { db, service, cv } = fixture();
-  const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'trigger', fromKind: 'schedule' });
+  // A person's mail: what the schedule or an agent sends after a job was admitted waits for the next job (pending).
+  const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'notice', fromKind: 'person', fromId: 'jonathan' });
   const muted = send(), dim = send();
   const quietUntil='2026-11-16T18:00:00.000Z';
   db.update(inbox).set({ volume: 'mute', quietUntil }).where(eq(inbox.id, muted.id)).run();
   db.update(inbox).set({ volume: 'dim', quietUntil }).where(eq(inbox.id, dim.id)).run();
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([dim.id]);
   expect(service.item(dim.id)).toMatchObject({volume:'dim',quietUntil});
   expect(service.item(muted.id)).toMatchObject({ state: 'waiting', job: null, takenAt: null });
@@ -77,7 +77,8 @@ it('records one public answer and read mark, and returns exactly one answer item
   expect(db.select().from(inboxReads).all()).toEqual([{ item: question.id, member: 'jonathan', readAt: service.now() }]);
   const answered = service.answer(question.id, 'jonathan', 'yes');
   expect(answered).toMatchObject({ state: 'answered', answer: 'yes', answeredBy: 'jonathan', answeredAt: service.now() });
-  expect(service.answer(question.id, 'jonathan', 'no')).toEqual(answered);
+  expect(service.answer(question.id, 'jonathan', 'yes')).toEqual(answered);
+  expect(() => service.answer(question.id, 'jonathan', 'no')).toThrow('already answered');
   const answer = db.select().from(inbox).where(eq(inbox.source, 'answer')).all();
   expect(answer).toHaveLength(1);
   expect(answer[0]).toMatchObject({ toKind: 'agent', to: 'art', sourceId: question.id, conversation: cv.id, seq: 2, words: 'yes\nOrder it?\nI order it today.', member: null });
@@ -112,7 +113,8 @@ it('records one wordless person turn for an Inbox answer and no extra turn on re
   const cv = service.open({ agent: 'art', venue: 'wake', place: 'night', label: 'Night' });
   const question = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Private wording?', answers: 'words' });
   const answer = service.answer(question.id, 'jonathan', 'words', 'Private answer');
-  expect(service.answer(question.id, 'jonathan', 'words', 'Retry')).toEqual(answer);
+  expect(service.answer(question.id, 'jonathan', 'words', 'Private answer')).toEqual(answer);
+  expect(() => service.answer(question.id, 'jonathan', 'words', 'Retry')).toThrow('already answered');
   expect(db.select().from(turns).all()).toMatchObject([{ conversation: cv.id, seq: 1, kind: 'message', fromKind: 'person', fromId: 'jonathan' }]);
   expect(JSON.stringify(db.select().from(turns).all())).not.toContain('Private');
   const second = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Another?', answers: 'yes-no' });
@@ -142,10 +144,48 @@ it.each(['dim','mute'] as const)('acknowledging already-taken mail preserves a l
  const {db,service,cv}=fixture();
  const item=service.send({toKind:'agent',to:'art',conversation:cv.id,source:'trigger',fromKind:'schedule'});
  db.insert(jobs).values({id:'job-quiet',agent:'art',conversation:cv.id,title:'Mail',state:'running',brief:'',model:'model',startedByKind:'member',startedBy:'jonathan',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:service.now()}).run();
- db.update(conversations).set({job:'job-quiet'}).where(eq(conversations.id,cv.id)).run();
  service.take(cv.id,'job-quiet');
  const quietUntil='2026-11-16T18:00:00.000Z';
  db.update(inbox).set({volume:level,quietUntil}).where(eq(inbox.id,item.id)).run();
  expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
  expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
+});
+it('closes only waiting items, by source or by id, returns unconfirmed mail to waiting and blanks an answer in one place each', () => {
+  const { db, service, cv } = fixture();
+  db.insert(members).values({ id: 'lee', role: 'member', joinedAt: service.now() }).run();
+  const notice = (to: string) => service.send({ toKind: 'person', to, source: 'notice', sourceId: 'outage:box', fromKind: 'unknown', words: 'Machine is quiet' });
+  const mine = notice('jonathan'), theirs = notice('lee');
+  // Named for one recipient, the other's item under the same source id stays.
+  expect(service.resolveSource('notice', 'outage:box', 'Reporting again', { kind: 'person', id: 'jonathan' }).map(item => item.id)).toEqual([mine.id]);
+  expect(service.item(mine.id)).toMatchObject({ state: 'resolved', resolution: 'Reporting again' });
+  expect(service.item(theirs.id).state).toBe('waiting');
+  // An item that no longer waits is not closed a second time, and keeps its first reason.
+  expect(service.resolveSource('notice', 'outage:box', 'Again')).toHaveLength(1);
+  expect(service.resolveItem(mine.id, 'Later')).toBeUndefined();
+  expect(service.item(mine.id).resolution).toBe('Reporting again');
+  const question = service.send({ toKind: 'person', to: 'jonathan', source: 'notice', sourceId: 'signin:1', fromKind: 'unknown', words: 'Answer with the code', answers: 'words' });
+  service.answer(question.id, 'jonathan', 'words', 'one-time-code');
+  service.redactAnswer(question.id, '(used)');
+  expect(service.item(question.id)).toMatchObject({ state: 'answered', answerText: '(used)' });
+  expect(service.resolveItem(question.id, 'Signed in')).toBeUndefined();
+  const waiting = service.send({ toKind: 'person', to: 'jonathan', source: 'notice', sourceId: 'signin:2', fromKind: 'unknown', words: 'Open the page' });
+  service.redactAnswer(waiting.id, '(used)');
+  expect(service.item(waiting.id).answerText).toBeNull();
+  expect(service.resolveItem(waiting.id, 'Signed in')?.state).toBe('resolved');
+  // An answer to a question asked in a conversation is also mailed to its agent. The code goes from that copy too.
+  const asked = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'notice', sourceId: 'signin:3', fromKind: 'agent', fromId: 'art', words: 'Answer with the code', answers: 'words' });
+  service.answer(asked.id, 'jonathan', 'words', 'second-code');
+  expect(JSON.stringify(db.select().from(inbox).all())).toContain('second-code');
+  service.redactAnswer(asked.id, '(used)');
+  expect(db.select().from(inbox).where(eq(inbox.sourceId, asked.id)).get()).toMatchObject({ source: 'answer', toKind: 'agent', words: '(used)' });
+  expect(JSON.stringify(db.select().from(inbox).all())).not.toContain('second-code');
+  const mail = ['a', 'b'].map(sourceId => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'thread', sourceId, fromKind: 'person', fromId: 'jonathan', words: sourceId }));
+  for (const id of ['job-1', 'job-2']) db.insert(jobs).values({ id, agent: 'art', title: '', state: 'running', brief: '', model: 'm', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
+  db.update(inbox).set({ state: 'taken', job: 'job-1', takenAt: service.now() }).where(eq(inbox.id, mail[0].id)).run();
+  db.update(inbox).set({ state: 'done', job: 'job-1', takenAt: service.now(), doneAt: service.now() }).where(eq(inbox.id, mail[1].id)).run();
+  service.returnTaken('job-2');
+  expect(service.item(mail[0].id).state).toBe('taken');
+  service.returnTaken('job-1');
+  expect(service.item(mail[0].id)).toMatchObject({ state: 'waiting', job: 'job-1', takenAt: null });
+  expect(service.item(mail[1].id).state).toBe('done');
 });

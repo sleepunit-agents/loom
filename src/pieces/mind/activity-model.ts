@@ -1,10 +1,12 @@
 /** Pure Activity vocabulary and derivation. No old store or UI imports. */
+import {DAY} from '../../core/day.js';
+import {TASK_ID} from '../../slug.js';
 export type ActivityWhat = 'conversation' | 'work' | 'system';
 export interface ActivityLink {label:string;href?:string}
 export interface ActivityEntry {[key:string]:unknown;id:string;agent:string;at:string;day:string;hour:number;title:string;line?:string;venue:string;where:string;what:ActivityWhat;owner?:true;expires?:number}
 export interface ActivityOpen extends ActivityEntry {asked:string[];decided:string[];story?:string;tasks:ActivityLink[];prs:ActivityLink[];links:ActivityLink[];needs?:string;steps?:Array<{label:string;state:string;tool:string}>;more:Array<{id:string;at:string;title:string}>}
 export interface ActivityWindow {[key:string]:unknown;id:string;to:string;days:string[];earlier?:string;entries:ActivityEntry[];conversations:'available'|'unavailable'|'error';episodes:'available'|'unavailable'|'error';truncated:boolean;expires:number}
-export const WINDOW_DAYS=3,MAX_BACK=30,MAX_ENTRIES=600;
+export const MAX_BACK=30,MAX_ENTRIES=600;
 export const VENUES:Record<string,string>={comms:'Comms',discord:'Discord',slack:'Slack',terminal:'Terminal',wakes:'Wakes',relay:'Relay',web:'Web',mcp:'MCP',voice:'Voice'};
 /** A venue or an episode's surface as the Where filter's key. */
 export function venueKey(surface: string): string {
@@ -15,11 +17,13 @@ export function venueKey(surface: string): string {
   return s;
 }
 
+const WORK = new RegExp(`\\b(merged|deployed|shipped|released|closed ${TASK_ID}|PR (?:#?\\d+ )?(?:is )?merged)\\b`, 'i');
+const TASK_IN_WORDS = new RegExp(`\\b${TASK_ID}\\b`, 'g'), TASK_ALONE = new RegExp(`^${TASK_ID}$`);
 /** What an entry is about: the system's own upkeep, work that landed, or else a conversation. */
 export function whatOf(e: { place?: string; title: string; line?: string; tasks?: string[] }): ActivityWhat {
   const text = `${e.title} ${e.line ?? ''}`;
   if (/^alert:/.test(e.place ?? '') || /\b(backups?|alerts?|disk|nearly full|box[- ]health|boxes|offsite|restic|service failed|unit [\w-]+ failed)\b/i.test(e.title)) return 'system';
-  if (/\b(merged|deployed|shipped|released|closed t-\d+|PR (?:#?\d+ )?(?:is )?merged)\b/i.test(text)) return 'work';
+  if (WORK.test(text)) return 'work';
   return 'conversation';
 }
 
@@ -31,7 +35,6 @@ export function dayBefore(day: string, n = 1): string {
   const [y, m, d] = day.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
-export const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The first sentence (or the first 200 characters) of a summary: an entry's one line. */
 export function oneLine(s: string): string {
@@ -43,7 +46,7 @@ export function oneLine(s: string): string {
 
 /** Refs a summary names: tasks (t-123) and pull requests (owner/repo#12, repo#12, a GitHub URL). */
 export function refsIn(text: string, github?: string): { tasks: string[]; prs: ActivityLink[] } {
-  const tasks = [...new Set([...text.matchAll(/\bt-\d{1,6}\b/g)].map((m) => m[0]))];
+  const tasks = [...new Set([...text.matchAll(TASK_IN_WORDS)].map((m) => m[0]))];
   const prs = new Map<string, ActivityLink>();
   for (const m of text.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g)) prs.set(`${m[1]}/${m[2]}#${m[3]}`, { label: `${m[2]}#${m[3]}`, href: m[0] });
   for (const m of text.matchAll(/(?<![\w/.-])(?:([\w.-]+)\/)?([a-z][\w.-]*)#(\d{1,6})\b/g)) {
@@ -56,7 +59,7 @@ export function refsIn(text: string, github?: string): { tasks: string[]; prs: A
 }
 
 
-export function splitTitle(t:string):{title:string;line?:string}{const m=/^(.{6,90}?):\s+(.{4,})$/.exec(t);return m&&!/^t-\d+$/.test(m[1])?{title:m[1],line:m[2]}:{title:t};}
+export function splitTitle(t:string):{title:string;line?:string}{const m=/^(.{6,90}?):\s+(.{4,})$/.exec(t);return m&&!TASK_ALONE.test(m[1])?{title:m[1],line:m[2]}:{title:t};}
 /** Find the first instant of a local day, including half-hour zones and DST. */
 export function startOf(day:string,tz:string):number {
  const format=dayFormatter(tz);

@@ -1,22 +1,22 @@
 import { z } from 'zod';
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createFoundation, type Foundation } from './app.js';
+import Database from 'better-sqlite3';
 import { FakeClock } from './clock.js';
-import { mayAct, mayCreate, mayMove, maySee, type Viewer } from '../policy.js';
+import { createDataSchema } from './data/database.js';
+import { OperationResults } from './data/operation-results.js';
+import { Operations } from './operations/index.js';
+import { mayAct, mayCreate, maySee, type Viewer } from '../policy.js';
 
-const homes: string[] = [], apps: Foundation[] = [];
-afterEach(() => {
-  for (const app of apps.splice(0)) app.close();
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
-});
+const closes: (() => void)[] = [];
+afterEach(() => { for (const close of closes.splice(0)) close(); });
+/** A dispatcher over a fresh household database, as the program builds it. */
 function fixture() {
-  const home = mkdtempSync(join(tmpdir(), 'loom-internal-')); homes.push(home);
-  const app = createFoundation({ home, clock: new FakeClock() }); apps.push(app); return app;
+  const client = new Database(':memory:'), clock = new FakeClock();
+  const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(createDataSchema(client, () => new Date(clock.now()).toISOString())) });
+  closes.push(() => { operations.close(); client.close(); });
+  return { operations };
 }
-const sharing = { members: {}, projects: {}, services: {} };
+const sharing = { members: {}, projects: {}};
 it('lets an installed module call another without permission, including private projections', () => {
   const app = fixture(), module = app.operations.internal('changes'), may = vi.fn(() => false);
   app.operations.register({ name: 'tasks.private', input: z.object({}), output: z.boolean(), may,
@@ -25,7 +25,6 @@ it('lets an installed module call another without permission, including private 
   expect(may).not.toHaveBeenCalled();
   expect(mayAct(module.viewer, {member:'sam'}, sharing, 'household')).toBe(true);
   expect(mayCreate(module.viewer, {member:'sam'}, sharing)).toBe(true);
-  expect(mayMove(module.viewer, {member:'sam'}, {member:'jonathan'}, sharing)).toBe(true);
 });
 it('does not trust names, copies, JSON, other registries, external doors or ended handles', async () => {
   const app = fixture(), other = fixture(), module = app.operations.internal('changes');
@@ -34,7 +33,7 @@ it('does not trust names, copies, JSON, other registries, external doors or ende
     expect(app.operations.call('direct', viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(maySee(viewer, {member:'sam'}, sharing)).toBe(false);
   }
-  for (const door of ['http', 'socket', 'mcp'] as const) {
+  for (const door of ['http'] as const) {
     expect(app.operations.call(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(await app.operations.callAsync(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
   }
@@ -59,7 +58,7 @@ it('keeps schemas, door restrictions and asynchronous preparation for installed 
   expect(await module.callAsync('tasks.prepared',{value:'bad'})).toMatchObject({code:'invalid'});
   expect(await module.callAsync('tasks.prepared',{value:1})).toEqual({ok:true,value:42});
   expect(prepare).toHaveBeenCalledOnce();expect(may).not.toHaveBeenCalled();
-  app.operations.register({name:'tasks.window',doors:['socket'],input:z.object({}),output:z.null(),may,run:()=>null});
+  app.operations.register({name:'tasks.window',doors:['http'],input:z.object({}),output:z.null(),may,run:()=>null});
   expect(module.call('tasks.window',{})).toMatchObject({code:'denied'});
 });
 it('retains prepared write admission, commit and replay without policy checks', async()=>{

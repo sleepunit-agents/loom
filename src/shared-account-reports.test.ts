@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
-import { recordAccountUsage, accountUsageUnavailable } from './runtime/account-usage.js';
+import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { refreshAccountWindows, recordAccountWindows } from './runtime/account-windows.js';
 import { dataDatabase } from './core/data/database.js';
 import { Operations } from './core/operations/index.js';
@@ -9,10 +9,10 @@ import { workerProgram } from './runtime/worker-program.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens, operationResults, sessions, agents, memberAgents, agentBoxes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens, operationResults, sessions, agents, memberAgents, agentBoxes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import type { ModelRole } from './runtime/placement.js';
-import { reportWorkerAccountUsage } from './runtime/worker-http.js';
+import { reportWorkerAccountLogins, reportWorkerAccountUsage } from './runtime/worker-http.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), other = 'b'.repeat(64), owner = 'c'.repeat(64);
@@ -158,9 +158,9 @@ it('runs default worker failure reporting through the actual root without leakin
   const config = { command: { command: '/fake/reader', args: [], cwd: '/fake', env: {} }, account: f.identity, report: { url: 'https://loom.example', tokenFile: '/token' } };
   expect(await workerProgram({ args: ['--account-usage', '/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
     on: () => {}, off: () => {}, output, error, usage: () => async () => { throw Error('provider credential diagnostic'); },
-  })).toBe(1);
+  })).toBe(50);
   expect(fetcher).toHaveBeenCalledTimes(2); expect(output).not.toHaveBeenCalled();
-  expect(error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+  expect(error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the account command did not complete\n');
   expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false);
 });
 it('refuses stale witnesses after a trusted quota edit and across root restart', async () => {
@@ -280,10 +280,9 @@ for (const failed of [false, true]) it(`does not apply a trusted ${failed ? 'fai
   expect(await pending).toEqual({ refreshed: false }); expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true);
 });
 
-for (const writer of ['windows', 'summary', 'unavailable'] as const) it(`shares standalone ${writer} completions with reporting witnesses`, async () => {
+for (const writer of ['windows', 'unavailable'] as const) it(`shares standalone ${writer} completions with reporting witnesses`, async () => {
   const f = fixture(); if (writer !== 'unavailable') await f.call(); const basis = await f.basis(), otherHandle = dataDatabase(f.client);
   if (writer === 'windows') expect(recordAccountWindows(otherHandle, f.identity, f.observation.windows, f.now())).toBe(true);
-  else if (writer === 'summary') expect(recordAccountUsage(otherHandle, { ...f.identity, windows: f.observation.windows, now: f.now() }).recorded).toBe(true);
   else expect(accountUsageUnavailable(otherHandle, f.identity)).toBe(true);
   const response = writer === 'unavailable' ? await f.call({ ...f.observation, basis }, 'old-success')
     : await f.operation('accountUnavailable', { ...f.identity, basis });
@@ -313,13 +312,13 @@ it('refreshes from the normal worker before claims and reports later failure thr
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => { paths.push(new URL(String(input)).pathname); return f.root.http.fetch(new Request(input, init)); });
   cleanup.push(() => { fetcher.mockRestore(); });
   const command = { command: '/fake/reader', args: [], cwd: '/fake', env: {} };
-  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', build: command, runners: { native: command }, accountUsage: { readers: [{ account: f.identity, command }] } };
+  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, accountUsage: { readers: [{ account: f.identity, command }] } };
   let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
   let stop!: () => void; const ended = new Promise<void>(resolve => { stop = resolve; });
   let attempts = 0, scans = 0;
   const pending = workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
     on: () => {}, off: () => {}, output, error, usage: () => async () => { if (attempts++ > 0) throw Error('private diagnostic'); return f.observation.windows; },
-    executor: () => ({} as never),
+    containerExecutor: () => ({} as never),
     run: async input => { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true); expect(await input.control.next()).toMatchObject({ id: 'quota-ready-job', box: 'worker', model: 'model', account: 'account', harness: 'native' }); expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' }); release(); await ended; },
     pause: async (ms, signal) => {
       expect(ms).toBe(60_000);
@@ -328,8 +327,39 @@ it('refreshes from the normal worker before claims and reports later failure thr
     },
   });
   expect(await pending).toBe(0);
-  expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
+  expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/signInState', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
   expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
-  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
+  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.signInState', 'runtime.next', 'runtime.accountUnavailable']);
   expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
+});
+it('records what a worker read about the sign-ins on its own machine, and only its own', async () => {
+  const f = fixture();
+  const remote = (key: string) => ({ url: 'https://loom.example', token: key, signal: new AbortController().signal, fetch: async (input: RequestInfo | URL, init?: RequestInit) => f.root.http.fetch(new Request(input, init)) });
+  const ends = new Date(f.clock.now() + 20 * 86400_000).toISOString();
+  expect(await reportWorkerAccountLogins(remote(token), [
+    { account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: ends },
+    { account: 'account', harness: 'claude', place: 'host', state: 'signed-out', why: 'no-file' },
+  ])).toEqual({ changed: 1 });
+  expect(f.db.select().from(modelAccountLogins).all().map(row => [row.box, row.place, row.state, row.expiresAt])).toEqual([
+    ['worker', 'containers', 'signed-in', ends], ['worker', 'host', 'signed-out', null]]);
+  // The other machine does not have the account enabled: nothing of what it says is kept, and it cannot name a machine.
+  expect(await reportWorkerAccountLogins(remote(other), [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-out' }])).toEqual({ changed: 0 });
+  expect(f.db.select().from(modelAccountLogins).all()).toHaveLength(2);
+  expect((await f.operation('signInState', { logins: [] }, 'by-owner', owner)).status).toBe(403);
+  expect((await f.operation('signInState', { logins: [] }, 'no-credential', 'f'.repeat(64))).status).toBeGreaterThanOrEqual(401);
+  // A worker whose machine was taken out of the household says nothing more.
+  f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'other')).run());
+  expect([401, 403]).toContain((await f.operation('signInState', { logins: [] }, 'revoked', other)).status);
+  expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', box: 'other' }] }, 'names-a-box')).status).toBe(400);
+  expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', token: 'secret' }] }, 'carries-more')).status).toBe(400);
+  // No words of the worker's own reach the record or the notice: a reason is one of a fixed list, a harness a plain name.
+  for (const [id, bad] of [['own-words', { why: 'a sentence or a token the worker chose' }], ['harness-words', { harness: 'claude. Open http://example' }], ['made-up-state', { state: 'fine' }]] as const)
+    expect((await f.operation('signInState', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-out', ...bad }] }, id)).status).toBe(400);
+  expect(f.db.select().from(modelAccountLogins).all()).toHaveLength(2);
+  // The owner reads the sign-ins with the account, by machine, harness and place.
+  const read = await f.root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + owner, 'content-type': 'application/json' },
+    body: JSON.stringify({ query: '{ modelAccounts { ... on RuntimeAccountDetail { logins { box { name } harness place state expiresAt learnedFrom why } } } }' }) });
+  expect((await read.json()).data.modelAccounts[0].logins).toEqual([
+    { box: { name: 'worker' }, harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: ends, learnedFrom: 'check', why: null },
+    { box: { name: 'worker' }, harness: 'claude', place: 'host', state: 'signed-out', expiresAt: null, learnedFrom: 'check', why: 'There is no sign-in file.' }]);
 });

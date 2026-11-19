@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import { GraphQLString } from 'graphql/index.js';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, boxes, boxAgents, members, memberAgents, tokens } from './core/data/schema.js';
+import { agents, agentBoxes, agentDeniedTools, agentHousePorts, agentPeople, agentRunSettings, boxes, boxAgents, boxFacts, members, memberAgents, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { applyDataPatch } from '../web/src/data/graphql/client.js';
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -38,9 +38,27 @@ it('mounts exact ticker fields with member ownership and current household-owner
   f.root.writes.run(()=>f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.id,'alice-box')).run());
   expect((await (await f.post('alice')).json()).data.boxes.map((row:{id:string})=>row.id)).toEqual(['retired']);
 });
-it('does not expose execution-grant relations alongside the registry',async()=>{
-  const f=fixture();const body=await(await f.post('bob','{ agents { id boxAgentsByAgent { boxRow { id } } } }')).json();
-  expect(body.errors).toHaveLength(1);expect(body.data).toBeUndefined();
+it('shows which agents a machine allows and what it has to whoever sees the machine; an agent sees only its own rows',async()=>{
+  const f=fixture();f.db.insert(boxFacts).values({box:'alice-box',fact:'gpu',fromOwner:true}).run();
+  const read=async(who:keyof typeof keys)=>(await(await f.post(who,'{ boxAgents { box agent lent } boxFacts { box fact } boxes { id } }')).json()).data;
+  expect(await read('alice')).toMatchObject({boxAgents:[{box:'alice-box',agent:'art',lent:true}],boxFacts:[{box:'alice-box',fact:'gpu'}]});
+  expect(await read('house')).toMatchObject({boxAgents:[{box:'alice-box',agent:'art',lent:true}],boxFacts:[{box:'alice-box',fact:'gpu'}]});
+  // Bob may use the agent, but the machine is Alice's.
+  expect(await read('bob')).toMatchObject({boxAgents:[],boxFacts:[]});
+  expect(await read('art')).toEqual({boxAgents:[{box:'alice-box',agent:'art',lent:true}],boxFacts:[],boxes:[]});
+  const nested=await(await f.post('bob','{ agents { id boxAgentsByAgent { boxRow { id } } } }')).json();
+  expect(nested.errors).toBeUndefined();expect(nested.data.agents).toEqual([{id:'art',boxAgentsByAgent:[]}]);
+});
+it('shows how an agent runs to those who see the agent, the agent included, and to nobody else',async()=>{
+  const f=fixture();
+  f.db.insert(agentRunSettings).values({agent:'art',houseRepository:'github:acme/house',houseFile:'house.yml',houseBranch:'main',repositorySecret:null,nestedContainers:false,gpu:true}).run();
+  f.db.insert(agentBoxes).values({agent:'art',box:'alice-box',position:0}).run();f.db.insert(agentHousePorts).values({agent:'art',address:'127.0.0.1',port:8080}).run();
+  f.db.insert(agentPeople).values({agent:'art',person:'discord:1',tier:2}).run();f.db.insert(agentDeniedTools).values({agent:'art',pattern:'Bash(rm *)',guestsOnly:true}).run();
+  const q='{ agentRunSettings { agent houseRepository gpu } agentBoxes { box position } agentHousePorts { port } agentHouseSecrets { alias } agentPeople { person tier } agentDeniedTools { pattern guestsOnly } }';
+  const full={agentRunSettings:[{agent:'art',houseRepository:'github:acme/house',gpu:true}],agentBoxes:[{box:'alice-box',position:0}],agentHousePorts:[{port:8080}],agentHouseSecrets:[],agentPeople:[{person:'discord:1',tier:2}],agentDeniedTools:[{pattern:'Bash(rm *)',guestsOnly:true}]};
+  for(const who of ['bob','house','art'] as const){const body=await(await f.post(who,q)).json();expect(body.errors).toBeUndefined();expect(body.data).toEqual(full);}
+  const none=await(await f.post('alice',q)).json();expect(none.errors).toBeUndefined();
+  expect(none.data).toEqual({agentRunSettings:[],agentBoxes:[],agentHousePorts:[],agentHouseSecrets:[],agentPeople:[],agentDeniedTools:[]});
 });
 async function socket(f:ReturnType<typeof fixture>,who:keyof typeof keys){
   const server=createServer();const detach=f.root.attach(server);server.listen(0,'127.0.0.1');await once(server,'listening');

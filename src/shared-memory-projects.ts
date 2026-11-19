@@ -5,6 +5,7 @@ import {asc,desc,eq,getTableColumns} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
 import {tasks,taskComments,taskLinks,changes} from './core/data/schema.js';
 import {taskVisibility} from './core/data/visibility.js';
+import {taskShelved} from './core/data/project-in-use.js';
 import {workVisibility} from './core/data/work-visibility.js';
 import type {TaskService} from './apps/tasks.js';
 import {taskGroups,type ProjectTask} from './pieces/mind/projects-tasks.js';
@@ -15,8 +16,9 @@ export function sharedProjectSections(db:DataDatabase,service:Pick<TaskService,'
   tasks:{read(viewer,q){
    const policy=taskVisibility(viewer);
    const comments=db.select().from(taskComments).where(policy.taskComments!(getTableColumns(taskComments))).all();
+   const shelved=new Set(db.select({id:tasks.id}).from(tasks).where(taskShelved(tasks)).all().map(row=>row.id));
    const rows:ProjectTask[]=db.select().from(tasks).where(policy.tasks!(getTableColumns(tasks))).orderBy(asc(tasks.priority),asc(tasks.position),asc(tasks.id)).all().map(row=>({
-    id:row.id,title:row.title,status:row.status,priority:row.priority,createdAt:row.createdAt,comments:comments.filter(c=>c.task===row.id),description:row.description,goal:row.goal,why:row.why,
+    id:row.id,title:row.title,status:row.status,...(shelved.has(row.id)?{shelved:true}:{}),priority:row.priority,createdAt:row.createdAt,comments:comments.filter(c=>c.task===row.id),description:row.description,goal:row.goal,why:row.why,
     ...(row.project?{project:row.project}:{}),...(row.assignee&&row.assigneeKind===viewer.kind?{assignee:row.assignee}:{}),...(row.startedAt?{startedAt:row.startedAt}:{}),...(row.closedAt?{closedAt:row.closedAt}:{}),...(row.closeReason?{closeReason:row.closeReason}:{}),...(row.sourceKind&&row.sourceId?{source:row.sourceKind+':'+row.sourceId}:{}),
    }));
    const links=db.select().from(taskLinks).where(policy.taskLinks!(getTableColumns(taskLinks))).all().map(row=>({id:row.task,dependsOn:row.dependsOn,type:row.type}));

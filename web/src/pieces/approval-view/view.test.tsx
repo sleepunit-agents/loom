@@ -89,3 +89,40 @@ it('threads change presentation through the selected tile reader without parsing
   expect(renderChange).not.toHaveBeenCalled();
   expect(tree.root.findAllByType('p').some((p: { props: { children: string } }) => p.props.children === 'Custom before and after')).toBe(false);
 });
+
+it('asks for a second, explicit yes before allowing a dangerous action; cancel sends nothing', async () => {
+  const allow = vi.fn(async () => {}), deny = vi.fn(async () => {});
+  const dangerous = { ...snapshot, approvals: [{ ...approval, kind: 'dangerous' as const }] };
+  const press = (label: string) => act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === label).props.onClick(); });
+  await draw(dangerous, { allow, deny });
+  await press('Allow');
+  expect(allow).not.toHaveBeenCalled();
+  expect(JSON.stringify(tree.toJSON())).toContain('This cannot be undone.');
+  await press('Cancel');
+  expect(allow).not.toHaveBeenCalled();
+  expect(JSON.stringify(tree.toJSON())).not.toContain('This cannot be undone.');
+  await press('Allow'); await press('Yes, allow it');
+  expect(allow).toHaveBeenCalledExactlyOnceWith(approval.id, true);
+  await press('Deny');
+  expect(deny).toHaveBeenCalledExactlyOnceWith(approval.id);
+});
+
+it('says the program\'s own refusal of an answer as it is, and shows what already stands against a card', async () => {
+  let reject!: (error: Error) => void;
+  const allow = vi.fn(() => new Promise<void>((_, no) => { reject = no; }));
+  await draw({ ...snapshot, approvals: [{ ...approval, problem: 'No live token has that label' }] }, { allow, deny: vi.fn() });
+  expect(JSON.stringify(tree.toJSON())).toContain('No live token has that label');
+  await act(async () => { buttons()[0].props.onClick(); });
+  await act(async () => { reject(Object.assign(new Error('At least one household owner must remain'), { name: 'WorkRefused' })); });
+  expect(tree.root.findAllByType('Error').map((node: { props: { text: string } }) => node.props.text)).toEqual(['At least one household owner must remain']);
+  // A card nothing stands against says nothing about it.
+  await draw(snapshot, { allow: vi.fn(), deny: vi.fn() });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('cannot be allowed');
+});
+
+it('shows the quoted decision on the inline approval card', async () => {
+ const note='Allowed by sam through art, on their words: “Go ahead” (conversation room, message msg, item item)';
+ await draw({...snapshot,approvals:[{...approval,state:'allowed',decidedBy:'sam'}],
+   record:[{seq:1,at:approval.askedAt,event:'allow',approval:approval.id,agent:'art',note}]});
+ expect(JSON.stringify(tree.toJSON())).toContain(note);
+});

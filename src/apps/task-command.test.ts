@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
 import { members, inbox } from '../core/data/schema.js';
 import { taskService, type TaskService } from './tasks.js';
-import { dispatchTaskCommand, taskCommandSchema, type TaskCommand } from './task-command.js';
+import { dispatchTaskCommand, taskCommandSchema, TASK_MOVE_MAX, type TaskCommand } from './task-command.js';
 
 let client: Database.Database, db: DataDatabase, service: TaskService;
 const actor = { kind: 'member', id: 'jonathan' } as const;
@@ -89,4 +89,20 @@ it.each([
   { action: 'ask', id: 't-1', input: { to: { kind: 'agent', id: 'art' }, ask: 'Go?', ifYes: 'Go', ifNo: 'Wait' } },
 ])('rejects malformed or identity-bearing command %# before dispatch', command => {
   expect(taskCommandSchema.safeParse(command).success).toBe(false);
+});
+
+it('takes a move as a place in the order, and a move to a project under its own name', () => {
+  const ok = (command: unknown) => taskCommandSchema.safeParse(command).success;
+  expect(ok({ action: 'move', id: 't-1', before: null })).toBe(true);
+  expect(ok({ action: 'moveToProject', ids: ['t-1', 't-2'], project: 'pond' })).toBe(true);
+  expect(ok({ action: 'moveToProject', ids: ['t-1'], project: null })).toBe(true);
+  expect(ok({ action: 'moveToProject', ids: Array.from({ length: TASK_MOVE_MAX }, (_, n) => `t-${n + 1}`), project: 'pond' })).toBe(true);
+  for (const bad of [{ action: 'moveToProject', ids: [], project: 'pond' }, { action: 'moveToProject', ids: Array.from({ length: TASK_MOVE_MAX + 1 }, (_, n) => `t-${n + 1}`), project: 'pond' },
+    { action: 'moveToProject', ids: ['t-1'] }, { action: 'moveToProject', ids: ['t-1'], project: '' }, { action: 'moveToProject', ids: 't-1', project: 'pond' }, { action: 'moveToProject', ids: ['t-1'], project: 'pond', before: null },
+    // `move` means the order and nothing else.
+    { action: 'move', ids: ['t-1'], project: 'pond' }, { action: 'move', id: 't-1', project: 'pond' }, { action: 'moveToProject', id: 't-1', before: null }]) expect(ok(bad), JSON.stringify(bad).slice(0, 80)).toBe(false);
+  expect(TASK_MOVE_MAX).toBe(500);
+  const a = create('Buy pump'), b = create('Fit pump');
+  expect(send({ action: 'moveToProject', ids: [a.id, b.id], project: null })).toEqual({ moved: [] });
+  expect(send({ action: 'move', id: b.id, before: a.id })).toMatchObject({ id: b.id });
 });

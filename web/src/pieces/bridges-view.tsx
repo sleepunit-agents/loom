@@ -13,7 +13,7 @@ export interface BridgePersonRow { platform: string; workspace: string; user: st
 export interface BridgeSendRow {
   id: string; incoming: string; connection: string; channel: string; thread: string | null;
   text: string; state: 'pending' | 'held' | 'sending' | 'sent' | 'uncertain' | 'dismissed';
-  postedId: string | null; createdAt: string;
+  createdAt: string;
 }
 export type BridgeFolder = 'connections' | 'channels' | 'people' | 'sends';
 export interface BridgeSelection { folder: BridgeFolder; id: string }

@@ -1,4 +1,5 @@
 import {sealHandoff} from './core/conversations/handoff-words.js';
+import {jobRoom} from './shared-place-mail.js';
 /** Real Root/body protocol, no provider or child process. */
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -20,20 +21,29 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
  });
  const brief=venue==='handoff'?await sealHandoff(f.key,'Compare three fictitious pumps',new Date(f.clock.now()).toISOString(),14):'Compare three fictitious pumps';
  const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:brief});
- const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
+ const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'},
+  // The room loom reads for the job, as its dispatcher hands it: the word decides what the body asks for.
+  run:{nestedContainers:false,gpu:false,ports:[],policy:jobRoom(f.db,{id:'job',agent:'art',conversation})}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture-image',bootstrap:{origin:'https://loom.example',job:'job',token}}));
  const errors:string[]=[];
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/fixture'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,schedule:{every:()=>()=>{}},
   fetch:async(url,init)=>f.root.http.request(new Request(String(url),init)),
-  native:async(assigned,words)=>{if(authored){const result=await f.call('digest',{summary:'Authored decisions',items:[{kind:'task',text:'Keep the inspection task'}],question:{to:'alice',answers:'yes-no',words:'Inspect the pump?'}},'authored-digest',token);expect(result.status).toBe(200);}expect(assigned).toEqual(job);expect(words).toBe('Compare three fictitious pumps');expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('done');return {text:'Three pumps compared.',model:'actual-background-model',actions:[{model:'actual-tool-model'}]};},
+  native:async(assigned,words)=>{if(authored){const result=await f.call('digest',{summary:'Authored decisions',items:[{kind:'task',text:'Keep the inspection task'}],question:{to:'alice',answers:'yes-no',words:'Inspect the pump?'}},'authored-digest',token);expect(result.status).toBe(200);}expect(assigned).toEqual(job);expect(words).toBe('Compare three fictitious pumps');expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('taken');return {text:'Three pumps compared.',model:'actual-background-model',actions:[{model:'actual-tool-model'}]};},
   error:text=>errors.push(text)})).toBe(0);
  expect(errors).toEqual([]);
+ // Settled only after the work was recorded.
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('done');
  expect(f.db.select().from(s.turns).all()).toEqual(expect.arrayContaining([expect.objectContaining({conversation,kind:'reply',model:'actual-background-model',run:'job'}),expect.objectContaining({conversation,kind:'action',model:'actual-tool-model',run:'job'})]));
- expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Completed this stretch of work.',revision:1})]);
+ // A brief with nobody's word on it is anybody else's: loom's line is first on its summary, as on its question. A lane's own work writes its own words alone.
+ const stamp=venue==='handoff'?`[From loom: written while working for somebody loom cannot name in conversation ${conversation}, who is not one of art's owners.] `:'';
+ expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:stamp+(authored?'Authored decisions':'Completed this stretch of work.'),revision:1})]);
  if(authored){expect(f.db.select().from(s.digestItems).all()).toEqual([expect.objectContaining({kind:'task',text:'Keep the inspection task'})]);
-  expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:'Inspect the pump?',state:'waiting'})]));
+  // A brief with nobody's word on it is anybody else's: the question says so first, in loom's words. A lane's own work asks in its own words alone.
+  const asked=venue==='handoff'?'[From loom: art asks this while working for somebody loom cannot name, who is not one of its owners. The words below are that job\'s, not art\'s own work.]\n\nInspect the pump?':'Inspect the pump?';
+  expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:asked,state:'waiting'})]));
  }
  expect(f.db.select().from(s.threads).all()).toEqual([]);expect(f.db.select().from(s.messages).all()).toEqual([]);
- expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
+ // Such a brief's body writes nothing to the agent's one status row; a lane's own work reports as before.
+ if(venue==='handoff')expect(f.db.select().from(s.agentStatus).get()).toBeUndefined();else expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
  expect(bytes.every(byte=>byte===0)).toBe(true);
 });

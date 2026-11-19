@@ -23,10 +23,10 @@ export const deskChangesQuery = `query DeskChanges { changes(where: {state: {eq:
 export interface DeskChangesData { changes: { id: string; checks: 'passing' | 'failing' | 'running' | 'none' }[] }
 /** Readiness is computed in SQL, including blockers the caller cannot see. */
 export const deskTasksQuery = `query DeskTasks {
-  inProgress: tasks(where: {status: {eq: in_progress}}) { id }
+  inProgress: tasks(where: {status: {eq: in_progress}}) { id isShelved }
   readyTasks { id }
 }`;
-export interface DeskTasksData { inProgress: { id: string }[]; readyTasks: { id: string }[] }
+export interface DeskTasksData { inProgress: { id: string; isShelved: boolean }[]; readyTasks: { id: string }[] }
 /** Counts only the policy-filtered records in this window. No legacy tile programs or health guesses. */
 export function useDeskStats() {
   const boxes = useDataQuery<DeskBoxesData>(deskBoxesQuery);
@@ -47,7 +47,7 @@ export function useDeskStats() {
   const latest = tempoData?.triggerLog[0];
   const enabledConnections = bridgeData?.bridgeConnections.filter(c=>c.enabled).length ?? 0;
   const parts: TickPart[] = [
-    {text:taskData ? `Tasks · ${taskData.inProgress.length} in progress · ${taskData.readyTasks.length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
+    {text:taskData ? `Tasks · ${taskData.inProgress.filter(task => !task.isShelved).length} in progress · ${taskData.readyTasks.length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
     {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}${latest?` · Last event: ${latest.event}`:''}` : 'Tempo unavailable',href:'/p/tempo',tone:failedTriggers?'bad':undefined},
     {text:bridgeData ? `Bridges · ${enabledConnections} enabled connection${enabledConnections===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changeData ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},

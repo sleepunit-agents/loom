@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import { knowledgeQueryFields } from './pieces/mind/knowledge-query.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
@@ -243,10 +243,10 @@ it('keeps project and agent-owner Work grants independent on retained root reads
 it('serves real Memory and Work through the same HTTP and socket caller, including demotion', async () => {
   const home = mkdtempSync(join(tmpdir(), 'root-memory-work-'));
   clean.push(() => rmSync(home, { recursive: true, force: true }));
-  const knowledge = new SqliteKnowledgeBackend({ dbPath: join(home, 'knowledge.db') });
+  const knowledge = new KnowledgePages({ dbPath: join(home, 'knowledge.db') });
   clean.push(() => knowledge.close());
   await knowledge.writePage({ slug: 'pump', title: 'Fictional pump', domain: 'pond', body: 'Fictional hose instructions.' });
-  const sharing = { members: { sam: { owner: true, agents: [] } }, projects: {}, services: {} };
+  const sharing = { members: { sam: { owner: true, agents: [] } }, projects: {}};
   const reader = knowledgeQueryFields({ path: join(home, 'knowledge.db'), sharing: () => sharing, now: () => 0 });
   clean.push(reader.close);
   const f = await setup(reader.fields);

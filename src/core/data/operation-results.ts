@@ -1,27 +1,15 @@
 import { and, eq, lte, min } from 'drizzle-orm';
 import { OperationError, type Result } from '../operations/index.js';
+import type { OperationReceipt, ReceiptPersistence } from '../operations/receipts.js';
 import type { DataDatabase } from './database.js';
 import { operationResults } from './schema.js';
 
 /** Persistence only. The dispatcher owns caller identity, hashing, current access,
  * retention deadlines and the transaction containing BOTH effect and receipt.
  * No input words are stored here. Expiry scheduling belongs to its Clock owner.
+ * The shapes are the dispatcher's own (../operations/receipts.ts), exported again here for callers of this module.
  */
-export interface OperationReceipt {
-  caller: string;
-  id: string;
-  operation: string;
-  inputHash: string;
-  result: Result;
-  expires: number;
-}
-export interface ReceiptPersistence {
-  get(caller: string, id: string): OperationReceipt | undefined;
-  insert(receipt: OperationReceipt): void;
-  recover(receipt: OperationReceipt): void;
-  expire(now: number): void;
-  nextExpiry(): number | undefined;
-}
+export type { OperationReceipt, ReceiptPersistence };
 
 function utc(ms: number): string {
   if (!Number.isSafeInteger(ms)) throw new Error('Receipt time must be integer milliseconds');

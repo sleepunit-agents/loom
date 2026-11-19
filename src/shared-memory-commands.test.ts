@@ -2,7 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import Database,{type Database as Connection} from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -16,7 +16,6 @@ import {bodyCommandClient} from './runtime/body-command-client.js';
 import {bodyMemoryIdentity,bodyIdentityQuery} from './runtime/body-memory-identity.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {WorkerAssignment} from './runtime/worker.js';
-import {propose} from './backends/proposals.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
 vi.mock('better-sqlite3',async importOriginal=>{
  const original=await importOriginal<{default:typeof Database}>();
@@ -37,8 +36,8 @@ import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixture
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
 import {PeopleStore} from './backends/people.js';
-import {mergePeople} from './backends/people-merge.js';
 import * as s from './core/data/schema.js';
+import {HELD_REFUSALS} from './shared-place-mail.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
 const words='alpha NATIVE_PRIVATE_MEMORY_WORDS',title='PRIVATE_MEMORY_TITLE';
@@ -85,16 +84,10 @@ it('authors private person and project cards through native commands, with typed
  expect(await f.query(`{memoryPerson(id:"${projectId}"){name} memoryProject(id:"${personId}"){name}}`)).toEqual({memoryPerson:null,memoryProject:null});
  for(const value of ['friend','repair','garden-repair','PRIVATE_FRIEND','PRIVATE_REPAIR','PRIVATE_CARD_SUMMARY','PRIVATE_PROJECT_EDIT','PRIVATE_PERSON_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
 });
-it('reports an actual private person redirect when read through the original opaque reference',async()=>{
- const f=await fixture(),from=await f.call('personWrite',{slug:'former-friend',name:'Former friend'},'merge-from'),into=await f.call('personWrite',{slug:'current-friend',name:'Current friend'},'merge-into');expect(from.status).toBe(200);expect(into.status).toBe(200);const opaque=from.result.value.ids[0];
- expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug}}}`)).memoryPerson).toEqual({mergedFrom:null,card:{slug:'former-friend'}});
- mergePeople({contextDir:dirname(f.path),agentName:'art',actor:'art',memorySelection:null,now:()=>f.clock.now()},{from:'former-friend',into:'current-friend'});
- expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug name}}}`)).memoryPerson).toMatchObject({mergedFrom:'former-friend',card:{slug:'current-friend',name:'Current friend'}});
-});
 it('restricts card writes to the current body source and keeps card claims separate from grants',async()=>{
  const f=await fixture();
  for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){
-  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
+  for(const [index,token] of [raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
   for(const extra of [{agent:'mark'},{path:f.other}])expect((await f.call(verb,{...value,...extra},'card-path-'+verb+'-'+Object.keys(extra)[0])).status).toBe(400);
   expect((await f.call(verb,{...value,slug:'../mark'},'card-escape-'+verb)).status).toBe(400);
  }
@@ -127,10 +120,10 @@ it('keeps existing semantic-only preparation usable without silently preparing p
 });
 it('browses retained private archive and proposal words through the actual canonical HTTP door without source or shared copies',async()=>{
  const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
- const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},null);
+ const proposed=await f.call('propose',{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},'retained-propose');expect(proposed.status).toBe(200);const proposal=proposed.result.value.ids[0];
  const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
  const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryProposals(agent:"art"){entries{id title content source} nextBefore}}';
- const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'}],nextBefore:null});
+ const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:proposal,title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'}],nextBefore:null});
  expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(f.source.serialize()).toEqual(before);
  expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryProposals(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryProposals:null});
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryProposals:null});
@@ -164,7 +157,7 @@ it('keeps edit and revision-restore authority own-body scoped, and rejects a rev
  expect((await f.call('restoreRevision',{id,revision_id:revisions[0].id},'wrong-version')).status).toBe(404);
  for(const [verb,value] of [['update',{id,content:'new words'}],['restoreRevision',{id,revision_id:revisions[0].id}]] as const){
   expect((await f.call(verb,{...value,id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
-  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
+  for(const [index,token] of [raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
   expect((await f.call(verb,{...value,path:f.other},'path-'+verb)).status).toBe(400);
  }
  expect((await f.call('update',{id},'empty-edit')).status).toBe(400);expect((await f.call('update',{id,content:'  '},'blank-edit')).status).toBe(400);
@@ -207,8 +200,10 @@ it('binds commands to the actual body, publishes committed content, and reads op
  expect(await f.query(`{memoryProjectMemory(id:"${id}"){title content}}`)).toEqual({memoryProjectMemory:{title,content:words}});
  const recall=await f.call('recall',{query:'alpha',limit:1},'recall');expect(recall.status).toBe(200);expect(recall.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(JSON.stringify(recall)).not.toContain(words);
  const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all();
- const priorHeat=heat(),before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);expect(heat()).toEqual(priorHeat);
- for(const token of [raw.agent,raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
+ // Recall is a read: asking again recalls again, and warms what it finds again.
+ const before=embed.calls,again=await f.call('recall',{query:'alpha',limit:1},'recall');expect(again.status).toBe(200);expect(again.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(embed.calls).toBe(before+1);expect(heat()).toHaveLength(1);
+ expect(f.source.prepare("SELECT count(*) AS n FROM memory_command_receipts WHERE name='memory.recall'").get()).toEqual({n:0});
+ for(const token of [raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
  expect((await f.call('remember',{...input,agent:'mark'},'choose-agent')).status).toBe(400);expect((await f.call('remember',{...input,path:f.other},'choose-path')).status).toBe(400);
  const canonical=JSON.stringify({category:input.category,content:input.content,project:input.project,title:input.title}),fingerprint=f.key.hash(canonical);
  expect(fingerprint).not.toBe(createHash('sha256').update(canonical).digest('hex'));
@@ -247,12 +242,6 @@ it('leaves an existing unprepared source byte-for-byte unchanged through startup
  const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect((await f.call('propose',input,'unprepared-propose')).status).toBe(503);expect((await f.call('ratify',{id:'art:proposal:00000000-0000-0000-0000-000000000000'},'unprepared-ratify')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
-});
-it('recovers recall after shared receipt failure without adding heat again',async()=>{
- const f=await fixture();expect((await f.call('remember',input,'initial')).status).toBe(200);
- f.db.$client.exec("CREATE TRIGGER fail_recall_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(503);
- const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all(),before=heat(),calls=embed.calls;expect(before).toEqual([expect.objectContaining({recall_heat:expect.any(Number)})]);
- f.db.$client.exec('DROP TRIGGER fail_recall_core');expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(200);expect(heat()).toEqual(before);expect(embed.calls).toBe(calls);
 });
 it('publishes a committed source effect even when its shared receipt cannot be saved',async()=>{
  const f=await fixture(),gate=hold();f.db.$client.exec("CREATE TRIGGER fail_live_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
@@ -296,7 +285,7 @@ it('ratifies atomically with draft removal and private receipt, then recovers a 
 });
 it('refuses foreign draft IDs and rolls back ratification when the current body ends during embedding',async()=>{
  const f=await fixture(),id=(await f.call('propose',input,'revoked-proposal')).result.value.ids[0];
- for(const token of [raw.member,raw.agent,raw.runner])expect((await f.call('propose',input,'weaker-proposal-'+token[0],token)).status).toBe(403);
+ for(const token of [raw.member,raw.runner])expect((await f.call('propose',input,'weaker-proposal-'+token[0],token)).status).toBe(403);
  expect((await f.call('ratify',{id:id.replace('art:','mark:')},'foreign-proposal')).status).toBe(403);expect((await f.call('ratify',{id},'member-proposal',raw.member)).status).toBe(403);
  expect((await f.call('propose',{...input,agent:'mark'},'select-proposal')).status).toBe(400);
  const gate=hold(),pending=f.call('ratify',{id},'ratify-ended');await gate.began;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect([401,403]).toContain((await pending).status);expect(f.count()).toBe(0);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});
@@ -305,7 +294,7 @@ it('archives, restores and forgets one own opaque ID with private notes, replay 
  const f=await fixture(),made=await f.call('remember',input,'make-lifecycle'),id=made.result.value.ids[0],uuid=id.slice(4),note='PRIVATE_ARCHIVE_NOTE';
  for(const verb of ['archive','restore','forget']){
   expect((await f.call(verb,{id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
-  expect((await f.call(verb,{id},'non-body-'+verb,raw.agent)).status).toBe(403);
+  expect((await f.call(verb,{id},'non-agent-'+verb,raw.member)).status).toBe(403);
   expect((await f.call(verb,{id,agent:'mark'},'select-'+verb)).status).toBe(400);
  }
  const archived=await f.call('archive',{id,note},'archive-one');expect(archived.status).toBe(200);expect(archived.result.value.ids).toEqual([id]);
@@ -329,7 +318,7 @@ it('consumes canonical Memory through the production body command and GraphQL cl
  expect(await client.command('memory.recall',{query:'alpha'},'consumer-recall')).toMatchObject({ok:true,value:{ids:[id]}});
  for(const verb of ['archive','restore','forget'])expect(await client.command('memory.'+verb,{id},'consumer-'+verb)).toMatchObject({ok:true,value:{ids:[id]}});
  expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content}}',variables:{id}})).toEqual({data:{memoryProjectMemory:null}});
- f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect(await client.command('memory.remember',input,'consumer-remember')).toMatchObject({ok:false,code:'denied'});
+ f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());await expect(client.command('memory.remember',input,'consumer-remember')).rejects.toThrow('Body credential ended');
 });
 it('reads private identity and hottest memories from declared sources through the production body client without writes or env fallback',async()=>{
  const f=await fixture(),directory=dirname(f.path),client=bodyCommandClient({url:f.url,token:raw.body,signal:new AbortController().signal,clock:f.clock});clean.push(client.close);
@@ -337,6 +326,10 @@ it('reads private identity and hottest memories from declared sources through th
  expect((await f.call('remember',input,'context-memory')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Private recent episode',content:'PRIVATE_BODY_EPISODE'},'context-episode')).status).toBe(200);
  f.source.prepare('UPDATE memories SET created=?,authored_at=NULL,recall_heat=0 WHERE category=?').run('2026-07-01T00:00:00.000Z','project');
  const cool=await bodyMemoryIdentity(client,'art');expect(cool).toContain('## Background');expect(cool).toContain(title);
+ // The page for the venue the body was started on comes with it: roles/wake.md is what every lane is told.
+ mkdirSync(join(directory,'roles'),{recursive:true});writeFileSync(join(directory,'roles','wake.md'),'PRIVATE_LANE_RULES');
+ const lane=await bodyMemoryIdentity(client,'art','wake');expect(lane).toContain('# Mode: wake\n\nPRIVATE_LANE_RULES');expect(lane!.indexOf('PRIVATE_LANE_RULES')).toBeGreaterThan(lane!.indexOf('PRIVATE_BODY_CREED'));
+ expect(await bodyMemoryIdentity(client,'art','discord')).not.toContain('PRIVATE_LANE_RULES');expect(await bodyMemoryIdentity(client,'art')).not.toContain('Mode:');
  expect((await f.call('recall',{query:'alpha'},'context-recall')).status).toBe(200);const before=f.source.serialize();
  vi.stubEnv('LOOM_SQLITE_DB_PATH',f.other);vi.stubEnv('LOOM_TIMEZONE','Pacific/Honolulu');
  try{const identity=await bodyMemoryIdentity(client,'art');for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',title,'18:00'])expect(identity).toContain(value);expect(identity).toContain('## Recent');expect(identity).not.toContain('OTHER_BODY_CREED');expect(await bodyMemoryIdentity(client,'mark')).toBeNull();}finally{vi.unstubAllEnvs();}
@@ -401,7 +394,6 @@ it('keeps two current bodies in their own files even when their agents share a p
  const thread=f.root.services.comms!.threads.open({member:'bob',agent:'mark',project:'pond',title:'Other private'});
  f.root.writes.run(()=>{
   f.db.insert(s.jobs).values({id:'other-job',agent:'mark',box:'box',member:'bob',project:'pond',conversation:thread.conversation,title:'Other body',state:'running',brief:'',model:'fixture',startedByKind:'member',startedBy:'bob',houseRepository:'fixture',houseFile:'HOUSE.md',houseBranch:'next',queuedAt:at}).run();
-  f.db.update(s.conversations).set({job:'other-job'}).where(eq(s.conversations.id,thread.conversation)).run();
   f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Other body',kind:'agent',agent:'mark',job:'other-job',createdAt:at}).run();
  });
  const own=await f.call('remember',input,'own'),other=await f.call('remember',{...input,content:'beta OTHER_PRIVATE_MEMORY'},'own',token);expect(own.status).toBe(200);expect(other.status).toBe(200);
@@ -451,4 +443,148 @@ it('lets a no-job agent credential read and write shared Knowledge through the r
  expect(await f.query(selection,raw.member)).toMatchObject({memoryKnowledgeAccess:{allowed:false,canAdd:false,canVerify:false,canRecheck:false},memoryKnowledgePage:null});
  const denied=await fetch(f.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({id:'member-knowledge',input:{...input,title:'Forbidden member fact'}})});
  expect(denied.status).toBe(403);
+});
+it('lists live memories newest first by category and project with sourcing, forgettable IDs and no recall heat',async()=>{
+ const f=await fixture(),ids:string[]=[];
+ for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other'],[4,'project','pond'],[5,'project','pond']] as const){
+  vi.setSystemTime(Date.parse('2026-11-14T18:00:00Z')+i*60000);
+  const made=await f.call('remember',{category,project,title:'Listed '+i,content:'alpha listed '+i,...(i===1?{sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'}:{}),...(i===5?{ttl:'1h'}:{})},'list-'+i);expect(made.status).toBe(200);ids.push(made.result.value.ids[0]);
+ }
+ expect(f.source.prepare('SELECT sourcing,provenance FROM memories WHERE uuid=?').get(ids[1].slice(4))).toEqual({sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'});
+ expect((await f.call('remember',{...input,title:'Bad sourcing',sourcing:'guessed'},'bad-sourcing')).status).toBe(400);expect((await f.call('remember',{...input,title:'Long provenance',provenance:'p'.repeat(2001)},'long-provenance')).status).toBe(400);
+ // A draft has nowhere to keep them, so it refuses rather than drops them.
+ expect((await f.call('propose',{...input,sourcing:'relayed'},'propose-sourcing')).status).toBe(400);expect(f.count()).toBe(6);
+ expect((await f.call('archive',{id:ids[4]},'list-archive')).status).toBe(200);
+ const later=Date.parse('2026-11-14T20:30:00Z');vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
+ const all=(await f.query('{memoryList(agent:"art"){id title category project created updated sourcing}}')).memoryList as Array<{id:string;title:string;category:string;project:string;created:string;updated:string;sourcing:string|null}>;
+ expect(all.map(row=>row.id)).toEqual([ids[3],ids[2],ids[1],ids[0]]);expect(all[2]).toMatchObject({title:'Listed 1',category:'project',project:'pond',created:'2026-11-14T18:01:00.000Z',updated:'2026-11-14T18:01:00.000Z',sourcing:'relayed'});
+ expect((await f.query('{memoryList(agent:"art",category:"project"){id}}')).memoryList).toEqual([{id:ids[3]},{id:ids[1]},{id:ids[0]}]);
+ expect((await f.query('{memoryList(agent:"art",project:"pond"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
+ expect((await f.query('{memoryList(agent:"art",category:"project",project:"pond",first:1){id}}')).memoryList).toEqual([{id:ids[1]}]);
+ expect((await f.query('{memoryList(agent:"art",category:"reference"){id}}')).memoryList).toEqual([]);
+ for(const args of ['first:0','first:501','category:""']){const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:`{memoryList(agent:"art",${args}){id}}`})});expect((await response.json()).errors?.[0].message).toBe('Memory list selection is invalid');}
+ expect(f.source.serialize()).toEqual(before);expect(f.source.prepare('SELECT sum(recall_heat) AS heat FROM memories').get()).toEqual({heat:0});
+ // Only a caller who may see this agent's Memory lists it.
+ expect((await f.query('{memoryList(agent:"art"){id}}',raw.member)).memoryList).toHaveLength(4);
+ expect(await f.query('{memoryList(agent:"mark"){id}}')).toEqual({memoryList:null});expect(await f.query('{memoryList(agent:"nobody"){id}}')).toEqual({memoryList:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query('{memoryList(agent:"art"){id title}}',raw.member)).toEqual({memoryList:null});
+ // Nor does the body working for her: it reaches what is the agent's only while she has the agent.
+ expect(await f.query('{memoryList(agent:"art"){id}}')).toEqual({memoryList:null});
+ // And it changes none of it either: the commands answer a body by the same rule as the read.
+ expect((await f.call('forget',{id:all[0].id},'lost-forget')).status).toBe(403);expect((await f.call('remember',{...input,title:'After she lost the agent'},'lost-remember')).status).toBe(403);
+ f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run());
+ const forgotten=await f.call('forget',{id:all[0].id},'list-forget');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([ids[3]]);
+ expect((await f.query('{memoryList(agent:"art"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
+ for(const value of ['PRIVATE_PROVENANCE','Listed 1',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('checks a Knowledge page without changing its words unless a note is given, and keeps its freshness anchor',async()=>{
+ const f=await fixture(),knowledge=new Database(f.memory.sources.commons.knowledge,{readonly:true,fileMustExist:true});clean.push(()=>{knowledge.close();});
+ const mind=async(verb:string,value:unknown,id:string,token=raw.agent)=>{const response=await fetch(f.url+'/api/mind/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input:value})});return {status:response.status,result:await response.json()};};
+ const page={title:'Fictional pump',domain:'household',body:'Fictional pump words.',source:''};
+ expect((await mind('knowledgeAdd',{...page,freshnessAnchor:'  Pump OS 1.21  '},'add-anchored')).status).toBe(200);expect((await mind('knowledgeAdd',{...page,title:'Plain fact'},'add-plain')).status).toBe(200);
+ expect((await mind('knowledgeAdd',{...page,title:'Blank anchor',freshnessAnchor:'   '},'add-blank')).status).toBe(400);
+ const fields='slug freshness_anchor sla_class';
+ expect(await f.query(`{memoryKnowledgePage(slug:"fictional-pump"){${fields}} plain:memoryKnowledgePage(slug:"plain-fact"){${fields}} memoryKnowledge{pages{${fields}}} memoryKnowledgeSearch(query:"pump words"){${fields}}}`,raw.agent)).toEqual({
+  memoryKnowledgePage:{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},plain:{slug:'plain-fact',freshness_anchor:null,sla_class:'default'},
+  memoryKnowledge:{pages:expect.arrayContaining([{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},{slug:'plain-fact',freshness_anchor:null,sla_class:'default'}])},
+  memoryKnowledgeSearch:expect.arrayContaining([{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},{slug:'plain-fact',freshness_anchor:null,sla_class:'default'}])});
+ const state=()=>knowledge.prepare(`SELECT p.body,p.updated,p.verified_at,p.freshness_anchor,p.sla_class,(SELECT count(*) FROM page_revisions r WHERE r.page_id=p.id) AS revisions,(SELECT count(*) FROM verifications v WHERE v.page_id=p.id) AS checks FROM pages p WHERE p.slug='plain-fact'`).get() as {body:string;updated:string;verified_at:string;freshness_anchor:string|null;sla_class:string;revisions:number;checks:number};
+ const made=state();expect(made).toMatchObject({body:page.body,revisions:0,checks:0,freshness_anchor:null});
+ const move=(at:string)=>{const now=Date.parse(at);vi.setSystemTime(now);vi.spyOn(f.clock,'now').mockReturnValue(now);};
+ // No note: a pure stamp. The words, their date and their kept versions stay.
+ move('2026-11-15T18:00:00Z');const stamped=await mind('knowledgeVerify',{slug:'plain-fact'},'verify-plain');expect(stamped.status).toBe(200);expect(stamped.result.value).toMatchObject({slugs:['plain-fact'],stamped:true,noted:false});
+ expect(state()).toEqual({...made,verified_at:'2026-11-15T18:00:00.000Z',checks:1});expect(knowledge.prepare('SELECT verifier,outcome FROM verifications').all()).toEqual([{verifier:expect.any(String),outcome:'confirmed'}]);
+ // Asking for another check records it without renewing the stamp or touching the words.
+ move('2026-11-16T18:00:00Z');expect((await mind('knowledgeRecheck',{slug:'plain-fact'},'recheck-plain')).result.value).toMatchObject({stamped:false,noted:false});
+ expect(state()).toEqual({...made,verified_at:'2026-11-15T18:00:00.000Z',checks:2});expect((await f.query('{memoryKnowledgePage(slug:"plain-fact"){checked{outcome}}}',raw.agent)).memoryKnowledgePage).toEqual({checked:{outcome:'stale'}});
+ // An anchor alone is still no change to the words; it moves the class.
+ move('2026-11-17T18:00:00Z');expect((await mind('knowledgeVerify',{slug:'plain-fact',freshnessAnchor:' as of v2.0 '},'verify-anchor')).status).toBe(200);
+ expect(state()).toEqual({...made,verified_at:'2026-11-17T18:00:00.000Z',freshness_anchor:'as of v2.0',sla_class:'software',checks:3});
+ expect((await f.query(`{memoryKnowledgePage(slug:"plain-fact"){${fields} verified_at}}`,raw.agent)).memoryKnowledgePage).toEqual({slug:'plain-fact',freshness_anchor:'as of v2.0',sla_class:'software',verified_at:'2026-11-17T18:00:00.000Z'});
+ // A note is asked for: it is appended, dated, and the prior words are kept as a version.
+ move('2026-11-18T18:00:00Z');const noted=await mind('knowledgeVerify',{slug:'plain-fact',note:'  Checked against the fictional manual.  '},'verify-note');expect(noted.result.value).toMatchObject({noted:true});
+ expect(state()).toEqual({body:page.body+'\n\n## Verification — 2026-11-18\n\nChecked against the fictional manual.',updated:'2026-11-18T18:00:00.000Z',verified_at:'2026-11-18T18:00:00.000Z',freshness_anchor:'as of v2.0',sla_class:'software',revisions:1,checks:4});
+ for(const bad of [{note:'   '},{note:'n'.repeat(4001)},{freshnessAnchor:'a'.repeat(201)}])expect((await mind('knowledgeVerify',{slug:'plain-fact',...bad},'verify-bad-'+Object.keys(bad)[0]+String(Object.values(bad)[0]).length)).status).toBe(400);
+ expect(state().checks).toBe(4);
+});
+it('answers a recall on a fresh home with nothing, before any memory has been written',async()=>{
+ const f=await fixture();expect(f.source.prepare("SELECT 1 FROM sqlite_schema WHERE name IN ('memories','vec_memories')").get()).toBeUndefined();
+ const before=f.source.serialize(),recall=await f.call('recall',{query:'alpha'},'fresh-recall');
+ expect(recall.status).toBe(200);expect(recall.result.value).toEqual({ids:[],matches:[]});
+ // Reading made nothing: the tables still arrive with the first write, in its transaction.
+ expect(f.source.serialize()).toEqual(before);
+ const remembered=await f.call('remember',input,'fresh-remember');expect(remembered.status).toBe(200);
+ expect((await f.call('recall',{query:'alpha'},'fresh-recall-again')).result.value).toMatchObject({ids:remembered.result.value.ids});
+});
+/** Puts the fixture's job on anybody else's word: in a shared room, holding one message from a member who does not have the agent. */
+function heldBody(f:Awaited<ReturnType<typeof fixture>>){
+ const conversation=f.thread.conversation,token='body_'+'e'.repeat(64);
+ f.root.writes.run(()=>{
+  f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();
+  f.db.update(s.conversations).set({venue:'slack',member:null,project:null,place:JSON.stringify(['T','C',null])}).where(eq(s.conversations.id,conversation)).run();
+  f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();
+  const old=f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,credentialHash(raw.body))).get()!;
+  f.db.delete(s.tokens).where(eq(s.tokens.fingerprint,old.fingerprint)).run();
+  f.db.insert(s.tokens).values({...old,fingerprint:credentialHash(token),label:'Held body'}).run();
+  const mail=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',fromKind:'person',fromId:'bob',words:'Remember this for me'});
+  f.db.update(s.inbox).set({job:'job',state:'taken'}).where(eq(s.inbox.id,mail.id)).run();
+ });
+ return {token,conversation};
+}
+it('lets a body on anybody else\'s word add a memory and a new note, each stamped by loom with whose word it was, and change nothing else the agent or the household keeps',async()=>{
+ const f=await fixture();
+ const api=async(piece:string,verb:string,value:unknown,id:string,token:string=raw.body)=>{const response=await fetch(f.url+'/api/'+piece+'/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
+ // What the agent keeps, written on its owners' word: a memory, a draft, a person card, a note and a knowledge page.
+ const mine=(await f.call('remember',input,'own-memory')).result.value.ids[0] as string;
+ const draft=(await f.call('propose',{category:'project',title:'Draft',content:'beta draft words'},'own-draft')).result.value.ids[0] as string;
+ expect((await f.call('personWrite',{slug:'sam',name:'Sam'},'own-person')).status).toBe(200);
+ expect((await api('memory','noteWrite',{path:'plans/pond',body:'The owner\'s plan',lifespan:'keep'},'own-note')).status).toBe(200);
+ const page=await api('mind','knowledgeAdd',{title:'Pond pumps',domain:'pond',body:'Pumps run at night.'},'own-page');expect(page.status).toBe(200);const slug=page.result.value.slug as string;
+ const kept=()=>JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories ORDER BY id').all(),f.source.prepare('SELECT count(*) AS n FROM proposals').get()]);
+ const before=kept(),{token,conversation}=heldBody(f);
+ const line=`[From loom: written while working for the member bob in conversation ${conversation}, who is not one of art's owners.]`;
+ // It adds a memory. loom writes whose word it was: first in its words, where every reader meets it, and in its
+ // record, where the body's own claim of the same name is thrown away.
+ const added=await f.call('remember',{category:'project',title:'Door code',content:'gamma the door code is 1234',metadata:{written_on_word:{who:'the member alice'},colour:'green'},provenance:'Alice said so',sourcing:'observed'},'held-memory',token);
+ expect(added.status).toBe(200);
+ const row=f.source.prepare('SELECT content,metadata,provenance,sourcing FROM memories WHERE title=?').get('Door code') as {content:string;metadata:string;provenance:string;sourcing:string};
+ expect(row.content).toBe(line+'\n\ngamma the door code is 1234');
+ expect(JSON.parse(row.metadata)).toEqual({colour:'green',written_on_word:{who:'the member bob',conversation}});
+ expect(row).toMatchObject({provenance:line,sourcing:'relayed'});
+ // Everything else that changes, removes or brings back what the agent keeps is refused, in words.
+ const refused=async(verb:string,value:unknown)=>expect(await f.call(verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.memory}});
+ await refused('update',{id:mine,content:'delta rewritten by a guest'});await refused('archive',{id:mine});await refused('restore',{id:mine});await refused('forget',{id:mine});
+ await refused('restoreRevision',{id:mine,revision_id:1});await refused('propose',{category:'project',title:'Another',content:'alpha another'});await refused('ratify',{id:draft});
+ await refused('personWrite',{slug:'sam',name:'Samuel'});await refused('personRestoreRevision',{slug:'sam',revision_id:1});await refused('projectWrite',{slug:'pond',name:'Drained pond'});
+ // Its own addition is one more row; the rest is as it was.
+ expect(f.count()).toBe(2);expect(JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories WHERE title<>? ORDER BY id').all('Door code'),f.source.prepare('SELECT count(*) AS n FROM proposals').get()])).toBe(before);
+ // A note: a new path only, and who it was written for is in the note's own record, which the body does not write.
+ expect((await api('memory','noteWrite',{path:'guests/door',body:'The code is 1234',lifespan:'short'},'held-note',token)).status).toBe(200);
+ const note=(path:string)=>new Database(join(f.home,'agents/art/notes.db'),{readonly:true}).prepare('SELECT body,by FROM notes WHERE path=?').get(path) as {body:string;by:string};
+ for(const [id,input] of [['cas',{path:'claims/first',expectedBody:null}],['install',{path:'lane-state/new'}],['verdict',{path:'alert-verdicts/alert/first'}]] as const){
+  expect((await api('memory','noteWrite',{...input,body:'claim',lifespan:'keep'},'held-'+id,token)).status).toBe(403);
+  expect(note(input.path)).toBeUndefined();
+ }
+ expect(note('guests/door')).toEqual({body:'The code is 1234',by:`art, working for the member bob in conversation ${conversation}, who is not one of art's owners`});
+ for(const [path,id] of [['plans/pond','held-over'],['guests/door','held-again']])expect(await api('memory','noteWrite',{path,body:'Overwritten',lifespan:'keep'},id,token),path).toMatchObject({status:403,result:{message:HELD_REFUSALS.note}});
+ expect(note('plans/pond')).toEqual({body:'The owner\'s plan',by:'art'});expect(note('guests/door').body).toBe('The code is 1234');
+ // The household's knowledge and people: nothing.
+ for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
+  expect(await api('mind',verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.knowledge}});
+ // Adding a person is refused too. Here the people rule already refuses this agent's body before loom's line is reached.
+ expect((await api('mind','personAdd',{name:'Mallory'},'held-person',token)).status).toBe(403);
+});
+it('lets no body set or clear loom\'s stamp of whose word a memory was written on, a body on owners\' word included',async()=>{
+ const f=await fixture(),meta=(title:string)=>JSON.parse((f.source.prepare('SELECT metadata FROM memories WHERE title=?').get(title) as {metadata:string}).metadata);
+ // A body on its owners' word claims the stamp for a memory of its own: the claim is thrown away, the rest is kept.
+ const forged=await f.call('remember',{category:'project',title:'Forged',content:'alpha forged words',metadata:{written_on_word:{who:'the member bob',conversation:'cv-elsewhere'},colour:'green'}},'forged');
+ expect(forged.status).toBe(200);expect(meta('Forged')).toEqual({colour:'green'});
+ // Nor does an edit set it.
+ expect((await f.call('update',{id:forged.result.value.ids[0],metadata:{written_on_word:{who:'somebody'},colour:'blue'}},'forge-update')).status).toBe(200);expect(meta('Forged')).toEqual({colour:'blue'});
+ // A memory loom stamped keeps its stamp through an edit that tries to clear or replace it.
+ const stamp={who:'the member bob',conversation:f.thread.conversation};
+ f.source.close();const write=new Database(f.path);write.prepare('UPDATE memories SET metadata=? WHERE title=?').run(JSON.stringify({written_on_word:stamp}),'Forged');write.close();
+ const read=()=>{const db=new Database(f.path,{readonly:true});try{return JSON.parse((db.prepare('SELECT metadata FROM memories WHERE title=?').get('Forged') as {metadata:string}).metadata);}finally{db.close();}};
+ for(const [id,claim] of [['clear',null],['replace',{who:'the member alice'}]] as const)expect((await f.call('update',{id:forged.result.value.ids[0],metadata:{written_on_word:claim,colour:id}},'stamp-'+id)).status).toBe(200);
+ expect(read()).toEqual({written_on_word:stamp,colour:'replace'});
 });

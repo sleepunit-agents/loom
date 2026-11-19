@@ -2,7 +2,7 @@
   "page": "inbox",
   "title": "Inbox",
   "ownerTask": "t-2237",
-  "sourceSha256": "1df6c5260a890f7f2ffa6bc1ea485d01ecd635f68ac1bf053128823d6b4259e4",
+  "sourceSha256": "f7d858d93973ee1c5e85d17d37d932606d91de6bbdda3008b9fe878ccc41c8c3",
   "promises": [
     {
       "id": "inbox-001",

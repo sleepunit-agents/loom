@@ -5,7 +5,9 @@ CREATE TABLE `members` (
 	`full_owner` integer DEFAULT false NOT NULL,
 	`position` integer DEFAULT 0 NOT NULL,
 	`joined_at` text NOT NULL,
+	`removed_at` text,
 	CONSTRAINT "members_joined_at_utc" CHECK("members"."joined_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "members"."joined_at") = "members"."joined_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "members"."joined_at") = "members"."joined_at", 0)),
+	CONSTRAINT "members_removed_at_utc" CHECK("members"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "members"."removed_at") = "members"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "members"."removed_at") = "members"."removed_at", 0)),
 	CONSTRAINT "members_role_choice" CHECK("members"."role" in ('owner', 'member')),
 	CONSTRAINT "members_full_owner_boolean" CHECK("members"."full_owner" in (0, 1)),
 	CONSTRAINT "members_full_owner_role" CHECK(not "members"."full_owner" or "members"."role" = 'owner')
@@ -21,7 +23,9 @@ CREATE TABLE `agents` (
 	`face_shape` text NOT NULL,
 	`face_eyes` text NOT NULL,
 	`sprite_version` text,
+	`removed_at` text,
 	CONSTRAINT "agents_about_asked_at_utc" CHECK("agents"."about_asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agents"."about_asked_at") = "agents"."about_asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agents"."about_asked_at") = "agents"."about_asked_at", 0)),
+	CONSTRAINT "agents_removed_at_utc" CHECK("agents"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agents"."removed_at") = "agents"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agents"."removed_at") = "agents"."removed_at", 0)),
 	CONSTRAINT "agents_about_length" CHECK(length("agents"."about") <= 600),
 	CONSTRAINT "agents_face_shape_choice" CHECK("agents"."face_shape" in ('pebble', 'trefoil', 'clover', 'drop')),
 	CONSTRAINT "agents_face_eyes_choice" CHECK("agents"."face_eyes" in ('dot', 'oval'))
@@ -37,7 +41,11 @@ CREATE TABLE `member_agents` (
 
 CREATE TABLE `projects` (
 	`id` text PRIMARY KEY NOT NULL,
-	`name` text NOT NULL
+	`name` text NOT NULL,
+	`removed_at` text,
+	`retired_at` text,
+	CONSTRAINT "projects_removed_at_utc" CHECK("projects"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "projects"."removed_at") = "projects"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "projects"."removed_at") = "projects"."removed_at", 0)),
+	CONSTRAINT "projects_retired_at_utc" CHECK("projects"."retired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "projects"."retired_at") = "projects"."retired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "projects"."retired_at") = "projects"."retired_at", 0))
 );
 
 CREATE TABLE `project_members` (
@@ -165,7 +173,11 @@ CREATE TABLE `sessions` (
 	`issued_at` text NOT NULL,
 	`seen_at` text NOT NULL,
 	`proved_at` text NOT NULL,
+	`passkey` text,
+	`made_by` text,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`passkey`) REFERENCES `passkeys`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`made_by`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "sessions_issued_at_utc" CHECK("sessions"."issued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."issued_at") = "sessions"."issued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."issued_at") = "sessions"."issued_at", 0)),
 	CONSTRAINT "sessions_seen_at_utc" CHECK("sessions"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."seen_at") = "sessions"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."seen_at") = "sessions"."seen_at", 0)),
 	CONSTRAINT "sessions_proved_at_utc" CHECK("sessions"."proved_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."proved_at") = "sessions"."proved_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."proved_at") = "sessions"."proved_at", 0)),
@@ -178,8 +190,12 @@ CREATE TABLE `signin_links` (
 	`token` text NOT NULL,
 	`label` text NOT NULL,
 	`expires_at` text NOT NULL,
+	`session` text,
+	`is_agent` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "signin_links_expires_at_utc" CHECK("signin_links"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_links"."expires_at") = "signin_links"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_links"."expires_at") = "signin_links"."expires_at", 0))
+	FOREIGN KEY (`session`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "signin_links_expires_at_utc" CHECK("signin_links"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_links"."expires_at") = "signin_links"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_links"."expires_at") = "signin_links"."expires_at", 0)),
+	CONSTRAINT "signin_links_is_agent_boolean" CHECK("signin_links"."is_agent" in (0, 1))
 );
 
 CREATE TABLE `passkeys` (
@@ -297,17 +313,17 @@ CREATE TABLE `conversations` (
 	`venue` text NOT NULL,
 	`place` text NOT NULL,
 	`label` text NOT NULL,
-	`job` text,
+	`direct` integer DEFAULT false NOT NULL,
 	`started_at` text NOT NULL,
 	`last_at` text NOT NULL,
 	`turn_count` integer NOT NULL,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "conversations_direct_boolean" CHECK("conversations"."direct" in (0, 1)),
 	CONSTRAINT "conversations_started_at_utc" CHECK("conversations"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."started_at") = "conversations"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."started_at") = "conversations"."started_at", 0)),
 	CONSTRAINT "conversations_last_at_utc" CHECK("conversations"."last_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."last_at") = "conversations"."last_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."last_at") = "conversations"."last_at", 0)),
-	CONSTRAINT "conversations_venue_choice" CHECK("conversations"."venue" in ('loom', 'discord', 'slack', 'wake', 'handoff'))
+	CONSTRAINT "conversations_venue_choice" CHECK("conversations"."venue" in ('loom', 'discord', 'slack', 'wake', 'handoff', 'terminal'))
 );
 
 CREATE UNIQUE INDEX `conversations_place_unique` ON `conversations` (`agent`,`venue`,`place`);
@@ -435,6 +451,10 @@ CREATE TABLE `inbox` (
 	`answered_at` text,
 	`resolution` text,
 	`changed_at` text NOT NULL,
+	`on_word_kind` text,
+	`on_word` text,
+	`chain` text,
+	`chain_started_at` text,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
@@ -443,6 +463,10 @@ CREATE TABLE `inbox` (
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`answered_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`thread`,`message_seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "inbox_chain_started_at_utc" CHECK("inbox"."chain_started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."chain_started_at") = "inbox"."chain_started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."chain_started_at") = "inbox"."chain_started_at", 0)),
+	CONSTRAINT "inbox_on_word_kind_choice" CHECK("inbox"."on_word_kind" in ('member', 'outside')),
+	CONSTRAINT "inbox_on_word_pair" CHECK(("inbox"."on_word_kind" is null) = ("inbox"."on_word" is null)),
+	CONSTRAINT "inbox_chain_pair" CHECK(("inbox"."chain" is null) = ("inbox"."chain_started_at" is null) and ("inbox"."chain" is null or (json_valid("inbox"."chain") and json_type("inbox"."chain") = 'array'))),
 	CONSTRAINT "inbox_at_utc" CHECK("inbox"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."at") = "inbox"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."at") = "inbox"."at", 0)),
 	CONSTRAINT "inbox_quiet_until_utc" CHECK("inbox"."quiet_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."quiet_until") = "inbox"."quiet_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."quiet_until") = "inbox"."quiet_until", 0)),
 	CONSTRAINT "inbox_taken_at_utc" CHECK("inbox"."taken_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."taken_at") = "inbox"."taken_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."taken_at") = "inbox"."taken_at", 0)),
@@ -668,7 +692,24 @@ CREATE TABLE `triggers` (
 	`last_fired_at` text,
 	`created_at` text NOT NULL,
 	`changed_at` text NOT NULL,
+	`wants_model` text,
+	`member` text,
+	`conversation` text,
+	`asked_by_kind` text,
+	`asked_by` text,
+	`asked_at` text,
+	`needs` text,
+	`prefers` text,
+	`program` text,
+	`program_period` text,
+	`read_state_from` text,
+	`program_state` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`read_state_from`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "triggers_asked_at_utc" CHECK("triggers"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."asked_at") = "triggers"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."asked_at") = "triggers"."asked_at", 0)),
+	CONSTRAINT "triggers_asked_by_kind_choice" CHECK("triggers"."asked_by_kind" in ('member', 'outside', 'agent')),
+	CONSTRAINT "triggers_asker_with_conversation" CHECK(("triggers"."conversation" is null) = ("triggers"."asked_by_kind" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_by" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_at" is null)),
 	CONSTRAINT "triggers_next_due_at_utc" CHECK("triggers"."next_due_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."next_due_at") = "triggers"."next_due_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."next_due_at") = "triggers"."next_due_at", 0)),
 	CONSTRAINT "triggers_last_fired_at_utc" CHECK("triggers"."last_fired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."last_fired_at") = "triggers"."last_fired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."last_fired_at") = "triggers"."last_fired_at", 0)),
 	CONSTRAINT "triggers_created_at_utc" CHECK("triggers"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."created_at") = "triggers"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."created_at") = "triggers"."created_at", 0)),
@@ -695,6 +736,19 @@ CREATE TABLE `trigger_log` (
 	CONSTRAINT "trigger_log_at_utc" CHECK("trigger_log"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_log"."at") = "trigger_log"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_log"."at") = "trigger_log"."at", 0))
 );
 
+CREATE TABLE `trigger_edits` (
+	`seq` integer PRIMARY KEY NOT NULL,
+	`trigger` text NOT NULL,
+	`at` text NOT NULL,
+	`by_kind` text NOT NULL,
+	`by` text NOT NULL,
+	`before` text NOT NULL,
+	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "trigger_edits_at_utc" CHECK("trigger_edits"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_edits"."at") = "trigger_edits"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_edits"."at") = "trigger_edits"."at", 0)),
+	CONSTRAINT "trigger_edits_by_kind_choice" CHECK("trigger_edits"."by_kind" in ('member', 'agent'))
+);
+
+CREATE INDEX `trigger_edits_trigger_idx` ON `trigger_edits` (`trigger`);
 CREATE TABLE `agent_pauses` (
 	`agent` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,
@@ -795,6 +849,8 @@ CREATE TABLE `boxes` (
 	`enrolled_at` text NOT NULL,
 	`last_seen_at` text,
 	`revoked_at` text,
+	`slots` integer,
+	`readers` text,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
 	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),
@@ -847,13 +903,17 @@ CREATE TABLE `jobs` (
 	`house_branch` text NOT NULL,
 	`build` text,
 	`exit_code` integer,
+	`exit_by` text,
 	`log_tail` text,
 	`ended_by` text,
 	`ended_reason` text,
+	`ended_note` text,
 	`queued_at` text NOT NULL,
 	`claimed_at` text,
 	`heard_at` text,
 	`ended_at` text,
+	`prefers` text,
+	`placement_decision` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
@@ -867,11 +927,12 @@ CREATE TABLE `jobs` (
 	CONSTRAINT "jobs_claimed_at_utc" CHECK("jobs"."claimed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."claimed_at") = "jobs"."claimed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."claimed_at") = "jobs"."claimed_at", 0)),
 	CONSTRAINT "jobs_heard_at_utc" CHECK("jobs"."heard_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."heard_at") = "jobs"."heard_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."heard_at") = "jobs"."heard_at", 0)),
 	CONSTRAINT "jobs_ended_at_utc" CHECK("jobs"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."ended_at") = "jobs"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."ended_at") = "jobs"."ended_at", 0)),
-	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')),
-	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off'))
+	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')),
+	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off', 'stop')),
+	CONSTRAINT "jobs_exit_by_choice" CHECK("jobs"."exit_by" in ('body', 'worker', 'loom', 'runner'))
 );
 
-CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE "jobs"."state" in ('queued', 'starting', 'running', 'waiting');
+CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE "jobs"."state" in ('queued', 'starting', 'running');
 CREATE INDEX `jobs_agent_state_idx` ON `jobs` (`agent`,`state`);
 CREATE INDEX `jobs_box_state_idx` ON `jobs` (`box`,`state`);
 CREATE TABLE `job_needs` (
@@ -889,6 +950,7 @@ CREATE TABLE `agent_run_settings` (
 	`repository_secret` text,
 	`nested_containers` integer NOT NULL,
 	`gpu` integer NOT NULL,
+	`prefers` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`repository_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "agent_run_settings_nested_containers_boolean" CHECK("agent_run_settings"."nested_containers" in (0, 1)),
@@ -981,6 +1043,26 @@ CREATE TABLE `model_account_boxes` (
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE `account_signins` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account` text NOT NULL,
+	`box` text NOT NULL,
+	`asked_by_kind` text NOT NULL,
+	`asked_by` text NOT NULL,
+	`state` text NOT NULL,
+	`item` text,
+	`why` text,
+	`asked_at` text NOT NULL,
+	`changed_at` text NOT NULL,
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "account_signins_asked_at_utc" CHECK("account_signins"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_signins"."asked_at") = "account_signins"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_signins"."asked_at") = "account_signins"."asked_at", 0)),
+	CONSTRAINT "account_signins_changed_at_utc" CHECK("account_signins"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_signins"."changed_at") = "account_signins"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_signins"."changed_at") = "account_signins"."changed_at", 0)),
+	CONSTRAINT "account_signins_asked_by_kind_choice" CHECK("account_signins"."asked_by_kind" in ('member', 'agent')),
+	CONSTRAINT "account_signins_state_choice" CHECK("account_signins"."state" in ('asked', 'started', 'waiting', 'done', 'failed'))
+);
+
+CREATE INDEX `account_signins_box_state_idx` ON `account_signins` (`box`,`state`);
 CREATE TABLE `agent_models` (
 	`agent` text NOT NULL,
 	`model` text NOT NULL,
@@ -1000,10 +1082,12 @@ CREATE TABLE `bridge_connections` (
 	`enabled` integer NOT NULL,
 	`state` text NOT NULL,
 	`state_at` text NOT NULL,
+	`removed_at` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`token_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`app_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_connections_state_at_utc" CHECK("bridge_connections"."state_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_connections"."state_at") = "bridge_connections"."state_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_connections"."state_at") = "bridge_connections"."state_at", 0)),
+	CONSTRAINT "bridge_connections_removed_at_utc" CHECK("bridge_connections"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_connections"."removed_at") = "bridge_connections"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_connections"."removed_at") = "bridge_connections"."removed_at", 0)),
 	CONSTRAINT "bridge_connections_platform_choice" CHECK("bridge_connections"."platform" in ('discord', 'slack')),
 	CONSTRAINT "bridge_connections_enabled_boolean" CHECK("bridge_connections"."enabled" in (0, 1)),
 	CONSTRAINT "bridge_connections_state_choice" CHECK("bridge_connections"."state" in ('connecting', 'connected', 'backoff', 'disconnected'))
@@ -1024,6 +1108,8 @@ CREATE TABLE `bridge_channels` (
 	`channel` text NOT NULL,
 	`answers` text NOT NULL,
 	`bots_may_talk` integer NOT NULL,
+	`brief` text,
+	`reports_to` text,
 	PRIMARY KEY(`platform`, `workspace`, `channel`),
 	FOREIGN KEY (`answers`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_channels_bots_may_talk_boolean" CHECK("bridge_channels"."bots_may_talk" in (0, 1))
@@ -1053,9 +1139,18 @@ CREATE TABLE `bridge_incoming` (
 	`state` text NOT NULL,
 	`reason` text,
 	`conversation` text,
+	`mentions` text,
+	`replies_to` text,
+	`parent` text,
+	`group_dm` integer,
+	`bot` integer,
+	`webhook` integer,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridge_incoming_group_dm_boolean" CHECK("bridge_incoming"."group_dm" in (0, 1)),
+	CONSTRAINT "bridge_incoming_bot_boolean" CHECK("bridge_incoming"."bot" in (0, 1)),
+	CONSTRAINT "bridge_incoming_webhook_boolean" CHECK("bridge_incoming"."webhook" in (0, 1)),
 	CONSTRAINT "bridge_incoming_posted_at_utc" CHECK("bridge_incoming"."posted_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."posted_at") = "bridge_incoming"."posted_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."posted_at") = "bridge_incoming"."posted_at", 0)),
 	CONSTRAINT "bridge_incoming_received_at_utc" CHECK("bridge_incoming"."received_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."received_at") = "bridge_incoming"."received_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."received_at") = "bridge_incoming"."received_at", 0)),
 	CONSTRAINT "bridge_incoming_delivered_at_utc" CHECK("bridge_incoming"."delivered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."delivered_at") = "bridge_incoming"."delivered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."delivered_at") = "bridge_incoming"."delivered_at", 0)),
@@ -1065,30 +1160,29 @@ CREATE TABLE `bridge_incoming` (
 
 CREATE TABLE `bridge_sends` (
 	`id` text PRIMARY KEY NOT NULL,
-	`incoming` text NOT NULL,
+	`incoming` text,
 	`connection` text NOT NULL,
 	`channel` text NOT NULL,
 	`thread` text,
+	`conversation` text,
 	`text` text NOT NULL,
 	`state` text NOT NULL,
-	`posted_id` text,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_sends_created_at_utc" CHECK("bridge_sends"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_sends"."created_at") = "bridge_sends"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_sends"."created_at") = "bridge_sends"."created_at", 0)),
-	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed'))
+	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')),
+	CONSTRAINT "bridge_sends_answers_or_placed" CHECK(coalesce("bridge_sends"."incoming", "bridge_sends"."conversation") is not null)
 );
 
 CREATE TABLE `bridge_files` (
 	`connection` text NOT NULL,
 	`file` text NOT NULL,
-	`incoming` text NOT NULL,
 	`name` text NOT NULL,
 	`contents` blob NOT NULL,
 	`fetched_at` text NOT NULL,
 	PRIMARY KEY(`connection`, `file`),
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_files_fetched_at_utc" CHECK("bridge_files"."fetched_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at", 0))
 );
 
@@ -1210,6 +1304,180 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `agent_kits` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`tools` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `agent_kit_projects` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`project` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `project`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `agent_kit_members` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`member` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `member`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `agent_kit_outside_people` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`user` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `platform`, `workspace`, `user`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `project_outside_people` (
+	`project` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`user` text NOT NULL,
+	PRIMARY KEY(`project`, `platform`, `workspace`, `user`),
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `kit_uses` (
+	`agent` text NOT NULL,
+	`conversation` text,
+	`person_kind` text,
+	`person` text,
+	`id` text PRIMARY KEY NOT NULL,
+	`job` text NOT NULL,
+	`kit` text NOT NULL,
+	`tool` text NOT NULL,
+	`at` text NOT NULL,
+	`outcome` text NOT NULL,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `program_firings` (
+	`id` text PRIMARY KEY NOT NULL,
+	`trigger` text NOT NULL,
+	`at` text NOT NULL,
+	`period` text,
+	`job` text NOT NULL,
+	`program` text NOT NULL,
+	`status` text NOT NULL,
+	`line` text,
+	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `program_firings_job` ON `program_firings` (`job`);
+CREATE UNIQUE INDEX `program_firings_pending` ON `program_firings` (`trigger`) WHERE "program_firings"."status" = 'pending';
+CREATE UNIQUE INDEX `program_firings_period` ON `program_firings` (`trigger`,`period`);
+CREATE TABLE `machine_reads` (
+	`id` text PRIMARY KEY NOT NULL,
+	`machine` text NOT NULL,
+	`agent` text NOT NULL,
+	`job` text NOT NULL,
+	`conversation` text,
+	`word` text NOT NULL,
+	`person` text,
+	`read` text NOT NULL,
+	`args` text NOT NULL,
+	`asked_at` text NOT NULL,
+	`bytes` integer NOT NULL,
+	`outcome` text NOT NULL
+);
+
+CREATE INDEX `machine_reads_machine_time` ON `machine_reads` (`machine`,`asked_at`);
+CREATE TABLE `terminal_credentials` (
+	`fingerprint` text PRIMARY KEY NOT NULL,
+	`machine` text NOT NULL,
+	`member` text NOT NULL,
+	FOREIGN KEY (`fingerprint`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `terminal_sessions` (
+	`job` text PRIMARY KEY NOT NULL,
+	`thread` text,
+	`session_id` text NOT NULL,
+	`instance_id` text,
+	`machine` text NOT NULL,
+	`member` text NOT NULL,
+	`agent` text NOT NULL,
+	`harness` text NOT NULL,
+	`cwd` text NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`machine`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `terminal_sessions_identity` ON `terminal_sessions` (`machine`,`member`,`agent`,`harness`,`session_id`);
+CREATE TABLE `terminal_runs` (
+	`job` text PRIMARY KEY NOT NULL,
+	`parent` text NOT NULL,
+	`run_id` text NOT NULL,
+	`revision` integer NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`parent`) REFERENCES `terminal_sessions`(`job`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE UNIQUE INDEX `terminal_runs_identity` ON `terminal_runs` (`parent`,`run_id`);
+CREATE TABLE `job_usage` (
+	`job` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`tokens_in` integer,
+	`tokens_out` integer,
+	`cache_read` integer,
+	`cache_written` integer,
+	`model_calls` integer,
+	`tool_calls` integer,
+	`tools` text,
+	`largest_context` integer,
+	`wall_ms` integer,
+	`harness` text,
+	`model` text,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "job_usage_source_choice" CHECK("job_usage"."source" in ('report','transcript','none','program'))
+);
+
+CREATE TABLE `model_account_logins` (
+	`account` text NOT NULL,
+	`box` text NOT NULL,
+	`harness` text NOT NULL,
+	`place` text NOT NULL,
+	`state` text NOT NULL,
+	`expires_at` text,
+	`since` text NOT NULL,
+	`checked_at` text NOT NULL,
+	`learned_from` text NOT NULL,
+	`why` text,
+	PRIMARY KEY(`account`, `box`, `harness`, `place`),
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "model_account_logins_harness" CHECK(length(trim("model_account_logins"."harness")) > 0),
+	CONSTRAINT "model_account_logins_place" CHECK("model_account_logins"."place" in ('containers', 'host')),
+	CONSTRAINT "model_account_logins_state" CHECK("model_account_logins"."state" in ('signed-in', 'signed-out')),
+	CONSTRAINT "model_account_logins_learned_from" CHECK("model_account_logins"."learned_from" in ('check', 'job')),
+	CONSTRAINT "model_account_logins_expires_at_utc" CHECK("model_account_logins"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."expires_at") = "model_account_logins"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."expires_at") = "model_account_logins"."expires_at", 0)),
+	CONSTRAINT "model_account_logins_checked_at_utc" CHECK("model_account_logins"."checked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."checked_at") = "model_account_logins"."checked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."checked_at") = "model_account_logins"."checked_at", 0)),
+	CONSTRAINT "model_account_logins_since_utc" CHECK("model_account_logins"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_logins"."since") = "model_account_logins"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_logins"."since") = "model_account_logins"."since", 0))
+);
+
 CREATE TABLE `program_tokens` (
 	`token` text PRIMARY KEY NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade
@@ -1249,18 +1517,6 @@ CREATE TABLE `operation_results` (
 );
 
 CREATE INDEX `operation_results_expiry_idx` ON `operation_results` (`expires_at`);
-CREATE TABLE `outside_effects` (
-	`id` text PRIMARY KEY NOT NULL,
-	`operation` text NOT NULL,
-	`target` text NOT NULL,
-	`created_at` text NOT NULL,
-	`released_at` text,
-	`completed_at` text,
-	CONSTRAINT "outsideEffects_createdAt_utc" CHECK("outside_effects"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."created_at") = "outside_effects"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."created_at") = "outside_effects"."created_at", 0)),
-	CONSTRAINT "outsideEffects_releasedAt_utc" CHECK("outside_effects"."released_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."released_at") = "outside_effects"."released_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."released_at") = "outside_effects"."released_at", 0)),
-	CONSTRAINT "outsideEffects_completedAt_utc" CHECK("outside_effects"."completed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."completed_at") = "outside_effects"."completed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."completed_at") = "outside_effects"."completed_at", 0))
-);
-
 CREATE TABLE `notification_queue` (
 	`id` text PRIMARY KEY NOT NULL,
 	`device` text NOT NULL,
@@ -1272,15 +1528,6 @@ CREATE TABLE `notification_queue` (
 	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "notificationQueue_queuedAt_utc" CHECK("notification_queue"."queued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."queued_at") = "notification_queue"."queued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."queued_at") = "notification_queue"."queued_at", 0)),
 	CONSTRAINT "notificationQueue_sentAt_utc" CHECK("notification_queue"."sent_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."sent_at") = "notification_queue"."sent_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."sent_at") = "notification_queue"."sent_at", 0))
-);
-
-CREATE TABLE `signin_challenges` (
-	`id` text PRIMARY KEY NOT NULL,
-	`token` text NOT NULL,
-	`challenge` text NOT NULL,
-	`expires_at` text NOT NULL,
-	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "signinChallenges_expiresAt_utc" CHECK("signin_challenges"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at", 0))
 );
 
 CREATE TABLE `bridge_raw_events` (
@@ -1301,7 +1548,48 @@ CREATE TABLE `bridge_resume` (
 	`session` text NOT NULL,
 	`sequence` integer NOT NULL,
 	`resume_url` text NOT NULL,
+	`identity` text NOT NULL,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `bridge_send_parts` (
+	`send` text NOT NULL,
+	`part` integer NOT NULL,
+	`posted_id` text NOT NULL,
+	PRIMARY KEY(`send`, `part`),
+	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE INDEX `bridge_send_parts_posted_id_idx` ON `bridge_send_parts` (`posted_id`);
+CREATE TABLE `bridge_file_messages` (
+	`connection` text NOT NULL,
+	`file` text NOT NULL,
+	`incoming` text NOT NULL,
+	PRIMARY KEY(`connection`, `file`, `incoming`),
+	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`connection`,`file`) REFERENCES `bridge_files`(`connection`,`file`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE INDEX `bridge_file_messages_incoming_idx` ON `bridge_file_messages` (`incoming`);
+CREATE TABLE `bridge_send_files` (
+	`send` text NOT NULL,
+	`position` integer NOT NULL,
+	`name` text NOT NULL,
+	`contents` blob NOT NULL,
+	PRIMARY KEY(`send`, `position`),
+	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `conversation_sessions` (
+	`conversation` text NOT NULL,
+	`harness` text NOT NULL,
+	`session` text NOT NULL,
+	`files` blob NOT NULL,
+	`bytes` integer NOT NULL,
+	`started_at` text NOT NULL,
+	PRIMARY KEY(`conversation`, `harness`),
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))
 );
 
 CREATE TABLE `secret_write_journal` (
@@ -1416,6 +1704,26 @@ CREATE TRIGGER "approval_rules_person_member_insert" BEFORE INSERT ON "approval_
 CREATE TRIGGER "approval_rules_person_member_update" BEFORE UPDATE ON "approval_rules" WHEN NEW."person" IS NOT NULL AND NEW."person" <> '' AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."person") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "approval_rules_person_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "approval_rules_person_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_member_insert" BEFORE INSERT ON "trigger_edits" WHEN NEW."by_kind" = 'member' AND NEW."by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_member_update" BEFORE UPDATE ON "trigger_edits" WHEN NEW."by_kind" = 'member' AND NEW."by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "trigger_edits" WHERE "by" = OLD.id AND "by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "trigger_edits" WHERE "by" = OLD.id AND "by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_agent_insert" BEFORE INSERT ON "trigger_edits" WHEN NEW."by_kind" = 'agent' AND NEW."by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_agent_update" BEFORE UPDATE ON "trigger_edits" WHEN NEW."by_kind" = 'agent' AND NEW."by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "trigger_edits" WHERE "by" = OLD.id AND "by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "trigger_edits" WHERE "by" = OLD.id AND "by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "trigger_edits_by_pair_insert" BEFORE INSERT ON "trigger_edits" WHEN NOT coalesce(((NEW."by" IS NULL AND NEW."by_kind" IS NULL) OR (NEW."by" IS NOT NULL AND NEW."by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "trigger_edits_by_pair_update" BEFORE UPDATE ON "trigger_edits" WHEN NOT coalesce(((NEW."by" IS NULL AND NEW."by_kind" IS NULL) OR (NEW."by" IS NOT NULL AND NEW."by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "account_signins_asked_by_member_insert" BEFORE INSERT ON "account_signins" WHEN NEW."asked_by_kind" = 'member' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_member_update" BEFORE UPDATE ON "account_signins" WHEN NEW."asked_by_kind" = 'member' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "account_signins" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "account_signins" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_agent_insert" BEFORE INSERT ON "account_signins" WHEN NEW."asked_by_kind" = 'agent' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_agent_update" BEFORE UPDATE ON "account_signins" WHEN NEW."asked_by_kind" = 'agent' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "account_signins" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "account_signins" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "account_signins_asked_by_pair_insert" BEFORE INSERT ON "account_signins" WHEN NOT coalesce(((NEW."asked_by" IS NULL AND NEW."asked_by_kind" IS NULL) OR (NEW."asked_by" IS NOT NULL AND NEW."asked_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "account_signins_asked_by_pair_update" BEFORE UPDATE ON "account_signins" WHEN NOT coalesce(((NEW."asked_by" IS NULL AND NEW."asked_by_kind" IS NULL) OR (NEW."asked_by" IS NOT NULL AND NEW."asked_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
 CREATE TRIGGER "approval_record_immutable_update" BEFORE UPDATE ON "approval_record" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
 CREATE TRIGGER "approval_record_immutable_delete" BEFORE DELETE ON "approval_record" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
 CREATE TRIGGER "deleted_threads_immutable_update" BEFORE UPDATE ON "deleted_threads" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;

@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { PeopleStore } from './people.js';
 
 /**
- * Criterion 10 of docs/specs/person-cards.md — mirrors
- * sqlite-knowledge-write-race.test.ts.
+ * Criterion 10 of docs/specs/person-cards.md.
  *
  * person_write is state-dependent: it reads the current card, merges the
  * passed fields onto it, then writes the whole card back. If that read

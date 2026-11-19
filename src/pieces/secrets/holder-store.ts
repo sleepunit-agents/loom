@@ -2,6 +2,7 @@
  * neither loom.db nor the old secrets store is opened here. Not a KeyHolder:
  * callers must await this API outside a synchronous registry transaction.
  */
+import { SHA256_HEX } from '../../core/sha256-hex.js';
 import Database from 'better-sqlite3';
 import { Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -9,9 +10,17 @@ import { closeSync, constants, fstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { assertPrivateDirectory, privateBytes } from './local-holder.js';
-import { secretName } from './input.js';
+import { SECRET_VALUE_BYTES, SECRET_WRITE_MODES, secretName, secretValueSize } from './input.js';
 
 const unavailable = () => new Error('Secret holder storage unavailable');
+/** The holder store's version, kept in the file header (PRAGMA user_version). A change to its tables raises
+ * it and adds a step where the store is opened. A file made before the number was kept reads 0 and has
+ * this same shape, so it is marked and nothing else. */
+const HOLDER_VERSION = 1;
+/** The one failure here that says why: it names two numbers and nothing the store holds. */
+class NewerHolderStore extends Error {
+  constructor(version: number) { super(`Secret holder storage is from a newer program (version ${version}; this program knows ${HOLDER_VERSION})`); }
+}
 const context = z.object({member: z.string().min(1).max(256), writeId: z.uuid()}).strict();
 /** Passed by trusted composition after authenticating the member and checking
  * current household permission. Never take this object directly from a request.
@@ -84,12 +93,15 @@ export async function openHolderStore(directory: string, identityFile: string, f
       try { assertPrivateFile(fd); } finally { closeSync(fd); }
     }
     db = new Database(path, {timeout: 0});
+    // Before anything is created or written: a store a newer program has changed is left as it is.
+    const version = db.pragma('user_version', {simple: true}) as number;
+    if (version > HOLDER_VERSION) throw new NewerHolderStore(version);
     db.pragma('journal_mode = WAL'); db.pragma('synchronous = FULL');
     const binding = (key: Buffer, recipient: string) => createHmac('sha256', key)
       .update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
     const verifier = binding(keys[0], recipients[0]);
     const supplied = new Set(keys.flatMap(key => recipients.map(recipient => binding(key, recipient))));
-    const historySchema = z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1);
+    const historySchema = z.array(z.string().regex(SHA256_HEX)).min(1);
 
     db.transaction(() => {
       const hadStore = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('holder_config','holder_values','holder_receipts','holder_generation','holder_key_history','holder_aborted_writes')").get();
@@ -108,12 +120,13 @@ export async function openHolderStore(directory: string, identityFile: string, f
       const history = saved ? historySchema.parse(JSON.parse(saved.bindings)) : old ? [old.verifier] : [];
       if ((saved && (!old || !history.includes(old.verifier))) || new Set(history).size !== history.length
         || history.some(hash => !supplied.has(hash))) throw unavailable();
-      if (!old) db!.prepare('INSERT INTO holder_config VALUES (1,?)').run(verifier);
+      if (!old) db!.prepare('INSERT INTO holder_config (id, verifier) VALUES (1,?)').run(verifier);
       const updated = [...new Set([...history, verifier])].sort();
-      db!.prepare('INSERT INTO holder_key_history VALUES (1,?) ON CONFLICT(id) DO UPDATE SET bindings=excluded.bindings')
+      db!.prepare('INSERT INTO holder_key_history (id, bindings) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET bindings=excluded.bindings')
         .run(JSON.stringify(updated));
-      db!.prepare('INSERT OR IGNORE INTO holder_generation VALUES (1,?)').run(randomUUID());
+      db!.prepare('INSERT OR IGNORE INTO holder_generation (id, generation) VALUES (1,?)').run(randomUUID());
     }).immediate();
+    if (version !== HOLDER_VERSION) db.pragma(`user_version = ${HOLDER_VERSION}`);
     const store = db;
     let closed = false;
     const check = () => { if (closed) throw unavailable(); };
@@ -131,14 +144,14 @@ export async function openHolderStore(directory: string, identityFile: string, f
       if (old && !hashes.includes(old.fingerprint)) throw unavailable();
       return !!old;
     };
-    const receipt = (who: HolderWrite, hash: string) => store.prepare('INSERT INTO holder_receipts VALUES (?,?,?)')
+    const receipt = (who: HolderWrite, hash: string) => store.prepare('INSERT INTO holder_receipts (member, write_id, fingerprint) VALUES (?,?,?)')
       .run(who.member, who.writeId, hash);
     return {
       async set(who, name, value, mode) {
         let bytes: Buffer | undefined;
         try {
           check();
-          if (!(value instanceof Uint8Array) || !value.byteLength || value.byteLength > 65536 || !['add', 'replace'].includes(mode)) throw unavailable();
+          if (!(value instanceof Uint8Array) || !secretValueSize(value.byteLength) || !SECRET_WRITE_MODES.includes(mode)) throw unavailable();
           // Snapshot all caller-owned mutable input before the first await.
           who = context.parse(who); bytes = Buffer.from(value);
           const hashes = keys.map(key => fingerprint(key, who, 'set', name, mode, bytes));
@@ -150,7 +163,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             if (replay(who, hashes)) return;
             const exists = !!store.prepare('SELECT 1 FROM holder_values WHERE name=?').get(name);
             if (exists !== (mode === 'replace')) throw unavailable();
-            store.prepare('INSERT INTO holder_values VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
+            store.prepare('INSERT INTO holder_values (name, ciphertext) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
             receipt(who, hashes[0]);
             store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
@@ -183,7 +196,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             const aborted = !!store.prepare('SELECT 1 FROM holder_aborted_writes WHERE member=? AND write_id=?').get(who.member, who.writeId);
             if (committed && aborted) throw unavailable();
             if (committed) return 'committed' as const;
-            if (!aborted) store.prepare('INSERT INTO holder_aborted_writes VALUES (?,?)').run(who.member, who.writeId);
+            if (!aborted) store.prepare('INSERT INTO holder_aborted_writes (member, write_id) VALUES (?,?)').run(who.member, who.writeId);
             return 'undone' as const;
           }).immediate();
         } catch { throw unavailable(); }
@@ -204,14 +217,14 @@ export async function openHolderStore(directory: string, identityFile: string, f
           const separator = row.ciphertext.indexOf('\n--- ');
           const end = separator < 0 ? -1 : row.ciphertext.indexOf(10, separator + 5);
           const payload = row.ciphertext.length - end - 1 - 16;
-          if (end < 0 || end >= 16384 || payload <= 16 || payload > 65536 + 16) throw unavailable();
+          if (end < 0 || end >= 16384 || payload <= 16 || payload > SECRET_VALUE_BYTES + 16) throw unavailable();
           bytes = await decrypt.decrypt(row.ciphertext);
           check();
-          if (!bytes.length || bytes.length > 65536) throw unavailable();
+          if (!secretValueSize(bytes.length)) throw unavailable();
           return bytes;
         } catch { bytes?.fill(0); throw unavailable(); }
       },
       close() { if (!closed) { closed = true; for (const key of keys) key.fill(0); store.close(); } },
     };
-  } catch { for (const key of keys) key.fill(0); db?.close(); throw unavailable(); }
+  } catch (error) { for (const key of keys) key.fill(0); db?.close(); throw error instanceof NewerHolderStore ? error : unavailable(); }
 }

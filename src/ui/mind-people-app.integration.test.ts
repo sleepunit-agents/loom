@@ -1,5 +1,5 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -136,4 +136,4 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       console.error('People fixture diagnostics',diagnostics);throw error;
     }
   } finally {await browser.close();await fixture.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+});

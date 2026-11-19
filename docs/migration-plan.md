@@ -1,5 +1,10 @@
 # Offline migration plan preparation
 
+> **This describes commands that are no longer in the tree.** `loom migrate` and its importers were removed with
+> the older program (commit abbf6857, 2026-11-16) and are in the repository's history. They wrote into the earlier
+> composition's store, which `loom serve` does not read, so a move into the current household database needs new
+> importers. The page is kept as the record of what an older home holds and what a move must preserve.
+
 `loom migrate plan --snapshot DIR` prints a raw JSON plan for editing. Save it
 outside the snapshot and destination, then validate it with
 `loom migrate plan --snapshot DIR --plan FILE`. Ambiguous source layouts require
