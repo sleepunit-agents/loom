@@ -66,9 +66,10 @@ async function fixture() {
     expect(await response.json()).toEqual({ ok: true, value: null });
   };
   /** What the worker read on its own machine: a 200 GiB disk this full, and its memory. */
-  const reading = async (percent: number, freeMemoryMib = 12_288) => {
+  const reading = async (percent: number | 'unknown', freeMemoryMib = 12_288, answers = true) => {
     const response = await root.http.request('http://loom/api/runtime/machineReadings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys.worker },
-      body: JSON.stringify({ input: { readings: [{ kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) }, { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
+      body: JSON.stringify({ input: { readings: [percent === 'unknown' ? { kind: 'disk', thing: '/', unknown: true } : { kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) },
+        { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }, { kind: 'containers', answers }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
     return (await response.json() as { value: { changed: boolean } }).value.changed;
   };
   // Long enough for a selection that was woken to have been read again.
@@ -153,6 +154,38 @@ it('does not read an open selection again for a write that was refused before it
   expect(f.reads()).toBe(before); expect(window.closed()).toBe(false);
 });
 
+it('reads an open selection again at once for a machine reading that changes a state a person is shown, and for no drift in the numbers between', async () => {
+  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { kind usedPercent answers level unknownSince } }');
+  const shown = () => (window.data() as { boxReadings: { kind: string; usedPercent: number | null; answers: boolean | null; level: string; unknownSince: string | null }[] }).boxReadings;
+  f.clock.advance(1000); expect(await f.reading(71)).toBe(true);
+  await vi.waitFor(() => expect(shown()).toHaveLength(3));
+  /** One reading that must be an ordinary change: read again and shown at once, with nothing waited for. */
+  const loud = async (percent: number | 'unknown', answers: boolean, check: () => void) => {
+    await f.settle(); const before = f.reads();
+    f.clock.advance(1000); expect(await f.reading(percent, 12_288, answers)).toBe(true);
+    await vi.waitFor(check);
+    expect(f.reads()).toBeGreaterThan(before);
+  };
+  /** Readings whose numbers alone move: each is kept, and none wakes the selection. */
+  const quiet = async (percents: number[], answers: boolean, unknown = false) => {
+    await f.settle(); const before = f.reads(), frames = window.frames();
+    for (const percent of percents) { f.clock.advance(1000); expect(await f.reading(unknown ? 'unknown' : percent, 12_288 - percent, answers), String(percent)).toBe(false); await f.settle(); }
+    expect(f.reads()).toBe(before); expect(window.frames()).toBe(frames);
+  };
+  await quiet([72, 74, 80, 84, 71], true);
+  // The container runtime stops answering: not yet a condition (one reading), and shown at once all the same.
+  await loud(71, false, () => expect(shown()[0]).toMatchObject({ kind: 'containers', answers: false, level: 'ok' }));
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  // Answering again: at once too.
+  await loud(71, true, () => expect(shown()[0]).toMatchObject({ answers: true }));
+  await quiet([73, 71], true);
+  // A thing the worker can no longer read, and one it can read again.
+  await loud('unknown', true, () => expect(shown()[1]).toMatchObject({ kind: 'disk', usedPercent: 71, unknownSince: f.now() }));
+  await quiet([0, 0], true, true);
+  await loud(72, true, () => expect(shown()[1]).toMatchObject({ kind: 'disk', usedPercent: 72, unknownSince: null }));
+  await quiet([75, 71], true);
+});
+
 it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
   const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
   // The first reading is a thing watched for the first time: a change, shown at once.
@@ -162,7 +195,7 @@ it('does not read an open selection again for a machine reading that raises and 
   const after = f.reads(), frames = window.frames();
   // The same reading again and again, and readings whose numbers move under every line.
   for (const percent of [71, 71, 71, 72, 74, 71, 80, 84, 71, 71]) { f.clock.advance(1000); expect(await f.reading(percent, 12_288 - percent), String(percent)).toBe(false); await f.settle(); }
-  expect(f.db.select().from(boxReadings).all().map(row => [row.kind, row.usedPercent ?? row.freeMib, row.readAt])).toEqual([['disk', 71, f.now()], ['memory', 12_217, f.now()]]);
+  expect(f.db.select().from(boxReadings).all().map(row => [row.kind, row.usedPercent ?? row.freeMib ?? row.answers, row.readAt])).toEqual([['disk', 71, f.now()], ['memory', 12_217, f.now()], ['containers', true, f.now()]]);
   expect(f.reads()).toBe(after); expect(window.frames()).toBe(frames); expect(window.closed()).toBe(false);
   // Over the line is a condition: raised, told to the machine's owner and shown at once. Said again, it is nothing new.
   const quiet = f.reads();

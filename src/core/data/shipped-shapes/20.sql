@@ -893,6 +893,8 @@ CREATE TABLE `box_readings` (
 	`since` text,
 	`urgent_since` text,
 	`read_at` text NOT NULL,
+	`unknown_since` text,
+	`stale` integer DEFAULT false NOT NULL,
 	PRIMARY KEY(`box`, `kind`, `thing`),
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "box_readings_kind" CHECK("box_readings"."kind" in ('disk', 'memory', 'containers')),
@@ -901,7 +903,9 @@ CREATE TABLE `box_readings` (
 	CONSTRAINT "box_readings_answers_boolean" CHECK("box_readings"."answers" is null or "box_readings"."answers" in (0, 1)),
 	CONSTRAINT "box_readings_since_utc" CHECK("box_readings"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."since") = "box_readings"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."since") = "box_readings"."since", 0)),
 	CONSTRAINT "box_readings_urgent_since_utc" CHECK("box_readings"."urgent_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."urgent_since") = "box_readings"."urgent_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."urgent_since") = "box_readings"."urgent_since", 0)),
-	CONSTRAINT "box_readings_read_at_utc" CHECK("box_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."read_at") = "box_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."read_at") = "box_readings"."read_at", 0))
+	CONSTRAINT "box_readings_read_at_utc" CHECK("box_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."read_at") = "box_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."read_at") = "box_readings"."read_at", 0)),
+	CONSTRAINT "box_readings_unknown_since_utc" CHECK("box_readings"."unknown_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."unknown_since") = "box_readings"."unknown_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."unknown_since") = "box_readings"."unknown_since", 0)),
+	CONSTRAINT "box_readings_stale_boolean" CHECK("box_readings"."stale" in (0, 1))
 );
 
 CREATE TABLE `box_alert_settings` (
@@ -911,8 +915,8 @@ CREATE TABLE `box_alert_settings` (
 	`disk_free_mib` integer DEFAULT 5120 NOT NULL,
 	`memory_free_mib` integer DEFAULT 512 NOT NULL,
 	CONSTRAINT "box_alert_settings_singleton" CHECK("box_alert_settings"."singleton" = 1),
-	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK("box_alert_settings"."disk_percent" between 1 and 100),
-	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK("box_alert_settings"."disk_urgent_percent" between "box_alert_settings"."disk_percent" and 100),
+	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK("box_alert_settings"."disk_percent" between 10 and 99),
+	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK("box_alert_settings"."disk_urgent_percent" > "box_alert_settings"."disk_percent" and "box_alert_settings"."disk_urgent_percent" <= 100),
 	CONSTRAINT "box_alert_settings_disk_free_mib_range" CHECK("box_alert_settings"."disk_free_mib" >= 0),
 	CONSTRAINT "box_alert_settings_memory_free_mib_range" CHECK("box_alert_settings"."memory_free_mib" >= 0)
 );

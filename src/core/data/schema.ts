@@ -967,7 +967,10 @@ export const boxFacts = sqliteTable('box_facts', {
  * container runtime answers. One row per machine, kind and thing, replaced by each reading; no history.
  * `thing` is the watched path for a disk and empty otherwise. `level` is what loom made of the reading
  * (runtime/machine-conditions.ts): the worker sends numbers, never a judgement. `since` and `urgent_since`
- * name the occasion a notice was raised for, and are absent while that level is not held. */
+ * name the occasion a notice was raised for, and are absent while that level is not held. `unknown_since` is
+ * set while the worker says it cannot read the thing: the numbers are then the last ones read (`read_at`).
+ * `stale` is set once that has lasted a day: loom has closed what it said and holds the thing to no line
+ * until it is read again. */
 export const boxReadings = sqliteTable('box_readings', {
   box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
   kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
@@ -980,6 +983,8 @@ export const boxReadings = sqliteTable('box_readings', {
   since: text('since'),
   urgentSince: text('urgent_since'),
   readAt: text('read_at').notNull(),
+  unknownSince: text('unknown_since'),
+  stale: integer('stale', { mode: 'boolean' }).notNull().default(false),
 }, t => [
   primaryKey({ columns: [t.box, t.kind, t.thing] }),
   check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
@@ -989,6 +994,8 @@ export const boxReadings = sqliteTable('box_readings', {
   check('box_readings_since_utc', utc(t.since)),
   check('box_readings_urgent_since_utc', utc(t.urgentSince)),
   check('box_readings_read_at_utc', utc(t.readAt)),
+  check('box_readings_unknown_since_utc', utc(t.unknownSince)),
+  check('box_readings_stale_boolean', sql`${t.stale} in (0, 1)`),
 ]);
 
 /** The lines a machine's readings are held to, for the whole household: one row, and the columns' own
@@ -1001,8 +1008,9 @@ export const boxAlertSettings = sqliteTable('box_alert_settings', {
   memoryFreeMib: integer('memory_free_mib').notNull().default(512),
 }, t => [
   check('box_alert_settings_singleton', sql`${t.singleton} = 1`),
-  check('box_alert_settings_disk_percent_range', sql`${t.diskPercent} between 1 and 100`),
-  check('box_alert_settings_disk_urgent_percent_range', sql`${t.diskUrgentPercent} between ${t.diskPercent} and 100`),
+  // A line clears a few points under itself (machine-conditions.ts, CLEAR_POINTS): one too low could never clear.
+  check('box_alert_settings_disk_percent_range', sql`${t.diskPercent} between 10 and 99`),
+  check('box_alert_settings_disk_urgent_percent_range', sql`${t.diskUrgentPercent} > ${t.diskPercent} and ${t.diskUrgentPercent} <= 100`),
   check('box_alert_settings_disk_free_mib_range', sql`${t.diskFreeMib} >= 0`),
   check('box_alert_settings_memory_free_mib_range', sql`${t.memoryFreeMib} >= 0`),
 ]);

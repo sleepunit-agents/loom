@@ -1,6 +1,9 @@
 /** What a machine's worker last read on it, as the short lines "Your machines" shows. The numbers and the
  * level are loom's (`boxReadings`); nothing is judged here. */
-export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:string; usedPercent:number|null; sizeMib:number|null; freeMib:number|null; answers:boolean|null; level:'ok'|'raised'|'urgent'};
+export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:string; usedPercent:number|null; sizeMib:number|null; freeMib:number|null; answers:boolean|null; level:'ok'|'raised'|'urgent'; readAt:string; unknownSince:string|null; stale:boolean};
+/** A reading older than this is shown with the time it was read: three of a worker's five-minute intervals.
+ * A worker set to read less often shows that time always, which is still true. */
+export const READING_OLD_MS=3*5*60_000;
 
 /** An amount of room, in the binary units `df -h` writes. The same rounding as the notice loom sends. */
 export function room(mib:number):string {
@@ -8,11 +11,24 @@ export function room(mib:number):string {
  const gb=mib/1024;
  return `${gb<10?Math.floor(gb*10)/10:Math.floor(gb)} GB`;
 }
+/** A time, short: the hour and minute today, with the day before that. */
+export function shortTime(iso:string,now:number):string {
+ const at=new Date(iso),today=new Date(now).toDateString()===at.toDateString();
+ return at.toLocaleString(undefined,today?{hour:'2-digit',minute:'2-digit'}:{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+}
+/** How old a reading is, where that needs saying: nothing for one just read. A number the machine can no
+ * longer read, or has not sent for a while, is never shown as if it were current. */
+export function readingAge(reading:Reading,now:number):string {
+ if(reading.stale)return ` (not read since ${shortTime(reading.readAt,now)})`;
+ const age=now-Date.parse(reading.readAt);
+ return reading.unknownSince||!(age<=READING_OLD_MS)?` (as of ${shortTime(reading.readAt,now)})`:'';
+}
 /** One reading, quietly. A disk is named by its path only when the machine has more than one watched. */
-export function readingLine(reading:Reading,disks:number):string {
- if(reading.kind==='containers')return reading.answers?'Container runtime answering':'Container runtime not answering';
- if(reading.kind==='memory')return `Memory ${room(reading.freeMib??0)} available`;
- return `Disk${disks>1?' '+reading.thing:''} ${reading.usedPercent??0}% · ${room(reading.freeMib??0)} free`;
+export function readingLine(reading:Reading,disks:number,now:number):string {
+ const said=reading.kind==='containers'?(reading.answers?'Container runtime answering':'Container runtime not answering')
+  :reading.kind==='memory'?`Memory ${room(reading.freeMib??0)} available`
+  :`Disk${disks>1?' '+reading.thing:''} ${reading.usedPercent??0}% · ${room(reading.freeMib??0)} free`;
+ return said+readingAge(reading,now);
 }
 /** An open condition, plainly. Nothing for a reading that is fine. */
 export function conditionLine(reading:Reading):string|undefined {

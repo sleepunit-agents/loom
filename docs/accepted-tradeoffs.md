@@ -598,14 +598,19 @@ On success the body sends its report alongside settlement. A body with validated
   request), and a timing row (every measured call). Open live selections are read again for these at most
   once in a minute (`STAMP_WAKE_MS` in `src/next-data.ts`), so a window shows such a time up to a minute
   after it was written. The rows themselves are written at once, and placement and the silence sweep
-  read them as before. The numbers a worker reads on its own machine every few minutes (a disk's room,
-  the memory available) are kept back the same way while they raise and clear no condition
-  (`MachineConditions.read`, `runtime.machineReadings`); a condition raised or cleared is told at once.
+  read them as before. The numbers a worker reads on its own machine every few minutes (how full a disk
+  is, how much memory is available) are kept back the same way while only the numbers move: 71% becoming
+  84% reaches an open window up to a minute late.
 - **What is enforced.** Only a write that has checked what it wrote may be kept back: a report that left
   the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
   a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and
   every change of who may see what, is told to every selection at once, as before
   (`DataWrites.run`). A machine heard from again after a silence is told at once.
+  A machine's reading of itself is kept back only when `MachineConditions.read` says no state a person
+  is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
+  once: a condition raised, made urgent or cleared; the container runtime going from answering to not
+  answering or back; a thing becoming unknown, readable again or stale; a thing watched for the first
+  time or no more. `src/shared-live-idle.test.ts` holds both halves.
 - **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
   was waiting is set again by the next such time written, a minute from then; with nothing more written it
   waits until the clock has caught up, as every other deadline of this program does.

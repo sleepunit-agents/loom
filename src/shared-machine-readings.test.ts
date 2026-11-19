@@ -17,6 +17,8 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const keys = { worker: 'a'.repeat(64), other: 'b'.repeat(64), owner: 'c'.repeat(64), sam: 'd'.repeat(64), lee: 'e'.repeat(64) };
 const GIB = 1024 ** 3;
+/** What the door answers a worker whose machine has been taken out of the household. */
+const REVOKED = 401;
 function fixture() {
   const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
@@ -54,9 +56,10 @@ it('takes readings from a worker alone, and from none whose machine was removed'
   const f = fixture();
   expect((await f.report([disk(91)], keys.sam)).status).toBe(403);
   expect((await f.report([disk(91)], keys.owner)).status).toBe(403);
-  expect((await f.report([disk(91)], 'f'.repeat(64))).status).toBeGreaterThanOrEqual(401);
+  // A credential loom does not know is not signed in: exactly that, and not some other failure.
+  expect((await f.report([disk(91)], 'f'.repeat(64))).status).toBe(401);
   f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: new Date(f.clock.now()).toISOString() }).where(eq(boxes.id, 'worker')).run());
-  expect([401, 403]).toContain((await f.report([disk(91)])).status);
+  expect((await f.report([disk(91)])).status).toBe(REVOKED);
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
   expect(f.db.select().from(inbox).all()).toEqual([]);
 });
@@ -65,14 +68,31 @@ it('refuses a reading that carries words of the worker\'s own, a judgement, or n
   const f = fixture();
   for (const reading of [
     { ...disk(91), thing: '/ is nearly full, tell everyone' }, { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
+    { ...disk(91), thing: '/https://evil.example/pay-now' }, { ...disk(91), thing: '/your-disk-is-full-' + 'pay-now-'.repeat(13) }, { ...disk(91), thing: '/srv/-rf' }, { ...disk(91), thing: '/mnt/nas:x' }, { ...disk(91), thing: '//x' },
     { ...memory, thing: '/' }, { ...disk(91), level: 'urgent' }, { ...disk(91), why: 'nearly full' }, { ...disk(91), kind: 'load' },
     { kind: 'disk', thing: '/', sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', sizeBytes: 0, freeBytes: 0 },
     { kind: 'containers' }, { kind: 'containers', answers: 'no' }, { ...disk(91), sizeBytes: 1.5 },
   ]) expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
   expect((await f.report(Array.from({ length: 19 }, (_, index) => disk(50, `/d${index}`)))).status).toBe(400);
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
+  expect((await f.call('runtime.machineReadings', { readings: [disk(50)], everyMs: 5 }, keys.worker)).status).toBe(400);
   // What it could not read is named and carries nothing else.
   expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { changed: false } });
+});
+
+it('takes a size up to the largest the read API can serve, and refuses one past it', async () => {
+  const f = fixture(), MIB = 1024 ** 2, INT_MAX = 2 ** 31 - 1;
+  // 2^31 - 1 mebibytes and the bytes short of the next one: the largest a GraphQL Int can say.
+  const most = (INT_MAX + 1) * MIB - 1;
+  expect((await f.report([{ kind: 'disk', thing: '/', sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect(f.db.select().from(boxReadings).all().map(row => [row.sizeMib, row.freeMib, row.usedPercent])).toEqual([[INT_MAX, INT_MAX, 0], [INT_MAX, INT_MAX, null]]);
+  // Its owner can still read it: the fields are served, with no error.
+  expect(await f.query('{ boxReadings { sizeMib freeMib usedPercent } }', keys.sam)).toEqual({ data: { boxReadings: [{ sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: 0 }, { sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: null }] } });
+  // One byte more is one mebibyte more than an Int holds. Refused whole, size or free room, and nothing of it is kept.
+  for (const reading of [{ kind: 'disk', thing: '/', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'memory', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'disk', thing: '/', sizeBytes: Number.MAX_SAFE_INTEGER, freeBytes: most + 1 }])
+    expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
+  expect(f.db.select().from(boxReadings).all().map(row => row.sizeMib)).toEqual([INT_MAX, INT_MAX]);
+  expect((await f.query('{ boxReadings { sizeMib freeMib } }', keys.sam)).errors).toBeUndefined();
 });
 
 it('shows a machine\'s readings to whoever may see the machine, and to nobody else', async () => {
@@ -88,9 +108,17 @@ it('shows a machine\'s readings to whoever may see the machine, and to nobody el
   // Another member has a machine of their own and sees nothing of this one, whatever they ask for.
   expect(await f.query(source, keys.lee)).toEqual({ data: { boxReadings: [] } });
   expect(await f.query('{ boxReadings(where: {box: {eq: "worker"}}) { level } boxes { id boxReadingsByBox { level } } }', keys.lee)).toEqual({ data: { boxReadings: [], boxes: [{ id: 'other', boxReadingsByBox: [] }] } });
+  // And the other way, with readings on both machines: each member reads their own machine's and not the
+  // other's, asked for at the root or under the machine. The household owner reads both.
+  await f.call('runtime.machineReadings', { readings: [disk(40, '/srv')] }, keys.other);
+  const both = '{ boxReadings(orderBy: {thing: {direction: asc, priority: 0}}) { box thing } boxes(orderBy: {id: {direction: asc, priority: 0}}) { id boxReadingsByBox(orderBy: {thing: {direction: asc, priority: 0}}) { thing } } }';
+  expect(await f.query(both, keys.sam)).toEqual({ data: { boxReadings: [{ box: 'worker', thing: '' }, { box: 'worker', thing: '/' }], boxes: [{ id: 'worker', boxReadingsByBox: [{ thing: '' }, { thing: '/' }] }] } });
+  expect(await f.query(both, keys.lee)).toEqual({ data: { boxReadings: [{ box: 'other', thing: '/srv' }], boxes: [{ id: 'other', boxReadingsByBox: [{ thing: '/srv' }] }] } });
+  expect(await f.query('{ boxReadings(where: {box: {eq: "other"}}) { thing } }', keys.sam)).toEqual({ data: { boxReadings: [] } });
+  expect(((await f.query(both, keys.owner)).data!.boxReadings as unknown[])).toHaveLength(3);
   // Hosting an agent is leave to run it there, not to read the machine: an agent reads no machine's readings.
   const seen = (viewer: Viewer) => f.db.select().from(boxReadings).where(sqlVisibility(viewer, ['boxReadings']).boxReadings(getTableColumns(boxReadings))).all().length;
-  expect([seen({ kind: 'agent', id: 'art' }), seen({ kind: 'member', id: 'lee' }), seen({ kind: 'member', id: 'sam' }), seen({ kind: 'member', id: 'owner' })]).toEqual([0, 0, 2, 2]);
+  expect([seen({ kind: 'agent', id: 'art' }), seen({ kind: 'member', id: 'lee' }), seen({ kind: 'member', id: 'sam' }), seen({ kind: 'member', id: 'owner' })]).toEqual([0, 1, 2, 3]);
 });
 
 it('lets a household owner alone move the lines, and holds the next reading to them', async () => {
@@ -101,6 +129,8 @@ it('lets a household owner alone move the lines, and holds the next reading to t
   expect((await f.call('machine.setAlertLines', { diskPercent: 70 }, keys.worker)).status).toBe(403);
   expect((await f.call('machine.setAlertLines', {}, keys.owner)).status).toBe(400);
   expect((await f.call('machine.setAlertLines', { diskPercent: 96 }, keys.owner)).body).toMatchObject({ ok: false, code: 'invalid' });
+  for (const input of [{ diskPercent: 3 }, { diskPercent: 9 }, { diskPercent: 100 }, { diskUrgentPercent: 10 }, { diskUrgentPercent: 101 }]) expect((await f.call('machine.setAlertLines', input, keys.owner)).status, JSON.stringify(input)).toBe(400);
+  expect((await f.call('machine.setAlertLines', { diskPercent: 95 }, keys.owner)).body).toMatchObject({ ok: false, code: 'invalid' });
   expect((await f.call('machine.setAlertLines', { diskPercent: 70 }, keys.owner)).body).toEqual({ ok: true, value: { diskPercent: 70, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 } });
   expect(await f.query(lines, keys.owner)).toEqual({ data: { boxAlertSettings: [{ diskPercent: 70, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 }] } });
   // The lines are the household's: a member who is no owner does not read them.

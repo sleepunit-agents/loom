@@ -7,6 +7,7 @@ vi.mock('../../data/graphql',()=>({useDataQuery:()=>f.feed}));
 vi.mock('../../data/operation',()=>({memberOperation:f.call}));
 vi.mock('../../kit',()=>({Button:(props:object)=>h('button',props),Error:()=>null,Loading:()=>null}));
 import {OwnerMachines} from './machines';
+import {shortTime} from './machine-readings';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.clearAllMocks();});
@@ -30,7 +31,8 @@ it('shows owner history and proposes and answers scoped read grants',async()=>{
 });
 it('shows what each machine last read on itself quietly, and an open condition plainly',async()=>{
  const before=f.feed.data;
- const reading={usedPercent:null,sizeMib:null,freeMib:null,answers:null,level:'ok'};
+ const now=Date.now(),ago=(ms:number)=>new Date(now-ms).toISOString();
+ const reading={usedPercent:null,sizeMib:null,freeMib:null,answers:null,level:'ok',readAt:ago(60_000),unknownSince:null,stale:false};
  f.feed={status:'live',data:{...before,boxReadings:[
   {...reading,box:'box',kind:'memory',thing:'',sizeMib:16384,freeMib:1946},
   {...reading,box:'box',kind:'disk',thing:'/',usedPercent:71,sizeMib:204800,freeMib:61440},
@@ -52,6 +54,20 @@ it('shows what each machine last read on itself quietly, and an open condition p
  expect(text()).toEqual(['/ is running out of room: 91% full, 18 GB free.','/srv/data is almost out of room: 97% full, 3 GB free.','The container runtime is not answering.',
   'Disk / 91% · 18 GB free · Disk /srv/data 97% · 3 GB free · Container runtime not answering']);
  expect(tree.root.findAllByProps({role:'status'})).toHaveLength(3);
+ // A number is shown as current only while it is. One the worker can no longer take, or has not sent for
+ // three of its intervals, says when it was read; one loom has given up on says it has not been read since.
+ const old=ago(16*60_000),lost=ago(3*60_000),dead=ago(26*3_600_000);
+ f.feed={status:'live',data:{...before,boxReadings:[
+  {...reading,box:'box',kind:'disk',thing:'/',usedPercent:71,sizeMib:204800,freeMib:61440,readAt:ago(14*60_000)},
+  {...reading,box:'box',kind:'disk',thing:'/old',usedPercent:40,sizeMib:204800,freeMib:122880,readAt:old},
+  {...reading,box:'box',kind:'disk',thing:'/srv',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised',readAt:lost,unknownSince:ago(60_000)},
+  {...reading,box:'box',kind:'disk',thing:'/was',usedPercent:96,sizeMib:204800,freeMib:8192,readAt:dead,unknownSince:dead,stale:true},
+ ]}} as never;
+ await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
+ // The disk that is still raised keeps its plain line; the stale one, whose notice loom closed, has none.
+ expect(text()).toEqual(['/srv is running out of room: 91% full, 18 GB free.',
+  `Disk / 71% · 60 GB free · Disk /old 40% · 120 GB free (as of ${shortTime(old,now)}) · Disk /srv 91% · 18 GB free (as of ${shortTime(lost,now)}) · Disk /was 96% · 8 GB free (not read since ${shortTime(dead,now)})`]);
+ expect(shortTime(dead,now)).not.toBe(shortTime(new Date(now).toISOString(),now));
  // A machine with no reading yet (an older worker, or none reporting) shows no line at all.
  f.feed={status:'live',data:before} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));

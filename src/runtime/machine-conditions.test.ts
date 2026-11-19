@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { boxAlertSettings, boxes, boxReadings, inbox, members } from '../core/data/schema.js';
-import { ALERT_LINE_DEFAULTS, MachineConditions, alertLines, roomWords, setAlertLines } from './machine-conditions.js';
+import { boxAlertSettings, boxes, boxReadings, household, inbox, members } from '../core/data/schema.js';
+import { ALERT_LINE_DEFAULTS, MachineConditions, STALE_MS, alertLines, roomWords, setAlertLines } from './machine-conditions.js';
 import { Machines } from './machines.js';
 import { SILENCE_MS } from './silence.js';
 
@@ -134,9 +134,14 @@ it('raises under the free-room floor with words about the floor, and clears a te
   expect(f.open()).toHaveLength(1);
   f.read(part(5700));
   expect(f.closed()).toEqual([['loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', '/ has 5.5 GB free (77% full), over the 5 GB floor.']]);
-  // A disk too small for the floor to mean anything is held to the percent line alone.
+  // A disk too small for the floor to mean anything is held to the percent line alone, and when it is
+  // over that line its notice says nothing of a floor it is not held to.
   f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
   expect(f.open()).toEqual([]);
+  f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 1 * GIB });
+  expect(f.open()).toEqual(['loom: / is 87% full (1 GB free). Alerts at 85%.']);
+  f.read({ kind: 'disk', thing: '/', sizeBytes: 8 * GIB, freeBytes: 4 * GIB });
+  expect(f.closed().at(-1)).toEqual(['loom: / is 87% full (1 GB free). Alerts at 85%.', '/ is at 50% (4 GB free), under the 85% line.']);
 });
 
 it('raises low memory and a container runtime that is not answering only when two readings in a row say so', () => {
@@ -157,18 +162,95 @@ it('raises low memory and a container runtime that is not answering only when tw
   expect(f.closed().map(([, reason]) => reason)).toEqual(['2 GB of memory is available, over the 512 MB floor.', 'The container runtime is answering again.']);
 });
 
-it('leaves a thing named as unknown as it was, and stops watching a thing no longer named', () => {
+it('keeps what was last read of a thing named as unknown, raising and clearing nothing, and stops watching a thing no longer named', () => {
   const f = fixture();
   f.read(disk(91), disk(92, '/srv/data'), memory(9000));
-  const before = f.rows();
+  const before = f.rows(), readAt = f.now();
+  // Becoming unknown is a state a person is shown; staying unknown is nothing new.
+  expect(f.read({ kind: 'disk', thing: '/', unknown: true }, disk(92, '/srv/data'), { kind: 'memory', unknown: true }, { kind: 'disk', thing: '/never/read', unknown: true })).toEqual({ changed: true });
+  const since = f.now();
   expect(f.read({ kind: 'disk', thing: '/', unknown: true }, disk(92, '/srv/data'), { kind: 'memory', unknown: true }, { kind: 'disk', thing: '/never/read', unknown: true })).toEqual({ changed: false });
-  expect(f.rows().filter(row => row.thing !== '/srv/data')).toEqual(before.filter(row => row.thing !== '/srv/data'));
+  // The numbers, the level and the time they were read stand; only that it is unknown, and since when, is added.
+  expect(f.rows().filter(row => row.thing !== '/srv/data')).toEqual(before.filter(row => row.thing !== '/srv/data').map(row => ({ ...row, unknownSince: since })));
+  expect(f.rows().map(row => row.readAt)).toEqual([readAt, f.now(), readAt]);
+  // A thing never read has no record made for it by being unknown.
+  expect(f.rows().map(row => row.thing)).toEqual(['/', '/srv/data', '']);
   expect(f.open()).toHaveLength(2);
+  // Readable again is shown too, and the same occasion goes on: no second notice.
+  expect(f.read(disk(91), disk(92, '/srv/data'), memory(9000))).toEqual({ changed: true });
+  expect(f.rows().map(row => [row.unknownSince, row.stale])).toEqual([[null, false], [null, false], [null, false]]);
+  expect(f.mail()).toHaveLength(2);
   // The second disk is gone from what the worker watches: its notice closes, the other stands.
   expect(f.read(disk(91), memory(9000))).toEqual({ changed: true });
   expect(f.rows().map(row => row.thing)).toEqual(['/', '']);
   expect(f.open()).toEqual(['loom: / is 91% full (18 GB free). Alerts at 85%.']);
   expect(f.closed()).toEqual([['loom: /srv/data is 92% full (16 GB free). Alerts at 85%.', 'No longer watched']]);
+});
+
+it('closes what it said about a thing that has been unknown for a day, marks the record stale, and starts a new occasion when it is read again', () => {
+  const f = fixture();
+  f.db.insert(household).values({ timezone: 'America/Chicago' }).run();
+  f.read(disk(96), memory(9000));
+  expect(f.open()).toEqual(['loom: / is 96% full (8 GB free). Urgent at 95%.']);
+  const gone = [{ kind: 'disk' as const, thing: '/', unknown: true as const }, memory(9000)];
+  f.read(...gone);
+  // Unknown for most of a day: the notice stands, and nothing is raised or closed.
+  f.advance(STALE_MS - 20 * MINUTES);
+  expect(f.read(...gone)).toEqual({ changed: false });
+  expect(f.open()).toHaveLength(1);
+  expect(f.rows()[0]).toMatchObject({ level: 'urgent', stale: false, usedPercent: 96 });
+  // A full day: loom closes it, saying that it can no longer be read and what was last read, in the household's time.
+  f.advance(20 * MINUTES);
+  expect(f.read(...gone)).toEqual({ changed: true });
+  expect(f.open()).toEqual([]);
+  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', '/ can no longer be read; last read 19 Nov, 08:05 at 96%.']]);
+  // The last numbers are kept, marked stale and held to no line.
+  expect(f.rows()[0]).toMatchObject({ level: 'ok', stale: true, usedPercent: 96, since: null, urgentSince: null, readAt: '2026-11-19T14:05:00.000Z' });
+  expect(f.read(...gone)).toEqual({ changed: false });
+  expect(f.mail()).toHaveLength(1);
+  // Read again and still over the line: a new occasion, with a notice of its own.
+  expect(f.read(disk(97), memory(9000))).toEqual({ changed: true });
+  expect(f.open()).toEqual(['loom: / is 97% full (6 GB free). Urgent at 95%.']);
+  expect(f.rows()[0]).toMatchObject({ level: 'urgent', stale: false, unknownSince: null, since: f.now() });
+  expect(new Set(f.mail().map(item => item.sourceId)).size).toBe(2);
+});
+
+it('raises nothing for a thing that goes unknown and stale while it was fine, and nothing when it is read again under the lines', () => {
+  const f = fixture();
+  f.read(disk(50), memory(9000));
+  f.read({ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true });
+  f.advance(STALE_MS);
+  f.read({ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true });
+  expect(f.rows().map(row => row.stale)).toEqual([true, true]);
+  f.read(disk(50), memory(9000));
+  expect(f.mail()).toEqual([]);
+});
+
+it('says a change in a state a person is shown, and not a drift in the numbers', () => {
+  const f = fixture(), up = { kind: 'containers' as const, answers: true }, down = { kind: 'containers' as const, answers: false };
+  expect(f.read(disk(71), memory(9000), up)).toEqual({ changed: true });
+  expect(f.read(disk(84), memory(600), up)).toEqual({ changed: false });
+  // The container runtime not answering is shown as it is, before it is a condition and when it is back.
+  expect(f.read(disk(84), memory(600), down)).toEqual({ changed: true });
+  expect(f.mail()).toEqual([]);
+  expect(f.read(disk(84), memory(600), up)).toEqual({ changed: true });
+  expect(f.read(disk(84), memory(600), up)).toEqual({ changed: false });
+});
+
+it('counts two readings in a row only when the one before was read lately, by the worker\'s own interval', () => {
+  const f = fixture(), down = { kind: 'containers' as const, answers: false };
+  f.read(memory(300), down);
+  // The worker was away for an hour (fixture readings are five minutes apart, and so is its interval).
+  f.advance(60 * MINUTES);
+  f.read(memory(300), down);
+  expect(f.mail()).toEqual([]);
+  f.read(memory(300), down);
+  expect(f.open()).toHaveLength(2);
+  // A worker that reads hourly: an hour apart is in a row.
+  const g = fixture();
+  g.service.read('box-1', [memory(300)], 60 * MINUTES); g.advance(60 * MINUTES);
+  g.service.read('box-1', [memory(300)], 60 * MINUTES);
+  expect(g.open()).toEqual(['loom: 300 MB of memory is available. Alerts under 512 MB.']);
 });
 
 it('leaves the conditions of a machine that has stopped reporting, and their notices, as they were', () => {
@@ -211,7 +293,12 @@ it('takes its lines from the household\'s settings, and the defaults while there
   f.read(disk(81));
   expect(f.open()).toEqual([]);
   expect(() => setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent: 96 })).toThrow(/box_alert_settings_disk_urgent_percent_range/);
-  expect(() => setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent: 0 })).toThrow(/box_alert_settings_disk_percent_range/);
+  expect(() => setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent: 95 })).toThrow(/box_alert_settings_disk_urgent_percent_range/);
+  // A line clears three points under itself: one of 1, 2 or 3 could never clear, so the lowest line is one that can.
+  for (const diskPercent of [0, 1, 3, 9, 100]) expect(() => setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent }), String(diskPercent)).toThrow(/box_alert_settings_disk_(urgent_)?percent_range/);
+  setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent: 10, diskUrgentPercent: 11 });
+  f.read(disk(12)); f.read(disk(7));
+  expect(f.rows()[0].level).toBe('ok');
 });
 
 it('tells each machine\'s own owner, and keeps one machine\'s things apart from another\'s', () => {

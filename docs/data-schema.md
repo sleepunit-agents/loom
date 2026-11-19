@@ -6,7 +6,7 @@ columns, `model_account_windows`, the ten internal bookkeeping tables listed the
 and the programme restriction and grant tables. Schema 15 added six tables for kit
 definitions, person and project grants, outside project membership and use history.
 Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
-grants and request history. Schema 20 adds `box_readings` (the latest reading of each thing a machine's worker watches on it: a disk's room, the memory available, whether the container runtime answers; no history) and `box_alert_settings` (the household's lines those readings are held to; no row until an owner sets one). Schema 19 adds who made each terminal binding (`terminal_credentials.issued_by`); bindings from before have nobody recorded. Schema 18 adds `model_account_logins`: what loom last
+grants and request history. Schema 20 adds `box_readings` (the latest reading of each thing a machine's worker watches on it: a disk's room, the memory available, whether the container runtime answers; no history, with since when a thing has been unknown and whether loom has given it up as stale) and `box_alert_settings` (the household's lines those readings are held to; no row until an owner sets one). Schema 19 adds who made each terminal binding (`terminal_credentials.issued_by`); bindings from before have nobody recorded. Schema 18 adds `model_account_logins`: what loom last
 learned about each model account sign-in (account, machine, harness and place), never a
 credential. Total: 110 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant

@@ -231,14 +231,16 @@ export async function workerProgram(input: {
     // poll for work. Everything watched is said each time: loom keeps the latest reading, decides what is a
     // condition and tells the machine's owner. A worker that only reports watches its machine as well; that
     // is how the machine loom itself is on is watched when it hosts no bodies. A failed report is tried
-    // again at the next interval and never stops the worker.
+    // again at the next interval and never stops the worker. A container runtime is asked about only by a
+    // worker that has one configured (`container.socket`), whether or not it also only reports.
     const watchMachine = () => {
-      const socket = config.container?.socket;
+      const socket = config.container?.socket, everyMs = config.machineCheckMs ?? MACHINE_CHECK_MS;
       const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.reportOnly ? [] : [config.state ?? defaultWorkerState(config.box)]), ...(config.watchPaths ?? [])], signal: abort.signal,
+        say: line => input.error(line),
         ...(socket === undefined ? {} : { engine: (signal: AbortSignal) => dockerEngine(socket).json('GET', '/info', undefined, signal) }) });
-      return poll(config.machineCheckMs ?? MACHINE_CHECK_MS, 'Worker machine readings unavailable\n', async () => {
+      return poll(everyMs, 'Worker machine readings unavailable\n', async () => {
         const readings = await read();
-        if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings);
+        if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings, everyMs);
       // A clock of its own: it shares no timing with the usage refresh or the sign-in check.
       }, input.machinePause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); }));
     };

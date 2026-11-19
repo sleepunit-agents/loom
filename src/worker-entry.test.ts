@@ -18,6 +18,10 @@ it('wires the actual worker executable arguments, configuration read and observa
     expect(on).toHaveBeenCalledWith('SIGTERM', stop); expect(off).toHaveBeenCalledWith('SIGTERM', stop);
     return 17;
   });
+  // Once the program has returned the process is given a moment and then ended, so that a call to a
+  // filesystem that never answers cannot hold it open (worker.ts).
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
   try {
     process.argv = ['node', 'loom-worker', '--account-usage', '/config'];
     await import('./worker.js');
@@ -26,8 +30,12 @@ it('wires the actual worker executable arguments, configuration read and observa
     expect(output).toHaveBeenCalledWith('structured-observation\n');
     expect(diagnostics).toHaveBeenCalledWith('generic-diagnostic\n');
     expect(process.exitCode).toBe(17);
+    expect(exit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_999); expect(exit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1); expect(exit).toHaveBeenCalledExactlyOnceWith(17);
   } finally {
     process.argv = argv; process.exitCode = exitCode;
+    vi.useRealTimers(); exit.mockRestore();
     output.mockRestore(); diagnostics.mockRestore(); on.mockRestore(); off.mockRestore();
   }
 });
