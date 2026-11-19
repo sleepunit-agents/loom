@@ -220,3 +220,72 @@ Overlapping firings are skipped. Set `programPeriod: "day"` to admit at most one
 household calendar date, including failed or quiet attempts. Leave it unset for a frequent
 watch. The trigger details show the latest outcome and its retained state. The scoped query
 `tempoProgram(id: String!)` returns the descriptor and state to the owner or the agent.
+
+## Wake me when
+
+An agent that would otherwise poll (a script that checks a pull request every ten minutes) asks loom to do
+the waiting: `tempo.wake`, or the tool `wake_me_when`. Input: `what`, an optional `when`, an optional `note`
+to self, and for a terminal session with several live sessions on one machine, `conversation`.
+
+| `what` | Watches | `when` |
+| --- | --- | --- |
+| `github:owner/repo#12`, `owner/repo#12` or the pull request's address | a pull request | `changed` (the default), `checks-finished`, `checks-failed`, `review`, `merged-or-closed` |
+| `job:<id>` | a job ending | |
+| `approval:<id>`, `question:<id>`, `secret-request:<id>` | an ask being answered | |
+| `at:<instant with its offset>`, `in:<minutes>` | a time | |
+
+It answers the trigger's id and one sentence of what will happen. The wait is an ordinary once-only trigger
+with an inbox target whose `target` is `wake` or `wake:<condition>` (`core/tempo/wake.ts`): Tempo lists it by
+its note ("Wake Art when checks finish on acme/app#12"), whoever sees the trigger sees the wait, `tempo.stop`
+cancels it, and the agent's card says "Waiting on checks on acme/app#12". `tempo.set` refuses that target: a
+wake is made only at its own door.
+
+Who may ask is what `tempo.set` asks of the same caller, in the same order: the caller reads what is watched
+(`watchAllowed`), may set the trigger as it is recorded (`maySetTrigger`), and a job that is not working for
+the agent's owners sets none. A body is woken in the conversation it is working in and no other. An agent
+holds at most 50 pending waits. A wait that is 14 days old ends and says so; a time further off is refused.
+
+A condition is judged between two readings of the pull request, and fires when it becomes true, not while it
+stays true. `checks-finished` means no check pending or running and at least one reported, so a head commit
+whose checks have not begun is unfinished, and checks already finished when the wait was set are not news
+until a new head finishes. A pull request that is merged or closed ends any other wait on it, and says so.
+
+A pull request loom does not track (its repository is no project's) is read once with the household's GitHub
+sign-in as the wait is set, and stored as Changes stores any. The one poller then reads that repository while
+a standing trigger watches a pull request in it (`apps/changes.ts`, `watchedChanges`), keeps of it only what
+is watched, and is not failed by it. When the wait ends the row stays as last read.
+
+### What the wake says
+
+Built by code from the records, under the asking agent's read rules as they stand when it fires, at most 4,000
+characters: loom's line that this is a wake and not a person, with what was asked and when; what happened,
+with before and after ("Checks on acme/app#12 finished on 1a2b3c4: 2 failed: build, DCO sign-off. Before: 3
+still running."); a link or reference; and the note, quoted as the agent's own words. An agent that may no
+longer read what it watched is told only that the watch ended.
+
+### Where it is delivered
+
+One function, `deliverWake` (`shared-wake.ts`), for every wake:
+
+1. Find the session it belongs to: the conversation it was asked from.
+2. A body is awake there: relay it in. A runtime body takes its mail once, as its turn begins, so the wake is
+   mail in the conversation that the next turn of the same kept session reads, started the moment this one
+   ends. A live terminal session is handed it by its hook (below).
+3. Nothing is awake there: the wake is mail in the conversation, and waiting mail starts a job there.
+4. No session to resume (asked outside any conversation, the conversation gone, its thread archived or deleted,
+   its bridge place closed, or a terminal session that has ended): a new conversation for the agent, private to
+   the member the old one was private to unless they are a household owner, with the same words and which
+   conversation it continues.
+
+A wake asked on the word of somebody no longer known, or of somebody who is not one of the agent's owners
+whose place is gone, is stopped and the agent's people are told.
+
+### The terminal hook
+
+`terminal.session` takes `wakes: true` on any report, and its answer then carries
+`wakes: [{ id, at, words }]`, oldest first, at most ten, for `open`, `turn` and `heartbeat` reports of a
+session still open. Each wake is handed once and closed as taken by that session; a retry of the same report
+(the same operation id) is answered with the same ones. A hook that does not send `wakes: true` is handed
+none. A wake no hook picks up within 15 minutes (`terminalSilenceMs`), or whose session ends first, goes to
+step 4.
+

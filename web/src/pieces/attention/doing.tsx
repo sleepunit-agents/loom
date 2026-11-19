@@ -4,7 +4,7 @@ import './doing.css';
 
 /** What an agent is doing now, as the server says it (src/runtime/job-summary.ts, `doing`): the parts of a
  * phrase, each already limited to what this viewer may read. The words are put together here and nowhere else. */
-export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private';
+export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private' | 'waiting';
 export interface DoingItem {
   id: string; kind: DoingKind | string; title: string | null; with: string | null; place: string | null;
   direct: 'person' | 'group' | string | null; ref: string | null; machine: string | null; since: string; state: string; href: string | null;
@@ -40,6 +40,9 @@ export function WithDoing({ agent, onChange, children }: { agent: string; onChan
   return <>{children(doing)}</>;
 }
 
+/** How many things on the list the agent is working on: all but what it is only waiting to be woken for. The
+ * state word beside its name reads this, so an agent with nothing but waits is not called working. */
+export const busyCount = (items: readonly DoingItem[]): number => items.filter(item => item.kind !== 'waiting').length;
 const venues: Record<string, string> = { discord: 'Discord', slack: 'Slack' };
 const fallbackName = (id: string) => id ? id[0].toUpperCase() + id.slice(1) : id;
 /** The sentence for one thing, from its parts. `name` gives a display name for a member's or an agent's id. */
@@ -58,12 +61,14 @@ export function doingPhrase(item: DoingItem, name: (id: string) => string = fall
     case 'trigger': return item.title ? `Running ${item.title}` : 'Running a trigger';
     case 'wake': return item.title ? `On a wake · ${item.title}` : 'On a wake';
     case 'task': return [`Working on ${item.title || 'a task'}`, item.ref].filter(Boolean).join(' · ');
+    // Something it asked loom to wake it for: what it waits on, or for a time, when (`ref` is the instant).
+    case 'waiting': return item.title ? `Waiting on ${item.title}` : item.ref && sinceWord(item.ref) ? `Waiting until ${sinceWord(item.ref)}` : 'Waiting to be woken';
     case 'private': return 'In a private conversation';
     default: return item.title || 'Running a job';
   }
 }
 /** A two-letter mark per kind: drawn in mono, so every look has it and it reads at a pill's size. */
-const marks: Record<string, string> = { terminal: '>_', discord: 'DC', slack: 'SL', loom: 'LM', handoff: 'HO', trigger: 'TP', wake: 'WK', task: 'TK', job: 'JB', private: '··' };
+const marks: Record<string, string> = { terminal: '>_', discord: 'DC', slack: 'SL', loom: 'LM', handoff: 'HO', trigger: 'TP', wake: 'WK', task: 'TK', job: 'JB', private: '··', waiting: 'ZZ' };
 const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
 const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
 /** "2:15 PM" today, "Nov 18, 2:15 PM" before. */
@@ -78,9 +83,9 @@ export function sinceWord(since: string, now = Date.now()): string {
 export function doingMeta(item: DoingItem, now = Date.now()): string {
   const since = sinceWord(item.since, now), quiet = item.quietSince ? sinceWord(item.quietSince, now) : '';
   return [item.state === 'queued' ? 'Queued' : item.state === 'starting' ? 'Starting' : '',
-    item.kind !== 'task' && item.ref ? [item.ref, item.task].filter(Boolean).join(' · ') : '',
+    item.kind !== 'task' && item.kind !== 'waiting' && item.ref ? [item.ref, item.task].filter(Boolean).join(' · ') : '',
     item.machine && item.kind !== 'terminal' ? `on ${item.machine}` : '',
-    quiet ? `no word since ${quiet}` : !since ? '' : item.kind === 'task' ? `touched ${since}` : `since ${since}`].filter(Boolean).join(' · ');
+    quiet ? `no word since ${quiet}` : !since ? '' : item.kind === 'task' ? `touched ${since}` : item.kind === 'waiting' ? `asked ${since}` : `since ${since}`].filter(Boolean).join(' · ');
 }
 /** The Tasks app on one agent's tasks in progress. */
 export const claimedPath = (agent: string) => `/p/tasks-preview/?folder=progress&assignee=${encodeURIComponent(agent)}`;
@@ -105,7 +110,7 @@ export function Doing({ doing, name, agent, names, go, compact = false }: {
       const inside = <><span className="desk-doing-mark" aria-hidden="true">{marks[item.kind] ?? marks.job}</span>
         <span className="desk-doing-words"><span className="desk-doing-phrase">{phrase}</span>{!compact && meta && <span className="desk-doing-meta">{meta}</span>}</span></>;
       const href = item.href;
-      return <li key={`${item.kind}:${item.id}`} data-kind={item.kind} data-quiet={item.quietSince ? '' : undefined}>{href
+      return <li key={`${item.kind}:${item.id}`} data-kind={item.kind} data-quiet={item.quietSince || item.kind === 'waiting' ? '' : undefined}>{href
         ? <a className="desk-doing-pill" href={href} title={compact ? meta : undefined} onClick={opens(href)}>{inside}</a>
         : <span className="desk-doing-pill" title={compact ? meta : undefined}>{inside}</span>}</li>;
     })}

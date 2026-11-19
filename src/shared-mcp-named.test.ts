@@ -301,3 +301,24 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});
  }finally{await art.client.close();await p.close();}
 });
+
+it('asks to be woken, lists what it waits on and cancels a wait through the named tools',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ try{
+  expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['wake_me_when','waits','wake_cancel']));
+  expect((await art.call('waits')).text).toBe('You are waiting on nothing.');
+  // A plain session of the agent is in no conversation: its wake starts a new one.
+  const asked=await art.call('wake_me_when',{what:'in:30',note:'FICTIONAL_NOTE'});
+  expect(asked.error).toBe(false);expect(asked.text).toMatch(/^I'll wake you in a new conversation at \d{4}-.*Z\. To cancel: tempo\.stop tr-wake-[0-9a-f-]+\.$/);
+  const id=/tr-wake-[0-9a-f-]+/.exec(asked.text)![0];
+  const waiting=(await art.call('waits')).text;
+  expect(waiting).toContain('**Wake Art at ');expect(waiting).toContain(id);expect(waiting).toContain('Note: FICTIONAL_NOTE');
+  // Another agent neither sees it nor cancels it.
+  expect((await mark.call('waits')).text).toBe('You are waiting on nothing.');
+  expect((await mark.call('wake_cancel',{id})).error).toBe(true);
+  const refused=await art.call('wake_me_when',{what:'the build going green'});
+  expect(refused.error).toBe(true);expect(refused.text).toContain('Say what to watch: github:owner/repo#12');
+  expect((await art.call('wake_cancel',{id})).text).toBe('Cancelled '+id+'.');
+  expect((await art.call('waits')).text).toBe('You are waiting on nothing.');
+ }finally{await art.client.close();await mark.client.close();await p.close();}
+});

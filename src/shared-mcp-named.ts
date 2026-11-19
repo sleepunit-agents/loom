@@ -14,6 +14,7 @@ import {MAX_PAGE_BODY_LENGTH} from './backends/knowledge-verification.js';
 import {STATUSES} from './backends/projects.js';
 import {approvals,inbox,tasks} from './core/data/schema.js';
 import {TASK_MOVE_MAX} from './apps/task-command.js';
+import {isWake,wakeConditions,wakeInput} from './core/tempo/wake.js';
 
 type Variables=Record<string,string|number|null>;
 type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|null};
@@ -359,6 +360,23 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
    return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words??'(no words kept)')+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
   });
+ // Wake me when (src/shared-wake.ts): loom does the waiting. Each is one command or one read on the same door.
+ tool('wake_me_when','Ask loom to wake you when something happens, instead of polling for it yourself. what: github:owner/repo#12 (a pull request; `when` is one of '+wakeConditions.join(', ')+', and changed if you leave it out), job:<id> (a job ending), approval:<id>, question:<id> or secret-request:<id> (an ask being answered), at:<instant with its offset> or in:<minutes>. note: a note to yourself, handed back with the wake: what you were doing and what to do next. It is kept as plain text where whoever sees the wait in Tempo can read it. You are woken in the conversation you ask from: if a body of yours is awake there the wake reaches it, if not loom starts one there, and if that conversation is gone loom starts a new one with your note. A terminal session with more than one live session on its machine names its own with `conversation`.',
+  wakeInput,
+  async input=>((await run('tempo.wake',input)) as {says:string}).says);
+
+ tool('waits','List what you have asked loom to wake you for and have not been woken for yet.',
+  z.object({}).strict(),
+  async(_input,agent)=>{
+   const data=await read<{triggers:{id:string;note:string;target:string|null;targetKind:string;enabled:boolean;state:string;createdAt:string;instructions:string|null}[]}>(
+    'query($agent:String!){triggers(where:{to:{eq:$agent}}){id note target targetKind enabled state createdAt instructions}}',{agent});
+   const pending=data.triggers.filter(row=>row.enabled&&isWake(row)).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+   return pending.length?pending.map(row=>'- **'+row.note+'** _'+row.id+' · asked '+row.createdAt+(row.state==='held'?' · held while you are paused':'')+'_'+(row.instructions?'\n  Note: '+row.instructions:'')).join('\n'):'You are waiting on nothing.';
+  });
+
+ tool('wake_cancel','Cancel a wait by its id (wake_me_when answered it; waits lists them). You are then not woken for it.',
+  z.object({id:z.string().min(1).max(200)}).strict(),
+  async input=>{await run('tempo.stop',{id:input.id});return 'Cancelled '+input.id+'.';});
 }
 interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}
 interface PersonCard{slug:string;name:string;updated:string;card:{summary:string|null;where:{key:string;label:string|null;source:string|null;verified_at:string|null;value:CardValue|null}[]|null;how:{key:string;value:CardValue|null}[]|null;may:{text:string;source:string}[]|null}|null}

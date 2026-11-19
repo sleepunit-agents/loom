@@ -5,6 +5,7 @@ import { SettledInbox, type AdmitInbox } from './settle.js';
 import { TriggerEngine, type Trigger } from './triggers.js';
 import { Sweep } from './sweep.js';
 import { TempoSources } from './sources.js';
+import { isWake } from './wake.js';
 
 /** Structural slice of Conversations: built-ins share one service/connection.
  * Kept small so Tempo does not own Inbox or conversation lifecycle. */
@@ -33,6 +34,10 @@ export interface TempoOptions {
    * names when the firing is one the agent's people should hear of. A notice stops nothing.
    * Without it such a trigger fails. */
   placeFiring?(trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: OnWord; loud?: { tell: string[]; key: string; words: string } };
+  /** Deliver a wake (core/tempo/wake.ts, isWake): a once-only trigger an agent asked for, to be woken where it
+   * asked. The composition finds the session and says the words (src/shared-wake.ts, deliverWake). `wait`: what
+   * was seen is not yet what it waits for. Without it a wake fails. */
+  wake?(trigger: Trigger, occurrence: string): void | 'stop' | 'wait';
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
@@ -55,6 +60,11 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
+      // A wake is delivered by its own rule, wherever it was asked from: the session it belongs to, or a new one.
+      if (isWake(t)) {
+        if (!options.wake) throw new Error('This program cannot deliver a wake');
+        return options.wake(t, occurrence);
+      }
       // A trigger that names a conversation is mail there, on its asker's word, and opens no wake. One that
       // can no longer fire is stopped here, in the firing's transaction, and its agent's owners are told once.
       if (t.conversation) {

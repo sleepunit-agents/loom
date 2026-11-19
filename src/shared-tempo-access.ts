@@ -9,6 +9,41 @@ import { triggers, approvals, changes, conversations, inbox, jobs, secretRequest
 import type { TempoAccess } from './core/tempo/operations.js';
 import type { NewTrigger } from './core/tempo/triggers.js';
 
+/** What is watched must be a record the caller reads. Nobody is let past that: a household owner reads
+ * every change, approval card and secret request by those records' own rules, and does not read a job
+ * of another member's private thread, so cannot watch one to learn when it ends. The one statement: asked
+ * as a trigger is set, and again of a wake as it fires, for the agent that asked (src/shared-wake.ts). */
+export function watchAllowed(db: DataDatabase, viewer: Viewer, kind: string, watch: string | null | undefined): boolean {
+  const sharing = sharedSharing(db);
+  if (!inHousehold(viewer, sharing)) return false;
+  if (kind === 'time') return true;
+  if (!watch) return false;
+  const colon = watch.indexOf(':'), prefix = watch.slice(0, colon), id = watch.slice(colon + 1);
+  if (kind === 'answer' && prefix === 'question') {
+    const row = db.select().from(inbox).where(eq(inbox.id, id)).get();
+    return !!row && holds(rules.recipient, viewer, { toKind: row.toKind, to: row.to }, sharing) && conversationQuestionPolicy(db).sourceAllowsItem(viewer, id);
+  }
+  const row = kind === 'pull-request' && prefix === 'change' ? db.select().from(changes).where(eq(changes.id, id)).get()
+    : kind === 'job' && prefix === 'job' ? db.select().from(jobs).where(eq(jobs.id, id)).get()
+    : kind === 'answer' && prefix === 'approval' ? db.select().from(approvals).where(eq(approvals.id, id)).get()
+    : kind === 'answer' && prefix === 'secret-request' ? db.select().from(secretRequests).where(eq(secretRequests.id, id)).get() : undefined;
+  // A job is read by the rule of its conversation; the others by the labels they carry.
+  if (!row) return false;
+  if (kind === 'job') return holds(tableRules.jobs, viewer, row, sharing, (_table, parent) => db.select().from(conversations).where(eq(conversations.id, parent)).get());
+  return holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
+}
+/** Whether this caller may set this wake: the same two questions `tempo.set` asks of any trigger (it reads what
+ * is watched, and may set the trigger as it will be recorded). `untracked` is for the first asking only: a pull
+ * request the shared cache does not hold yet has no record to judge, and the door asks again, without it, once
+ * it has read the pull request (src/shared-wake.ts). Nothing is set on the first answer alone. */
+export function wakeAllowed(db: DataDatabase, viewer: Viewer, trigger: NewTrigger, untracked = false): boolean {
+  const sharing = sharedSharing(db);
+  if (!inHousehold(viewer, sharing)) return false;
+  const unread = untracked && trigger.sourceKind === 'pull-request' && !!trigger.watches?.startsWith('change:')
+    && !db.select({ id: changes.id }).from(changes).where(eq(changes.id, trigger.watches.slice(7))).get();
+  return (unread || watchAllowed(db, viewer, trigger.sourceKind, trigger.watches)) && maySetTrigger(viewer, triggerAsSet(viewer, trigger, sharing), sharing);
+}
+
 /** `chatMember` is the door's proof that the caller is the current body of a member's chat, and names that
  * member. Only the volume command uses it: a body sets its member's volume on that member's word. */
 export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: TempoAccess, chatMember?: (viewer: Viewer) => string | undefined): boolean {
@@ -19,26 +54,7 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
   // does not: a full owner has every agent on their list.
   const directs = (id: string) => recipient('agent', id);
   const visibleItem = (id:string, who: Viewer = viewer) => conversationQuestionPolicy(db).sourceAllowsItem(who,id);
-  // What is watched must be a record the caller reads. Nobody is let past that: a household owner reads
-  // every change, approval card and secret request by those records' own rules, and does not read a job
-  // of another member's private thread, so cannot watch one to learn when it ends.
-  const sourceAllowed = (kind: string, watch: string | null | undefined) => {
-    if (kind === 'time') return true;
-    if (!watch) return false;
-    const colon = watch.indexOf(':'), prefix = watch.slice(0, colon), id = watch.slice(colon + 1);
-    if (kind === 'answer' && prefix === 'question') {
-      const row = db.select().from(inbox).where(eq(inbox.id, id)).get();
-      return !!row && recipient(row.toKind, row.to) && visibleItem(id);
-    }
-    const row = kind === 'pull-request' && prefix === 'change' ? db.select().from(changes).where(eq(changes.id, id)).get()
-      : kind === 'job' && prefix === 'job' ? db.select().from(jobs).where(eq(jobs.id, id)).get()
-      : kind === 'answer' && prefix === 'approval' ? db.select().from(approvals).where(eq(approvals.id, id)).get()
-      : kind === 'answer' && prefix === 'secret-request' ? db.select().from(secretRequests).where(eq(secretRequests.id, id)).get() : undefined;
-    // A job is read by the rule of its conversation; the others by the labels they carry.
-    if (!row) return false;
-    if (kind === 'job') return holds(tableRules.jobs, viewer, row, sharing, (_table, parent) => db.select().from(conversations).where(eq(conversations.id, parent)).get());
-    return holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
-  };
+  const sourceAllowed = (kind: string, watch: string | null | undefined) => watchAllowed(db, viewer, kind, watch);
   switch (access.action) {
     case 'volume': {
       // In the caller's own right: they may address the recipient, and the item is one they read.

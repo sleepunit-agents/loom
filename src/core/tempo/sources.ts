@@ -14,6 +14,20 @@ export const tempoWatch = {
   job: (id: string) => `job:${id}`,
 };
 
+/** The fingerprint of a change as the shared cache holds it now, or nothing when it holds none. The one reading:
+ * what snapshotChange compares, and the baseline a wake records as it is set (src/shared-wake.ts), so that a
+ * watch begins from what the change is when it is asked for, never from an older trigger's last look. */
+export function changeSnapshot(db: DataDatabase, id: string): string | undefined {
+  const row = db.select().from(changes).where(eq(changes.id, id)).get();
+  if (!row) return undefined;
+  const checks = db.select().from(changeChecks).where(eq(changeChecks.change, id)).orderBy(asc(changeChecks.name)).all();
+  const people = db.select().from(changePeople).where(eq(changePeople.change, id)).orderBy(asc(changePeople.role), asc(changePeople.login)).all();
+  const tasks = db.select().from(changeTasks).where(eq(changeTasks.change, id)).orderBy(asc(changeTasks.task)).all();
+  return createHash('sha256').update(JSON.stringify([row, checks, people, tasks])).digest('hex');
+}
+/** The trigger log event a change's last observed snapshot is kept under. */
+export const SOURCE_SNAPSHOT = 'source-snapshot';
+
 /** Call after the source transaction commits, never from inside it. Read the
  * durable result rather than trusting an external notification's payload.
  * Repeated callbacks/recovery replay use the same event id, so TriggerEngine
@@ -67,12 +81,8 @@ export class TempoSources {
       eq(triggers.sourceKind, 'pull-request'), eq(triggers.watches, watch))).orderBy(asc(triggers.id)).get();
     if (!trigger) return;
     this.db.transaction(() => {
-      const row = this.db.select().from(changes).where(eq(changes.id, id)).get();
-      if (!row) return;
-      const checks = this.db.select().from(changeChecks).where(eq(changeChecks.change, id)).orderBy(asc(changeChecks.name)).all();
-      const people = this.db.select().from(changePeople).where(eq(changePeople.change, id)).orderBy(asc(changePeople.role), asc(changePeople.login)).all();
-      const tasks = this.db.select().from(changeTasks).where(eq(changeTasks.change, id)).orderBy(asc(changeTasks.task)).all();
-      const fingerprint = createHash('sha256').update(JSON.stringify([row, checks, people, tasks])).digest('hex');
+      const fingerprint = changeSnapshot(this.db, id);
+      if (!fingerprint) return;
       const previous = this.db.select({ seq: triggerLog.seq, note: triggerLog.note }).from(triggerLog)
         .innerJoin(triggers, eq(triggers.id, triggerLog.trigger)).where(and(eq(triggers.sourceKind, 'pull-request'),
           eq(triggers.watches, watch), eq(triggerLog.event, 'source-snapshot'))).orderBy(desc(triggerLog.seq)).get();

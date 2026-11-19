@@ -24,6 +24,7 @@ import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
 import { editsWords } from './core/tempo/triggers.js';
+import { deliverWake, expireWakes, registerWake, rehomeTerminalWakes, takeTerminalWakes, type WakeDelivery, type WakeDoor } from './shared-wake.js';
 
 export interface SharedTempoOptions {
   /** Trusted checkout path, never supplied by a command caller. */
@@ -47,6 +48,11 @@ export interface SharedTempoOptions {
   askOwners?(agent: string, ask: PlaceScheduleAsk, why: string, where: { conversation: string; member: string | null; project: string | null }): string;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
+  /** The machine, member and agent of a terminal credential: a terminal session that asks to be woken and names no
+   * conversation is woken in its one live session (shared-wake.ts). */
+  terminal?: WakeDoor['terminal'];
+  /** The household's GitHub read and the Changes cache, so a wake can watch a pull request loom does not track yet. */
+  changes?: WakeDoor['changes'];
 }
 export function mayReadProgramWork(db: DataDatabase, viewer: Viewer, job?: { id: string; agent: string; conversation: string | null }): boolean {
   const sharing = sharedSharing(db);
@@ -75,6 +81,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     for (const member of crowded?.tell ?? []) conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: crowded!.key, fromKind: 'schedule', words: crowded!.words, refs: [trigger.id] }); };
   const recorded: NonNullable<TempoOperationOptions['recorded']> = (viewer, trigger) => { const as = recordedTrigger(db, judgedAs(viewer), trigger);
     return trigger.conversation ? { trigger: as.trigger, asked: placeTriggerAsker(db, viewer, as.trigger, options.bodyWork?.(viewer)) } : as; };
+  const wakes: WakeDelivery = { db, conversations, now: () => new Date(clock.now()).toISOString() };
+  // Filled in below, where `tempo.set`'s own refusals are stated: the wake door asks the same ones of the same caller.
+  const commands = {} as TempoOperationOptions;
   const installed = installTempoComposition({ db, clock, writes, operations,
     contributors: options.contributors,beforeStart:options.beforeStart,
     delivery: { conversations, changed,
@@ -90,6 +99,8 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
         return jobStore.admitProgram(trigger, conversation.id, words);
       },
       placeFiring: trigger => placeFiring(db, trigger),
+      // Every wake is delivered by the one rule: the session it was asked from, awake or brought up, or a new one.
+      wake: (trigger, occurrence) => deliverWake(wakes, trigger, occurrence),
       worksFor(trigger) {
         if (trigger.member === null || trigger.toKind !== 'agent') return undefined;
         const sharing = sharedSharing(db), member = isHouseholdOwner({ kind: 'member', id: trigger.member }, sharing) ? undefined : trigger.member;
@@ -107,7 +118,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // Chat is the control surface: a current body may carry out its member's ordinary mailbox preference
     // without becoming that member. When is the volume rule in policy.ts, asked by tempoCommandAllowed;
     // chatMember is this door's proof that the caller is the current body of that member's chat.
-    commands: { mailboxReceiptScope:options.mailboxReceiptScope,
+    commands: Object.assign(commands, { mailboxReceiptScope:options.mailboxReceiptScope,
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
       recorded, authorize: (viewer, access) => {
         if ('trigger' in access && access.trigger.program && access.action !== 'stop') {
@@ -142,9 +153,21 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // both as they were, so a firing's words and its asker always come from the same person.
       reasked: (viewer, trigger, change) => { if (!trigger.conversation || !editsWords(change, trigger)) return undefined;
         const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;
-        return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } },
+        return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } } satisfies TempoOperationOptions),
   });
+  // Wake me when: its own door, held to what `tempo.set` holds the same caller to (shared-wake.ts).
+  registerWake(operations, db, clock, installed.triggers, { judgedAs, bodyWork: viewer => options.bodyWork?.(viewer), bodyJob: viewer => options.bodyJob?.(viewer),
+    terminal: options.terminal, changes: options.changes,
+    heldRefusal: viewer => commands.heldRefusal?.(viewer, 'set'), wordRefusal: (viewer, trigger) => commands.wordRefusal?.(viewer, 'set', trigger),
+    stood: (viewer, trigger) => commands.stood?.(viewer, 'set', trigger) });
   return { ...installed,
     /** Carry out a `placeSchedule` card an owner allowed (shared-household-proposals.ts), in that write. */
-    placeSchedule(ask: PlaceScheduleAsk) { stood(applyPlaceSchedule(db, installed.triggers, ask)); } };
+    placeSchedule(ask: PlaceScheduleAsk) { stood(applyPlaceSchedule(db, installed.triggers, ask)); },
+    wakes: {
+      /** Asked on the runtime's tick: wakes a terminal session did not pick up go to a new conversation, and waits
+       * past their life end. Both write nothing when there is nothing to do; answers whether anything was written. */
+      sweep(): boolean { const moved = rehomeTerminalWakes(wakes), ended = expireWakes(db, installed.triggers, wakes.now()); return moved + ended > 0; },
+      /** The wakes waiting for a live terminal session, handed to its hook and closed (shared-terminal-session.ts). */
+      takeTerminal: (conversation: string, job: string) => takeTerminalWakes({ db, conversations }, conversation, job),
+    } };
 }

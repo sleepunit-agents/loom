@@ -11,6 +11,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
+import { isWake } from './wake.js';
 import { HOST_SCHEDULE_REFUSAL, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
@@ -65,6 +66,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
     run(ctx, trigger) {
       if (trigger.execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
+      // A wake is made only by its own door, which says where it is delivered and bounds it (src/shared-wake.ts).
+      if (isWake(trigger)) throw new OperationError('invalid', 'A wake is asked for with tempo.wake');
       const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });

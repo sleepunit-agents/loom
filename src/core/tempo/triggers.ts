@@ -63,8 +63,10 @@ export type TriggerAsked = { id?: string; conversation?: string | null; times?: 
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
-  /** `stop`: the trigger can no longer fire and is stopped with this firing. */
-  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop';
+  /** `stop`: the trigger can no longer fire and is stopped with this firing.
+   * `wait`: what was seen is not yet what the trigger waits for (a wake's condition, core/tempo/wake.ts). Nothing
+   * is delivered, the event is used up, and the trigger stands as it stood. */
+  inbox(trigger: Trigger, deliveryId: string, words: string): void | 'stop' | 'wait';
   operation(name: string, trigger: Trigger, deliveryId: string): void;
   /** Admit a program job on the shared connection. The firing binds its frozen input to that job. */
   program?(trigger: Trigger, words: string): string | undefined;
@@ -326,7 +328,7 @@ export class TriggerEngine {
         else if (late > MISSED_GRACE_MS) this.miss(t);
       } else {
         const logs = this.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all();
-        const consumed = new Set(logs.filter(l => ['fired', 'failed'].includes(l.event)).map(l => l.note));
+        const consumed = new Set(logs.filter(l => ['fired', 'failed', 'waited'].includes(l.event)).map(l => l.note));
         for (const log of logs.filter(l => l.event === 'observed' && !consumed.has(l.note))) {
           if (this.closed) return;
           const current = this.get(t.id);
@@ -430,6 +432,8 @@ export class TriggerEngine {
           // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
           const did = this.effects.inbox(t, delivery, words);
           if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
+          // Not yet: the trigger is put back exactly as it stood, and only the log says this event was looked at.
+          if (did === 'wait') { this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', changedAt: t.changedAt }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'waited', eventId); return; }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
         this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: event === 'fired' ? this.now() : t.lastFiredAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();

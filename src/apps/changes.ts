@@ -1,9 +1,9 @@
 import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
+import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals, triggers } from '../core/data/schema.js';
 import { lastApprovalAnswer } from './approval-answer.js';
-import { changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
+import { canonicalRepository, changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
 export type ChangeRow = typeof changes.$inferSelect;
 export type ChangeDetail = ChangeRow & {
@@ -107,6 +107,14 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
             rows.push(c);
           }
         }
+        // Pull requests somebody is waiting on (watchedChanges) in a repository no project lists: this same read
+        // keeps them fresh, and of such a repository only they are kept. One that can no longer be read is left as
+        // it was and fails nothing else: a watch must not be able to stop the household's own Changes.
+        const watched = watchedChanges(db), elsewhere = [...new Set([...watched].map(id => id.slice(7, id.lastIndexOf('#'))))].filter(repository => !repositories.includes(repository));
+        for (const repository of elsewhere) {
+          try { for (const c of await read(repository, Date.parse(now()))) if (watched.has(c.id) && repoId(c.repo).slice(7) === repository) rows.push(c); }
+          catch { /* its rows stay as last read */ }
+        }
         return commit(() => {
           const stored = rows.map(store);
           db.insert(changeSync).values({ readAt: now(), failed: false, nextAt }).onConflictDoUpdate({ target: changeSync.singleton, set: { readAt: now(), failed: false, nextAt } }).run();
@@ -118,6 +126,20 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
       }
     },
   };
+}
+
+/** The pull requests a standing trigger watches, as change ids (`github:owner/repo#12`): what `sync` reads beside
+ * the projects' repositories. A wake on a pull request loom did not track makes it tracked by being one of these
+ * (src/shared-wake.ts); when the last watch on it ends it is read no more, and its row stays as it was last read. */
+export function watchedChanges(db: DataDatabase): Set<string> {
+  const ids = new Set<string>();
+  for (const row of db.select({ watches: triggers.watches }).from(triggers).where(and(eq(triggers.enabled, true), eq(triggers.sourceKind, 'pull-request'))).all()) {
+    const id = row.watches?.startsWith('change:') ? row.watches.slice(7) : '';
+    // As `store` writes a change's id: `github:` and the repository in the one spelling loom keeps, `#`, its number.
+    const hash = id.lastIndexOf('#');
+    if (id.startsWith('github:') && hash > 7 && canonicalRepository(id.slice(7, hash)) && Number.isSafeInteger(Number(id.slice(hash + 1)))) ids.add(id);
+  }
+  return ids;
 }
 
 /** Does loom read this repository: is it one of a project's, or is a change of it held here? For a
