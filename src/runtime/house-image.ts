@@ -162,11 +162,11 @@ export interface HouseStart { id: string }
  * places cannot be seen from here: an image without them fails when its body is started
  * (WORKER_EXIT.launch, or the body's own code for its file).
  * @throws UnmetHouseError (WORKER_EXIT.house), naming the label or rule, when the image does not meet it. */
-export async function houseStart(engine: DockerEngine, image: string, harness: string, signal: AbortSignal): Promise<HouseStart> {
+export async function houseStart(engine: DockerEngine, image: string, harness: string | undefined, signal: AbortSignal): Promise<HouseStart> {
   if (!houseImageName(image)) throw new Error('Invalid house image');
   const { id, harnesses } = contract(await engine.json('GET', `/images/${image}/json`, undefined, signal));
   // A job's own harness is one of those the house serves.
-  if (!HARNESS_NAME.test(harness) || !harnesses.includes(harness)) throw new UnmetHouseError(HOUSE_LABEL_HARNESSES);
+  if (harness !== undefined && (!HARNESS_NAME.test(harness) || !harnesses.includes(harness))) throw new UnmetHouseError(HOUSE_LABEL_HARNESSES);
   return { id };
 }
 

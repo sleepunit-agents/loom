@@ -124,3 +124,11 @@ it('offers resume for a paused operation belonging to its agent without an inbox
  const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children==='Resume agent')!;
  expect(button).toBeDefined();await act(async()=>button.props.onClick());expect(resume).toHaveBeenCalledExactlyOnceWith('art');
 });
+
+it('shows the latest program decision in the trigger details', async () => {
+  const events = ['Did not wake', 'Woke art · 2000 ms · Found gaps'].map((note, seq) =>
+    ({seq, trigger:'tr-1', at:'2026-11-14T00:00:00Z', event:'program', note}));
+  await act(async () => { tree=create(h(TempoCard,{snapshot:{...snapshot,events}, triggerId:'tr-1'})); });
+  const values=tree.root.findAllByType('dd').map((node:{children:string[]})=>node.children.join(''));
+  expect(values).toContain('Woke art · 2000 ms · Found gaps');
+});

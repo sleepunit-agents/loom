@@ -179,3 +179,14 @@ it('does not turn authorship of an explicitly addressed operation into agent-own
   expect((result.data?.triggerLog as {trigger:string}[]).map(t=>t.trigger)).not.toContain('explicit-operation');
  }
 });
+
+it('keeps program state and configuration out of table projections, including filters and relations', async () => {
+  const schema = schemaFor({ kind: 'member', id: 'sam' });
+  for (const source of [
+    '{ triggers { program } }',
+    '{ triggerLog { triggerRow { programState } } }',
+    '{ triggers(where:{programState:{eq:"draft"}}) { id } }',
+    '{ triggers(where:{OR:[{readStateFrom:{eq:"private"}}]}) { id } }',
+    '{ triggers(orderBy:{program:{direction:asc,priority:0}}) { id } }',
+  ]) expect((await graphql({ schema, source })).errors?.length).toBeGreaterThan(0);
+});

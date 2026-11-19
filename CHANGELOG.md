@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Owner cards can define pinned kit tools, grant kits to people or projects, and confirm outside project members. Kit calls use the current job’s asker and leave a metadata-only use record. Schema 15 starts existing households with empty kit tables.
+- Tempo can schedule a named house program and record its decision, pass data to a wake, queue a ruled channel post, and keep small state between firings. Schema 16 retains existing schedules and job usage.
 
 - Tempo lanes can require or prefer machine facts. Agent run settings can prefer facts for ordinary jobs. Placement falls back immediately when a preferred machine is unavailable, and job history explains the claim. Schema 14 preserves existing households.
 

@@ -126,3 +126,9 @@ it.each(['conversation','project'] as const)('binds enrollment receipt to the cu
 it.each(['expired','future'] as const)('refuses a cached enrollment receipt after its body hash becomes %s',async state=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);f.db.update(tokens).set(state==='expired'?{expiresAt:f.now()}:{createdAt:new Date(f.clock.now()+1000).toISOString()}).where(eq(tokens.fingerprint,input.fingerprint)).run();const before=f.db.select().from(tokens).where(eq(tokens.fingerprint,input.fingerprint)).get();expect((await f.call(input,raw.runner,id)).status).toBe(403);expect((await f.call(input)).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,input.fingerprint)).get()).toEqual(before);
 });
+
+it('refuses to mint a body credential for a house program', async () => {
+ const f = fixture();
+ f.db.update(jobs).set({ startedByKind: 'program' }).where(eq(jobs.id, 'job')).run();
+ expect((await f.call({ job: 'job', fingerprint: hash(f.credential()) })).status).toBe(403);
+});

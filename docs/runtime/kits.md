@@ -8,6 +8,8 @@ The job credential identifies the job. Its admitted mail supplies the asker. Whe
 
 Each tool definition gives an owner a program, the code revision, its argument template and the names of the credentials the program receives. Fixed arguments may include a tenant or dataset identifier. The helper must enforce the resulting data boundary. For user input, use narrowly typed fields and construct an argument vector without shell interpretation. Expose the smallest useful operation, such as a station lookup. The helper receives its own minimal environment. Errors and results cross back through a secret-byte check. Audit metadata identifies the asker, job, conversation, kit, tool, time and outcome. Keeping arguments or output in the audit would bypass conversation retention.
 
+Both a kit tool and a scheduled program use the [house program executor](worker.md#house-programs). Updating a house branch or rebuilding an image never silently updates a definition.
+
 ## Moving the Pond configuration
 
 The former bridge project record has five fields. Its label belongs on the project. Its Discord channel is a route for conversation and digests. Its three repository paths describe where maintainers work. A read-only code lookup would need a separately defined tool and an explicit data scope. The epic and requests ids remain work-tracking references.

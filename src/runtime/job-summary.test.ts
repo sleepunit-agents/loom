@@ -1,10 +1,11 @@
+import {testProgramPin} from './pinned-program.fixture.js';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
-import { agents, boxes, jobs, members, jobUsage, conversations, inbox, inboxRefs } from '../core/data/schema.js';
+import { agents, boxes, jobs, members, jobUsage, conversations, inbox, inboxRefs, programFirings, triggers } from '../core/data/schema.js';
 import { JobSummaries, jobSummaryFields } from './job-summary.js';
 
 const clients: Database.Database[] = [];
@@ -189,4 +190,32 @@ it('groups terminal main and subagent usage under their visible parent conversat
     {id:'child',title:'Inspect parser',runKind:'subagent',usage:{totalTokens:7}}],jobUsageRollup:[{key:'cv',totalTokens:11}]}});
   f.policy({jobs:fields=>sql`${fields.id} != 'main'`});
   expect((await graphql({schema,source:query})).data?.jobUsageRollup).toEqual([]);
+});
+
+it('links visible wake jobs to their program firing and compares recent completed firings with earlier history', async () => {
+  const f = fixture();
+  f.db.insert(conversations).values({id:'cv',agent:'art',venue:'wake',place:'lane',label:'Check',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+  f.db.insert(triggers).values({id:'lane',ownerKind:'agent',owner:'art',sourceKind:'time',lifespan:'until-stopped',
+    targetKind:'inbox',toKind:'agent',to:'art',note:'check',enabled:true,state:'standing',createdAt:f.at,changedAt:f.at}).run();
+  for (let n=1;n<=8;n++) {
+    const at = `2026-11-14T0${n}:00:00Z`, bodyAt = `2026-11-14T0${n}:01:00Z`;
+    f.add('p'+n,'done',{conversation:'cv',queuedAt:at});
+    f.db.insert(programFirings).values({id:'lane:'+n,trigger:'lane',at,job:'p'+n,
+      program:{ ...testProgramPin, name:'check',args:[],timeoutMs:60_000,secrets:{}},status:'done'}).run();
+    if (n<=4) continue;
+    f.add('w'+n,'done',{conversation:'cv',queuedAt:bodyAt});
+    f.db.insert(inbox).values({id:'mail'+n,source:'trigger',sourceId:'lane:'+n,toKind:'agent',to:'art',fromKind:'schedule',
+      job:'w'+n,conversation:'cv',state:'done',at,changedAt:at}).run();
+    f.db.insert(inboxRefs).values({item:'mail'+n,ref:'lane'}).run();
+  }
+  const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
+  const read=()=>graphql({schema,source:'{jobUsage(id:"p8"){firingId linkedWakeJob observations} wake:jobUsage(id:"w8"){firingId} quiet:jobUsage(id:"p2"){firingId linkedWakeJob observations}}'});
+  expect(await read()).toEqual({data:{jobUsage:{firingId:'lane:8',linkedWakeJob:'w8',observations:[
+    'This trigger woke a body on 4 of its last 4 completed program runs, up from 0 of 4 earlier runs.']},
+    wake:{firingId:'lane:8'},quiet:{firingId:'lane:2',linkedWakeJob:null,observations:[]}}});
+  const totals = await graphql({schema,source:'{jobUsageRollup(from:"2026-11-14T07:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"firing"){key jobCount}}'});
+  expect(totals).toEqual({data:{jobUsageRollup:[{key:'lane:8',jobCount:2},{key:'lane:7',jobCount:2}]}});
+  f.policy({jobs:()=>sql`${jobs.id} not like 'w%'`});
+  expect(await read()).toEqual({data:{jobUsage:{firingId:'lane:8',linkedWakeJob:null,observations:[]},
+    wake:null,quiet:{firingId:'lane:2',linkedWakeJob:null,observations:[]}}});
 });

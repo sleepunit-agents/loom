@@ -11,7 +11,7 @@ const toolCounts = z.preprocess((raw, ctx) => {
   return raw;
 }, z.record(z.string().max(200).regex(/^[a-zA-Z0-9_.-]+$/), count));
 export const usageReport = z.object({
-  source: z.enum(jobUsage.source.enumValues),
+  source: z.enum(jobUsage.source.enumValues).exclude(['program']),
   tokensIn: count.nullish(),
   tokensOut: count.nullish(),
   cacheRead: count.nullish(),

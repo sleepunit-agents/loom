@@ -2,10 +2,10 @@
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
 schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their named
-columns, `model_account_windows`, the ten internal bookkeeping tables listed there
-and three internal programme restriction/grant tables. With six kit tables in schema 15,
-the household schema now contains: 105 tables. Kit records cover definitions, person and project
-grants, outside project membership and use history. The programme
+columns, `model_account_windows`, the ten internal bookkeeping tables listed there,
+and the programme restriction and grant tables. Schema 15 added six tables for kit
+definitions, person and project grants, outside project membership and use history.
+Schema 16 adds the scheduled program firing ledger, bringing the total to 106 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
