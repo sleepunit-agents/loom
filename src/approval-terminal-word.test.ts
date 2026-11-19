@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { bodyCredentials, bodyFixture, credentialHash } from '../test/fixtures/conversation-body.js';
 import { TerminalSessions } from './core/conversations/terminal-sessions.js';
-import { boxes, memberAgents, members, messages, jobs, terminalCredentials } from './core/data/schema.js';
+import { boxes, inbox, memberAgents, members, messages, jobs, terminalCredentials } from './core/data/schema.js';
 
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const done of cleanup.splice(0).reverse())await done();});
@@ -115,12 +115,51 @@ it('lets the agent at a household owner’s own terminal answer for them, only o
   // What the owner said at one of their machines answers nothing for a session bound to another.
   f.db.insert(boxes).values({id:'other',name:'Other',owner:'alice',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
   await refused(()=>f.db.update(terminalCredentials).set({machine:'other'}).run(),()=>f.db.update(terminalCredentials).set({machine:'box'}).run(),'the credential is bound to another machine');
-  // And only while the owner has the agent at all is there anything the agent may read of theirs; answering needs the owner role alone.
-  expect(f.db.select().from(memberAgents).all().length).toBeGreaterThan(0);
 
-  // A body of the agent is not at the terminal, and neither is a member who is not an owner.
+  // The owner is told, in full, of every answer given in their name this way.
+  const told=f.db.select().from(inbox).where(eq(inbox.source,'approval')).all().filter(row=>row.sourceId===first.id+':tell:allow');
+  expect(told).toMatchObject([{toKind:'person',to:'alice',fromKind:'agent',fromId:'art',volume:'full'}]);
+  expect(told[0].words).toContain('as told to art at the terminal');
+
+  // Twelve letters and digits at the least, and exactly as written: no padding the passage out.
+  await send({...key,action:'turn',role:'member',eventId:'m4',words:'ok do it now ok. ok do it now pls'});
+  const short=card();
+  for (const words of ['ok do it now ok','ok do it now p ','  ok do it now pls','- - - - - - - - - - - -'])
+    expect((await answer(short.id,words)).status,JSON.stringify(words)).toBe(403);
+  expect((await answer(short.id,'ok do it now pls')).status).toBe(200);
+
+  // Another member's words in their own session on their own machine answer nothing for this owner.
+  f.db.insert(boxes).values({id:'bobs',name:'Bobs',owner:'bob',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
+  f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run();
+  const theirs={machine:'bobs',sessionId:'theirs',harness:'claude'},bobScope={machine:'bobs',agent:'art',member:'bob'};
+  await send({...theirs,action:'open',cwd:'/src',model:null},bobScope);
+  await send({...theirs,action:'turn',role:'member',eventId:'b1',words:'bob says approve the purple elephant card'},bobScope);
+  const purple=card();
+  expect((await answer(purple.id,'approve the purple elephant card')).status).toBe(403);
+
+  // What was said stops being an answer: after twelve hours, and when the session has gone quiet.
+  const aged=card();
+  f.clock.advance(12*60*60*1000+1);
+  await send({...key,action:'heartbeat'});
+  expect((await answer(aged.id,quote)).status).toBe(403);
+  // An ended session opened again is running again, and its old words are still too old.
+  await send({...key,action:'end'});
+  await send({...key,action:'open',cwd:'/src',model:null});
+  expect((await answer(aged.id,quote)).status).toBe(403);
+  await send({...key,action:'turn',role:'member',eventId:'m5',words:'fresh: '+quote});
+  expect((await answer(aged.id,quote)).status).toBe(200);
+  expect(state(aged.id)).toContain('turn');
+  const quiet=card();
+  f.clock.advance(60*60*1000);
+  expect((await answer(quiet.id,quote)).status).toBe(403);
+  await send({...key,action:'heartbeat'});
+  expect((await answer(quiet.id,quote)).status).toBe(200);
+
+  // A body of the agent is not at the terminal; nor is a machine's worker, nor a member who is not an owner.
   const fourth=card();
-  expect((await answer(fourth.id,quote,bodyCredentials.body)).status).toBe(403);
+  expect((await answer(fourth.id,quote,bodyCredentials.runner)).status).toBe(403);
+
+  expect([401,403]).toContain((await answer(fourth.id,quote,bodyCredentials.body)).status);
   // Once the session has ended, what was said in it answers nothing.
   await send({...key,action:'end'});
   expect((await answer(fourth.id,quote)).status).toBe(403);

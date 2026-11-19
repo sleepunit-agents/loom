@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
-import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
-import { boxes, memberAgents } from './core/data/schema.js';
+import { bodyCredentials, bodyFixture, credentialHash } from '../test/fixtures/conversation-body.js';
+import { eq } from 'drizzle-orm';
+import { boxes, memberAgents, members, tokens } from './core/data/schema.js';
 
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -78,4 +79,51 @@ it('lets the agent read back, at its member\'s own terminal, what the two of the
   // Once the machine is no longer this member's, the same credential reads none of it.
   f.root.writes.run(() => f.db.update(boxes).set({ owner: 'bob' }).run());
   expect((await ask(token, threads))?.commsThreads ?? []).toEqual([]);
+});
+
+it('lets only a machine\'s own owner make the credential that puts an agent at their terminal', async () => {
+  const f = await bodyFixture(clean);
+  // Two household owners. The machine is alice's.
+  f.db.update(members).set({ role: 'owner' }).run();
+  const bob = 'd'.repeat(64);
+  f.db.insert(tokens).values({ fingerprint: credentialHash(bob), label: 'Bob', kind: 'owner', member: 'bob', createdAt: new Date(f.clock.now()).toISOString() }).run();
+  const issue = (bearer: string, label: string, extra: Record<string, unknown> = { terminalMachine: 'box' }) => f.root.http.request('/api/signin/token', { method: 'POST',
+    headers: { authorization: 'Bearer ' + bearer, 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'agent', agent: 'art', label, ...extra }) });
+  // Another owner cannot put the agent at alice's terminal, where it would read her private talk and answer for her.
+  expect((await issue(bob, 'Bob at her machine')).status).toBe(403);
+  expect(f.db.select().from(tokens).where(eq(tokens.label, 'Bob at her machine')).all()).toEqual([]);
+  // He may still make the agent's ordinary credential, which is the agent alone.
+  expect((await issue(bob, 'Plain', {})).status).toBe(200);
+  const mine = await issue(bodyCredentials.member, 'Alice at her machine');
+  expect(mine.status).toBe(200);
+  const bound = (await mine.json()).value.token as string;
+  const ask = async (bearer: string, query: string) => (await (await f.root.http.request('/graphql', { method: 'POST',
+    headers: { authorization: 'Bearer ' + bearer, 'content-type': 'application/json' }, body: JSON.stringify({ query }) })).json()).data;
+  const threads = '{ commsThreads(agent: "art") { member } }';
+  expect((await ask(bound, threads)).commsThreads.length).toBeGreaterThan(0);
+  // The reach ends with what it stands on: the member dropping the agent, leaving, or the machine being revoked.
+  const ends = async (change: () => void, undo: () => void, why: string) => {
+    f.root.writes.run(change);
+    expect((await ask(bound, threads))?.commsThreads ?? [], why).toEqual([]);
+    f.root.writes.run(undo);
+    expect((await ask(bound, threads)).commsThreads.length, why + ' (undone)').toBeGreaterThan(0);
+  };
+  await ends(() => f.db.delete(memberAgents).where(eq(memberAgents.member, 'alice')).run(), () => f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run(), 'the member no longer has the agent');
+  await ends(() => f.db.update(boxes).set({ revokedAt: new Date(f.clock.now()).toISOString() }).where(eq(boxes.id, 'box')).run(), () => f.db.update(boxes).set({ revokedAt: null }).where(eq(boxes.id, 'box')).run(), 'the machine was revoked');
+  await ends(() => f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'alice')).run(), () => f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'alice')).run(), 'the member left');
+});
+
+it('titles a terminal conversation by the last part of its folder, however the path is written, within sixty characters', async () => {
+  const f = await bodyFixture(clean);
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' });
+  const title = async (sessionId: string, cwd: string) => {
+    const opened = await (await f.root.http.request('/api/terminal/session', { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'open-' + sessionId, input: { action: 'open', machine: 'box', sessionId, harness: 'claude', model: null, cwd } }) })).json();
+    return f.root.services.comms.threads.thread(opened.value.thread).title;
+  };
+  expect(await title('a', '/home/alice/clients/acme/')).toBe('Box · claude · acme');
+  expect(await title('b', 'C:\\Users\\alice\\clients\\acme')).toBe('Box · claude · acme');
+  expect(await title('c', '/')).toBe('Box · claude');
+  expect(await title('d', '/work/line\nbreak\u0007')).toBe('Box · claude · linebreak');
+  expect([...(await title('e', '/work/' + 'x'.repeat(200)))]).toHaveLength(60);
 });

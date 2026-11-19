@@ -29,8 +29,12 @@ export type EvidenceSources = {
   terminal?(viewer: Viewer): { agent: string; member: string; machine: string } | undefined;
   words?(thread: string, seq: number): Promise<string | null>;
 };
-/** The shortest passage an agent may quote to answer for the owner: enough that a word in passing is not an answer. */
+/** The fewest letters and digits a passage an agent quotes to answer for the owner may have: enough that a
+ * word in passing is not an answer. */
 export const terminalQuoteMin = 12;
+/** How long after the owner said something the agent may still answer on it. A session can stay open for
+ * days and be opened again after it ended; what was said in it does not stay an answer for as long. */
+export const terminalAnswerMs = 12 * 60 * 60 * 1000;
 type Evidence = { member: string; basis?: string; through?: string; verifiedOnly?: true } & (
   | { item: string; sealed: Buffer; thread: string; seq: number }
   | { sealed?: undefined }
@@ -63,16 +67,24 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
   }
 
   // The agent itself, in a session at a household owner's own terminal, answers for that owner when asked
-  // to there. It has no say of its own: the answer stands only on words loom itself recorded from that
-  // owner in a terminal session with this agent on that machine that is still running, and there is no
+  // to there. The answer stands only on words loom has on record from that owner in a terminal session with
+  // this agent on that machine that is still running, said in the last twelve hours, and there is no
   // unverified form of it. The newest message that carries the quote is the one answered on.
+  //
+  // This is a record, not proof that a person spoke. Those words reach loom from the hook on that machine,
+  // on this same credential, so the agent could write them itself. What the rule buys is that an honest
+  // agent cannot answer by mistake on words that were never said, that every such answer names the words
+  // it stands on, and that the owner is told of each one at once (shared-work-commands.ts). An action
+  // that cannot be undone is not answered this way at all.
   const terminal = sources.terminal?.(viewer);
   if (terminal && viewer.kind === 'agent' && viewer.id === terminal.agent) {
     const owner = { kind: 'member' as const, id: terminal.member };
     if (!workAnswersAllowed(db, owner)) refused('The person at this terminal is not a household owner.');
     if (!word || !('venue' in word) || word.through !== terminal.agent) refused('Quote what the owner said to you at this terminal.');
-    if (word.quote.trim().length < terminalQuoteMin) refused('Quote a longer passage of what the owner said.');
-    const found = terminalWords(db, sources.now(), { member: terminal.member, agent: terminal.agent, machine: terminal.machine });
+    if (word.quote !== word.quote.trim() || (word.quote.match(/[\p{L}\p{N}]/gu) ?? []).length < terminalQuoteMin) refused('Quote a longer passage of what the owner said.');
+    const now = sources.now(), since = Date.parse(now) - terminalAnswerMs;
+    const found = terminalWords(db, now, { member: terminal.member, agent: terminal.agent, machine: terminal.machine })
+      .filter(({ row }) => Date.parse(row.at) > since);
     if (!found.length) refused('Those words do not appear in what the owner said at this terminal.');
     return found.map(({ row, conversation, machine }) => ({
       member: terminal.member, through: terminal.agent, verifiedOnly: true as const, item: JSON.stringify([row.thread, row.seq]), sealed: row.words!, thread: row.thread, seq: row.seq,

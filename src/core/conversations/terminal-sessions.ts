@@ -94,7 +94,8 @@ export class TerminalSessions {
     // The machine by its name and the folder the session began in: what its person would call it. The
     // machine's id says nothing to them. The whole path is on the session row; the title has its last part.
     const machine = this.db.select({ name: boxes.name }).from(boxes).where(eq(boxes.id, scope.machine)).get()?.name ?? scope.machine;
-    const folder = event.cwd.split('/').filter(Boolean).pop();
+    // The last part of the path, whichever way its slashes lean, with nothing in it that is not printable.
+    const folder = event.cwd.split(/[\\/]/).filter(Boolean).pop()?.replace(/[\p{C}]/gu, '').trim();
     const title = [...([machine, event.harness, ...(folder ? [folder] : [])].join(' · '))].slice(0,60).join('');
     const thread = this.messages.threads.open({agent:scope.agent,member:scope.member,venue:'terminal',title});
     const job = this.db.insert(jobs).values({agent:scope.agent,member:scope.member,box:scope.machine,

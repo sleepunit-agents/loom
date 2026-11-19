@@ -121,6 +121,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       // A dangerous action cannot be put back, so allowing one takes a second, explicit yes.
+      // The agent at the owner's terminal does not allow what cannot be put back: that yes is the owner's own hand.
+      if (row.kind === 'dangerous' && input.answer === 'allow' && proof.verifiedOnly)
+        throw new OperationError('denied', 'This cannot be undone. Its owner allows it themselves.');
       if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true && !basis)
         throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
@@ -136,7 +139,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       }
       if (basis && proof.through) {
         const loud = row.kind === 'dangerous' || (row.operation === 'household.change' && alwaysAsks.has(JSON.parse(row.details).change));
-        service.tellAnswer(row, proof.member, proof.through, input.answer, basis, loud);
+        // An answer the agent gave at the owner's terminal is always told in full: the owner sees, at once,
+        // everything answered in their name there.
+        service.tellAnswer(row, proof.member, proof.through, input.answer, basis, loud || !!proof.verifiedOnly);
       }
       return { id: input.id };
     },
