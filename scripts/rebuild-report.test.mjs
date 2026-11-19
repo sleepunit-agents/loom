@@ -77,7 +77,7 @@ it('keeps the measured revision and every page count in both regenerated reports
  }finally{rmSync(out,{recursive:true,force:true});}
 });
 it('requires persisted Account Household and Sharing action evidence from their checked-in checklists',()=>{
- for(const [file,app]of [['signing-in','Your account'],['people','Household setup'],['people','Project sharing']]){
+ for(const [file,app]of [['signing-in','Your account'],['people','Household setup'],['people','Sharing']]){
   const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+file+'.json',import.meta.url),'utf8'));
   const promise=checklist.promises.find(row=>row.probe?.kind==='action'&&row.probe.app===app);
   expect(promise).toBeDefined();
@@ -99,7 +99,7 @@ it('can disprove a one-query-door promise without claiming the converse proves i
  const promise={probe:{kind:'legacy-data-socket'}};
  expect(evaluate(promise,{}).status).toBe('not checkable yet');
  expect(evaluate(promise,{transport:{sockets:[{path:'/graphql',phase:'Tasks'}]}}).status).toBe('not checkable yet');
- expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Project sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
+ expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
 });
 
 it('keeps an explicitly incomplete action unknown even if partial checks passed',()=>{expect(evaluate({probe:{kind:'action',action:'partial'}},{actions:{partial:{ok:true,inconclusive:true,reason:'A new app has no query signature yet.'}}})).toMatchObject({status:'not checkable yet',reason:'A new app has no query signature yet.'});});

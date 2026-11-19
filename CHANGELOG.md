@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A tile's bar is the app's key, its title and three small drawn window controls (a square, a line, a cross): the back and forward arrows and the Trail are gone, while Alt+← and Alt+→ and the browser's own Back still travel a tile's history. Appearance is an app of its own, listed under Look & feel in the launcher, and no longer folds out of the top bar; it saves the same choices the same way, and Ground is called Desk background. The dock shows each app's name alone on hover, and its rule is as wide as the dock. Project sharing is named Sharing; Tempo and Sharing take their own colour. The ticker says how many boxes are enrolled without a health it has no source for, and no longer ends Tempo with a raw event name.
 - Three keyboard shortcuts that work while typing: Ctrl+Space or a double tap of Shift opens and closes the launcher (Ctrl+Shift+Space still does), and holding Control while tapping the key under Escape switches between open apps, most recently used first. The launcher lists them.
 - Owner cards can define pinned kit tools, grant kits to people or projects, and confirm outside project members. Kit calls use the current job’s asker and leave a metadata-only use record. Schema 15 starts existing households with empty kit tables.
 - Tempo can schedule a named house program and record its decision, pass data to a wake, queue a ruled channel post, and keep small state between firings. Schema 16 retains existing schedules and job usage.

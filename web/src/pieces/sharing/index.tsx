@@ -18,7 +18,7 @@ function ProjectForm({project,choices,enabled}:{project?:Project;choices:Sharing
 export default function SharingApp({go=()=>{}}:{path?:string;go?:(path:string)=>void}={}){
  const feed=useDataQuery<{householdSharing:Sharing|null}>(query),choices=feed.data?.householdSharing,[selected,select]=useState<string>();
  const project=choices?.projects.find(row=>row.id===selected),enabled=feed.status==='live'&&!!choices;
- return <AppFrame title="Project sharing" where="Sharing" go={go}>{feed.status==='loading'?<Loading label="Opening project sharing…"/>:!choices?<Empty title="Household owners manage sharing" text="Ask an owner to put members and agents on a project."/>:<div className="grid gap-6 p-5">
+ return <AppFrame title="Sharing" where="Sharing" go={go}>{feed.status==='loading'?<Loading label="Opening project sharing…"/>:!choices?<Empty title="Household owners manage sharing" text="Ask an owner to put members and agents on a project."/>:<div className="grid gap-6 p-5">
  {feed.status!=='live'&&<Error text="Project sharing is disconnected. Changes are disabled."/>}<p>A project shares its work with the members and agents on its lists.</p><Button disabled={!enabled} variant="outline" onClick={()=>select(undefined)}>New project</Button>
  <List label="Projects">{choices.projects.map(row=><Row key={row.id} title={row.name} meta={row.id} status={`${row.members.length} members · ${row.agents.length} agents`} selected={row.id===selected} onClick={()=>select(row.id)}/>)}</List>
  <ProjectForm key={JSON.stringify(project??'new')} project={project} choices={choices} enabled={enabled}/></div>}</AppFrame>;

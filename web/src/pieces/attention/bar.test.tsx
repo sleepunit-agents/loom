@@ -22,7 +22,7 @@ beforeEach(()=>{f.tasks={status:'live',data:{inProgress:[{id:'t-1'}],readyTasks:
 };});
 afterEach(async()=>{await act(async()=>tree?.unmount());});
 it('uses owned-agent facts and open asks, and opens Inbox through the router',async()=>{
- const go=vi.fn();await act(async()=>{tree=create(h(Bar,{title:'Tasks',go,actions:h('button',null,'Appearance')}));});
+ const go=vi.fn();await act(async()=>{tree=create(h(Bar,{title:'Tasks',go}));});
  expect(tree.root.findByType('h1').children).toEqual(['Tasks']);
  expect(tree.root.findByType('ticker-test').props.parts.slice(0,2)).toEqual([{text:'1 agent',href:'/'},{text:'Art E Fish · Checking a pull request',href:'/p/agents-preview/agent/art'}]);
  const needs=tree.root.findByProps({'aria-label':'1 needs you'});const preventDefault=vi.fn();
@@ -30,14 +30,14 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
  go.mockClear();needs.props.onClick({metaKey:true,preventDefault});expect(go).not.toHaveBeenCalled();
 });
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  f.tasks={...f.tasks,status};
  f.changes={...f.changes,status};
  f.tempo={...f.tempo,status};
  f.bridges={...f.bridges,status};
  f.boxes={...f.boxes,status};
  for(const type of Object.keys(f.snapshots))f.snapshots[type]={...f.snapshots[type],status};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tree.root.findByType('ticker-test').props.parts.map((p:{text:string})=>p.text)).toEqual(['Your agents are unavailable','Tasks unavailable','Tempo unavailable','Bridges unavailable','Changes unavailable','Boxes unavailable']);
  expect(tree.root.findByProps({'aria-label':'Boxes unavailable'}).children).toBeTruthy();
  expect(tree.root.findByType('ticker-test').props.live).toBe(false);
@@ -45,37 +45,39 @@ it.each(['offline','denied','loading'] as const)('drops stale work, identity and
 });
 
 it('shows server time and status on desktop and clears stale time',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  expect(tree.root.findByProps({title:'12:41 PM, America/Chicago time'})).toBeTruthy();
  expect(tree.root.findByProps({'aria-label':'1 of 1 agents at work'})).toBeTruthy();
  f.snapshots['household.time']={...f.snapshots['household.time'],status:'offline'};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tree.root.findAllByProps({title:'12:41 PM, America/Chicago time'})).toHaveLength(0);
  expect(tree.root.findByProps({title:'Loom time unavailable'})).toBeTruthy();
 });
 
 it('clears working-agent count when just the roster becomes unavailable',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  f.snapshots['attention.ownedAgent']={...f.snapshots['attention.ownedAgent'],status:'offline'};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tree.root.findAllByProps({'aria-label':'1 of 1 agents at work'})).toHaveLength(0);
  expect(tree.root.findByProps({'aria-label':'Agent status unavailable'})).toBeTruthy();
 });
 
-it('uses real piece counts, puts CI trouble first, and never calls enrollment health',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+it('uses real piece counts, puts CI trouble first, and says nothing about health it has no source for',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  expect(tree.root.findByType('ticker-test').props.parts.slice(2)).toEqual([
   {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
   {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
-  {text:'Tempo · 1 active trigger · 1 paused agent · Last event: fired',href:'/p/tempo',tone:undefined},
+  {text:'Tempo · 1 active trigger · 1 paused agent',href:'/p/tempo',tone:undefined},
   {text:'Bridges · 1 enabled connection',href:'/p/bridges-preview'},
-  {text:'1 enrolled box · health unavailable'},
+  {text:'1 enrolled box'},
  ]);
- expect(tree.root.findByProps({'aria-label':'1 enrolled box; health unavailable'})).toBeTruthy();
+ // A known count is a plain fact: the icon is not dimmed, and nothing claims or disclaims health.
+ expect(tree.root.findByProps({'aria-label':'1 enrolled box'}).props['data-dim']).toBeUndefined();
+ expect(JSON.stringify(tree.toJSON())).not.toMatch(/health|Last event/i);
  // Each source drops its own stale values independently, including a retained red PR.
  f.changes={...f.changes,status:'denied'};
  f.boxes={...f.boxes,status:'offline'};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  const parts=tree.root.findByType('ticker-test').props.parts;
  expect(parts.some((p:{text:string})=>p.text.includes('CI red')||p.text.includes('enrolled'))).toBe(false);
  expect(parts.find((p:{text:string})=>p.text==='Changes unavailable').tone).toBeUndefined();
@@ -83,87 +85,96 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
 });
 
 it('updates Tempo independently, clears retained failures and keeps an empty live result explicit',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  f.tempo={status:'live',data:{triggers:[{id:'failed',enabled:false,state:'failed'},{id:'held',enabled:true,state:'held'}],triggerLog:[{seq:3,event:'held'}],agentPauses:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  const tempo=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tempo');
- expect(tempo()).toEqual({text:'Tempo · 1 active trigger · 0 paused agents · 1 failed · Last event: held',href:'/p/tempo',tone:'bad'});
+ // The latest event arrives with the facts and its raw name is never shown.
+ expect(tempo()).toEqual({text:'Tempo · 1 active trigger · 0 paused agents · 1 failed',href:'/p/tempo',tone:'bad'});
  for(const status of ['offline','denied','loading']){
   f.tempo={...f.tempo,status};
-  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
   expect(tempo()).toEqual({text:'Tempo unavailable',href:'/p/tempo',tone:undefined});
  }
  f.tempo={status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tempo().text).toBe('Tempo · 0 active triggers · 0 paused agents');
 });
 
 it('updates box enrollment, distinguishes live zero and clears retained counts in every unavailable state',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  const boxes=()=>tree.root.findByType('ticker-test').props.parts.at(-1).text;
  f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null}]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
- expect(boxes()).toBe('2 enrolled boxes · health unavailable');
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+ expect(boxes()).toBe('2 enrolled boxes');
  for(const status of ['loading','offline','denied']){
   f.boxes={...f.boxes,status};
-  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
   expect(boxes()).toBe('Boxes unavailable');
-  expect(tree.root.findByProps({'aria-label':'Boxes unavailable'})).toBeTruthy();
+  expect(tree.root.findByProps({'aria-label':'Boxes unavailable'}).props['data-dim']).toBe('');
  }
  f.boxes={status:'live',data:{boxes:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
- expect(boxes()).toBe('0 enrolled boxes · health unavailable');
- expect(tree.root.findByProps({'aria-label':'0 enrolled boxes; health unavailable'})).toBeTruthy();
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+ expect(boxes()).toBe('0 enrolled boxes');
+ expect(tree.root.findByProps({'aria-label':'0 enrolled boxes'})).toBeTruthy();
 });
 
 it('updates generated bridge counts and clears retained configuration when unavailable',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  const bridges=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/bridges-preview');
  f.bridges={status:'live',data:{bridgeConnections:[{id:'a',enabled:true},{id:'b',enabled:true},{id:'off',enabled:false}]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(bridges().text).toBe('Bridges · 2 enabled connections');
  for(const status of ['loading','offline','denied']){
   f.bridges={...f.bridges,status};
-  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
   expect(bridges().text).toBe('Bridges unavailable');
  }
  f.bridges={status:'live',data:{bridgeConnections:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(bridges().text).toBe('Bridges · 0 enabled connections');
 });
 
 it('updates generated Changes counts, clears retained failures and distinguishes live zero',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  const changes=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/changes-preview');
  f.changes={status:'live',data:{changes:[{id:'a',checks:'passing'},{id:'b',checks:'running'}]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(changes()).toEqual({text:'Changes · 2 open',href:'/p/changes-preview',tone:undefined});
  for(const status of ['loading','offline','denied']){
   f.changes={status,data:{changes:[{id:'red',checks:'failing'}]}};
-  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
   expect(changes()).toEqual({text:'Changes unavailable',href:'/p/changes-preview',tone:undefined});
  }
  f.changes={status:'live',data:{changes:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(changes().text).toBe('Changes · 0 open');
 });
 
 it('updates generated task counts independently and clears retained readiness in unavailable states',async()=>{
- await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
  const tasks=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tasks-preview');
  f.tasks={status:'live',data:{inProgress:[{id:'a'},{id:'b'}],readyTasks:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tasks().text).toBe('Tasks · 2 in progress · 0 ready');
  // A task held in a retired project is shelved: it is not counted as work in progress.
  f.tasks={status:'live',data:{inProgress:[{id:'a',isShelved:false},{id:'b',isShelved:true},{id:'c',isShelved:true}],readyTasks:[{id:'d'}]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tasks().text).toBe('Tasks · 1 in progress · 1 ready');
  for(const status of ['loading','offline','denied']){
   f.tasks={...f.tasks,status};
-  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
   expect(tasks().text).toBe('Tasks unavailable');
  }
  f.tasks={status:'live',data:{inProgress:[],readyTasks:[]}};
- await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(tasks().text).toBe('Tasks · 0 in progress · 0 ready');
+});
+
+it('holds no appearance fold-out: appearance is an app of its own',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn()}));});
+ expect(tree.root.findAllByType('details')).toHaveLength(0);
+ expect(tree.root.findAllByType('summary')).toHaveLength(0);
+ expect(tree.root.findAllByType('select')).toHaveLength(0);
+ expect(JSON.stringify(tree.toJSON())).not.toContain('Appearance');
 });

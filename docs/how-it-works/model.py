@@ -74,7 +74,7 @@ area("people", "People, agents and projects",
     ("member", "id", "Whose preferences.", "members"),
     ("look", "choice(neon, lowlight, daylight)", "The colour scheme.", ""),
     ("ground", "choice(depth, contours, wash)", "The desk background.", ""),
-    ("sound, pixel, icons, haptics, one_window, zoom", "yes/no", "Six on/off switches from the Appearance panel.", ""),
+    ("sound, pixel, icons, haptics, one_window, zoom", "yes/no", "Six on/off switches from the Appearance app.", ""),
     ("motion, contrast", "choice(follow, on, off)", "Follow the device's setting, or force it.", ""),
     ("changed_at", "time", "When they last changed anything here.", "")]),
  ])

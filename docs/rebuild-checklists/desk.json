@@ -2,7 +2,7 @@
   "page": "desk",
   "title": "The desk",
   "ownerTask": "t-2240",
-  "sourceSha256": "0a1a837f63a3c27d7402ad7d277d09c24d9043e150d12fa94548e7ee4e994859",
+  "sourceSha256": "58e7f50582d27ca45ee9f4bc60228ee8e7a81f7b8782cf381d1b12fc4a159087",
   "promises": [
     {
       "id": "desk-001",

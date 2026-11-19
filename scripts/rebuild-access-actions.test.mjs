@@ -28,7 +28,7 @@ async function fixture(title,mode){
   return await accessAction({page,tile,title,app:{services:{comms:{db:{$client:client}}}},out:'/unused'});
  }finally{client.close();}
 }
-it.each(['Your account','Household setup','Project sharing'])('verifies successful persisted %s actions',async title=>{
+it.each(['Your account','Household setup','Sharing'])('verifies successful persisted %s actions',async title=>{
  expect(await fixture(title,'valid')).toMatchObject({ok:true});
 });
 it.each([
@@ -36,10 +36,10 @@ it.each([
  ['Your account','link-stays-visible','The delivered link stayed visible'],
  ['Household setup','missing-member','Member was not persisted'],
  ['Household setup','wrong-role','Member was not persisted'],
- ['Project sharing','missing-project','Project was not persisted'],
- ['Project sharing','wrong-name','Project was not persisted'],
- ['Project sharing','missing-membership','Project membership was not persisted'],
- ['Project sharing','extra-membership','Project membership was not persisted'],
+ ['Sharing','missing-project','Project was not persisted'],
+ ['Sharing','wrong-name','Project was not persisted'],
+ ['Sharing','missing-membership','Project membership was not persisted'],
+ ['Sharing','extra-membership','Project membership was not persisted'],
 ])('refuses to count %s as success with %s',async(title,mode,error)=>{
  expect(await fixture(title,mode)).toMatchObject({ok:false,error:'Error: '+error});
 });

@@ -9,7 +9,6 @@ vi.mock('@radix-ui/react-dialog',()=>({
  Overlay:()=>null,Content:({children}:{children:ReactNode})=>h('section',{'data-launcher':true},children),
  Title:({children}:{children:ReactNode})=>h('h2',null,children),Close:({children}:{children:ReactNode})=>h('button',null,children),
 }));
-vi.mock('./preferences',()=>({default:()=>null}));
 vi.mock('../kit',()=>({Loading:()=>null,Error:()=>null,Empty:()=>null,Button:({children,variant:_v,size:_s,...props}:{children?:ReactNode;variant?:string;size?:string})=>h('button',props,children)}));
 vi.mock('../tiling/menu',()=>({ContextMenu:()=>null}));
 vi.mock('./member-preferences',()=>({useMemberPreferences:()=>({status:'loading',records:[]})}));

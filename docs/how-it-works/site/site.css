@@ -331,8 +331,9 @@ p{max-width:68ch}
 @media (prefers-reduced-motion:no-preference){ .face .eye{animation:blink 5.5s infinite;transform-origin:center;transform-box:fill-box} .face.b .eye{animation-delay:2.1s} }
 @keyframes blink{0%,95%,100%{transform:scaleY(1)}97.5%{transform:scaleY(.12)}}
 .desk__dock{display:flex;justify-content:center;gap:6px;padding:2px 12px 12px;flex-wrap:wrap}
-.desk__dock span{display:flex;align-items:center;gap:6px;padding:4px 9px 4px 5px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--paper) 86%,transparent);font-size:11px;color:var(--ink-2)}
-.desk__dock span::before{content:"";width:12px;height:12px;background:var(--t);clip-path:polygon(4px 0,100% 0,100% 100%,0 100%,0 4px)}
+/* the dock is icon keys, as the app's is: an app's icon on its colour, its name shown on hover */
+.desk__dock span{display:grid;place-items:center;width:28px;height:28px;background:var(--t);color:var(--on-tint);clip-path:polygon(6px 0,100% 0,100% 100%,0 100%,0 6px)}
+.desk__dock svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .mini{padding:9px 11px 11px;display:grid;gap:7px;align-content:start}
 .mini .row{padding:0 0 7px;border-bottom:1px solid var(--line)} .mini .row:last-child{border:0;padding-bottom:0}
 .mini .msg{grid-template-columns:minmax(0,1fr)}
