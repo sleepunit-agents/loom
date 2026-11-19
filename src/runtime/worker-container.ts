@@ -42,8 +42,9 @@ export const CONTAINER_RUNTIMES = ['runc', 'crun'] as const;
 
 export interface ContainerConfig {
   socket: string;
-  /** Explicit opt-in on this machine as well as in the agent's run settings. */
+  /** Retired configuration key. Its presence stops the worker. */
   nestedSocket?: string;
+  protectedPaths?: readonly string[];
   /** Sent as `HostConfig.Runtime`. `runc` when left out. */
   runtime?: typeof CONTAINER_RUNTIMES[number];
   /** Directories of this machine given to the containers of one agent's bodies, by agent (worker-mounts.ts). */
@@ -195,6 +196,7 @@ export function containerWorkerExecutor(config: {
   state?: string;
   /** The file with the worker's token for loom, when the caller has one: no mount may reach it. */
   tokenFile?: string;
+  configFile?: string;
 }, dependencies: {
   engine?: DockerEngine; name?: () => string;
   kitAccess?: {url:string;runner:string};
@@ -222,6 +224,7 @@ export function containerWorkerExecutor(config: {
   // Checked and fixed here, before the state directory is taken or anything asks the engine: a worker
   // whose mounts cannot be used is not made (WorkerStop 'mounts').
   const mountsFor = bodyMounts({ program, accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, socket: fixed.container.socket,
+    protectedPaths: fixed.container.protectedPaths, configFile: fixed.configFile,
     nestedSocket: fixed.container.nestedSocket, state: fixed.state ?? defaultWorkerState(fixed.box), tokenFile: fixed.tokenFile });
   if (!programInside(program)) throw new WorkerStop('program');
   if (!dependencies.source && !(dependencies.git ?? gitAvailable)()) throw new WorkerStop('git');
@@ -247,8 +250,7 @@ export function containerWorkerExecutor(config: {
     if (job.program) {
       const plan = houseProgramSchema.parse(job.program);
       if (job.house.repository !== plan.repository) throw new Error('Program repository does not match its pin');
-      if (fixed.container.nestedSocket)
-        throw new UnservedJobError('Programs need a machine with a private engine');
+      if (job.run?.nestedContainers) throw new Error('Nested containers unavailable');
       return;
     }
     if (fixed.accountLogins === undefined && (job.accountChoices ?? 1) > 1) throw new UnservedJobError('Several accounts need a sign-in directory each');
@@ -444,7 +446,7 @@ export function containerWorkerExecutor(config: {
           houseId=canonicalKitImage(house.id);
           // A body on a machine that lends out its engine can inspect other containers there.
           // Such a machine never receives kit secrets. A new socket belongs to one job only.
-          if(houseId&&dependencies.kitAccess&&!fixed.container.nestedSocket&&!assignment.run?.nestedContainers){
+          if(houseId&&dependencies.kitAccess){
             kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal).catch(()=>undefined);
             if(kit)mounts=[...mounts,{Type:'bind',Source:kit.path,Target:KIT_SOCKET,ReadOnly:true}];
           }

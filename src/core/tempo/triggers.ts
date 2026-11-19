@@ -15,7 +15,9 @@ import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
 const placement = { needs: machineFacts.nullish(), prefers: machineFacts.nullish() };
+export const HOST_SCHEDULE_REFUSAL = 'Host execution is unavailable for scheduled work. Schedule a container job or use an approved machine read.';
 export const triggerInput = z.object({
+  execution: z.enum(['container', 'host']).optional(),
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
@@ -141,7 +143,8 @@ export class TriggerEngine {
    * shared-place-triggers.ts) and never part of what a caller sends. */
   set(value: NewTrigger, member?: string, asked?: Asker): Trigger {
     this.open();
-    const v = triggerInput.parse(value);
+    const { execution, ...v } = triggerInput.parse(value);
+    if (execution === 'host') throw new Error(HOST_SCHEDULE_REFUSAL);
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
     if ((v.ownerKind === 'household') !== !v.owner) throw new Error('Trigger needs its owner');
     if (!!v.toKind !== !!v.to) throw new Error('A recipient needs both kind and id');

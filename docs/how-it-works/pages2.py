@@ -917,8 +917,8 @@ def houses():
         row("<b>What its house was built from.</b> Three environment variables that loom sets, whatever the image says: <code>LOOM_HOUSE_REPOSITORY</code> (the address, which never holds a credential), <code>LOOM_HOUSE_BRANCH</code> and <code>LOOM_HOUSE_COMMIT</code>, the exact commit the image was built from, so a repository can make the copy of itself a real checkout.", "set by loom"),
         row("<b>Its job.</b> The work, and a credential of its own that is good for this one job.", plink("Signing in")),
     ]) + group("What it is not given", "amber", [
-        row("Anything else of the machine. No other directory, no other account's sign-in, none of the worker's environment, and not the engine itself unless the agent is allowed nested containers and the machine has opted in.", "nothing by default"),
-        row("A body allowed nested containers holds the machine's container engine, and through it everything that engine's user can reach, every account's sign-in included. It is allowed only where both the agent's settings and the machine say so.", "a stated exception"),
+        row("The engine socket stays with the worker. A worker configured to pass it through stops at startup, and a job requesting nested containers cannot start.", "container engine"),
+        row("The worker refuses mounts overlapping its configuration, credentials, private state or protected server storage. Apply the same protection to custom storage paths in the worker configuration.", "private storage"),
     ]) + '</div>'
 
     several = how([

@@ -9,7 +9,7 @@ import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
-import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
+import { commandUsageProvider } from './worker-process.js';
 import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
@@ -43,10 +43,9 @@ const configSchema = z.object({
    * body's scratch directory, so that the worker after it can end them if this one is killed
    * (worker-left.ts). Left out, it is a directory under the temporary directory named for this user and machine. */
   state: commandString.startsWith('/').optional(),
-  /** For a worker whose bodies are processes: the command that builds, and one runner for each harness.
-   * A worker with container bodies takes neither (WorkerStop 'retired'): it builds each house itself. */
+  /** Former process worker keys, parsed so a valid legacy configuration gets a migration diagnostic. */
   build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
-  /** How many jobs the worker runs side by side. Left out: HOUSE_SLOTS_DEFAULT with container bodies, one with process bodies. */
+  /** How many jobs the worker runs side by side. Defaults to HOUSE_SLOTS_DEFAULT. */
   slots: z.number().int().min(1).max(SLOTS_MAX).optional(),
   /** How many of those may be bodies on one account at once, for one harness: one number for every
    * harness, or a number for each harness named. A harness not said has its default: ACCOUNT_SLOTS_BY_HARNESS,
@@ -67,7 +66,7 @@ const configSchema = z.object({
    * This is the one way a worker signs an account in. */
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
-  container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),
+  container: z.object({ socket: z.string(), nestedSocket: z.string().optional(), protectedPaths: z.array(z.string()).optional(),
     runtime: z.enum(CONTAINER_RUNTIMES).optional(),
     // By agent id. One list for every body is what this key used to be: read here so that the worker
     // can stop on it with its own line (WorkerStop 'retired') and not as a file that is not valid.
@@ -77,13 +76,10 @@ const configSchema = z.object({
 }).strict().superRefine((config, context) => {
   const accounts = config.accountUsage?.readers.map(reader => reader.account.account) ?? [];
   if (new Set(accounts).size !== accounts.length) context.addIssue({ code: 'custom', message: 'Duplicate account quota reader' });
-  // A body run as a process is given nothing by a mount: sign-in directories that would be shared by every
-  // body all the same are refused, never quietly ignored.
+  // Account sign-in directories are container mounts.
   if (config.accountLogins && !config.container) context.addIssue({ code: 'custom', message: 'Account sign-in directories need container bodies' });
-  const most = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
+  const most = config.slots ?? HOUSE_SLOTS_DEFAULT;
   if ((typeof config.accountSlots === 'number' ? [config.accountSlots] : Object.values(config.accountSlots ?? {})).some(count => count > most)) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
-  // Bodies as processes need the command that builds and a runner for each harness, as before.
-  if (!config.reportOnly && !config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
 });
 export async function workerProgram(input: {
   args: readonly string[];
@@ -102,7 +98,7 @@ export async function workerProgram(input: {
   usageUnavailable?: typeof reportWorkerAccountUnavailable;
   health?: typeof reportWorkerHealth;
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
-  run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
+  run?: typeof runWorker; control?: typeof httpWorkerControl;
   containerExecutor?: typeof containerWorkerExecutor;
 }): Promise<number> {
   const abort = new AbortController();
@@ -152,6 +148,8 @@ export async function workerProgram(input: {
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
     stage = 'config';
     const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
+    if (!config.reportOnly && !config.container) throw new WorkerStop('containerRequired');
+    if (config.container?.nestedSocket !== undefined) throw new WorkerStop('mounts', 'container.nestedSocket');
     // Keys a worker with container bodies used to take. It does not go on without them as if they were
     // not there: whoever wrote one expects it to do something.
     if (config.container) for (const [key, present] of [['build', config.build], ['runners', config.runners], ['accountRunners', config.accountRunners],
@@ -162,7 +160,7 @@ export async function workerProgram(input: {
     stage = 'token';
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
-    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
+    const slots = config.slots ?? HOUSE_SLOTS_DEFAULT;
     const remote = { url: config.url, token, signal: abort.signal };
     const wait = input.pause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, {signal}); });
     const reportHealth = async () => (input.health ?? reportWorkerHealth)({
@@ -196,14 +194,13 @@ export async function workerProgram(input: {
       if (config.reportOnly) { await diagnostics; return 0; }
     }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
-    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && !config.container.nestedSocket && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
+    const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
-    executor = config.container
-      // (A list of mounts stopped the worker above: what is left is by agent, or nothing.)
-      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: { ...config.container, mounts: config.container.mounts as Exclude<typeof config.container.mounts, unknown[]> }, state },
-        { say: text => input.error(text), kitAccess:{url:config.url,runner:token} })
-      : (input.executor ?? commandWorkerExecutor)({ ...config, build: config.build!, runners: config.runners!, state });
+    const container = config.container!; // Required before token read for every worker taking jobs.
+    // A list of mounts stopped the worker above. The remaining mounts are keyed by agent.
+    executor = (input.containerExecutor ?? containerWorkerExecutor)({ ...config, configFile: input.args[0], container: { ...container, mounts: container.mounts as Exclude<typeof container.mounts, unknown[]> }, state },
+      { say: text => input.error(text), kitAccess:{url:config.url,runner:token} });
     // Before any report or claim: end what a worker killed before this one left running, or the work loom
     // has queued again would run beside it. If that cannot be done, this worker does not start.
     stage = 'left';

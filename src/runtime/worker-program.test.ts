@@ -5,31 +5,30 @@ import { defaultWorkerState } from './worker-left.js';
 import { WORKER_STOP, WorkerStop } from './worker-stop.js';
 import { RELAY_MS } from './account-signin-relay.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT } from './job-exit.js';
+
 const plan = { command: '/builder', args: [], cwd: '/work', env: { PATH: '/bin' } };
-const config = { url: 'https://loom.example', box: 'b', tokenFile: '/token', build: plan, runners: { claude: plan } };
-/** A worker with container bodies: it builds each house itself, so it has no build command and no runners. */
-const houseConfig = { url: config.url, box: config.box, tokenFile: config.tokenFile };
+const houseConfig = { url: 'https://loom.example', box: 'b', tokenFile: '/token' };
+const config = { ...houseConfig, slots: 1, container: { socket: '/fake/docker.sock' } };
 function fixture() {
   const handlers = new Map<string, () => void>();
   return { handlers, args: ['/config'], read: vi.fn(async (path: string) => path === '/config' ? JSON.stringify(config) : ' private-token\n'),
     on: (name: string, stop: () => void) => { handlers.set(name, stop); },
     off: (name: string, stop: () => void) => { expect(handlers.get(name)).toBe(stop); handlers.delete(name); },
-    error: vi.fn(), control: vi.fn().mockReturnValue({}), executor: vi.fn().mockReturnValue({}), run: vi.fn().mockResolvedValue(undefined) };
+    error: vi.fn(), control: vi.fn().mockReturnValue({}), containerExecutor: vi.fn().mockReturnValue({}), run: vi.fn().mockResolvedValue(undefined) };
 }
 const state = defaultWorkerState('b');
 it('loads validated config and token file then wires worker-only dependencies', async () => {
   const f = fixture();
   expect(await workerProgram(f)).toBe(0);
   expect(f.read.mock.calls.map(c => c[0])).toEqual(['/config', '/token']);
-  expect(f.control).toHaveBeenCalledWith({ url: config.url, slots: 1, token: 'private-token', signal: expect.any(AbortSignal), silenceExpired: expect.any(Function) });
-  expect(f.executor).toHaveBeenCalledWith({ ...config, state });
-  // One slot for a worker whose bodies are processes, unless it is told otherwise.
+  expect(f.control).toHaveBeenCalledWith({ url: config.url, slots: 1, programs: true, token: 'private-token', signal: expect.any(AbortSignal), silenceExpired: expect.any(Function) });
+  expect(f.containerExecutor).toHaveBeenCalledWith({ ...config, configFile: '/config', state }, expect.any(Object));
   expect(f.run).toHaveBeenCalledExactlyOnceWith({ box: 'b', control: {}, executor: {}, signal: expect.any(AbortSignal), turns: expect.objectContaining({ take: expect.any(Function) }), silenceExpired: expect.any(Function) });
   expect(f.handlers.size).toBe(0);
 });
 it('ends what a killed worker left before it takes any work, and gives its state directory up when it stops', async () => {
   const f = fixture(), order: string[] = [];
-  f.executor.mockImplementation(given => { order.push('executor ' + given.state); return { endLeft: vi.fn(async () => { order.push('endLeft'); return { unverified: 0 }; }), close: () => { order.push('close'); } }; });
+  f.containerExecutor.mockImplementation(given => { order.push('executor ' + given.state); return { endLeft: vi.fn(async () => { order.push('endLeft'); return { unverified: 0 }; }), close: () => { order.push('close'); } }; });
   f.run.mockImplementation(async () => { order.push('run'); });
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, state: '/var/lib/loom-worker' }) : 'private-token');
   expect(await workerProgram(f)).toBe(0);
@@ -45,8 +44,8 @@ it.each([
   ['what was left cannot be ended', 'left', 46, 'Worker stopped: a process a previous worker left running could not be ended\n'],
 ] as const)('takes no work when %s, and says which', async (_why, stage, code, line) => {
   const f = fixture(), close = vi.fn();
-  if (stage === 'left') f.executor.mockReturnValue({ close, endLeft: vi.fn(async () => { throw new WorkerStop('left'); }) });
-  else f.executor.mockImplementation(() => { throw new WorkerStop(stage); });
+  if (stage === 'left') f.containerExecutor.mockReturnValue({ close, endLeft: vi.fn(async () => { throw new WorkerStop('left'); }) });
+  else f.containerExecutor.mockImplementation(() => { throw new WorkerStop(stage); });
   expect(await workerProgram(f)).toBe(code);
   expect(f.run).not.toHaveBeenCalled();
   expect(f.error).toHaveBeenCalledExactlyOnceWith(line);
@@ -76,11 +75,11 @@ it('tells an unreadable configuration, an invalid one, an unreadable token file 
   for (const bad of ['', ' \n', 'two words', 'a'.repeat(8193)]) expect(await stopped(f => { f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(config) : bad); }))
     .toEqual([42, 'Worker stopped: the token file could not be read\n']);
   expect(await stopped(f => { f.control.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
-  expect(await stopped(f => { f.executor.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
+  expect(await stopped(f => { f.containerExecutor.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
   expect(await stopped(f => { f.run.mockRejectedValue(new Error('private-brief')); })).toEqual([49, 'Worker stopped: a body it started could not be ended, so it takes no more work\n']);
 });
 it('says so when something left is still running that it could not show to be a previous worker\'s, and goes on', async () => {
-  const f = fixture(); f.executor.mockReturnValue({ endLeft: vi.fn(async () => ({ unverified: 2 })) });
+  const f = fixture(); f.containerExecutor.mockReturnValue({ endLeft: vi.fn(async () => ({ unverified: 2 })) });
   expect(await workerProgram(f)).toBe(0);
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker left 2 process group(s) running that it could not show to be a previous worker\'s\n');
   expect(f.run).toHaveBeenCalledOnce();
@@ -96,7 +95,7 @@ for (const name of ['SIGINT', 'SIGTERM']) it(`cancels worker on ${name} and remo
   expect(f.handlers.size).toBe(0);
 });
 it('never prints private configuration or execution diagnostics', async () => {
-  for (const stage of ['read', 'control', 'executor', 'run'] as const) {
+  for (const stage of ['read', 'control', 'containerExecutor', 'run'] as const) {
     const f = fixture();
     f[stage].mockImplementation(() => { throw new Error('private-token private-brief'); });
     expect(await workerProgram(f)).toBeGreaterThan(0);
@@ -109,7 +108,7 @@ it('rejects malformed configuration before reading a token or launching', async 
   const f = fixture(); f.read.mockResolvedValue('{}');
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   expect(f.read).toHaveBeenCalledTimes(1);
-  expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  expect(f.control).not.toHaveBeenCalled(); expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
 const account = { account: 'subscription', owner: 'member', provider: 'provider' };
@@ -156,25 +155,25 @@ it('passes a configured build deadline to the executor', async () => {
   const f = fixture();
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, buildTimeoutMs: 1_234 }) : 'private-token');
   expect(await workerProgram(f)).toBe(0);
-  expect(f.executor).toHaveBeenCalledWith({ ...config, buildTimeoutMs: 1_234, state });
+  expect(f.containerExecutor).toHaveBeenCalledWith({ ...config, buildTimeoutMs: 1_234, configFile: '/config', state }, expect.any(Object));
 });
 for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured deadline ${buildTimeoutMs} before launching`, async () => {
   const f = fixture();
   f.read.mockResolvedValue(JSON.stringify({ ...config, buildTimeoutMs }));
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   expect(f.read).toHaveBeenCalledTimes(1);
-  expect(f.executor).not.toHaveBeenCalled();
+  expect(f.containerExecutor).not.toHaveBeenCalled();
 });
 
 
 it('selects the actual container executor when configured, without invoking a host runner', async () => {
   const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
-  const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
+  const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(f.control.mock.calls[0][0]).not.toHaveProperty('programs');
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} });
-  expect(f.executor).not.toHaveBeenCalled();
+  expect(f.control.mock.calls[0][0]).toHaveProperty('programs', true);
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, configFile: '/config', state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} });
+  expect(f.containerExecutor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
 });
 for (const container of [{ socket: 7 }, { nestedSocket: '/docker.sock' }, { socket: '/docker.sock', privileged: true }, { socket: '/docker.sock', cleanupTimeoutMs: 0 }]) {
@@ -186,24 +185,18 @@ for (const container of [{ socket: 7 }, { nestedSocket: '/docker.sock' }, { sock
   });
 }
 
-it('passes explicit account and harness runner bindings to the actual worker executor', async () => {
-  const f = fixture(), configured = { ...config, accountRunners: { subscription: { claude: { ...plan, env: { PROFILE: '/worker/private/subscription' } } } } };
-  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'token');
-  expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith({ ...configured, state });
-});
-
 for (const accountRunners of [null, [], { sub: null }, { sub: [] }, { sub: { claude: null } },
   { '': { claude: plan } }, { sub: { '': plan } }, { sub: { claude: { ...plan, extra: 'wrong' } } },
   ...[{ command: '\0' }, { args: ['bad\0arg'] }, { cwd: '/bad\0dir' }, { env: { KEY: 'bad\0value' } }].map(patch => ({ sub: { claude: { ...plan, ...patch } } })),
 ]) it('rejects malformed nested account runners before token reads or execution', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, accountRunners }));
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
-  expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+  expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
 });
 it.each([
   ['build', { build: plan }], ['runners', { runners: { claude: plan } }], ['runners', { runners: {} }], ['accountRunners', { accountRunners: { subscription: { claude: plan } } }],
   ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [{ source: '/house/stamps', target: 'house/stamps' }] } }], ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [] } }],
-  ['build', config],
+  ['build', { build: plan, runners: { claude: plan } }],
   // Where a sign-in appears in a house is no longer the machine's to say.
   ['accountLogins.subscription.claude.target', { accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } } }],
   ['accountLogins."an account".codex.target', { accountLogins: { 'an account': { claude: { source: '/x' }, codex: { source: '/y', target: '/run/loom/login/codex' } } } }],
@@ -213,7 +206,7 @@ it.each([
   expect(await workerProgram({ ...f, containerExecutor })).toBe(53);
   expect(f.error).toHaveBeenCalledExactlyOnceWith(`Worker stopped: ${WORKER_STOP.retired[1]} (${key})\n`);
   expect(WORKER_STOP.retired[1]).toBe('the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house');
-  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 it('stops a worker with container bodies whose own directory cannot give a container the body program, with its own line and code', async () => {
   const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('program'); });
@@ -251,33 +244,30 @@ it('stops a worker with container bodies on a machine that has no git, with its 
   expect(await workerProgram({ ...f, containerExecutor })).toBe(54);
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git 2.32.0 or later, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
 });
-for (const gone of ['build', 'runners'] as const) it(`still needs ${gone} for a worker whose bodies are processes`, async () => {
-  const f = fixture(), { [gone]: _left, ...rest } = config;
-  f.read.mockResolvedValue(JSON.stringify(rest));
-  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+it.each([{}, { build: plan }, { build: plan, runners: { claude: plan } },
+  { build: plan, runners: {}, accountRunners: { subscription: { claude: plan } } },
+])('refuses every configuration without an engine before reading its token or claiming work', async legacy => {
+  const f = fixture();
+  f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, ...legacy }));
+  expect(await workerProgram(f)).toBe(58);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith(`Worker stopped: ${WORKER_STOP.containerRequired[1]}\n`);
+  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
+  expect(f.control).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
 for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\0fact'], ['bad\nline'], ['bad\rfact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i), null, 'gpu:5090']) it('rejects invalid configured machine facts before reading a token or executing', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, facts }));
-  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
-it('accepts explicit private bootstrap only in a configured runner, without putting it in argv or environment', async () => {
-  const f = fixture(), selected = { ...config, runners: { claude: { ...plan, bodyBootstrap: true } } };
-  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'machine-token'); expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith({ ...selected, state });
-});
 for (const bodyBootstrap of ['true', 1, null, {}]) it('refuses an invalid private runner bootstrap option before token reads', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, runners: { claude: { ...plan, bodyBootstrap } } }));
-  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.containerExecutor).not.toHaveBeenCalled();
 });
 
-it('accepts private bootstrap in exact account/harness bindings', async () => {
-  const f = fixture(), selected = { ...config, accountRunners: { sub: { claude: { ...plan, bodyBootstrap: true } } } };
-  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'machine-token'); expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith({ ...selected, state });
-});
 it('refuses a private bootstrap flag on a builder before reading its token', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, build: { ...plan, bodyBootstrap: true } }));
-  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.containerExecutor).not.toHaveBeenCalled();
 });
 for (const mode of ['--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
   const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account });
@@ -299,7 +289,7 @@ it('passes the engine runtime, the sign-in directories and the fixed mounts to c
     container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: 'house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: 'mirror' }] } } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} }); expect(f.executor).not.toHaveBeenCalled();
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, configFile: '/config', state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} }); expect(f.containerExecutor).not.toHaveBeenCalled();
 });
 for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { container: { socket: '/s', runtime: '' } },
   { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', readOnly: 'yes' }] } } }, { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', propagation: 'shared' }] } } },
@@ -311,12 +301,12 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
   { accountLogins: { a: { claude: { source: '/a', target: '/b' } } } }, { accountLogins: {} }].entries())
   it(`rejects a runtime it does not know, a misshapen mount and sign-in directories without container bodies, before the token is read (${JSON.stringify(patch[1])})`, async () => {
     const f = fixture(), containerExecutor = vi.fn();
-    f.read.mockResolvedValue(JSON.stringify({ ...('container' in patch[1] ? houseConfig : config), ...patch[1] }));
+    f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, ...patch[1] }));
     expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
-    expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+    expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 it('stops before any work is claimed when a path given to containers or an engine socket cannot be used, with its own line and code and no path in it', async () => {
-  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
+  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, a mounted directory that overlaps another or a protected host path, or a request to pass an engine socket into a house']);
   // The line, then the configuration key at fault in brackets: a key, never the path written under it.
   const line = (key: string) => `Worker stopped: ${WORKER_STOP.mounts[1]} (${key})\n`;
   const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');
@@ -340,11 +330,11 @@ it('stops before any work is claimed when a path given to containers or an engin
   };
   try {
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.
-    const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: { art: [{ source: other, target: 'house/x' }] } } });
+    const fine = await started({ ...login(real), container: { mounts: { art: [{ source: other, target: 'house/x' }] } } });
     expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledTimes(4);
     // So does one whose engine socket is named through a linked directory, as `/var/run/docker.sock` is on
     // most machines, with nothing else in it: a configuration from before any of these keys.
-    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: 'house/x' }] } }]) {
+    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: 'house/x' }] } }]) {
       const linked = await started({ container });
       expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledTimes(4);
     }
@@ -374,22 +364,22 @@ it('stops before any work is claimed when a path given to containers or an engin
       expect(code, what).toBe(52);
       expect(f.error, what).toHaveBeenCalledExactlyOnceWith(line(key));
       expect(f.error.mock.calls[0][0], what).not.toMatch(/private|loom-test|loom-private/);
-      expect(f.run, what).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
+      expect(f.run, what).not.toHaveBeenCalled(); expect(f.containerExecutor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
     }
   } finally { await new Promise(done => server.close(done)); rmSync(root, { recursive: true, force: true }); }
 });
 
 // Several jobs side by side.
-it('runs as many slots as the configuration says: four for container bodies and one for process bodies when it does not, all on one executor, one control and one set of turns', async () => {
-  for (const [given, container, expected] of [[undefined, true, 4], [undefined, false, 1], [1, true, 1], [3, false, 3], [16, true, 16]] as const) {
+it('runs as many slots as the configuration says: four by default, all on one executor, one control and one set of turns', async () => {
+  for (const [given, expected] of [[undefined, 4], [1, 1], [3, 3], [16, 16]] as const) {
     const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
-    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...(container ? { ...houseConfig, container: { socket: '/fake/docker.sock' } } : config), ...(given ? { slots: given } : {}) }) : 'private-token');
+    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: config.container, ...(given ? { slots: given } : {}) }) : 'private-token');
     expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
     expect(f.run).toHaveBeenCalledTimes(expected);
     const calls = f.run.mock.calls.map(call => call[0]);
     expect(new Set(calls.map(call => call.turns)).size).toBe(1); expect(new Set(calls.map(call => call.executor)).size).toBe(1);
     expect(new Set(calls.map(call => call.control)).size).toBe(1); expect(new Set(calls.map(call => call.signal)).size).toBe(1);
-    expect(container ? containerExecutor : f.executor).toHaveBeenCalledOnce();
+    expect(containerExecutor).toHaveBeenCalledOnce();
   }
 });
 for (const slots of [0, 17, 1.5, -1, '4', null]) it(`refuses ${JSON.stringify(slots)} slots before it reads its token`, async () => {
@@ -398,7 +388,7 @@ for (const slots of [0, 17, 1.5, -1, '4', null]) it(`refuses ${JSON.stringify(sl
 });
 it('stops every slot when one cannot end its body, waits for each to end its own, and only then gives its state up and says why', async () => {
   const f = fixture(), order: string[] = [], close = vi.fn(() => { order.push('close'); });
-  f.executor.mockReturnValue({ close });
+  f.containerExecutor.mockReturnValue({ close });
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 3 }) : 'private-token');
   let slot = 0;
   f.run.mockImplementation(async ({ signal }: { signal: AbortSignal }) => {
@@ -452,7 +442,7 @@ for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accou
     f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));
     expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
-it('holds a process worker to its one slot for accounts too', async () => {
+it('holds a worker to its configured slots for accounts too', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, accountSlots: 2 }));
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   const fine = fixture(); fine.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 3, accountSlots: 2 }) : 'private-token');
@@ -464,5 +454,5 @@ it('a diagnostics-only worker polls and reports health without constructing an e
  f.read.mockImplementation(async path=>path==='/config'?JSON.stringify({...houseConfig,reportOnly:true,reads:['memory']}):'private-token');
  const result=await workerProgram({...f,health,readRemote:()=>({next,done:async()=>true}),pause:async()=>{f.handlers.get('SIGTERM')?.();}});
  expect(result).toBe(0);expect(next).toHaveBeenCalledWith(['memory']);expect(health).toHaveBeenCalledWith(expect.objectContaining({slots:0}));
- expect(f.run).not.toHaveBeenCalled();expect(f.executor).not.toHaveBeenCalled();expect(f.control).not.toHaveBeenCalled();
+ expect(f.run).not.toHaveBeenCalled();expect(f.containerExecutor).not.toHaveBeenCalled();expect(f.control).not.toHaveBeenCalled();
 });

@@ -15,6 +15,7 @@ import { houseRepository, houseSource } from './house-source.js';
 import { HOUSE_ENV } from './house-layout.js';
 import type { DockerEngine } from './docker-engine.js';
 import { WorkerStop } from './worker-stop.js';
+
 const deferred = <T>() => { let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = async () => { await new Promise<void>(resolve => process.nextTick(resolve)); for (let n = 0; n < 30; n++) await Promise.resolve(); };
@@ -91,17 +92,14 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   // The body was given a credential, so what it printed is not kept: it reports for itself.
   expect(await run).toBe('finished'); expect(control.finish).toHaveBeenCalledWith('job', 17, '', 'body');
 });
-it('applies only approved GPU, TCP listeners and explicitly configured nested socket', async () => {
+it('applies only approved GPU, TCP listeners', async () => {
   const f = fixture();
-  const original = f.engine.json.getMockImplementation()!;
-  f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: [{ Type: 'bind', Source: nestedSock, Destination: '/var/run/docker.sock', RW: true }, programReport()] }) : original(method, path, body, signal));
-  const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, nestedSocket: nestedSock } }, { ...f.deps, name: () => 'capabilities' });
-  const body = executor.start({ ...job, run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }] } }, built, f.abort.signal);
+  const body = f.start({ ...job, run: { gpu: true, nestedContainers: false, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }] } });
   await body.spawned;
   expect(f.engine.json.mock.calls[0][2]).toMatchObject({ ExposedPorts: { '8080/tcp': {} }, HostConfig: {
     DeviceRequests: [{ Driver: '', Count: -1, Capabilities: [['gpu']] }],
     PortBindings: { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '8080' }, { HostIp: '::1', HostPort: '8080' }] },
-    Mounts: [{ Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock', ReadOnly: false }, programAsked()] } });
+    Mounts: [programAsked()] } });
   await body.stop();
 });
 for (const run of [ { gpu: false, nestedContainers: true, ports: [] },
@@ -407,11 +405,11 @@ it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and
   expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[1]).toEqual({ Type: 'bind', Source: loginB, Target: '/run/loom/login/harness', ReadOnly: false });
   expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
 });
-it('gives every body the fixed mounts when no sign-in map is configured, beside the nested socket', async () => {
-  const f = house([reported(nestedSock, '/var/run/docker.sock', true), ...expectedReport.slice(1)], { mounts: { art: houseMounts }, nestedSocket: nestedSock }, null);
-  const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, built, f.abort.signal); await body.spawned;
+it('gives every body the fixed mounts when no sign-in map is configured', async () => {
+  const f = house(expectedReport.slice(1), { mounts: { art: houseMounts } }, null);
+  const body = f.executor.start({ ...job, account: 'anyone' }, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
-    { Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock', ReadOnly: false }, programAsked(),
+    programAsked(),
     { Type: 'bind', Source: stamps, Target: '/home/agent/house/stamps', ReadOnly: false },
     { Type: 'bind', Source: mirror, Target: '/home/agent/house/mirror', ReadOnly: true }]);
   await body.stop();
@@ -457,22 +455,11 @@ it.each([
   expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
   expect(f.engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
 });
-const nestedReport = () => [reported(nestedSock, '/var/run/docker.sock', true), ...expectedReport];
-it.each([
-  ['the socket missing', () => expectedReport],
-  ['another socket in its place', () => [reported('/run/other.sock', '/var/run/docker.sock', true), ...expectedReport]],
-  ['the socket at another place', () => [reported(nestedSock, '/run/docker.sock', true), ...expectedReport]],
-  ['the socket read-only', () => [reported(nestedSock, '/var/run/docker.sock', false), ...expectedReport]],
-  ['the socket without saying whether it is writable', () => [{ Type: 'bind', Source: nestedSock, Destination: '/var/run/docker.sock' }, ...expectedReport]],
-  ['a volume at the socket\'s place', () => [{ ...reported(nestedSock, '/var/run/docker.sock', true), Type: 'volume' }, ...expectedReport]],
-  ['one mount more than the socket and its own', () => [...nestedReport(), reported('/host', '/work', true)]],
-])('removes a nested job\'s container without starting it when the engine reports %s', async (_what, inspected) => {
-  const nestedJob = { ...job, run: { gpu: false, nestedContainers: true, ports: [] } };
-  const good = house(nestedReport(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), fine = good.executor.start(nestedJob, built, good.abort.signal);
-  await fine.spawned; await fine.stop();
-  const f = house(inspected(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), body = f.executor.start(nestedJob, built, f.abort.signal);
+it.each(['/var/run/docker.sock', '/run/docker.sock'])('removes a container when the engine adds an unrequested socket at %s', async target => {
+  const f = house([...expectedReport, reported(nestedSock, target, true)]);
+  const body = f.executor.start(job, built, f.abort.signal);
   await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
-  expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
+  expect(f.engine.attach).not.toHaveBeenCalled();
 });
 it('still runs the build of a nested job on a machine with no nested socket, and fails it when its body is started', async () => {
   const f = fixture(), nested = { ...job, run: { gpu: false, nestedContainers: true, ports: [] } };
@@ -1236,7 +1223,7 @@ function programFixture() {
 it('runs a named program only after acknowledgement, with declared input and no model or host access', async () => {
   const f = programFixture(), ack = deferred<void>(), bytes = Buffer.from('private weather credential');
   const assignment = { ...job, harness: 'program', program: namedProgram, accountChoices: 2,
-    run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 9000 }] } };
+    run: { gpu: true, nestedContainers: false, ports: [{ address: '127.0.0.1', port: 9000 }] } };
   const control = { next: async () => assignment, started: vi.fn(() => ack.promise), heartbeat: async () => true,
     finish: vi.fn(async () => {}), enrollBody: vi.fn(), programInputs: vi.fn(async () => new Map([['KIT_WEATHER', bytes]])) };
   const run = workOnce({ box: job.box, control, executor: f.executor, signal: f.abort.signal });

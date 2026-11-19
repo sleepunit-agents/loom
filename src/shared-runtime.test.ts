@@ -87,12 +87,12 @@ it('binds every worker report to the authenticated live machine and refuses supp
   expect((await f.call('started', { job: queued.id, build: 'image', box: 'worker' })).status).toBe(400);
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('starting');
   f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run());
-  expect((await f.call('next', {})).status).toBe(401);
+  expect((await f.call('next', { execution: 'container' })).status).toBe(401);
   expect((await f.call('started', { job: queued.id, build: 'image' })).status).toBe(401);
 });
 it('refuses stale claim/heartbeat replay while report receipts remain atomic and bound to current box authority', async () => {
   const f = fixture(), queued = f.send();
-  expect((await f.call('next', {}, 'claim')).status).toBe(200); expect((await f.call('next', {}, 'claim')).status).toBe(409);
+  expect((await f.call('next', { execution: 'container' }, 'claim')).status).toBe(200); expect((await f.call('next', { execution: 'container' }, 'claim')).status).toBe(409);
   const beat = { job: queued.id, state: 'starting' };
   expect(await (await f.call('heartbeat', beat, 'beat')).json()).toEqual({ ok: true, value: { active: true } });
   expect((await f.call('heartbeat', beat, 'beat')).status).toBe(409);
@@ -133,7 +133,7 @@ it('uses current configured roles and shuts down its runtime sweep before releas
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('queued');
   f.setRoles([{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }]); expect((await f.control.next())?.id).toBe(queued.id);
   await f.root.close(); f.client.close(); f.clock.advance(5 * 60_000); expect(f.errors).not.toHaveBeenCalled();
-  expect((await f.call('next', {}, 'closed')).status).toBe(503);
+  expect((await f.call('next', { execution: 'container' }, 'closed')).status).toBe(503);
 });
 
 it('starts silence reconciliation while open and refuses the lost body old running receipt', async () => {
@@ -244,7 +244,7 @@ it('requires the current bearer runner proof rather than a runner-labelled cooki
   }
   expect(f.db.select().from(operationResults).all()).toEqual([]);
   expect(f.db.select().from(jobs).get()?.state).toBe('queued');
-  expect((await f.call('next', {}, 'bearer')).status).toBe(200);
+  expect((await f.call('next', { execution: 'container' }, 'bearer')).status).toBe(200);
 });
 
 it('reports local worker facts through default HTTP and uses them in the same poll placement', async () => {
@@ -253,21 +253,33 @@ it('reports local worker facts through default HTTP and uses them in the same po
   f.db.insert(boxFacts).values([{ box: 'worker', fact: 'rack:attic', fromOwner: true }, { box: 'worker', fact: 'gpu:old', fromOwner: false }, { box: 'other', fact: 'gpu:other', fromOwner: false }]).run();
   expect(await f.control.next()).toBeUndefined(); expect(f.db.select().from(jobs).get()?.state).toBe('queued');
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => f.root.http.fetch(new Request(input, init))); cleanup.push(() => { fetcher.mockRestore(); });
-  const command = { command: '/fake', args: [], cwd: '/fake', env: {} }, config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', build: command, runners: { codex: command }, facts: ['gpu:5090', 'rack:attic'] };
-  expect(await workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : credential, on: () => {}, off: () => {}, error: text => { throw Error(text); }, executor: () => ({} as never),
+  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, facts: ['gpu:5090', 'rack:attic'] };
+  expect(await workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : credential, on: () => {}, off: () => {}, error: text => { throw Error(text); }, containerExecutor: () => ({} as never),
     run: async input => { expect(await input.control.next()).toMatchObject({ id: job.id, box: 'worker' }); },
   })).toBe(0);
   expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker' });
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.slots).toBe(1);
   expect(f.db.select().from(boxFacts).all().sort((a,b) => (a.box+a.fact).localeCompare(b.box+b.fact))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'gpu:5090', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
 });
-it('forgets prior reported capacity when an older worker replaces the reporter', async () => {
+it('refuses unmarked and host workers on every claim, including after a container worker used the same credential', async () => {
+  const f = fixture();
+  await f.control.next();
+  const job = f.send();
+  for (const input of [{}, { execution: 'host' }, { programs: true, slots: 4 }]) {
+    const refusal = await f.call('next', input);
+    expect(refusal.status).toBe(403);
+    expect(await refusal.json()).toMatchObject({ code: 'denied', message: expect.stringContaining('only to container workers') });
+    expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()?.state).toBe('queued');
+  }
+  expect((await f.control.next())?.id).toBe(job.id);
+});
+it('forgets prior reported capacity when health or an eligible claim omits slots', async () => {
   const f = fixture();
   const slots = () => f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.slots;
   for (const operation of ['health', 'next']) {
     expect((await f.call('health', { slots: 4 }, 'reported-'+operation)).status).toBe(200);
     expect(slots()).toBe(4);
-    expect((await f.call(operation, {}, 'legacy-'+operation)).status).toBe(200);
+    expect((await f.call(operation, operation === 'next' ? { execution: 'container' } : {}, 'no-slots-'+operation)).status).toBe(200);
     expect(slots()).toBeNull();
   }
 });
@@ -275,36 +287,36 @@ it('rolls machine facts and health back with a failed poll receipt and refuses r
   const f = fixture(), job = f.send(); f.db.insert(jobNeeds).values({ job: job.id, need: 'after' }).run(); f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run(); const health = f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt;
   f.clock.advance(1000);
   f.client.exec("CREATE TRIGGER reject_facts_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'fixture'); END");
-  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(503);
+  expect((await f.call('next', { execution: 'container', facts: ['after'] }, 'facts-poll')).status).toBe(503);
   expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'before', fromOwner: false }]); expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(health);
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'queued', box: null, account: null, claimedAt: null });
   expect(f.db.select().from(operationResults).all()).toEqual([]); f.client.exec('DROP TRIGGER reject_facts_receipt');
-  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(200);
+  expect((await f.call('next', { execution: 'container', facts: ['after'] }, 'facts-poll')).status).toBe(200);
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' });
-  expect((await f.call('next', { facts: ['newer'] }, 'newer-facts-poll')).status).toBe(200);
-  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(409);
+  expect((await f.call('next', { execution: 'container', facts: ['newer'] }, 'newer-facts-poll')).status).toBe(200);
+  expect((await f.call('next', { execution: 'container', facts: ['after'] }, 'facts-poll')).status).toBe(409);
   expect(f.db.select().from(boxFacts).get()?.fact).toBe('newer');
 });
 for (const facts of [[''], ['gpu:5090', 'gpu:5090'], ['gpu:5090', ' gpu:5090 '], ['bad\nline'], ['bad\rfact'], ['bad\0fact'], Array(129).fill('fact').map((v,i) => v+i), ['x'.repeat(257)], null, 'gpu:5090']) it('rejects malformed machine facts at the authenticated door without writes', async () => {
   const f = fixture(), before = f.db.select().from(boxes).all();
-  expect((await f.call('next', { facts })).status).toBe(400);
+  expect((await f.call('next', { execution: 'container', facts })).status).toBe(400);
   expect(f.db.select().from(boxFacts).all()).toEqual([]); expect(f.db.select().from(boxes).all()).toEqual(before); expect(f.db.select().from(operationResults).all()).toEqual([]);
 });
 it('cannot report another machine or use a runner cookie to replace facts', async () => {
   const f = fixture(); f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run();
-  expect((await f.call('next', { facts: ['after'], box: 'worker' }, 'inject', otherCredential)).status).toBe(400);
-  for (const key of [ownerCredential, agentCredential]) expect((await f.call('next', { facts: ['after'] }, 'deny-'+key[0], key)).status).toBe(403);
+  expect((await f.call('next', { execution: 'container', facts: ['after'], box: 'worker' }, 'inject', otherCredential)).status).toBe(400);
+  for (const key of [ownerCredential, agentCredential]) expect((await f.call('next', { execution: 'container', facts: ['after'] }, 'deny-'+key[0], key)).status).toBe(403);
   f.db.insert(sessions).values({ id: hash('z'.repeat(64)), token: hash(credential), device: 'Fixture', via: 'link', isAgent: true, issuedAt: f.now(), seenAt: f.now(), provedAt: f.now() }).run();
   expect((await f.root.http.request('/api/runtime/next', { method: 'POST', headers: { cookie: 'loom_ui='+'z'.repeat(64), 'content-type': 'application/json' }, body: JSON.stringify({ id: 'cookie-facts', input: { facts: ['after'] } }) })).status).toBe(403);
   f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run());
-  expect((await f.call('next', { facts: ['after'] }, 'revoked')).status).toBe(401);
+  expect((await f.call('next', { execution: 'container', facts: ['after'] }, 'revoked')).status).toBe(401);
   expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'before', fromOwner: false }]); expect(f.db.select().from(operationResults).all()).toEqual([]);
 });
 
 it('accepts fact reports from a report-only machine without assigning its queued work', async () => {
   const f = fixture(), job = f.send(); f.db.update(boxes).set({ reportOnly: true }).where(eq(boxes.id, 'worker')).run();
   f.clock.advance(1000);
-  expect(await (await f.call('next', { facts: ['os:linux'] }, 'report-only-facts')).json()).toMatchObject({ value: null });
+  expect(await (await f.call('next', { execution: 'container', facts: ['os:linux'] }, 'report-only-facts')).json()).toMatchObject({ value: null });
   expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'os:linux', fromOwner: false }]);
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(f.now());
@@ -520,7 +532,7 @@ it('tells of a job a poll ended because no harness can hold it, so the mail that
   const job = f.db.select().from(jobs).where(eq(jobs.conversation, room.id)).get()!;
   expect(f.db.select().from(inbox).where(eq(inbox.id, second.id)).get()!.job).toBeNull();
   // The agent's only model runs on Codex, which cannot be held to loom's tools: the poll ends the first job.
-  expect((await f.call('next', {}, 'poll')).status).toBe(200);
+  expect((await f.call('next', { execution: 'container' }, 'poll')).status).toBe(200);
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'failed', exitBy: 'loom' });
   // Its end is told like any job's end, which is what offers the waiting message to admission again.
   expect(f.ended.mock.calls.map(call => call[0])).toContain(job.id);
