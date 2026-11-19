@@ -17,6 +17,7 @@ import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { sameRequestOrigin } from '../data/origin.js';
 import { LINK_MS } from './link-lifetime.js';
+import { SIGNIN_PAGE_POLICY, signinLinkPage } from './page.js';
 
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => activeMemberToken(db,clock,id);
@@ -182,8 +183,9 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     // no-referrer also nulls a native form's Origin (Fetch section 3.2).
     // Keep the code path out of referrers while retaining same-origin POSTs.
     c.header('referrer-policy', 'strict-origin');
-    c.header('content-security-policy', "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
-    return c.html('<!doctype html><html><head><title>Sign in to loom</title></head><body><h1>Sign in to loom</h1><form method="post"><button>Sign in</button></form></body></html>');
+    // The page's one style block is allowed by its hash; nothing else loads or runs (signin/page.ts).
+    c.header('content-security-policy', SIGNIN_PAGE_POLICY);
+    return c.html(signinLinkPage());
   });
   routes.post('/login/:code', c => {
     const result = write(() => signin.redeem(c.req.param('code'), c.req.header('user-agent') ?? 'Browser'));
