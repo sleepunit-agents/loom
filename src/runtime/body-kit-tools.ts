@@ -14,7 +14,7 @@ function post(socketPath:string,path:'/list'|'/call',input:object,signal:AbortSi
       res.once('close',()=>{if(!res.complete)reject(Error('Kit response interrupted'));});
       if(res.statusCode!==200){res.resume();reject(res.statusCode===409?new KitRefused():res.statusCode===422?new KitCapacity():Error('Kit unavailable'));return;}
       const chunks:Buffer[]=[];let size=0;
-      res.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>1024*1024)res.destroy(Error('Kit response too large'));else chunks.push(chunk);});
+      res.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>2*1024*1024)res.destroy(Error('Kit response too large'));else chunks.push(chunk);});
       res.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString()));}catch{reject(Error('Kit unavailable'));}});
     });
     req.on('error',reject);req.end(JSON.stringify(input));

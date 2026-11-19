@@ -12,10 +12,12 @@ export function kitPrivateClient(input:{url:string;runner:string;body:string;job
       headers:{authorization:'Bearer '+input.runner,'x-loom-body-credential':input.body,'x-loom-kit-job':input.job,'content-type':'application/json'},
       signal:AbortSignal.any([signal,AbortSignal.timeout(PRIVATE_SECRET_TIMEOUT_MS)]),body:JSON.stringify(payload)});
     if(!response.ok||!response.body){await response.body?.cancel();if(verb==='authorize'&&[401,403,409].includes(response.status))throw new KitRefused();throw Error('Kit unavailable');}
+    // One full Unicode manifest plus sixteen maximum-size base64 credentials.
+    const maximumBytes=4*1024*1024;
     const reader=response.body.getReader(),chunks:Buffer[]=[];
     let size=0,bytes:Buffer|undefined;
     try{
-      for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>2*1024*1024)throw Error('Kit response too large');chunks.push(Buffer.from(part.value));}
+      for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>maximumBytes)throw Error('Kit response too large');chunks.push(Buffer.from(part.value));}
       bytes=Buffer.concat(chunks);return JSON.parse(bytes.toString());
     }finally{await reader.cancel().catch(()=>{});bytes?.fill(0);for(const chunk of chunks)chunk.fill(0);}
   };
