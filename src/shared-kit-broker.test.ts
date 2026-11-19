@@ -87,3 +87,19 @@ it('takes the outside asker from marked mail and checks the current project, acc
   expect(await read()).toMatchObject({tools:[],projects:[]});
   expect(source.read).toHaveBeenCalledTimes(1);
 });
+it('pages the mounted house in binary kit/tool order and excludes the cursor itself',async()=>{
+  const {db,post}=fixture(),existing=db.select().from(agentKits).get()!,tool=existing.tools[0];
+  db.insert(agentKits).values({agent:'art',kit:'alpha',tools:[
+    {...tool,name:'z'}, {...tool,name:'a'}, {...tool,name:'foreign',commit:'b'.repeat(40)},
+  ]}).run();
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const page=async(after?:{kit:string;tool:string})=> (await post('list',{...pin,after})).json();
+  const first=await page();
+  expect(first).toMatchObject({tools:[{kit:'alpha',tool:{name:'a'}}],next:{kit:'alpha',tool:'a'}});
+  const second=await page(first.next);
+  expect(second).toMatchObject({tools:[{kit:'alpha',tool:{name:'z'}}],next:{kit:'alpha',tool:'z'}});
+  const last=await page(second.next);
+  expect(last.tools).toMatchObject([{kit:'weather',tool:{name:'lookup'}}]);
+  expect(last.next).toBeUndefined();
+  expect(await (await post('list',{...pin,image:'sha256:'+'f'.repeat(64)})).json()).toEqual({tools:[]});
+});

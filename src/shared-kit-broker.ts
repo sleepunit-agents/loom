@@ -9,14 +9,17 @@ import { kitUses, secretChanges, secretWriteJournal } from './core/data/schema.j
 import { secretHasValue } from './pieces/secrets/presence.js';
 import { secretValueSize } from './pieces/secrets/input.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
+import { SHA256_HEX } from './core/sha256-hex.js';
+import { kitTool } from './runtime/kit-manifest.js';
 import { householdId } from './slug.js';
 import type { sharedCredentials } from './shared-credentials.js';
 import { currentKitJob } from './shared-kit-access.js';
 
 type Credentials = ReturnType<typeof sharedCredentials>;
 type Target = NonNullable<ReturnType<typeof currentKitJob>>;
-const call = z.strictObject({kit:householdId,
-  tool:z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),definition:z.string().regex(/^[a-f0-9]{64}$/)});
+const cursor = z.strictObject({kit:householdId,tool:kitTool.shape.name});
+const list = z.strictObject({repository:kitTool.shape.repository,commit:kitTool.shape.commit,image:kitTool.shape.image,after:cursor.optional()});
+const call = cursor.extend({definition:z.string().regex(SHA256_HEX)});
 const finish = z.strictObject({use:z.uuid(),outcome:z.enum(['ran','failed','refused'])});
 const changed = 'This tool or its grant changed. Read the available tools for this job again.';
 export function kitBroker(options: {db:DataDatabase;credentials:Credentials;source?:SecretValueSource;
@@ -52,7 +55,18 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
     const raw=await options.readJson(request,c.get('shutdown')),target=current();
     if (!target) return c.json({message:'The job ended'},403);
     const operation=c.req.param('operation');
-    if (operation==='list' && z.strictObject({}).safeParse(raw).success) return c.json({tools:target.tools});
+    if (operation==='list') {
+      const parsed=list.safeParse(raw);
+      if (!parsed.success) return c.json({message:'Invalid mounted house or cursor'},400);
+      const {repository,commit,image,after}=parsed.data;
+      const ordered=target.tools.filter(({kit,tool})=>tool.repository===repository && tool.commit===commit && tool.image===image
+        && (!after || kit>after.kit || (kit===after.kit && tool.name>after.tool)))
+        .sort((a,b)=>a.kit<b.kit?-1:a.kit>b.kit?1:a.tool.name<b.tool.name?-1:a.tool.name>b.tool.name?1:0);
+      const first=ordered[0];
+      if (!first) return c.json({tools:[]});
+      // Even one full tool can contain 64 long fixed arguments. Page by one complete definition.
+      return c.json({tools:[first],...(ordered.length>1?{next:{kit:first.kit,tool:first.tool.name}}:{})});
+    }
     if (operation==='finish') {
       const result=finish.safeParse(raw);
       if (!result.success) return c.json({message:'Invalid use report'},400);

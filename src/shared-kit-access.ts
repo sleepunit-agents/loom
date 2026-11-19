@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { agentKitMembers, agentKitOutsidePeople, agentKitProjects, agentKits, agents, bridgePeople, jobs,
+import { agentKitMembers, agentKitOutsidePeople, agentKitProjects, agentKits, agents, bridgeConnections, bridgePeople, jobs,
   projectMembers, projectOutsidePeople, projects } from './core/data/schema.js';
 import { holds, rules, type OnWord, type Viewer, type Woke } from './policy.js';
 import { kitRoom, stillKnown } from './shared-place-mail.js';
@@ -14,7 +14,7 @@ import { kitToolDenied } from './runtime/kit-manifest.js';
 import type { sharedCredentials } from './shared-credentials.js';
 
 type Word = { woke: Woke; person?: OnWord };
-const outside = z.tuple([z.enum(['discord','slack']), z.string(), z.string()]);
+const outside = z.tuple([z.enum(bridgeConnections.platform.enumValues), z.string(), z.string()]);
 export function kitAccess(db: DataDatabase, agent: string, word: Word) {
   const definitions = db.select().from(agentKits).where(eq(agentKits.agent,agent)).all();
   const unrestricted = word.woke!=='others';
