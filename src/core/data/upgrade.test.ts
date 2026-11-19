@@ -416,3 +416,16 @@ describe('upgrading a household database', () => {
     expect(everything(old)).toEqual(before);
   });
 });
+
+it('upgrades a populated schema 14 household without assigning a kit to any existing member',()=>{
+  const old=household(14);
+  old.prepare("INSERT INTO projects (id,name) VALUES ('pond','Pond')").run();
+  old.prepare("INSERT INTO members (id,role,joined_at) VALUES ('sam','member',?)").run(at);
+  old.prepare("INSERT INTO project_members (project,member) VALUES ('pond','sam')").run();
+  upgradeDataSchema(old,()=>at);
+  for(const table of ['agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses']){
+    expect(old.prepare('SELECT count(*) AS n FROM '+table).get()).toEqual({n:0});
+  }
+  expect(old.prepare('SELECT project,member FROM project_members').all()).toEqual([{project:'pond',member:'sam'}]);
+  expect(old.pragma('foreign_key_check')).toEqual([]);
+});
