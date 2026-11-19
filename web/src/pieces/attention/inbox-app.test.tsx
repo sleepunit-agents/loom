@@ -8,6 +8,8 @@ type Asked = { query: string; variables: Record<string, unknown>; options?: { ke
 // the next folder, search or page loads (the last answer again, marked settling); `stray` answers with another item.
 const f = vi.hoisted(() => ({ status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
+  // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
+  if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   f.requests.push({ query, variables, options });
   if (options?.pause) return { status: 'loading' };
   if (query.includes('query InboxItem(')) {

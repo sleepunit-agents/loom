@@ -37,7 +37,7 @@ it('draws the open thread as the site does: a head built from the kit, bubbles, 
   const html = view({}, { cards: { screen: h('span', { className: 'face' }) } });
   expect(html).toContain('<header class="loom-reader__head "><span class="face"></span><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Pond pump</h2><p class="loom-reader__meta ">with Art <span class="loom-kit-chip">pond</span></p></div>');
   // Stop is not offered (nothing is running); More is the one control in the head, closed.
-  expect(html).toMatch(/<\/div><div class="loom-kit-actions "><span class="loom-menu"><button[^>]*aria-expanded="false"[^>]*>/);
+  expect(html).toMatch(/<\/div><div class="loom-kit-actions "><span class="loom-kit-menu"><button[^>]*aria-expanded="false"[^>]*>/);
   for (const hidden of ['>Pin<', '>Archive<', '>Rename<', '>Delete<', '>Stop<']) expect(html).not.toContain(hidden);
   expect(html).toContain('<li class="comms-group" data-side="me"><p class="comms-group__who" aria-hidden="true"><span>You</span><time dateTime="2026-11-14T20:00:00Z" title="Nov 14, 2026, 2:00 PM">2:00 PM</time></p>');
   expect(html).toContain('<p class="comms-bubble" data-plain="">Can you find a pump that fits the old hose?</p>');
@@ -64,5 +64,5 @@ it('draws Work as the kit\'s quiet rows under one heading, with a closed "Work �
     h(WorkCard, { label: 'Conversation change github:owner/repo#12', made: true }, h('article', null, 'card'))));
   expect(html).toMatch(/^<section class="comms-work" aria-label="Work in this conversation"><h3 class="loom-reader__label comms-work__label">Work<\/h3><button type="button" class="comms-work__toggle" aria-expanded="false" aria-controls="[^"]+">Work · 3<\/button>/);
   expect(html).toContain('<span class="loom-kit-title">Order the pump</span><span class="loom-kit-status">t-2190 · open · Made here</span>');
-  expect(html).toContain('<div class="comms-refc" role="group" aria-label="Conversation change github:owner/repo#12"><p class="comms-work__made">Made here</p><article>card</article></div>');
+  expect(html).toContain('<div class="loom-kit-refc" role="group" aria-label="Conversation change github:owner/repo#12"><p class="loom-kit-refc__note">Made here</p><article>card</article></div>');
 });

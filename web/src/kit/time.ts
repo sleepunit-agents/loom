@@ -1,6 +1,6 @@
-/** Every time Comms shows, said in this one place: the time alone for today, a short date with it for another
+/** Every time an app shows, said in this one place: the time alone for today, a short date with it for another
  * day, the date and year for another year. Never seconds and never a zone's id. The zone is the household's
- * where the caller has read it (`deskTime`); without one it is the device's own. Nothing here names a zone. */
+ * where the caller has read it (data/zone.ts); without one it is the device's own. Nothing here names a zone. */
 const made = new Map<string, Intl.DateTimeFormat>();
 function format(zone: string | undefined, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
   const key = JSON.stringify([zone, options]);

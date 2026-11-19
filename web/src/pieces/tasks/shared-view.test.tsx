@@ -8,8 +8,10 @@ import { SharedTasks, type SharedTasksProps, type SharedTask, type SharedTaskLin
 type Assert<T extends true> = T;
 export type ProjectionContract = [Assert<typeof tasks.$inferSelect extends SharedTask ? true : false>, Assert<typeof taskLinks.$inferSelect extends SharedTaskLink ? true : false>, Assert<typeof taskComments.$inferSelect extends SharedTaskComment ? true : false>];
 vi.mock('../../kit', () => ({
-  ...Object.fromEntries(['List','Row','Empty','Error','Loading','Button','Input'].map(name => [name,(props: {children?:ReactNode}) => h(name,props,props.children)])),
-  Split:(props: {list?:ReactNode;reader?:ReactNode;listTop?:ReactNode;search?:ReactNode}) => h('Split',props,props.search,props.listTop,props.list,props.reader),
+  ...Object.fromEntries(['List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Actions','Search','Input','Textarea','Field','Fields','Reader','Meta','Title','Facts','Fact','Section','Body','Chip','RefCard'].map(name => [name,(props: {children?:ReactNode}) => h(name,props,props.children)])),
+  // What is behind More is drawn open, so a test can say where each action is.
+  Menu:(props: {children(close:()=>void):ReactNode}) => h('Menu',props,props.children(() => {})),
+  Split:(props: {list?:ReactNode;reader?:ReactNode;listTop?:ReactNode;listAction?:ReactNode;search?:ReactNode}) => h('Split',props,props.search,props.listAction,props.listTop,props.list,props.reader),
 }));
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -37,10 +39,14 @@ it('shows ordered comments, provenance and task actions without offering claim o
   expect(buttons.some((b:{props:{children:string}})=>b.props.children==='Claim')).toBe(false);
   await act(async () => buttons.find((b:{props:{children:string}})=>b.props.children==='Comment').props.onClick());
   expect(p.act).toHaveBeenCalledWith('comment',t);
-  await act(async () => buttons.find((b:{props:{children:string}})=>b.props.children==='From conversation').props.onClick());
-  expect(p.conversation).toHaveBeenCalledWith('cv-1');
+  // One link to where it came from, and never the conversation's stored id.
+  await act(async () => tree.root.findAllByType('LinkButton').find((b:{props:{children:string}})=>b.props.children==='From a conversation').props.onClick());
+  expect(p.conversation).toHaveBeenCalledWith('cv-1'); expect(visibleText(tree.toJSON())).not.toContain('cv-1');
   const json=visibleText(tree.toJSON());
   expect(json.indexOf('First')).toBeLessThan(json.indexOf('Second'));
+  // Each comment is said by a name, never by a kind word and an id.
+  expect(tree.root.findAllByType('strong').map((node:{props:{children:string}})=>node.props.children)).toEqual(['Art','Jonathan']);
+  expect(json).not.toContain('agent'); expect(json).not.toContain('member');
 });
 it('clears task detail, comments, folders and actions as soon as the authorized snapshot is lost',async () => {
   const p=props({tasks:[task('t-1',{title:'Private pump',project:'private'})],ready:['t-1'],selected:'t-1',comments:[{task:'t-1',seq:1,actorKind:'agent',actor:'art',at:'2026-11-14T19:00:00Z',text:'Private comment'}]});
@@ -64,12 +70,17 @@ it('renders a closed cancelled task as cancelled and offers reopen rather than c
 
 it('shows current linked pull request state and drops it with the authorized snapshot', async () => {
   const task = { id:'t-1', title:'Work', type:'task', status:'open', priority:2, position:0, ownerKind:'household', owner:null, project:null, assigneeKind:null, assignee:null, goal:'', why:'', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null } as SharedTask;
-  const change = { task:'t-1',id:'github:acme/app#3',repository:'github:acme/app',number:3,state:'open',checks:'passing',review:'approved' } as const;
-  const p = props({tasks:[task],selected:task.id,changes:[change]}); await draw(p);
+  const change = { task:'t-1',id:'github:acme/app#3',repository:'github:acme/app',number:3,title:'Order script',state:'open',draft:false,checks:'passing',review:'approved',waitingOn:'you' } as const;
+  const openChange = vi.fn(), p = props({tasks:[task],selected:task.id,changes:[change],openChange}); await draw(p);
+  // The same bordered card a conversation shows: its title and state in plain words, Open, and its page on GitHub.
+  const card = () => tree.root.findByType('RefCard');
+  expect(card().props.label).toBe('Pull request acme/app#3');
   expect(tree.root.findByType('a').props.href).toBe('https://github.com/acme/app/pull/3');
-  expect(visibleText(tree.root.findByType('a').parent)).toContain('passing · approved');
-  await act(async () => tree.update(h(SharedTasks,{...p,changes:[{...change,checks:'failing',review:'changes_requested'}]})));
-  expect(visibleText(tree.root.findByType('a').parent)).toContain('failing · changes requested');
+  expect(visibleText(card())).toContain('Order script'); expect(visibleText(card())).toContain('Checks passing · Approved · Waiting on you');
+  await act(async () => card().findAllByType('Button').find((b:{props:{children:string}})=>b.props.children==='Open').props.onClick());
+  expect(openChange).toHaveBeenCalledWith('github:acme/app#3');
+  await act(async () => tree.update(h(SharedTasks,{...p,changes:[{...change,checks:'failing',review:'changes_requested',waitingOn:'author'}]})));
+  expect(visibleText(card())).toContain('Checks failing · Changes requested · Waiting on its author');
   await act(async () => tree.update(h(SharedTasks,{...p,status:'denied'})));
   expect(tree.root.findAllByType('a')).toHaveLength(0);
 });
@@ -91,4 +102,45 @@ it('shows a shelved task under its project marked as shelved, and in no list or 
   const buttons=tree.root.findAllByType('Button').map((b:{props:{children:string}})=>b.props.children);
   expect(buttons).not.toContain('Claim');
   expect(buttons).toEqual(expect.arrayContaining(['Comment','Project','Close']));
+});
+
+it('keeps six actions in one row with one filled, the rest behind More, and opens nothing for a relation that is not there',async () => {
+  const mineInProgress=task('t-2',{status:'in_progress',assigneeKind:'member',assignee:'jonathan'});
+  await draw(props({tasks:[task('t-1'),mineInProgress],selected:'t-1',names:{art:'Art'}}));
+  const row=()=>{const inMenu=tree.root.findByType('Menu').findAllByType('Button');return tree.root.findByType('Actions').findAllByType('Button').filter((b:unknown)=>!inMenu.includes(b));};
+  const behind=()=>tree.root.findByType('Menu').findAllByType('Button').map((b:{props:{children:string}})=>b.props.children);
+  expect(row().map((b:{props:{children:string}})=>b.props.children)).toEqual(['Claim','Close','Comment','Edit','Priority','Project']);
+  expect(behind()).toEqual(['Ask a person','Parent','Blocked by…']);
+  expect(row().filter((b:{props:{variant?:string}})=>b.props.variant==='primary').map((b:{props:{children:string}})=>b.props.children)).toEqual(['Claim']);
+  // No heading over nothing: a task with no relations and no comments names none.
+  expect(tree.root.findAllByType('Fact').map((f:{props:{label:string}})=>f.props.label)).not.toEqual(expect.arrayContaining(['Parent','Children','Blocked by','Blocks']));
+  expect(tree.root.findAllByType('Section')).toHaveLength(0);
+  // Owner is a name, with no kind word.
+  expect(tree.root.findAllByType('Fact').find((f:{props:{label:string}})=>f.props.label==='Owner').props.children).toBe('Art');
+  // Yours and in progress: Close is the one filled button.
+  await act(async () => tree.update(h(SharedTasks,props({tasks:[task('t-1'),mineInProgress],selected:'t-2'}))));
+  expect(row().filter((b:{props:{variant?:string}})=>b.props.variant==='primary').map((b:{props:{children:string}})=>b.props.children)).toEqual(['Close']);
+});
+it('shows a parent and a blocker as a title and a chip that opens it, and the form in place under the actions',async () => {
+  const p=props({tasks:[task('t-1'),task('t-2',{title:'Pond'}),task('t-3',{title:'Hose'})],selected:'t-1',links:[{task:'t-1',dependsOn:'t-2',type:'parent-child'},{task:'t-1',dependsOn:'t-3',type:'blocks'},{task:'t-1',dependsOn:'t-9',type:'blocks'}],
+    form:{action:'comment',node:h('form',{'aria-label':'Add comment'})}});
+  await draw(p);
+  const fact=(label:string)=>tree.root.findAllByType('Fact').find((f:{props:{label:string}})=>f.props.label===label);
+  expect(visibleText(fact('Parent').children)).toContain('Pond'); expect(fact('Children')).toBeUndefined(); expect(fact('Blocks')).toBeUndefined();
+  const chips=fact('Blocked by').findAllByType('Chip');
+  expect(chips.map((c:{props:{children:string}})=>c.props.children)).toEqual(['t-3','t-9']);
+  // One this person cannot see is its id alone, and opens nothing.
+  expect(chips[1].props.onClick).toBeUndefined();
+  await act(async () => chips[0].props.onClick()); expect(p.select).toHaveBeenCalledWith('t-3');
+  expect(tree.root.findByType('Section').props.label).toBe('Add comment'); expect(tree.root.findByType('Section').findAllByType('form')).toHaveLength(1);
+});
+it('names its folders as the site does, counts projects and epics, and heads neither when there are none',async () => {
+  await draw(props({tasks:[task('t-1',{project:'pond'}),task('t-2',{project:'pond',status:'closed'}),task('t-3',{project:'done',status:'closed'}),task('t-4',{type:'epic',title:'Fix the pond'})],links:[{task:'t-1',dependsOn:'t-4',type:'parent-child'}],names:{jonathan:'Jonathan'}}));
+  const folders=()=>tree.root.findByType('Split').props.folders as ({id?:string;label?:string;count?:number;heading?:string})[];
+  expect(folders().filter(f=>f.id&&!f.id.includes(':')).map(f=>f.label)).toEqual(['Ready','In progress','Needs Jonathan','All open','Recently closed','Shelved']);
+  expect(folders().filter(f=>f.id?.includes(':')).map(f=>[f.label,f.count])).toEqual([['pond',1],['Fix the pond',1]]);
+  expect(folders().filter(f=>f.heading).map(f=>f.heading)).toEqual(['Projects','Epics']);
+  expect(tree.root.findByType('Split').props.listTitle).toBe('Ready'); expect(tree.root.findByType('Split').props.backLabel).toBe('Back to Tasks');
+  await act(async () => tree.update(h(SharedTasks,props({tasks:[task('t-1')]}))));
+  expect(folders().some(f=>f.heading)).toBe(false);
 });

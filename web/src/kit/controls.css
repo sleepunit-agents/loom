@@ -73,6 +73,20 @@
 /* ---- a row of buttons ---- */
 .loom-kit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 
+/* ---- a small menu (menu.tsx): More in a reader's actions, New over a list ---- */
+/* (Named for the kit: the old desk's own .loom-menu, in index.css, is a different thing with a plate and a shadow.) */
+.loom-kit-menu { position: relative; display: inline-flex; }
+.loom-kit-menu__box { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; display: grid; gap: 4px; width: max-content; min-width: 148px; max-width: min(260px, 80vw); padding: 6px;
+  border: 1px solid var(--v-edge); border-radius: var(--r-md); background: var(--v-paper); font-family: var(--font-sans); letter-spacing: 0; }
+.next-page .loom-kit-menu .loom-kit-menu__box > .v-btn[data-slot="button"]:not(.-card) { width: 100%; justify-content: flex-start; text-align: left; }
+
+/* ---- a form in a page (field.tsx): each field's words over its control, an optional quiet hint under it ---- */
+.loom-kit-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.loom-kit-field, .loom-kit-field > label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; }
+.loom-kit-field__label { font-size: var(--fs-small); color: var(--v-text-2); }
+.loom-kit-field__hint { font-size: var(--fs-small); color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-kit-field > label > :is(select, input, textarea) { width: 100%; }
+
 /* ---- the library's fields, at the page's scale ---- */
 .next-page input.v-input[data-slot="input"]:not(:where([data-slot="input-group"]) *) { height: var(--kit-field); padding: 0 10px; border-radius: var(--r-sm); font-size: var(--fs-control); }
 .next-page textarea.v-textarea:not(:where([data-slot="textarea-composer"]) *) { min-height: 72px; padding: 7px 10px; border-radius: var(--r-sm); font-size: var(--fs-control); line-height: 1.45; }

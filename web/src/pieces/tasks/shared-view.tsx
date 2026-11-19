@@ -1,6 +1,10 @@
 import type { changes } from '../../../../src/core/data/schema';
-import { useEffect, useState } from 'react';
-import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Split, List, Row, Empty, Error, Loading, Button, Actions, LinkButton, Search, Menu, Reader, Meta, Title, Facts, Fact, Section, Body, Chip, RefCard, type SplitFolder } from '../../kit';
+import { briefTime, fullTime } from '../../kit/time';
+import { displayName } from '../../kit/words';
+import { ChangeCard } from '../change-view';
+import { taskFormTitles } from './shared-form';
 
 /** Field projection accepted from the shared query client; no runtime schema or record adapter. */
 export interface SharedTask {
@@ -16,7 +20,7 @@ export interface SharedTask {
 }
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
-export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'state' | 'checks' | 'review'> & { task: string };
+export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'title' | 'state' | 'draft' | 'checks' | 'review' | 'waitingOn'> & { task: string };
 type Task = SharedTask;
 type Link = SharedTaskLink;
 type Comment = SharedTaskComment;
@@ -34,25 +38,43 @@ export interface SharedTasksProps {
   startFolder?: string; startAssignee?: string;
   questionFor: string;
   select(id?: string): void;
-  /** The composition opens a form; its authenticated operation supplies the actor. */
+  /** The composition acts at once (Claim, Unclaim, Reopen) or opens a form; its authenticated operation supplies the actor. */
   act?(action: TaskAction, task?: Task): void;
+  /** The form the composition has open: under the open task's actions, or (Create task) in the reader's place. */
+  form?: { action: TaskAction; node: ReactNode };
+  /** An action sent at once is on its way; and what the program said if it refused one. */
+  busy?: boolean; problem?: string;
   conversation?(id: string): void;
+  /** Opens a pull request in Changes, where the composition can. */
+  openChange?(id: string): void;
+  /** Display names by id, where the composition has read them; the zone times are said in (the household's). */
+  names?: Readonly<Record<string, string>>; zone?: string;
 }
-const labels: Record<TaskAction, string> = {create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blockers',ask:'Ask a person'};
+const labels: Record<TaskAction, string> = {create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blocked by…',ask:'Ask a person'};
+/** Behind More: what is done to a task less often than the six beside it. */
+const more: readonly TaskAction[] = ['ask','parent','link'];
 function actions(task: Task): TaskAction[] {
   // A shelved task cannot be claimed; moving it to another project (Project) is how one is taken up.
   return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask && !(task.isShelved && task.status === 'open') ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link'];
 }
+/** A task's stored state in plain words ("in_progress" is "in progress"). */
+const stateWord = (task: Task) => task.closeReason === 'cancelled' && task.status === 'closed' ? 'cancelled' : task.status.replace('_',' ');
 /** Shared-schema presentation only. Root owns reads, authorization, routing and writes. */
 export function SharedTasks(props: SharedTasksProps) {
   const [folder,setFolder] = useState(props.startFolder ?? 'ready'), [query,setQuery] = useState('');
   const [assignee,setAssignee] = useState(props.startAssignee);
   // A later path that asks again (the app was already open) is followed; a path that asks nothing changes nothing.
   useEffect(() => { if (props.startFolder) setFolder(props.startFolder); if (props.startAssignee) setAssignee(props.startAssignee); }, [props.startFolder, props.startAssignee]);
+  // A form that closes gives focus back to the button that opened it.
+  const opener = useRef<HTMLElement | null>(null), formOpen = !!props.form;
+  useEffect(() => { if (!formOpen && opener.current?.isConnected) opener.current.focus?.(); }, [formOpen]);
+  const act = (action: TaskAction, task?: Task) => { opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null; props.act?.(action, task); };
   // Losing the authorized snapshot also hides selected detail and comments immediately.
-  const tasks = props.status === 'live' ? props.tasks : [];
-  const links = props.status === 'live' ? props.links : [];
+  const live = props.status === 'live';
+  const tasks = live ? props.tasks : [];
+  const links = live ? props.links : [];
   const selected = tasks.find(t => t.id === props.selected);
+  const name = (id: string | null) => displayName(id, props.names);
   const inFolder = (task: Task, id: string) => {
     if (id === 'closed') return task.status === 'closed';
     if (task.status === 'closed') return false;
@@ -66,43 +88,76 @@ export function SharedTasks(props: SharedTasksProps) {
     if (id.startsWith('epic:')) return links.some(l => l.task === task.id && l.dependsOn === id.slice(5) && l.type === 'parent-child');
     return true;
   };
+  const count = (id: string) => tasks.filter(t => inFolder(t,id)).length;
+  // A project whose work is all closed has nothing to list, so it is not offered; a heading shows only over something.
+  const projects = [...new Set(tasks.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({id:`project:${project}`,label:project,count:count(`project:${project}`)})).filter(f => f.count > 0);
+  const epics = tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title,count:count(`epic:${t.id}`)}));
   const folders: SplitFolder[] = [
-    ...[['ready','Ready'],['progress','In progress'],['questions',`Needs ${props.questionFor}`],['open','All open'],['shelved','Shelved'],['closed','Closed']].map(([id,label]) => ({id,label,count:tasks.filter(t => inFolder(t,id)).length})),
-    {heading:'Projects'}, ...[...new Set(tasks.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({id:`project:${project}`,label:project})),
-    {heading:'Epics'}, ...tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title})),
+    ...[['ready','Ready'],['progress','In progress'],['questions',props.questionFor ? `Needs ${name(props.questionFor)}` : 'Needs you'],['open','All open'],['closed','Recently closed'],['shelved','Shelved']].map(([id,label]) => ({id,label,count:count(id)})),
+    ...(projects.length ? [{heading:'Projects'}, ...projects] : []),
+    ...(epics.length ? [{heading:'Epics'}, ...epics] : []),
   ];
+  const current = folders.find((f): f is Extract<SplitFolder,{id:string}> => 'id' in f && f.id === folder);
   const words = query.toLowerCase().trim().split(/\s+/);
   const shown = tasks.filter(t => inFolder(t,folder) && (!assignee || t.assigneeKind === 'agent' && t.assignee === assignee) && words.every(word => [t.id,t.title,t.goal,t.why,t.description,t.project,t.owner,t.assignee].join(' ').toLowerCase().includes(word)))
     .sort((a,b) => a.priority-b.priority || a.position-b.position || a.id.localeCompare(b.id));
-  const relations = (title: string, ids: string[]) => <section><h3>{title}</h3>{ids.length ? <List label={title}>{ids.map(id => {
+  // A related task: its title, then its id as a chip that opens it. One this person may not see is its id alone.
+  const relations = (title: string, ids: string[]) => ids.length > 0 && <Fact label={title}><div role="group" aria-label={title} className="grid gap-1">{ids.map(id => {
     const task = tasks.find(t => t.id === id);
-    return task ? <Row key={id} title={task.title} meta={id} onClick={() => props.select(id)}/> : <li key={id}>{id}</li>;
-  })}</List> : <p>None</p>}</section>;
-  return <Split label="Tasks" className="h-full" folders={folders} folder={folder} onFolder={setFolder}
-    search={<><label>Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)}/></label>
-      {assignee && <Button variant="outline" onClick={() => setAssignee(undefined)}>Only {assignee}’s tasks · show everyone’s</Button>}</>}
-    listTitle="Tasks" listMeta={shown.length} listTop={<Button disabled={props.status !== 'live' || !props.act} onClick={() => props.act?.('create')}>Create task</Button>}
-    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : props.status !== 'live' ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : <><List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.closeReason === 'cancelled' && t.status === 'closed' ? 'cancelled' : t.isShelved ? `shelved · was ${t.status.replace('_',' ')}` : t.status.replace('_',' ')}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List>{!shown.length && <Empty title="No tasks here" text="Choose another folder or change your search."/>}</>}
-    open={!!props.selected} onBack={() => props.select()} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
-    reader={selected ? <article className="grid gap-5 p-5">
-      <header><p>{selected.id} · {selected.type}</p><h1>{selected.title}</h1><p>{selected.isShelved ? `shelved with its project · was ${selected.status.replace('_',' ')}` : selected.status.replace('_',' ')} · P{selected.priority}{selected.project && ` · ${selected.project}`}</p></header>
-      <p>Owner: {selected.ownerKind === 'household' ? 'Household' : `${selected.ownerKind} ${selected.owner}`}</p>
-      {selected.assignee && <p>Assigned to {selected.assigneeKind} {selected.assignee}</p>}
-      {props.act && <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actions(selected).map(action => <Button variant="outline" key={action} onClick={() => props.act?.(action,selected)}>{labels[action]}</Button>)}</div>}
-      {([['Goal',selected.goal],['Why',selected.why],['Done when',selected.doneWhen],['Description',selected.description],['Question',selected.ask],['If yes',selected.ifYes],['If no',selected.ifNo],['Closed because',selected.closeReason]] as const).filter(([,value]) => value).map(([label,value]) => <section key={label}><h3>{label}</h3><p className="whitespace-pre-wrap break-words">{value}</p></section>)}
-      {!!props.changes?.some(change => change.task === selected.id) && <section><h3>Pull requests</h3>{props.changes.filter(change => change.task === selected.id).map(change => {
+    return <div key={id}>{task && `${task.title} `}<Chip onClick={task ? () => props.select(id) : undefined} label={task ? `Open ${task.title}, ${id}` : undefined}>{id}</Chip></div>;
+  })}</div></Fact>;
+  const comments = selected ? props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq) : [];
+  const changes = selected ? props.changes?.filter(change => change.task === selected.id) ?? [] : [];
+  const mine = !!selected && selected.assigneeKind === 'member' && !!props.questionFor && selected.assignee === props.questionFor;
+  const offered = selected ? actions(selected) : [];
+  const button = (action: TaskAction, after?: () => void) => <Button key={action} disabled={props.busy}
+    variant={action === 'claim' || action === 'close' && mine && selected!.status === 'in_progress' ? 'primary' : undefined}
+    {...(action in taskFormTitles ? {'aria-expanded': props.form?.action === action} : {})}
+    onClick={() => { after?.(); act(action,selected); }}>{labels[action]}</Button>;
+  const creating = live && props.form?.action === 'create';
+  return <Split label="Tasks" folders={folders} folder={folder} onFolder={setFolder}
+    search={<Search label="Search tasks" value={query} onChange={setQuery}/>}
+    listTitle={current?.label ?? 'Tasks'} listCount={live ? shown.length : undefined} listKey={JSON.stringify([folder,query,assignee])}
+    listAction={<Button disabled={!live || !props.act} onClick={() => act('create')}>Create task</Button>}
+    listTop={live && assignee && <Body quiet>Only {name(assignee)}’s tasks · <LinkButton onClick={() => setAssignee(undefined)}>show everyone’s</LinkButton></Body>}
+    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : !live ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : shown.length ? <List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.isShelved ? `shelved · was ${stateWord(t)}` : stateWord(t)}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List> : <Empty title="No tasks here" text="Choose another folder or change your search."/>}
+    open={!!props.selected || creating} onBack={() => props.select()} backLabel="Back to Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
+    reader={creating ? <Reader aria-label="Create task"><Title>Create task</Title>{props.form!.node}</Reader>
+    : selected ? <Reader aria-label="Task">
+      <Meta>{selected.id} · {selected.type}</Meta>
+      <Title>{selected.title}</Title>
+      <Meta>{selected.isShelved ? `shelved with its project · was ${stateWord(selected)}` : stateWord(selected)} · P{selected.priority}{selected.project && ` · ${selected.project}`}</Meta>
+      {props.act && <Actions label="Task actions">
+        {offered.filter(action => !more.includes(action)).map(action => button(action))}
+        {offered.some(action => more.includes(action)) && <Menu label="More" name="More for this task" disabled={props.busy}>{close => offered.filter(action => more.includes(action)).map(action => button(action, close))}</Menu>}
+      </Actions>}
+      {props.problem && <Error text={props.problem}/>}
+      {props.form && props.form.action !== 'create' && <Section data-form="" label={taskFormTitles[props.form.action] ?? labels[props.form.action]}>{props.form.node}</Section>}
+      <Facts>
+        <Fact label="Goal">{selected.goal}</Fact>
+        <Fact label="Why">{selected.why}</Fact>
+        <Fact label="Done when">{selected.doneWhen}</Fact>
+        {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
+        {relations('Children',links.filter(l => l.dependsOn === selected.id && l.type === 'parent-child').map(l => l.task))}
+        {relations('Blocked by',links.filter(l => l.task === selected.id && l.type === 'blocks').map(l => l.dependsOn))}
+        {relations('Blocks',links.filter(l => l.dependsOn === selected.id && l.type === 'blocks').map(l => l.task))}
+        <Fact label="Owner">{selected.ownerKind === 'household' ? 'Household' : name(selected.owner)}</Fact>
+        <Fact label="Assigned to">{name(selected.assignee)}</Fact>
+        <Fact label="Closed because">{selected.closeReason}</Fact>
+      </Facts>
+      {selected.sourceKind === 'conversation' && selected.sourceId && (props.conversation
+        ? <LinkButton onClick={() => props.conversation!(selected.sourceId!)}>From a conversation</LinkButton> : <Body quiet>From a conversation</Body>)}
+      {selected.description && <Section label="Description"><Body>{selected.description}</Body></Section>}
+      {selected.ask && <Section label="Question"><Body>{selected.ask}</Body>
+        {(selected.ifYes || selected.ifNo) && <Facts><Fact label="If yes">{selected.ifYes}</Fact><Fact label="If no">{selected.ifNo}</Fact></Facts>}</Section>}
+      {changes.length > 0 && <Section label="Pull requests">{changes.map(change => {
         const repository = /^(?:github:)?([\w.-]+\/[\w.-]+)$/.exec(change.repository)?.[1];
         const label = repository ? `${repository}#${change.number}` : change.id;
         const href = repository && Number.isInteger(change.number) && change.number > 0 ? `https://github.com/${repository}/pull/${change.number}` : undefined;
-        const status = change.state === 'open' ? `${change.checks} · ${change.review.replaceAll('_',' ')}` : change.state;
-        return <p key={change.id}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : label}{` · ${status}`}</p>;
-      })}</section>}
-      {selected.sourceKind === 'conversation' && selected.sourceId && <section><h3>Source conversation</h3><p>{selected.sourceId}</p></section>}
-      {selected.sourceKind === 'conversation' && selected.sourceId && props.conversation && <Button variant="outline" onClick={() => props.conversation!(selected.sourceId!)}>From conversation</Button>}
-      {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
-      {relations('Children',links.filter(l => l.dependsOn === selected.id && l.type === 'parent-child').map(l => l.task))}
-      {relations('Blocked by',links.filter(l => l.task === selected.id && l.type === 'blocks').map(l => l.dependsOn))}
-      {relations('Blocks',links.filter(l => l.dependsOn === selected.id && l.type === 'blocks').map(l => l.task))}
-      <section><h3>Comments</h3><ol>{props.comments.filter(c => c.task === selected.id).toSorted((a,b) => a.seq-b.seq).map(c => <li key={c.seq}><p>{c.actorKind} {c.actor} · <time dateTime={c.at}>{new Date(c.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time></p><p className="whitespace-pre-wrap break-words">{c.text}</p></li>)}</ol></section>
-    </article> : props.status === 'live' && props.selected ? <Empty title="This task is no longer in view" text="Choose another task."/> : null}/>;
+        return <RefCard key={change.id} label={`Pull request ${label}`}><ChangeCard id={change.id} snapshot={{status:'live',changes:[change]}} open={props.openChange} link={{label,href}} name={name}/></RefCard>;
+      })}</Section>}
+      {comments.length > 0 && <Section label="Comments"><ol className="grid gap-2.5">{comments.map(c => <li key={c.seq} className="grid gap-0.5">
+        <Body><strong>{name(c.actor)}</strong> <time className="loom-reader__meta" dateTime={c.at} title={fullTime(c.at,props.zone)}>{briefTime(c.at,props.zone)}</time></Body>
+        <Body>{c.text}</Body></li>)}</ol></Section>}
+    </Reader> : live && props.selected ? <Empty title="This task is no longer in view" text="Choose another task."/> : null}/>;
 }

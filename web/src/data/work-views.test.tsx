@@ -5,7 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
 const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
 vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
-vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Reader', 'Meta', 'Body'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listTop, props.list, props.reader] : []))])));
+vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
@@ -101,7 +101,8 @@ it('linked work opens the Tasks reader route and unavailability withdraws the de
   await draw(node);
   await selectRow();
   await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));
-  const linked = tree.root.findAllByType('Row').find((row: { props: { title: string } }) => row.props.title === 'Linked task');
+  expect(words()).toContain('Linked task');
+  const linked = tree.root.findAllByType('Chip').find((chip: { props: { children: string } }) => chip.props.children === 't-42');
   await act(async () => linked.props.onClick());
   expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-42');
   for (const status of ['offline', 'denied', 'loading']) {
@@ -303,10 +304,12 @@ it.each(tempoAnswerCases)('awaits the actual $surface Tempo answer (allow=$allow
 it('mounts standing-rule editing only for the live current-owner metadata',async()=>{
  fixture();feed.owner=true;
  await draw(h(ApprovalsApp,{path:'/p/approvals-preview/rules'}));
- const form=()=>tree.root.findAllByProps({'aria-label':'Standing rule'});
- expect(form()).toHaveLength(1);
- feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);
- feed.owner=true;for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);}
+ // A rule is edited in the reader: New rule (the list's one action) opens a blank one there.
+ const form=()=>tree.root.findAllByProps({'aria-label':'Standing rule'}).filter((node:{type:unknown})=>node.type==='form');
+ const fresh=()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='New rule');
+ expect(form()).toHaveLength(0);await act(async()=>fresh()!.props.onClick());expect(form()).toHaveLength(1);
+ feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);expect(fresh()).toBeUndefined();
+ feed.owner=true;for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);expect(fresh()).toBeUndefined();}
 });
 
 function standingFixture(){
@@ -320,27 +323,27 @@ it.each(['approvals','changes'])('sends atomic Always from current %s without op
  const view=()=>surface==='approvals'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(change.id)});
  await draw(view());
  const button=()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Always for pond');
- const headerState=()=>{const paragraphs=tree.root.findByType('article').findByType('header').findAllByType('p');const value=paragraphs[surface==='changes'?paragraphs.length-1:0].props.children;return Array.isArray(value)?value.join(''):String(value);};
+ const headerState=()=>{const value=tree.root.findByType('Reader').findAllByType('Meta')[surface==='changes'?1:0].props.children;return Array.isArray(value)?value.join(''):String(value);};
  expect(button()).toBeDefined();await act(async()=>button()!.props.onClick());await act(async()=>button()!.props.onClick());
  expect(request).toHaveBeenCalledExactlyOnceWith('/api/approvals/always',expect.objectContaining({credentials:'same-origin'}));expect(JSON.parse(String(request.mock.calls[0][1]!.body))).toMatchObject({input:{approval:card.id,change:change.id,head:change.headCommit,project:'pond',person:''}});
  expect(button()!.props.disabled).toBe(true);expect(headerState()).toContain(surface==='changes'?'Waiting on you':'merge · pending');
  await act(async()=>finish(Response.json({ok:true,value:{id:card.id}})));
  expect(headerState()).toContain(surface==='changes'?'Waiting on you':'merge · pending');expect(button()).toBeDefined();expect(card.state).toBe('pending');expect(change.waitingOn).toBe('you');
- card.state='allowed';change.waitingOn='agent';await act(async()=>tree.update(view()));expect(button()).toBeUndefined();expect(headerState()).toContain(surface==='changes'?'Waiting on agent':'merge · allowed');
+ card.state='allowed';change.waitingOn='agent';await act(async()=>tree.update(view()));expect(button()).toBeUndefined();expect(headerState()).toContain(surface==='changes'?'Waiting on Art':'merge · allowed');
 });
 it.each(['approvals','changes'])('rebinds Always after selecting a different current card in %s',async surface=>{
  const {card,change}=standingFixture(),otherChange={...change,id:'github:acme/app#2',headCommit:'b'.repeat(40),project:'other'},otherCard={...card,id:'a-other',target:`${otherChange.id}@${otherChange.headCommit}`,project:'other',actingFor:'sam'};
  feed.changes={...feed.changes,changes:[change,otherChange]};feed.approvals={...feed.approvals,approvals:[card,otherCard]};const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:otherCard.id}}));vi.stubGlobal('fetch',request);
  const view=(id:string,changeId:string)=>surface==='approvals'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+id}):h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(changeId)});
  await draw(view(card.id,change.id));await act(async()=>tree.update(view(otherCard.id,otherChange.id)));
- await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Always for other for sam')!.props.onClick());
+ await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Always for other, Sam’s work only')!.props.onClick());
  expect(JSON.parse(String(request.mock.calls[0][1]!.body))).toMatchObject({input:{approval:otherCard.id,change:otherChange.id,head:otherChange.headCommit,project:'other',person:'sam'}});
 });
 it('names personal Always grants and hides them for stale rows, principals or owner capability independently',async()=>{
  const {card,change}=standingFixture();card.actingFor='sam';
  await draw(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}));const labels=()=>tree.root.findAllByType('Button').map((button:{props:{children:unknown}})=>button.props.children);
- expect(labels()).toContain('Always for pond for sam');
- feed.changeStatus='offline';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels()).not.toContain('Always for pond for sam');expect(labels()).toContain('Allow');
+ expect(labels()).toContain('Always for pond, Sam’s work only');
+ feed.changeStatus='offline';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels()).not.toContain('Always for pond, Sam’s work only');expect(labels()).toContain('Allow');
  feed.changeStatus=undefined;card.actingFor='unknown';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
  card.actingFor='pat';for(const state of ['allowed','denied','used','withdrawn','expired'] as const){card.state=state;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);}
  card.state='pending';change.headCommit='b'.repeat(40);await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
@@ -360,7 +363,7 @@ it.each(['ci','reviewer','author','agent','you'] as const)('offers a bound stand
  const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:card.id}}));vi.stubGlobal('fetch',request);
  await draw(h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(change.id)}));
  const buttons=tree.root.findAllByType('Button'),labels=buttons.map((button:{props:{children:unknown}})=>button.props.children);
- expect(labels).toContain('Always for pond');expect(labels.includes('Yes, merge it')).toBe(waitingOn==='you');expect(words()).toContain('Waiting on '+waitingOn);
+ expect(labels).toContain('Always for pond');expect(labels.includes('Yes, merge it')).toBe(waitingOn==='you');expect(words()).toContain({ci:'Waiting on the checks',reviewer:'Waiting on a reviewer',author:'Waiting on its author',agent:'Waiting on Art',you:'Waiting on you'}[waitingOn]);
  await act(async()=>buttons.find((button:{props:{children:unknown}})=>button.props.children==='Always for pond')!.props.onClick());
  expect(request).toHaveBeenCalledExactlyOnceWith('/api/approvals/always',expect.anything());expect(change.waitingOn).toBe(waitingOn);expect(card.state).toBe('pending');
 });
