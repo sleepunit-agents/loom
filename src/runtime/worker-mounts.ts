@@ -1,21 +1,21 @@
 /** The directories of this machine that a container body is given: its own account's sign-in directory
  * (`accountLogins`), its own agent's fixed mounts (`container.mounts`, by agent), the worker's own program
- * directory, read-only, which holds the body program every body runs, and for a job allowed nested
- * containers the engine's socket (`container.nestedSocket`). Nothing else of the host is ever mounted.
+ * directory, read-only, which holds the body program every body runs. Nothing else of the host is ever mounted.
  *
  * Every rule about these paths is here and nowhere else, the engine's own socket (`container.socket`)
  * included; the configuration's schema reads only that each is a string. They are checked once, when the
  * worker starts: a configuration that breaks one stops the worker (WorkerStop 'mounts') before it takes
  * any work. The paths are machine-local, like `accountRunners`: no error made here carries one, and
  * nothing here writes a log. */
-import { lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, posix, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
+import { dirname, join, posix, resolve } from 'node:path';
 import { UnservedJobError, type WorkerAssignment } from './worker.js';
 import { WorkerStop } from './worker-stop.js';
 import { relativeName } from './house-context.js';
 import { HARNESS_NAME, HOUSE_REPOSITORY, houseLogin, houseMount } from './house-layout.js';
 
-/** Where a body allowed nested containers finds the engine's socket. */
+/** Reserved engine socket target inside a container. */
 export const NESTED_SOCKET_TARGET = '/var/run/docker.sock';
 /** The places no other mount's target may be, hold or be inside, so that none hides or replaces the socket:
  * the place itself, and the one it is in most images, where `/var/run` is a link to `/run`. */
@@ -46,29 +46,47 @@ export type AccountLogins = Readonly<Record<string, Readonly<Record<string, Host
 export interface BodyMount { readonly source: string; readonly target: string; readonly readOnly: boolean }
 
 /** `inner` is `outer` or a path inside it. Both are plain absolute paths (see `plainPath`). */
-const inside = (inner: string, outer: string) => inner === outer || inner.startsWith(`${outer}/`);
+const inside = (inner: string, outer: string) => outer === '/' || inner === outer || inner.startsWith(`${outer}/`);
 const overlap = (one: string, other: string) => inside(one, other) || inside(other, one);
 /** An absolute path written one way only: no `.`, `..`, doubled or trailing slash, and not the root. So
  * two paths name the same place, or one inside the other, exactly when their text says so. */
 export const plainPath = (path: unknown): path is string => typeof path === 'string' && path.startsWith('/') && path !== '/'
   && !path.includes('\0') && !path.endsWith('/') && posix.normalize(path) === path;
 
-/** Where a path that may not exist yet will be: the real path of the nearest directory above it that
- * exists, and the rest as written. */
-function resting(path: string): string {
-  const full = resolve(path);
-  try { return realpathSync(full); } catch { /* not there yet */ }
-  const above = dirname(full);
-  return above === full ? full : join(resting(above), basename(full));
+/** Protect the spelling, every link followed, and the final location. Missing components can be
+ * provisioned later. Resolve relative link targets one component at a time so a subsequent ".."
+ * is interpreted after following the link, as it is by the filesystem. */
+function protectedLocations(path: string): string[] {
+  const absolute = path.startsWith('/') ? path : process.cwd() + '/' + path;
+  const locations = new Set([resolve(absolute)]);
+  let current = '/', links = 0;
+  const pending = absolute.split('/').reverse();
+  while (pending.length) {
+    const part = pending.pop()!;
+    if (!part || part === '.') continue;
+    if (part === '..') { current = dirname(current); continue; }
+    const next = join(current, part);
+    try {
+      if (lstatSync(next, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        if (++links > 40) throw new Error();
+        locations.add(next);
+        const target = readlinkSync(next);
+        if (target.startsWith('/')) current = '/';
+        pending.push(...target.split('/').reverse());
+      } else current = next;
+    } catch { throw new WorkerStop('mounts', 'host-private paths'); }
+  }
+  locations.add(current);
+  return [...locations];
 }
 
-/** Check the configured paths and fix them. Returns what one job's container is given: the engine's socket
- * first when the job is allowed nested containers, then the worker's program directory, then its account's
+/** Check the configured paths and fix them. Returns what one job's container is given: the worker's program
+ * directory, then its account's
  * sign-in directory for its harness when sign-ins are configured, then its own agent's fixed mounts.
  * @throws WorkerStop('mounts'), with the configuration key at fault, when the configuration breaks a rule.
  * Of two directories that overlap it names the later one. The returned function throws
  * UnservedJobError for a job with no exact sign-in entry, as a missing `accountRunners` entry does, and
- * a plain error for a nested job on a machine with no nested socket. */
+ * a plain error for any job requesting nested containers. */
 export function bodyMounts(config: {
   accountLogins?: AccountLogins; mounts?: AgentMounts;
   /** The directory the worker is installed in, mounted read-only into every body at BODY_PROGRAM_TARGET.
@@ -80,11 +98,12 @@ export function bodyMounts(config: {
   nestedSocket?: string;
   /** The worker's own files, never mounted: the state directory (its records of what it started, by which
    * the next worker ends what this one left) and the file holding its token for loom. */
-  state?: string; tokenFile?: string;
+  state?: string; tokenFile?: string; configFile?: string; protectedPaths?: readonly string[];
 }, user: { uid?: () => number | undefined } = {}): (job: Pick<WorkerAssignment, 'agent' | 'account' | 'harness' | 'run'>) => BodyMount[] {
   const uid = (user.uid ?? (() => process.getuid?.()))();
   /** Stop the worker, naming the configuration key at fault and nothing written under it. */
   const stop = (key: string): never => { throw new WorkerStop('mounts', key); };
+  if (config.nestedSocket !== undefined) stop('container.nestedSocket');
   /** An existing directory of the worker's own user, named by its real path: neither it nor a directory
    * above it is a symbolic link, so the place checked now is the place mounted later, and the text of two
    * sources can be compared. */
@@ -95,8 +114,7 @@ export function bodyMounts(config: {
   };
   /** An engine's socket: plainly written and, followed through any symbolic link (`/var/run` is one on
    * most machines), an existing Unix socket. It is the engine's, so it need not
-   * belong to the worker's user. Anything else at that path (a directory above the sign-in directories,
-   * say) would be mounted into a nested job's container in the socket's place. */
+   * belong to the worker's user. */
   const socket = (path: unknown): path is string => {
     if (!plainPath(path)) return false;
     try { return lstatSync(realpathSync(path)).isSocket(); }
@@ -146,10 +164,6 @@ export function bodyMounts(config: {
     logins.set(account, byHarness);
   }
   if (config.socket !== undefined && !socket(config.socket)) stop('container.socket');
-  if (config.nestedSocket !== undefined && !socket(config.nestedSocket)) stop('container.nestedSocket');
-  // Mounted as it is written, as before: the engine reports the source it was asked for.
-  const nested = config.nestedSocket === undefined ? undefined
-    : Object.freeze({ source: config.nestedSocket, target: NESTED_SOCKET_TARGET, readOnly: false });
   // Inside one container: no directory on, above or below the nested socket's place or another directory
   // that can be in the same container. Two never meet when they are two agents' fixed mounts, or two
   // sign-in directories; those may share a target. Of two that collide, the later is named.
@@ -161,20 +175,25 @@ export function bodyMounts(config: {
   // one inside the other: a sign-in directory then reaches only its own account and harness, an agent's
   // directory only that agent's bodies, the body program cannot be written through an agent's mount, and a
   // read-only directory is not writable under a second name. And none is, holds or lies inside what must
-  // stay out of a container that was not given it: either engine socket, the worker's state directory, the
+  // stay out of a container that was not given it: the engine socket, the worker's state directory, the
   // file with its token. Each of those is compared twice, as it is written and where it really is (or will
   // be): a body must reach neither the thing nor a link the worker follows to it.
-  const kept = [config.socket, config.nestedSocket, config.state, config.tokenFile].flatMap(path => path === undefined ? [] : [resolve(path), resting(path)]);
+  const localConfig = join(homedir(), '.config');
+  const serverHomes = [join(localConfig, 'loom'), join(localConfig, 'loom-new')];
+  if (process.env.LOOM_HOME) serverHomes.push(resolve(process.env.LOOM_HOME));
+  const extra = config.protectedPaths ?? [];
+  for (const [index, path] of extra.entries())
+    if (!plainPath(path)) stop(`container.protectedPaths[${index}]`);
+  const kept = [...serverHomes, ...['loom', 'loom-new'].map(name => join(homedir(), '.local/share', name, 'home-backups')), join(localConfig, 'loom-secrets'), join(localConfig, 'loom-new-credentials'), join(localConfig, 'loom-worker'),
+    join(localConfig, 'loom-new-worker'), process.env.LOOM_SECRETS_DIR || undefined, ...extra.flatMap(path => [path, path + '-wal', path + '-shm', path + '-journal']),
+    config.socket, config.state, config.tokenFile, config.configFile].flatMap(path => path === undefined ? [] : protectedLocations(path));
   for (const [index, { mount, key }] of directories.entries())
     if (directories.some((other, at) => at < index && overlap(mount.source, other.mount.source)) || kept.some(path => overlap(mount.source, path)))
       stop(key === PROGRAM_KEY ? key : `${key}.source`);
   const present = config.accountLogins !== undefined;
   return job => {
     const own: BodyMount[] = [];
-    if (job.run?.nestedContainers) {
-      if (!nested) throw new Error('Nested containers unavailable');
-      own.push(nested);
-    }
+    if (job.run?.nestedContainers) throw new Error('Nested containers unavailable');
     if (program) own.push(program);
     if (present) {
       const login = logins.get(job.account)?.get(job.harness);

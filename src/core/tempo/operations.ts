@@ -11,7 +11,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
+import { HOST_SCHEDULE_REFUSAL, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
@@ -64,6 +64,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string(), waits }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
     run(ctx, trigger) {
+      if (trigger.execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
@@ -84,9 +85,10 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1) }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
     may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
-    run(ctx, { id: target, ...change }) {
+    run(ctx, { id: target, execution, ...change }) {
+      if (execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);

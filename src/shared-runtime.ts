@@ -53,11 +53,15 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ execution: z.enum(['container', 'host']).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
     run(ctx, input) {
+      // The machine credential authenticates a trusted worker. This protocol version
+      // distinguishes old binaries that could run jobs directly on the host.
+      if (input.execution !== 'container') throw new OperationError('denied',
+        'This server gives jobs only to container workers. Update the worker and configure container.socket.');
       const ended: string[] = [];
       const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs);
       ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);

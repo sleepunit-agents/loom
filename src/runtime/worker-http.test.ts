@@ -18,7 +18,7 @@ describe('worker operation client', () => {
     await control.finish('j1', 0, 'done', 'body');
     const requests = fetcher.mock.calls.map(([url, init]) => ({ url: String(url), ...init, data: JSON.parse(String(init?.body)) }));
     expect(requests.map(r => r.url)).toEqual(['next', 'started', 'heartbeat', 'finish'].map(n => `https://loom.example/api/runtime/${n}`));
-    expect(requests.map(r => r.data.input)).toEqual([{}, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done', exitBy: 'body' }]);
+    expect(requests.map(r => r.data.input)).toEqual([{ execution: 'container' }, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done', exitBy: 'body' }]);
     expect(new Set(requests.map(r => r.data.id)).size).toBe(4);
     expect(requests.every(r => r.redirect === 'error' && r.signal && (r.headers as Record<string,string>).authorization === 'Bearer private-token')).toBe(true);
   });
@@ -218,7 +218,7 @@ it('snapshots configured machine facts for each poll without caller-supplied mac
   const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
   const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
   facts[0] = 'changed'; await control.next(); await control.next();
-  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ execution: 'container', facts: ['gpu:5090'] }, { execution: 'container', facts: ['gpu:5090'] }]);
 });
 
 it('uses the existing bounded authenticated operation door for health without claiming work', async () => {
@@ -301,11 +301,11 @@ it('sends the validated program result on the retried finish receipt', async () 
   expect(reports[1]).toEqual(reports[0]);
 });
 
-it('polls a pre-program server after its explicit pre-claim schema refusal only', async () => {
+it('keeps its container witness when an older server refuses the claim schema', async () => {
  const fetcher=vi.fn<typeof fetch>()
    .mockResolvedValueOnce(new Response(JSON.stringify({ok:false,code:'invalid',message:'Input does not match operation schema'}),{status:400}))
    .mockResolvedValueOnce(response(assignment));
  const control=httpWorkerControl({url:'https://loom.example',token:'fixture',signal:new AbortController().signal,fetch:fetcher,programs:true});
- expect(await control.next()).toEqual(assignment);
- expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{programs:true},{}]);
+ await expect(control.next()).rejects.toThrow('Worker next failed');
+ expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{execution:'container',programs:true}]);
 });

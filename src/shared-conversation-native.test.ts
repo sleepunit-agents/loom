@@ -29,8 +29,8 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  const member=(name:string,input:unknown)=>fetch(url+'/api/'+name.replace('.','/'),{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({input,id:randomUUID()})});
  const input='PRIVATE NATIVE INPUT',reply='PRIVATE NATIVE REPLY t-4242',card='PRIVATE NATIVE CARD',question='PRIVATE NATIVE QUESTION';
  expect((await member('comms.send',{thread:f.thread.id,words:input,clientId:'native-input'})).status).toBe(200);
- expect((await (await bearer('runtime.next',{})).json()).value).toBeNull();f.clock.advance(1000);
- const claim=await bearer('runtime.next',{});expect(claim.status).toBe(200);const job=(await claim.json()).value as {id:string;conversation:string;brief:string;model:string};expect(job).toMatchObject({conversation:f.thread.conversation,brief:'',model:'requested-model'});
+ expect((await (await bearer('runtime.next',{execution:'container'})).json()).value).toBeNull();f.clock.advance(1000);
+ const claim=await bearer('runtime.next',{execution:'container'});expect(claim.status).toBe(200);const job=(await claim.json()).value as {id:string;conversation:string;brief:string;model:string};expect(job).toMatchObject({conversation:f.thread.conversation,brief:'',model:'requested-model'});
  const token='body_'+randomBytes(32).toString('hex');expect((await bearer('conversation.status',{state:'working',work:''},token)).status).toBe(401);
  const enrolled=await bearer('runtime.enrollBody',{job:job.id,fingerprint:hash(token)});expect(await enrolled.json()).toEqual({ok:true,value:{registered:true}});
  expect((await bearer('conversation.status',{state:'working',work:''},token)).status).toBe(403);

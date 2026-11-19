@@ -40,6 +40,16 @@ function fixture() {
   return { client, db, clock, now, tempo, writes, operations, call, trigger, conversation, accesses, admissions, mail, allow(value: boolean) { allowed = value; } };
 }
 
+it('refuses an explicit host schedule or host edit without changing a trigger', () => {
+  const f = fixture();
+  const denied = {ok: false, code: 'denied', message: expect.stringContaining('Host execution is unavailable')};
+  expect(f.call('tempo.set', {...f.trigger, execution:'host'}, 'host')).toMatchObject(denied);
+  expect(f.db.select().from(triggers).all()).toEqual([]);
+  expect(f.call('tempo.set', {...f.trigger, execution:'container'}, 'container').ok).toBe(true);
+  expect(f.call('tempo.edit', {id:f.trigger.id, execution:'host', note:'changed'}, 'edit')).toMatchObject(denied);
+  expect(f.db.select().from(triggers).get()?.note).toBe(f.trigger.note);
+});
+
 it('dispatches a due trigger atomically with its receipt, admits after commit and rechecks authority on replay', () => {
   const f = fixture();
   f.tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });

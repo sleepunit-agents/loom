@@ -608,12 +608,13 @@ it('works out when a Knowledge page changes state from the days that decide the 
   expect(sources('src').filter(file => /\b(CHECK|AGING|RECENT)_DAYS\s*=\s*[\d(]/.test(text(file)))).toEqual(['src/pieces/mind/knowledge.ts']);
 });
 
-it('names where a nested job finds the engine, the engine runtimes and a mount\'s read-only default once', () => {
-  // The socket's place inside a container: what the worker mounts there and what no other mount may cover.
+it('names the reserved engine socket paths, the engine runtimes and a mount\'s read-only default once', () => {
+  // These socket paths remain reserved. No body receives the engine at any target.
   expect(NESTED_SOCKET_TARGET).toBe('/var/run/docker.sock');
   expect(sources('src').filter(file => /\/(var\/)?run\/docker\.sock/.test(text(file)))).toEqual(['src/runtime/worker-mounts.ts']);
   expect(text('src/runtime/worker-mounts.ts')).toContain("const SOCKET_PLACES = [NESTED_SOCKET_TARGET, '/run/docker.sock'] as const;");
-  expect(text('src/runtime/worker-mounts.ts')).toContain('target: NESTED_SOCKET_TARGET');
+  expect(text('src/runtime/worker-mounts.ts')).not.toContain('target: NESTED_SOCKET_TARGET');
+  expect(text('src/runtime/worker-mounts.ts')).toContain("if (config.nestedSocket !== undefined) stop('container.nestedSocket')");
   // How a mounted path and an engine socket must be written is one function. The configuration's schema
   // reads only that each is a string, and nothing else looks at how a socket's path begins.
   expect(plainPath('/run/engine.sock')).toBe(true);
@@ -642,8 +643,8 @@ it('says once where a body finds its program, what a house image must say, and h
     .toEqual(['/home/agent', '/home/agent/repo', '/usr/local/bin/node', '/etc/loom/body/claude.json', '/run/loom/login/claude', '/home/agent/x']);
   expect(sources('src').filter(file => /\/home\/agent|\/run\/loom\/login|\/etc\/loom\/body|\/usr\/local\/bin\/node/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
   // The worker never looks inside a sign-in directory: the one file that takes their paths asks the system
-  // only what each directory is (lstat, realpath), and reads, lists, writes and removes nothing.
-  expect(text('src/runtime/worker-mounts.ts')).toContain("import { lstatSync, realpathSync } from 'node:fs';");
+  // only about path metadata and symlink targets. It never reads directory entries or file contents.
+  expect(text('src/runtime/worker-mounts.ts')).toContain("import { lstatSync, readlinkSync, realpathSync } from 'node:fs';");
   expect(text('src/runtime/worker-mounts.ts')).not.toMatch(/from 'node:fs\/promises'|node:child_process/);
   expect(sources('src').filter(file => /accountLogins/.test(text(file)))).toEqual(['src/runtime/job-exit.ts', 'src/runtime/worker-container.ts', 'src/runtime/worker-mounts.ts', 'src/runtime/worker-program.ts', 'src/runtime/worker-stop.ts']);
   // The file that mounts them reads one file in all, its own package.json, and the file that holds them
@@ -697,7 +698,7 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(ACCOUNT_SLOTS_BY_HARNESS).toEqual({ codex: 1 });
   expect(sources('src').filter(file => /ACCOUNT_SLOTS_BY_HARNESS\b.*=/.test(text(file)))).toEqual(['src/runtime/worker-limits.ts']);
   expect(text('src/runtime/worker-program.ts')).toContain('slots: z.number().int().min(1).max(SLOTS_MAX).optional(),');
-  expect(text('src/runtime/worker-program.ts')).toContain('config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1)');
+  expect(text('src/runtime/worker-program.ts')).toContain('config.slots ?? HOUSE_SLOTS_DEFAULT');
   // What two bodies cannot have at once is named in one place, and the loop asks there.
   expect(sources('src').filter(file => /[`'"](account|port):/.test(text(file)))).toEqual(['src/runtime/worker-turns.ts']);
   expect(text('src/runtime/worker.ts')).toContain('input.turns.take(turnsOf(assignment), abort.signal)');

@@ -490,8 +490,8 @@ On success the body sends its report alongside settlement. A body with validated
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
   harness and no other. A fixed mount or another entry that names the same directory, one above it or one
   inside it stops the worker at start (another agent's mounts and the worker's own program directory
-  included); so does any mounted directory that is, holds or is inside either
-  engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
+  included); so does any mounted directory that is, holds or is inside the
+  worker engine socket (`container.socket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
   with no exact entry does not run. On one worker, at most `accountSlots` bodies of one harness run on an
   account at once (4 by default, 1 for Codex; `src/runtime/worker-turns.ts`): a job beyond that waits
@@ -505,18 +505,11 @@ On success the body sends its report alongside settlement. A body with validated
   second one stops at start (exit 57; `src/runtime/worker-alone.ts`). That hold is a name in the machine's
   table of listening sockets, so a worker inside a container with a network of its own is not held apart
   from one on the host: giving two such workers one directory is not refused.
-- **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
-  configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
-  engine's user can reach on the machine, every account's sign-in directory included: it can start a
-  container of its own with any of them mounted. "Its own directory and no other" holds for every job
-  that is not given the engine.
 - **Why the rest is accepted.** A sign-in is one set of files per account, which the provider's program
   must be able to rewrite. Many processes signed in to one account share them in the same way on this
   household's machines and have for months, and every such body already acts as that account. Running
   an account's bodies one at a time would make a household whose jobs are mostly on one account wait
-  for no gain most of the time. The engine's socket was already broad authority
-  over the machine that both an agent's run settings and the machine's operator must opt in to; the
-  sign-in directories are one more thing within its reach, not a new kind of reach.
+  for no gain most of the time.
 - **Considered and not done.** A renewer or lock of loom's own (it could not see inside a harness
   program's renewal, and the program would still renew for itself), a program on the machine that hands
   bodies short-lived tokens (a broker of a subscription sign-in, which the providers' terms rule out and

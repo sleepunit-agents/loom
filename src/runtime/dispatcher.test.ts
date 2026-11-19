@@ -186,7 +186,9 @@ it('projects current agent capabilities and only its configured ports at claim',
 });
 
 it('hands the configured outside tier and tool rules to the runner on actual claim', () => {
-  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  const f = fixture();
+  f.db.update(agentRunSettings).set({ nestedContainers: true }).run();
+  f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
   f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
   f.db.insert(bridgeConnections).values({ id: 'c', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
   const person = JSON.stringify(['discord', 'w', 'outside']);
@@ -209,6 +211,7 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   const second = f.runtime.jobs.admit(incoming.conversation!)!, assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(second.id);
   expect(assignment.venueDescription).toBe('Discord direct message with outside');
+  expect(assignment.run.nestedContainers).toBe(true);
   expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: f.db.select().from(inbox).where(eq(inbox.job, second.id)).all().map(item => item.id).sort(), word: 'others' });
   // The message the ended job never answered was closed with it, and is not carried into this one.
   expect(assignment.run.policy!.mail).toHaveLength(1);

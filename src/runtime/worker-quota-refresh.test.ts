@@ -8,7 +8,7 @@ const windows = [{ name: 'week', usage: 0.2, readAt: '2026-11-15T00:00:00Z', res
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: Error) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { resolve, reject, promise }; }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 function fixture() {
-  const config = { url: 'https://loom.example', box: 'box', tokenFile: '/token', build: command, runners: { native: command },
+  const config = { url: 'https://loom.example', box: 'box', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' },
     accountUsage: { readers: [{ command, account }], intervalMs: 1000 } };
   const handlers = new Map<string, () => void>(), stopRun = deferred<void>();
   const provider = vi.fn(async (_account: typeof account) => windows);
@@ -16,7 +16,7 @@ function fixture() {
     on: (name: string, stop: () => void) => { handlers.set(name, stop); }, off: (name: string) => { handlers.delete(name); },
     error: vi.fn(), output: vi.fn(), health: vi.fn(async (_input: { signal: AbortSignal; facts?: readonly string[] }) => ({ ok: true as const })), usage: vi.fn((_plan: WorkerCommand, _options: { signal: AbortSignal; timeoutMs?: number }) => provider), usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })),
     reportUsage: vi.fn(async (_remote: unknown, _observation: { basis: string }) => ({ recorded: true })), usageUnavailable: vi.fn(async () => ({ recorded: true })),
-    control: vi.fn(() => ({} as never)), executor: vi.fn(() => ({} as never)),
+    control: vi.fn(() => ({} as never)), containerExecutor: vi.fn(() => ({} as never)),
     run: vi.fn(async ({ signal }: { signal: AbortSignal }) => { signal.addEventListener('abort', () => stopRun.resolve(), { once: true }); await stopRun.promise; }),
     pause: vi.fn(async (_ms: number, signal: AbortSignal) => { await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }) };
   return { config, input, handlers, provider, stopRun };

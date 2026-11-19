@@ -2,11 +2,12 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, sy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
 import { UnservedJobError } from './worker.js';
 import { WORKER_STOP, WorkerStop, workerStopLine } from './worker-stop.js';
 import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './house-layout.js';
+
 
 // Real directories: the checks are about what is on the disk. The temporary directory is resolved first,
 // because a source that passes through a symbolic link is itself refused.
@@ -37,7 +38,7 @@ const home = '/run/loom/login/claude';
 const logins: AccountLogins = { a: { claude: { source: a }, codex: { source: codex } }, b: { claude: { source: b } } };
 const fixed: FixedMount[] = [{ source: stamps, target: 'house/stamps', readOnly: false }, { source: mirror, target: 'house/mirror' }];
 const job = (account: string, harness: string, agent = 'art') => ({ agent, account, harness });
-const nestedJob = (account: string, harness: string) => ({ agent: 'art', account, harness, run: { gpu: false, nestedContainers: true, ports: [] } });
+const nestedJob = (account: string, harness: string) => ({ agent: 'art', account, harness, run: { policy: { word: 'own' as const, people: [], deniedTools: [] }, gpu: false, nestedContainers: true, ports: [] } });
 const stopped = (config: Parameters<typeof bodyMounts>[0], files?: Parameters<typeof bodyMounts>[1]) => {
   try { bodyMounts(config, files); } catch (error) { return error; }
   return undefined;
@@ -191,28 +192,16 @@ it('stops the worker over a directory that belongs to another user, or where the
   expect(stopped(mount(mirror), { uid: () => mine + 1 })).toMatchObject({ stage: 'mounts' });
   expect(stopped(mount(mirror), { uid: () => undefined })).toMatchObject({ stage: 'mounts' });
 });
-it('takes a nested socket that is a real socket apart from every mounted directory', () => {
-  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, nestedSocket: socket })).toBeUndefined();
-  // A socket is the engine's, often root's: it need not belong to the worker's user.
-  expect(stopped({ nestedSocket: socket }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
-  // Only a job allowed nested containers is given it, first and writable, at the one place.
-  const mounts = bodyMounts({ accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket, state: stateDirectory, tokenFile });
-  expect(mounts(job('a', 'claude')).map(found => found.source)).toEqual([a, stamps, mirror]);
-  expect(mounts(nestedJob('a', 'claude'))).toEqual([{ source: socket, target: NESTED_SOCKET_TARGET, readOnly: false },
-    { source: a, target: home, readOnly: false }, { source: stamps, target: '/home/agent/house/stamps', readOnly: false }, { source: mirror, target: '/home/agent/house/mirror', readOnly: true }]);
-  // A nested job on a machine with no nested socket is not run, and not for want of a runner.
-  const without = bodyMounts({ mounts: { art: fixed }, socket });
-  expect(() => without(nestedJob('a', 'claude'))).toThrow('Nested containers unavailable');
-  expect(() => { try { without(nestedJob('a', 'claude')); } catch (error) { if (error instanceof UnservedJobError) throw error; } }).not.toThrow();
+it('refuses the same engine, a different engine, and aliases of the engine for nested access', () => {
+  for (const nestedSocket of [socket, socketInLogin, socketLink, join(engineLink, 'engine.sock')])
+    expect(stopped({ socket, nestedSocket })).toMatchObject({ stage: 'mounts', key: 'container.nestedSocket' });
 });
 it('takes the engine socket and the worker\'s own files when no mount reaches them, existing or not', () => {
   // A socket named through a linked directory, or by a link, is taken, and mounted as it was written.
   for (const through of [join(engineLink, 'engine.sock'), socketLink]) {
-    expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket: through, nestedSocket: through, state: stateDirectory, tokenFile })).toBeUndefined();
-    expect(bodyMounts({ socket: through, nestedSocket: through })(nestedJob('a', 'claude'))).toEqual([{ source: through, target: NESTED_SOCKET_TARGET, readOnly: false }]);
+    expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket: through, state: stateDirectory, tokenFile })).toBeUndefined();
   }
-  // The engine socket and the nested socket are commonly the same socket.
-  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket, state: stateDirectory, tokenFile })).toBeUndefined();
+  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket, state: stateDirectory, tokenFile })).toBeUndefined();
   expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket, state: join(root, 'not-made-yet'), tokenFile: join(root, 'no-token') })).toBeUndefined();
   // With nothing mounted the worker's own files are not looked at.
   expect(stopped({ socket, state: stateDirectory, tokenFile })).toBeUndefined();
@@ -251,11 +240,10 @@ it('lets two agents use one place inside their own containers, and holds every a
   expect(key({ mounts: { 'an agent': [{ source: join(root, 'missing'), target: 'x' }] } })).toBe('container.mounts."an agent"[0].source');
 });
 it('gives every body the worker\'s own directory, read-only, at one place no mount may cover', () => {
-  const mounts = bodyMounts({ program: programDirectory, accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket });
+  const mounts = bodyMounts({ program: programDirectory, accountLogins: logins, mounts: { art: fixed }, socket });
   const program = { source: programDirectory, target: BODY_PROGRAM_TARGET, readOnly: true };
   expect(BODY_PROGRAM_TARGET).toBe('/opt/loom'); expect(BODY_PROGRAM).toBe('/opt/loom/dist/body.js');
   expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, { source: a, target: home, readOnly: false }]);
-  expect(mounts(nestedJob('a', 'claude')).slice(0, 3)).toEqual([{ source: socket, target: NESTED_SOCKET_TARGET, readOnly: false }, program, { source: a, target: home, readOnly: false }]);
   // It need not belong to the worker's user: a system-wide install is root's.
   expect(stopped({ program: programDirectory }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
   const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
@@ -306,3 +294,58 @@ it('leaves everything inside a sign-in directory as it found it: a lock a harnes
   expect(readdirSync(login).sort().map(name => [name, statSync(join(login, name)).mtimeMs, statSync(join(login, name)).atimeMs, statSync(join(login, name)).mode])).toEqual(before);
 });
 
+
+it('protects private directories from all mount types, including symlink aliases and future files', () => {
+  for (const source of [stamps, join(stamps, 'inner')]) {
+    for (const configured of [mount(source), login(source), { program: source }])
+      expect(stopped({ ...configured, protectedPaths: [link] })).toBeInstanceOf(WorkerStop);
+  }
+  expect(stopped({ ...login(stamps), protectedPaths: [join(link, 'future.db')] })).toBeInstanceOf(WorkerStop);
+  const future = join(root, 'future-private');
+  symlinkSync(join(mirror, 'future-db'), future);
+  expect(stopped({ ...mount(mirror), protectedPaths: [future] })).toBeInstanceOf(WorkerStop);
+  symlinkSync(join(mirror, 'sidecar'), join(root, 'custom.db-wal'));
+  expect(stopped({ ...mount(mirror), protectedPaths: [join(root, 'custom.db')] })).toBeInstanceOf(WorkerStop);
+  expect(stopped({ ...mount(mirror), configFile: join(mirror, 'worker.json') })).toBeInstanceOf(WorkerStop);
+  expect(stopped({ ...mount(mirror), protectedPaths: [stamps] })).toBeUndefined();
+  expect(stopped({ protectedPaths: ['relative'] })).toBeInstanceOf(WorkerStop);
+  expect(stopped({ nestedSocket: socket })).toBeInstanceOf(WorkerStop);
+  expect(stopped({ nestedSocket: socket, protectedPaths: [] })).toBeInstanceOf(WorkerStop);
+});
+
+it('keeps intermediate links in a private path outside every mounted directory', () => {
+  const through = join(mirror, 'private-hop');
+  symlinkSync(stamps, through);
+  const alias = join(root, 'private-alias');
+  symlinkSync(through, alias);
+  for (const configured of [mount(mirror), login(mirror), { program: mirror }])
+    expect(stopped({ ...configured, protectedPaths: [join(alias, 'future.db')] })).toBeInstanceOf(WorkerStop);
+});
+
+it('protects default private homes and the backup directories for both installations', () => {
+  const host = directory('dedicated-machine');
+  vi.stubEnv('HOME', host);
+  try {
+    for (const name of ['loom', 'loom-new', 'loom-secrets', 'loom-new-credentials', 'loom-worker', 'loom-new-worker']) {
+      const path = join(host, '.config', name);
+      mkdirSync(path, { recursive: true });
+      expect(stopped(mount(path))).toBeInstanceOf(WorkerStop);
+    }
+    for (const name of ['loom', 'loom-new']) {
+      const backups = join(host, '.local/share', name, 'home-backups');
+      mkdirSync(backups, { recursive: true });
+      expect(stopped(mount(backups))).toBeInstanceOf(WorkerStop);
+    }
+  } finally { vi.unstubAllEnvs(); }
+});
+
+
+it('refuses an engine socket for own, owner, held, guest and older assignments', () => {
+  const mounts = bodyMounts({ socket });
+  const job = nestedJob('a', 'claude');
+  const room = { deniedTools: [], people: [] };
+  for (const policy of [undefined, room, { ...room, word: 'own' as const }, { ...room, word: 'owners' as const }, { ...room, word: 'others' as const },
+    { ...room, word: 'owners' as const, people: [{ kind: 'outside' as const, person: 'guest', tier: 3 as const }] },
+    { ...room, word: 'own' as const, people: [{ kind: 'unknown' as const, person: null, tier: null }] }])
+    expect(() => mounts({ ...job, run: { ...job.run, policy } })).toThrow('Nested containers unavailable');
+});

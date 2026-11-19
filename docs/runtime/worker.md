@@ -4,54 +4,37 @@
 loom's operation door; it does not open loom's database or start inside its server.
 This executable requires POSIX process groups (use WSL on Windows).
 
-The configuration is JSON. For example, with locally supplied builder and runner
-programs:
+A worker that takes jobs runs every body in a container, including jobs on the
+owner's word, jobs on another person's word, and jobs held to loom's tools.
+One worker shares its slots across those jobs. A minimal configuration is:
 
 ```json
 {
   "url": "https://loom.example",
   "box": "workshop",
   "tokenFile": "/run/loom-worker/token",
-  "build": {
-    "command": "/opt/house-builder",
-    "args": [],
-    "cwd": "/srv/worker",
-    "env": {"PATH": "/usr/bin:/bin"}
-  },
-  "runners": {
-    "claude": {
-      "command": "/opt/body-runner",
-      "args": [],
-      "cwd": "/srv/worker",
-      "env": {"PATH": "/usr/bin:/bin"}
-    }
-  }
+  "container": { "socket": "/run/user/1000/podman/podman.sock" }
 }
 ```
 
-The programs in this example are placeholders for worker-local commands, not
-bundled adapters. Harness keys match the roles configured in loom. A model name
-does not select a harness implicitly. Credentials belong in the private token
-file or the explicit environment needed by a command, never in command arguments.
-Worker-local command children receive only the configured environment; the worker's ambient credentials
-are not inherited. Keep the configuration and token file private.
+Set the socket to the local engine's socket. To migrate a process worker, stop
+its service, keep its state directory, replace `build`, `runners` and
+`accountRunners` with `container`, and configure account sign-in directories
+where needed. The worker refuses a job-taking configuration without an engine
+before it reads the machine token. A diagnostics-only worker can instead set
+`"reportOnly": true` and report zero slots.
 
-The builder receives one JSON line on stdin with `job` (the id) and `house`
-(`repository`, `file`, `branch`). When the configured repository needs a secret,
-loom checks the assigned starting worker and its startup permission, then sends
-`repositoryInput: {encoding: "base64", value: "…"}` on that same private stdin.
-The builder decodes it for repository access and must not print or persist it.
-It is absent for public repositories. Credentials never enter command arguments,
-the assignment, build results or environment; the worker erases its input buffer
-after the build settles. It writes only `{"build":"<artifact>"}` to
-stdout, with diagnostics on stderr, and exits zero. Build stdout is limited to
-64 KiB. The runner receives one JSON line with `job` (the full assignment) and
-`build`, after loom acknowledges that the process is running. The assignment
-includes the brief, agent, conversation, model, account and harness. The runner
-must translate this envelope into its harness's invocation; it must keep bodies
-in its process group until completion. Any surviving descendants are killed
-when the command leader exits. The last 16,384 characters of output become the
-job's log tail; do not print secrets there.
+Upgrade the server and job-taking workers together. Each claim carries
+`execution: "container"`, including claims after reconnect. The server refuses
+older workers before assigning a job. Updated workers keep the marker when an
+older server rejects their poll and take no work from that server. During
+migration, stop or drain existing workers and jobs before switching versions.
+The server trusts the machine credential holder to run the installed worker
+binary. The marker identifies the worker protocol and provides no remote
+attestation of the host.
+
+Explicit `execution: "host"` on schedule creation or edit is refused. No
+placement fact or preferred machine name grants host execution.
 
 The worker sends a bearer token through loom's standard operation door. Only
 HTTPS origins are accepted, except HTTP on loopback. Redirects are refused.
@@ -63,14 +46,13 @@ claim only assigned work, and implement:
 | Operation | Input | Value in the standard success envelope |
 | --- | --- | --- |
 | `runtime.health` | `{facts?}` | `{ok:true}` |
-| `runtime.next` | `{}` | assignment or `null` |
+| `runtime.next` | `{execution:"container", facts?, slots?, programs?}` | assignment or `null` |
 | `runtime.started` | `{job, build}` | `{ok:true}` |
 | `runtime.heartbeat` | `{job, state}` | `{active:boolean}` |
 | `runtime.finish` | `{job, exitCode, logTail}` | `{ok:true}` |
 
 A worker runs several jobs side by side, each in a slot of its own. `slots` in
-its configuration says how many, from 1 to 16; left out, it is 4 for a worker
-with container bodies and 1 for one whose bodies are processes (see "Several
+its configuration says how many, from 1 to 16; left out, it is 4 (see "Several
 jobs at once"). Each slot runs one job at a time and asks loom for its next when
 it is free; loom itself keeps no count of a machine's jobs. Idle or abandoned
 attempts wait five seconds.
@@ -150,10 +132,10 @@ because a machine's own runner may exit with any of these numbers and mean
 something of its own. The worker says it when it reports the job:
 
 - `body`: loom's body program, which the worker knows by having given it a
-  body's credential (`"bodyBootstrap":true`).
+  body's credential.
 - `worker`: the worker itself, for a body it could not get running or lost, or
   one a signal ended.
-- `runner`: a machine's own runner, which is given no credential.
+- `runner`: the machine's own runner on a job recorded by an older process worker.
 - `loom`: loom itself, for a job no machine took. No worker can report this one.
 
 A stage is named only when the number is in the table of whoever chose it. A
@@ -177,12 +159,12 @@ said whose it was, and no stage is guessed.
 | 19 | body report | The first report failed validation or Loom refused it for a reason other than the job ending. |
 | 20 | body contact | A required call exhausted its contact budget, Loom confirmed the credential or job ended, or a later status report failed. This includes loss of contact during the first report. |
 | 21 | worker input | Fetching the private repository input. |
-| 22 | worker build | The build command; or, with container bodies, fetching the house's repository or building its image. |
+| 22 | worker build | Fetching the house's repository or building its image. |
 | 23 | worker launch | Starting the body's process. |
 | 24 | worker enroll | Registering the body's credential with loom. |
 | 25 | worker release | Handing the started body its input. |
 | 26 | worker reap | The body's process could not be watched or reaped to its end. |
-| 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"), or no sign-in directory for the job's account and harness (see "Worker-local account sign-in directories"). |
+| 27 | worker runner | The worker has no matching sign-in directory for the job's account and harness (see "Worker-local account sign-in directories"). |
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 30 | worker house | The house's image does not meet the image contract: it does not say it is a house of this layout (`loom.house="2"`), it does not list the job's harness, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
@@ -216,12 +198,13 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
+| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, a mounted directory that overlaps another or a protected host path, or a request to pass an engine socket into a house. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
 | 53 | the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent's repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house. The line ends with the key in brackets: `(build)`, `(runners)`, `(accountRunners)`, `(container.mounts)` or the `target` of a sign-in directory, as in `(accountLogins.subscription-a.claude.target)` (see "Container bodies") |
 | 54 | git 2.32.0 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 | 56 | the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on |
 | 57 | another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine's houses. The line ends with the key of the one that is in use, in brackets: `(container.socket)` or `(accountLogins.subscription-a.claude.source)` (see "One worker for an engine") |
+| 58 | body jobs require a container engine. Configure `container.socket` and remove `build`, `runners` and `accountRunners`, or set `reportOnly` to report machine health without taking jobs. |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -238,12 +221,7 @@ notice, once, and closes the notice when the mail is admitted.
 ```
 
 `slots` is how many jobs a worker runs side by side: an integer from 1 to 16.
-Left out, a worker with container bodies runs 4 and a worker whose bodies are
-processes runs 1. The difference is on purpose. A container worker fetches,
-builds and starts bodies itself, and was built to do several at once. A process
-worker's build command and runners are the operator's own programs, written for
-one job at a time; set `slots` for one when its programs can run beside
-themselves. Memory, disk and GPU are not counted: `slots` is the only limit.
+The default is 4. Each slot shares the same worker and engine. Memory, disk and GPU are not counted.
 
 What two jobs on one worker never have at the same time:
 
@@ -264,10 +242,7 @@ What two jobs on one worker never have at the same time:
   [`../accepted-tradeoffs.md`](../accepted-tradeoffs.md).
 - **A port** a job publishes on the machine, on whatever address: always one
   body's at a time.
-- **A build command**, for a process worker: one runs at a time, and the build
-  limit of the next counts from when its turn comes. A container worker builds
-  different houses side by side, and builds one image once for every job that
-  wants it.
+- **An image build.** The worker builds different houses side by side and builds one image once for every job that wants it.
 
 A job that waits is reported to loom as starting all the while, takes what it
 needs all at once and in the order jobs asked, and stops waiting when it is
@@ -657,9 +632,7 @@ step from the home down to it, is a link and not a real directory. **An agent
 mount at `.claude`, or anywhere under it, turns this off for that agent's
 bodies:** each then starts fresh with what was said before. A house that sets
 `CLAUDE_CONFIG_DIR` to anywhere but `/home/agent/.claude` turns it off too, and
-so does a house whose image has no such directory: a body never makes it. A
-body run as a plain process (no `container` in the configuration) is never told
-its harness's directory is its own and keeps no session. A body whose job works
+so does a house whose image has no such directory: a body never makes it. A body whose job works
 on anybody else's word keeps and continues none anywhere ("What a body may use").
 
 A repository must not assume its own name in a path, a home other than `$HOME`,
@@ -736,23 +709,9 @@ capability request fails the launch; there is no fallback to a host process or
 a container with broader settings. The worker's ambient environment is never
 copied into the container.
 
-Nested containers additionally require a local `container.nestedSocket` path.
-It must name an existing Unix socket, through a symbolic link or not, and neither
-the path as written nor the socket's real place may be at or inside any
-directory the configuration mounts. So must `container.socket` itself, which is
-never mounted (exit code 52 otherwise, for a relative path too; see "Mounted
-directories"). Only assignments
-with `run.nestedContainers` receive that socket at `/var/run/docker.sock`. This
-is broad authority over that configured engine; the local operator must
-deliberately opt in. A job given the engine can ask it to mount anything the
-engine's user can reach on this machine, every account's sign-in directory
-included: what the sections below say about which container sees which
-directory holds for every job that is not given the engine, and for no job
-that is. No socket is otherwise mounted, and
-no host directory except the worker's own program directory and those the
-configuration names (next section). The
-worker never discovers a socket or credentials from HOME or the ambient
-environment.
+The host engine is reserved for the worker. A configuration with
+`container.nestedSocket` stops at startup (exit 52), including when the path
+names a second engine. A job requesting `run.nestedContainers` cannot start.
 
 ### Mounted directories
 
@@ -805,12 +764,12 @@ directories of `accountLogins`.
   same target. None is, holds or is inside `/var/run/docker.sock` or
   `/run/docker.sock` (the same place in most images, where a mount at `/run`
   would hide the socket).
-- `container.socket`, and `container.nestedSocket` when there is one, is written
+- `container.socket` is written
   as plainly and names an existing Unix socket. It may be reached through a
   symbolic link, as `/var/run/docker.sock` is on most machines where `/var/run`
   links to `/run`: the worker follows it once, at start, and the rules below
   hold for the socket as it is written and for where it really is. It need not
-  belong to the worker's user. The two may be the same socket. A socket that is
+  belong to the worker's user. A socket that is
   not there, or not plainly written, stops the worker at start with 52 whether
   or not anything is mounted. That changes two older answers: a missing
   `container.socket` used to stop the worker with 46 when it first asked the
@@ -821,9 +780,9 @@ directories of `accountLogins`.
   directory or another account's sign-in under another name, a read-only
   directory could be written under a second one, or a body could change the
   program every other body runs.
-- No mounted directory's source is, holds or is inside either engine socket, the
+- No mounted directory's source is, holds or is inside the engine socket, the
   worker's state directory (`state`, or its default place) or its token file
-  (`tokenFile`). Each of the four is compared both as it is written and where it
+  (`tokenFile`). Each is compared both as it is written and where it
   really is, so a body can reach neither the thing nor a link that leads to it. A body that could reach the engine's socket would hold the
   engine. One that could write the state directory could change what the next
   worker ends at start. The token is the machine's.
@@ -844,7 +803,7 @@ answer for.
 After creating a container and before starting it, the worker reads the
 container's mounts back from the engine. They must be exactly the ones it asked
 for: each a bind mount of the same source at the same target, writable or
-read-only as asked (the nested socket writable), and no others. Anything else, an image's declared volume
+read-only as asked, and no others. Anything else, an image's declared volume
 included, removes the container unstarted and fails the launch (exit code 23).
 
 The paths are this machine's own. The worker puts no mount path, credential or
@@ -916,56 +875,11 @@ ignores the runtime's name and runs the runtime it is itself configured with,
 whichever of the two the worker asks for. It also creates a bind mount's source
 directory when that is missing, where Docker refuses the container.
 
-### Worker-local account runner bindings
-
-A shared `runners` command is signed in to one account by its own environment,
-and the worker cannot check which. That is right while one account of the job's
-provider is signed in on the machine. When several are, loom says so in the
-assignment (`accountChoices`) and the worker refuses the job (exit code 27)
-rather than run it on an account loom did not pick. Two things lift the refusal:
-a shared runner that reads the account from the startup JSON and signs in to it
-itself says so with `"selectsAccount": true` on its command; or, for separate
-local profiles or private runner commands, configure `accountRunners`, keyed
-first by the account ID and then by harness:
-
-```json
-{
-  "accountRunners": {
-    "subscription-a": {
-      "codex": {
-        "command": "/private/runner-a",
-        "args": [],
-        "cwd": "/work",
-        "env": {"ACCOUNT_PROFILE": "/private/profile-a"}
-      }
-    }
-  }
-}
-```
-
-When this map is present, every job needs an exact account/harness entry. Missing
-entries fail before the builder or body starts; they never fall back to the shared
-runner or another account. Plans are copied when the worker executor is created.
-The builder retains its own explicit environment, and the body receives the
-selected command's environment plus the existing account/model/harness startup
-envelope after the running acknowledgement.
-
-`runners` and `accountRunners` are for a worker whose bodies are processes. A
-worker with container bodies has neither (exit code 53): every body starts the
-same way ("The layout of every house"), and an account reaches a body only as its sign-in directory (next
-section). Without `accountLogins`, such a worker refuses a job when loom says
-several accounts of its provider are signed in on the machine (exit code 27).
-
-These bindings select a configured runner. That program must still implement its
-native harness's model choice and tool restrictions; this feature does not infer
-provider CLI flags or supply an account profile that is not locally configured.
-
 ### Worker-local account sign-in directories
 
 A subscription sign-in is a directory of files that the provider's program
 rewrites when it renews. It cannot be baked into an image. With container
-bodies, `accountLogins` names that directory for each account, keyed like
-`accountRunners`: first by the account ID, then by harness.
+bodies, `accountLogins` names that directory for each account, keyed first by the account ID, then by harness.
 
 ```json
 {
@@ -986,10 +900,7 @@ mounted read-write so the program can renew. An entry gives only the machine's
 directory. Where it appears is the same in every house, and the house points
 its harness there (a variable for Claude Code, a link for Codex). An entry
 that still has a `target` stops the worker with exit code 53, naming the key. No other account's
-directory, and no other harness's, is ever mounted into that container. A job
-with `run.nestedContainers` is the exception to what that is worth: it holds the
-engine, and can have the engine mount any of these directories into a container
-it starts itself (see "Container bodies").
+directory, and no other harness's, is ever mounted into that container.
 
 When this map is present, every job needs an exact account/harness entry. A job
 without one fails before the builder or the body starts (exit code 27). It never
@@ -1000,9 +911,7 @@ worker starts (exit code 52) and is fixed from then on. A harness's name is
 part of the place its directory is mounted at, so it is lower-case letters,
 digits, `-` and `_`. The mount is
 one of those the worker expects when it reads the created container's mounts
-back. `accountLogins` needs `container`: a body run as a process is not given
-anything by a mount, so a configuration with `accountLogins` and no `container`
-is not valid (exit code 41).
+back. Configuring `accountLogins` without `container` is invalid (exit code 41).
 
 **One directory, renewed in place.** A provider's renewal token changes at every
 renewal, so two copies of one sign-in cancel each other. There is therefore one
@@ -1130,8 +1039,7 @@ unclaimed work and terminal sessions have no placement decision.
 
 ## Private body bootstrap
 
-A runner command may set `"bodyBootstrap":true` when its fixed child implements
-the private bootstrap envelope. Ordinary envelope commands receive no body token.
+The worker and its container body use a private bootstrap envelope.
 The parent completes the build and observes child spawn, then generates a
 `body_` token locally and calls the canonical `runtime.enrollBody` metadata door
 with only `{job,fingerprint}`. This requires the coordinator's enrollment door;
@@ -1157,12 +1065,8 @@ of the machines/models task.
 
 ### Fixed Claude child
 
-loom-body <configuration-file> implements that private envelope as a separate
-worker child. Opt the exact account/harness runner into bodyBootstrap:true;
-its command is the fixed loom-body entry, with its configuration filename as
-the only argument. Its configuration is {"command":"/path/to/claude","cwd":"/house"}.
-The worker's explicitly configured account environment reaches the child and
-native CLI; no ambient worker environment is added.
+The fixed body program runs inside the container and receives the private
+envelope on stdin.
 
 The child takes mail through the canonical body client into its own context,
 reports it received, then invokes Claude with the assignment's exact model. It
@@ -1689,3 +1593,21 @@ The report-only program reports zero job slots with its health and polls for dia
 A current job calls the named tool `machine_read` with the enrolled machine ID, a read name and its arguments. The underlying operation is `machine.read`. A machine that hosts the agent is eligible. Its owner can also grant inspection on the machine page. Loom checks the job's word, credential and current machine grant before dispatch and delivery. One request per machine can wait at a time, for up to ten seconds, inside the body’s 15-second HTTP deadline. The executable has four seconds and at most 16,384 output bytes. A refused result contains a reason. A successful result identifies the machine and read and wraps output in an array of untrusted lines.
 
 Read names, arguments and disclosure limits are in [Machine reads](machine-reads.md).
+
+### Keeping server files out of houses
+
+At startup the container worker checks every fixed mount, account sign-in and
+body program directory against host-private paths. The check covers the path
+itself, its parents and its descendants, including the resolved location of
+a protected path reached through a symlink. Custom database paths also cover their SQLite sidecars. Read-only mounts use the same check.
+
+Under the worker user's home, the defaults protect the loom and loom-new
+configuration homes, loom-secrets, loom-new-credentials, and the loom-worker and loom-new-worker
+configuration directories. Both `~/.local/share/loom/home-backups` and
+`~/.local/share/loom-new/home-backups` are protected. LOOM_HOME and LOOM_SECRETS_DIR extend those
+locations. The worker also protects its configuration file, token and state.
+
+For a server with a custom home, a separately located database or credentials,
+set `container.protectedPaths` in the worker's local configuration to an array
+of absolute paths covering those locations. Include private directories used
+by other worker installations on the same machine. Restart the worker when changing server locations.
