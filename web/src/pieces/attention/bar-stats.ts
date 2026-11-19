@@ -1,7 +1,8 @@
 import type { TickPart } from '../../ticker';
 import { useDataQuery } from '../../data/graphql';
 
-/** Minimal Tempo facts; no trigger instructions, destinations or log notes. */
+/** Minimal Tempo facts; no trigger instructions, destinations or log notes. The ticker no longer shows the latest
+ * event's raw name; its selection stays because two server tests hold this exact query to its policy and limit. */
 export const deskTempoQuery = `query DeskTempo {
   triggers { id enabled state }
   triggerLog(orderBy: {seq: {direction: desc, priority: 0}}, limit: 1) { seq event }
@@ -44,16 +45,15 @@ export function useDeskStats() {
   const activeTriggers = tempoData?.triggers.filter(t=>t.enabled && ['standing','due','firing','held'].includes(t.state)).length ?? 0;
   const failedTriggers = tempoData?.triggers.filter(t=>t.state==='failed').length ?? 0;
   const paused = tempoData?.agentPauses.length ?? 0;
-  const latest = tempoData?.triggerLog[0];
   const enabledConnections = bridgeData?.bridgeConnections.filter(c=>c.enabled).length ?? 0;
   const parts: TickPart[] = [
     {text:taskData ? `Tasks · ${taskData.inProgress.filter(task => !task.isShelved).length} in progress · ${taskData.readyTasks.length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
-    {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}${latest?` · Last event: ${latest.event}`:''}` : 'Tempo unavailable',href:'/p/tempo',tone:failedTriggers?'bad':undefined},
+    {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}` : 'Tempo unavailable',href:'/p/tempo',tone:failedTriggers?'bad':undefined},
     {text:bridgeData ? `Bridges · ${enabledConnections} enabled connection${enabledConnections===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changeData ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},
   ];
   // Trouble first, preserving the normal order for equal tones.
   parts.sort((a,b)=>Number(b.tone==='bad')-Number(a.tone==='bad'));
-  parts.push({text:enrolled===undefined?'Boxes unavailable':`${enrolled} enrolled box${enrolled===1?'':'es'} · health unavailable`});
+  parts.push({text:enrolled===undefined?'Boxes unavailable':`${enrolled} enrolled box${enrolled===1?'':'es'}`});
   return { parts, enrolled };
 }

@@ -230,7 +230,7 @@ def desk_html():
           <div class="agent">{FACE_B}<div><b>Mark</b><i class="idle">idle</i><span>Nothing right now</span></div></div>
         </div>
       </div>
-      <div class="desk__dock"><span class="t-violet">Tasks</span><span class="t-cyan">Inbox</span><span class="t-pink">Comms</span><span class="t-pink">Approvals</span><span class="t-violet">Tempo</span><span class="t-pink">Changes</span></div>
+      <div class="desk__dock">{"".join(f'<span class="t-{tint}"><svg viewBox="0 0 24 24">{ICONS[icon]}</svg></span>' for tint, icon in [("violet", "tasks"), ("cyan", "inbox"), ("pink", "comms"), ("pink", "approvals"), ("violet", "clock"), ("pink", "changes")])}</div>
     </div>'''
 
 # ───────────────────────── index

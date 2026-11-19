@@ -2,7 +2,7 @@
   "page": "people",
   "title": "People and projects",
   "ownerTask": "t-2236",
-  "sourceSha256": "d16eeb6387343747c573329c03e65d522d6b13af09b1ed6eacf01d7cd8eac8bb",
+  "sourceSha256": "88d873df41934eb09e7cebdb8e08f961ace8d25001b3baa7cc65841b6c085efd",
   "promises": [
     {
       "id": "people-001",
@@ -105,7 +105,7 @@
       "source": "docs/how-it-works/site/people.html",
       "probe": {
         "kind": "ui",
-        "app": "Project sharing",
+        "app": "Sharing",
         "contains": []
       }
     },
@@ -134,7 +134,7 @@
       "source": "docs/how-it-works/site/people.html",
       "probe": {
         "kind": "action",
-        "app": "Project sharing"
+        "app": "Sharing"
       }
     }
   ],

@@ -81,14 +81,18 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await b.goto(app.url);
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box',exact:true}).count()).toBe(1);
   app.writes.run(()=>db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'desk-box')).run());
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'0 enrolled boxes; health unavailable',exact:true}).count()).toBe(1);
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'0 enrolled boxes',exact:true}).count()).toBe(1);
   app.writes.run(()=>db.insert(boxes).values({...machine,id:'new-desk-box',name:'New disposable worker'}).run());
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
-  await a.locator('.next-preferences summary').click();
-  await a.getByRole('combobox',{name:'Look',exact:true}).selectOption('daylight');
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box',exact:true}).count()).toBe(1);
+  // Appearance is an app in a tile like any other: open it from the launcher, choose, close it.
+  await a.getByRole('button',{name:'All apps',exact:true}).first().click();
+  await a.getByRole('dialog',{name:'Apps',exact:true}).getByRole('region',{name:'Look & feel',exact:true}).getByRole('button',{name:'Appearance',exact:true}).click();
+  const appearance=a.getByRole('region',{name:'Appearance tile',exact:true});
+  await appearance.getByRole('group',{name:'Look',exact:true}).getByRole('radio',{name:'Daylight',exact:true}).click();
   for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
+  await appearance.getByRole('button',{name:'Close Appearance',exact:true}).click();await expect.poll(()=>a.locator('[data-tile]').count()).toBe(0);
   // Saves travel through the real cookie HTTP command; displayed choices come
   // back through each window's one generated live-query connection.
   const set=async(input:object,id:string)=>{
@@ -146,8 +150,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await b.evaluate(()=>document.fonts.ready);await b.screenshot({path:join(shots,`new-home-${look}-${width}.png`),animations:'disabled'});
-    await b.locator('.next-preferences summary').click();await expect.poll(()=>b.getByRole('combobox',{name:'Look',exact:true}).isVisible()).toBe(true);
-    await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.locator('.next-preferences summary').click();
+    await b.getByRole('button',{name:'Open Appearance',exact:true}).click();await expect.poll(()=>b.getByRole('group',{name:'Look',exact:true}).isVisible()).toBe(true);
+    await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.getByRole('button',{name:'Close Appearance',exact:true}).click();
     await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
     await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
     const first=b.getByRole('group',{name:'First waiting item',exact:true});
@@ -184,7 +188,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);
   await b.getByRole('button',{name:'All apps',exact:true}).first().click();
   const launcher=b.getByRole('dialog',{name:'Apps',exact:true});
-  for(const group of ['Work','People & agents','Library','System'])expect(await launcher.getByRole('region',{name:group,exact:true}).count()).toBe(1);
+  for(const group of ['Work','People & agents','Library','System','Look & feel'])expect(await launcher.getByRole('region',{name:group,exact:true}).count()).toBe(1);
   const inventory=await launcher.locator('.loom-lapp__nm').allTextContents();await b.keyboard.press('Escape');
   await expect.poll(()=>launcher.count()).toBe(0);
   for(const title of inventory)expect(await b.getByRole('button',{name:title==='Home'?'Home':`Open ${title}`,exact:true}).count()).toBeGreaterThan(0);
@@ -197,13 +201,12 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   const paths=JSON.parse(new URL(b.url()).searchParams.get('paths')??'{}');expect(paths.agents).toBe('/p/agents-preview/agent/art');
   await b.reload();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await expect.poll(()=>b.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);
-  await b.locator('.next-preferences summary').click();
-  const oneWindow=b.getByRole('checkbox',{name:'One window at a time',exact:true});
-  await oneWindow.check();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  // The saved choice, through the same command the Appearance app sends (its own switch is exercised by the
+  // rebuild walkthrough and web/src/pieces/appearance/index.test.tsx); an Appearance tile here would change the counts.
+  await set({oneWindow:true},'one-window-on');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Open Agents',exact:true}).click();
   await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/agents-preview/agent/art');
-  await oneWindow.uncheck();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
-  await b.locator('.next-preferences summary').click();
+  await set({oneWindow:false},'one-window-off');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   const makeBig=b.getByRole('button',{name:'Make Tasks big',exact:true});await makeBig.focus();

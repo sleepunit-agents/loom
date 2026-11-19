@@ -23,7 +23,7 @@ export async function accessAction({page,tile,title,app,out}){
    await saved('/api/household/setMember',()=>form.getByRole('button',{name:'Add member',exact:true}).click());
    await tile.getByRole('form',{name:'Save member walkthrough-person',exact:true}).waitFor();
    check(db.prepare('SELECT role FROM members WHERE id=?').get('walkthrough-person')?.role==='member','Member was not persisted');
-  }else if(title==='Project sharing'){
+  }else if(title==='Sharing'){
    await tile.getByRole('button',{name:'New project',exact:true}).click();
    const form=tile.getByRole('form',{name:'Create project',exact:true});await form.getByLabel('Slug',{exact:true}).fill('walkthrough-sharing');await form.getByLabel('Name',{exact:true}).fill('Walkthrough sharing');
    await form.getByRole('checkbox',{name:'alex',exact:true}).check();

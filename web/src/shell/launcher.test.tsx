@@ -34,3 +34,11 @@ it('a logical reopen resets the previous search before autofocus arrives',async(
  await draw();await type('Inbox');await act(async()=>tree.update(view(false)));await act(async()=>tree.update(view(true)));
  expect(tree.root.findByType('input').props.value).toBe('');await enter();expect(launch).toHaveBeenCalledExactlyOnceWith('tasks');
 });
+it('lists the Appearance app in its own Look & feel group, and finds it by what it holds',async()=>{
+ const withAppearance:RegisteredApp[]=[...apps,{id:'appearance',title:'Appearance',path:'/p/appearance',icon:'palette',fit,Screen}];
+ await act(async()=>{tree=create(h(Launcher,{apps:withAppearance,open:true,onOpenChange:change,launch}),{createNodeMock:(node:{type:unknown})=>node.type==='input'?input:{querySelectorAll:()=>[]}});});
+ const groups=()=>tree.root.findAll((n:{type:unknown;props:{className?:string}})=>n.type==='section'&&n.props.className==='loom-lsec').map((s:{props:{'aria-label':string};findAllByProps(props:object):{props:{children:string}}[]})=>[s.props['aria-label'],s.findAllByProps({className:'loom-lapp__nm'}).map(n=>n.props.children)]);
+ expect(groups()).toEqual([['Work',['Tasks','Inbox']],['Look & feel',['Appearance']]]);
+ await type('desk background');expect(groups()).toEqual([['Look & feel',['Appearance']]]);
+ await enter();expect(launch).toHaveBeenCalledExactlyOnceWith('appearance');
+});
