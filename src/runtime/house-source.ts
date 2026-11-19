@@ -26,7 +26,9 @@ import { existsSync, mkdirSync, readdirSync, statSync, utimesSync } from 'node:f
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { endGit, houseContext, relativeName, type ContextApart, type ContextLimits } from './house-context.js';
+import { endGit, houseContext, type ContextApart, type ContextLimits } from './house-context.js';
+import { hasControlCharacter, houseAddress, houseBranch, houseFile } from './house-input.js';
+export { houseFile, houseRepository } from './house-input.js';
 import { COMMIT } from '../apps/merge-target.js';
 import { GIT_MINIMUM } from './worker-limits.js';
 
@@ -46,34 +48,11 @@ export class HouseSourceError extends Error {}
 export type GitSpawn = (args: readonly string[], env: Readonly<Record<string, string>>, output: 'pipe' | 'ignore', input?: 'pipe' | 'ignore') => ChildProcess;
 
 const native: GitSpawn = (args, env, output, input = 'ignore') => spawn('git', [...args], { env: { ...env }, shell: false, detached: true, stdio: [input, output, 'ignore'] });
-/** A branch name plain enough to be put in a refspec: no option, no range, no pattern, no ref trickery. */
-const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
-const control = (text: string) => /[\0-\x1f\x7f]/.test(text);
-
-/** The Housefile's path inside the repository: relative, going nowhere but down. */
-export const houseFile = (file: unknown): file is string => typeof file === 'string' && file.length <= 512 && !control(file) && !file.includes('\\') && relativeName(file);
-const houseBranch = (branch: unknown): branch is string => typeof branch === 'string' && BRANCH.test(branch)
-  && !branch.includes('..') && !branch.includes('//') && !branch.endsWith('/') && !branch.endsWith('.') && !branch.endsWith('.lock');
-/** The repository's address as a URL, when it is one the worker fetches. */
-function houseAddress(repository: unknown, protocols: readonly string[]): URL | undefined {
-  // No backslash and no `@` anywhere: a URL parser and git do not read either the same way.
-  if (typeof repository !== 'string' || repository.length > 2048 || control(repository) || /[\s\\@]/.test(repository)) return undefined;
-  let url: URL;
-  try { url = new URL(repository); } catch { return undefined; }
-  if (!protocols.includes(url.protocol.slice(0, -1)) || !repository.startsWith(`${url.protocol}//`)) return undefined;
-  if (url.username || url.password || url.search || url.hash || repository.includes('?') || repository.includes('#')) return undefined;
-  // As it is written, not as a URL parser mends it: `https:///x` has no host, whatever a parser makes of it.
-  if (url.protocol === 'https:' ? !url.hostname || !repository.toLowerCase().startsWith(`https://${url.host}`) : url.hostname !== '' || !repository.startsWith('file:///')) return undefined;
-  return url;
-}
-/** Whether this is an address a worker fetches a house from: `https`, with no user, password, query or
- * fragment in it. Such an address holds no credential and can be told to a body. */
-export const houseRepository = (repository: unknown): repository is string => houseAddress(repository, ['https']) !== undefined;
 /** The header git sends for a repository secret: `user:password` when the secret has a colon, otherwise a
  * token as the password of `x-access-token`. */
 function authorization(credential: Uint8Array): string {
   const text = Buffer.from(credential).toString('utf8').trim();
-  if (!text || control(text)) throw new HouseSourceError('House repository secret is not usable');
+  if (!text || hasControlCharacter(text)) throw new HouseSourceError('House repository secret is not usable');
   return `Authorization: Basic ${Buffer.from(text.includes(':') ? text : `x-access-token:${text}`).toString('base64')}`;
 }
 /** Where git is looked for: the worker's own search path, the one thing of its environment git is given. */

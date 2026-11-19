@@ -22,6 +22,8 @@
  *  - a context past its limits (worker-limits.ts).
  * Names and targets longer than the 100 bytes a plain header holds are written in a pax extended header,
  * which every engine's builder reads. */
+import { relativeName } from './house-input.js';
+export { relativeName } from './house-input.js';
 import type { ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { COMMIT } from '../apps/merge-target.js';
@@ -43,9 +45,6 @@ interface Entry { name: Buffer; oid: string; size: number; link: boolean; execut
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 /** These bytes as text, when they are UTF-8. */
 const text = (bytes: Buffer): string | undefined => { try { return utf8.decode(bytes); } catch { return undefined; } };
-/** A name that goes nowhere but down from where it starts: relative, with no part that is empty, `.` or `..`.
- * The one rule for a file's name in a context and for a Housefile's path. */
-export const relativeName = (name: string): boolean => name.length > 0 && !name.startsWith('/') && name.split('/').every(part => part !== '' && part !== '.' && part !== '..');
 /** End a git the worker started, and whatever it started in turn: it leads a process group of its own. */
 export const endGit = (child: ChildProcess): void => {
   try { if (child.pid) { process.kill(-child.pid, 'SIGKILL'); return; } } catch { /* no such group: the one process, then */ }
