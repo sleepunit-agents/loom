@@ -245,7 +245,11 @@ p{max-width:68ch}
 .sp__nav{padding:10px 8px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:2px;background:var(--sunk-2)}
 .sp__search{height:28px;border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:0 9px;color:var(--ink-3);display:flex;align-items:center;font-size:12px;margin-bottom:6px}
 .sp__f{display:flex;align-items:center;gap:8px;min-height:28px;padding:3px 9px;border-radius:8px;border:1px solid transparent;color:var(--ink-2)}
-.sp__f span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A label a person reads is never cut off mid-word: it wraps, evenly, to as many lines as it needs. Only a
+   value nobody reads whole (an id, a path, a ticker) may be shortened, and those say so where they are styled. */
+.sp__f{align-items:flex-start}
+.sp__f span{flex:1;min-width:0;white-space:normal;overflow-wrap:break-word;text-wrap:balance;line-height:1.3;padding:3px 0}
+.sp__f em{line-height:22px}
 .sp__f em{font:normal 11px var(--mono);color:var(--ink-3)}
 .sp__f[data-on]{background:var(--ts);border-color:color-mix(in srgb,var(--t) 55%,transparent);color:var(--ink)}
 .sp__nav .lbl{padding:10px 9px 3px}
@@ -257,7 +261,7 @@ p{max-width:68ch}
 .sp__chips span[data-on]{background:var(--ts);border-color:var(--t);color:var(--ink)}
 .row{display:grid;gap:1px;padding:9px 12px;border-bottom:1px solid var(--line);min-width:0}
 .row b{font-weight:600;font-size:13px}
-.row span{color:var(--ink-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row span{color:var(--ink-2);font-size:12px;white-space:normal;overflow-wrap:break-word;text-wrap:pretty;line-height:1.35}
 .row em{font:normal 11px var(--mono);color:var(--ink-3)}
 .row[data-on]{background:var(--ts);box-shadow:inset 3px 0 0 var(--t)}
 .sp__read{padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -278,7 +282,7 @@ p{max-width:68ch}
 .cm__row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--line)}
 .cm__row[data-on]{background:var(--ts);box-shadow:inset 3px 0 0 var(--t)}
 .letter{display:grid;place-items:center;width:28px;height:28px;border:1px solid var(--line);border-radius:7px;background:var(--sunk);font:600 12px var(--mono)}
-.cm__row b{display:block;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cm__row b{display:block;font-weight:600;font-size:13px;white-space:normal;overflow-wrap:break-word;text-wrap:balance;line-height:1.3}
 .cm__row div span{display:block;font-size:11.5px;color:var(--ink-3)}
 .cm__row u{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 var(--glow) var(--cyan)}
 .cm__thread{display:flex;flex-direction:column;min-width:0}
