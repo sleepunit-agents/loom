@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry'] as const;
+export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry','cleanup-week-journal'] as const;
 export type LaneFact = typeof laneFactKinds[number];
 export const factDirectory = '/var/lib/loom/machine-facts';
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -13,6 +13,10 @@ const alert = z.strictObject({
   verdict: z.enum(['real','fixed','false-alarm']).optional(),
 });
 const schemas = {
+  'cleanup-week-journal': z.strictObject({
+    observedAt:stamp,since:stamp,total:count,
+    recent:z.array(z.strictObject({at:stamp,priority:z.number().int().min(0).max(7)})).max(100),
+  }),
   'login-expiry': z.strictObject({ observedAt: stamp, refreshExpiresAt: stamp.max(253402300799) }),
   'mirror-freshness': z.strictObject({ observedAt: stamp, trackedMax: count, liveMax: stamp }),
   'alert-ledger': z.strictObject({ observedAt: stamp, since: stamp, entries: z.array(alert).max(100), tuneSources: z.array(identifier).max(100) }),
@@ -35,6 +39,9 @@ export function laneFactOutput(kind: LaneFact, raw: string, now = Math.floor(Dat
     const seconds = kind === 'alert-ledger' ? 26 * 3600 : 7 * 86400;
     if (value.since !== value.observedAt - seconds) throw Error('Incomplete observation window');
   }
+  if ('recent' in value && (value.recent.length !== Math.min(value.total, 100)
+      || value.recent.some(entry => entry.at < value.since || entry.at > value.observedAt)))
+    throw Error('Incomplete cleanup journal');
   if ('entries' in value && value.entries.some(entry => entry.at < value.since || entry.at > value.observedAt))
     throw Error('Alert outside observation window');
   if ('kept' in value && Object.values(value.reasons).reduce((sum, n) => sum + n, 0) !== value.kept)

@@ -24,7 +24,7 @@ Use **Request read grant** or **Request revocation** under the machine's explici
 
 ### Art lane observations
 
-Separately enabling `cleanup-week-journal` releases at most 100 visible entries from the past week for art-worktree-cleanup.service. Run on the intended single-user journal source. Message text requires that exact user unit in journalUnits. A full page or incomplete journal visibility cannot establish complete coverage.
+The separate `cleanup-week-journal` projection keeps the publisher on Art's user journal and the worker on its own user bus. As Art, capture `journalctl --user --user-unit=art-worktree-cleanup.service --since="8 days ago" --quiet --no-pager --output=json --output-fields=PRIORITY,_SYSTEMD_USER_UNIT` successfully, then pass its output to the publisher. It releases the seven-day count and up to 100 recent priorities and times. Treat unavailable retention or a gap in journal coverage as missing evidence. Journal message text remains with the operator.
 
 The optional reads `mirror-freshness`, `alert-ledger`, `cleanup-receipt`, and `login-expiry` take empty arguments. Their inputs are operator-published JSON files named for the read under `/var/lib/loom/machine-facts/`. Keep that directory and its ancestors outside house mounts and writable only by the publishing account or root. Give the worker read access to the projections. Enable the corresponding read names only on the machine that actually owns these records. Every agent authorized to inspect that machine can request its enabled reads.
 

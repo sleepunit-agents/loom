@@ -72,10 +72,10 @@ it('projects only timestamps and severity unless the operator lists the exact jo
  expect(execute.mock.calls[0]).toBeDefined();
 });
 
-it('accepts seven days of one journal under the same line cap', () => {
-  const cmd = machineReadCommand(parseMachineRead({kind:'cleanup-week-journal'}));
-  expect(cmd).toContain('--since=10080 minutes ago');
-  expect(cmd).toContain('--lines=100');
+it('reads only the fixed operator-published cleanup journal summary', () => {
+  expect(machineReadCommand(parseMachineRead({kind:'cleanup-week-journal'}))).toEqual([
+    '/usr/bin/cat','--','/var/lib/loom/machine-facts/cleanup-week-journal.json',
+  ]);
 });
 
 it('releases only current fixed-shape operator projections', async () => {
