@@ -104,7 +104,7 @@ function Draft(p: TaskFormProps) {
         <label>If no<Textarea required value={ifNo} onChange={e => setIfNo(e.target.value)}/></label>
         <label>Answer<select aria-label="Answer" value={answers} onChange={e => setAnswers(e.target.value as typeof answers)}><option value="yes-no">Yes or no</option><option value="words">In words</option></select></label>
       </>}
-      <Button type="submit">{busy ? 'Saving…' : titles[p.action]}</Button>
+      <Button variant="primary" type="submit">{busy ? 'Saving…' : titles[p.action]}</Button>
     </fieldset>
     {error && <p role="alert">{error}</p>}
     <Button type="button" variant="outline" onClick={p.cancel}>Cancel</Button>

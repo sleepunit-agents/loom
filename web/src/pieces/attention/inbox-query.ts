@@ -61,3 +61,9 @@ export function inboxSourcePath(row: InboxItem): string | undefined {
   if (kind === 'secret-request') return `/p/settings-preview/requests/${encodeURIComponent(id)}`;
   if (kind === 'task') return `/p/tasks-preview/task/${taskSegment(id)}`;
 }
+
+/** Where a reference an item is about opens, for the two kinds this app can address: a task and an approval card. */
+export function inboxRefPath(ref: string): string | undefined {
+  if (/^t-\d+$/.test(ref)) return `/p/tasks-preview/task/${taskSegment(ref)}`;
+  if (/^a-[A-Za-z0-9-]+$/.test(ref)) return `/p/approvals-preview/approval/${encodeURIComponent(ref)}`;
+}

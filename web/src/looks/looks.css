@@ -113,7 +113,8 @@ color-scheme:dark;
   background:color-mix(in srgb,var(--v-pink) 8%,var(--v-paper));color:var(--v-pink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 70%,transparent),var(--glow-key) var(--v-pink)}
 
 /* ---- the primary button: solid neon with a halo (the one thing on a screen it asks you to do); the focus ring is cyan ---- */
-:root[data-look] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]){box-shadow:var(--glow-btn) var(--v-pink)}
+/* (Not inside an app's page: there the kit draws buttons quiet, and the one filled action flat; kit/controls.css.) */
+:root[data-look] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]):not(:where(.next-page) *){box-shadow:var(--glow-btn) var(--v-pink)}
 :root[data-look] :focus-visible{outline-color:var(--v-blue);box-shadow:var(--glow-focus) var(--v-blue)}
 
 /* ---- an agent's card: a 45° cut corner, its edge lit in the agent's colour, and a lit tick on its top edge ---- */
@@ -312,6 +313,8 @@ html.loom-ios-app:root[data-look] .loom-top--one :is(.loom-sys__clock,.loom-sys_
 :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="label"]{position:absolute;display:block;
   /* over the key as it's drawn: magnified and lifted (dock.tsx sets both on the item), 6px clear of its top */
   bottom:calc(100% + 6px + var(--dock-item-lift,0px) + (var(--dock-item-scale,1) - 1) * var(--dock-item-size));top:auto;left:50%;right:auto;translate:-50% 0;
+  /* centred by `translate` alone: the library's own transform (dock.css, translate(-50%)) would move it half its width again */
+  transform:none;
   max-inline-size:none;width:max-content;padding:3px 8px;border-radius:6px;background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-edge);
   font-family:var(--loom-font-data);font-size:11px;line-height:1.3;opacity:0;pointer-events:none;
   /* it rises with the key as the key grows (dock.css: transform .18s) */

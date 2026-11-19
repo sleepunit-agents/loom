@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import type { Ask } from './model';
+/** A person's waiting question as the desk fixture carries it. */
+interface Ask { id:string; agent?:string; project?:string; member?:string; ask:string; why?:string; if_yes?:string; if_no?:string; href?:string; refs?:string[]; answers?:'yes-no'|'words'; source:{kind:string;id:string}; state:'open'|'answered'|'resolved'; createdAt:number; changedAt:number; [field:string]:unknown }
 import type { OwnedAgent, AgentStatus } from './home-model';
 import type { CurrentJob } from './current-jobs';
 import type { Snapshot } from '../../data';

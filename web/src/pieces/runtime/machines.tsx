@@ -38,7 +38,7 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
   {!box.revokedAt && <section aria-label="Explicit machine read grants">
    <h4>Explicit read grants</h4>
    <p>Agents allowed to run on this machine may also read it.</p>
-   <ul>{readers.map(id => <li key={id}>{id} <Button disabled={busy} variant="outline" onClick={() => void change('machine.proposeReader',{box:box.id,agent:id,allow:false})}>Request revocation for {id}</Button></li>)}</ul>
+   <ul>{readers.map(id => <li key={id}>{id} <Button disabled={busy} variant="danger-quiet" onClick={() => void change('machine.proposeReader',{box:box.id,agent:id,allow:false})}>Request revocation for {id}</Button></li>)}</ul>
    {!readers.length && <p>No explicit grants.</p>}
    <form onSubmit={event => {event.preventDefault(); if(agent && !readers.includes(agent)) void change('machine.proposeReader',{box:box.id,agent,allow:true});}}>
     <label>Agent <select value={agent} onChange={event => select(event.target.value)}><option value="">Choose an agent</option>

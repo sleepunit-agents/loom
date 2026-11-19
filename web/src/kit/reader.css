@@ -1,0 +1,51 @@
+/* What an open item is made of (reader.tsx), as the "how it works" site draws a reader (site.css: .sp__read,
+   .meta, h4, .kv, .sec, .lbl, .chip): a quiet mono line, a title, facts as label and value, ruled sections with a
+   small uppercase label, and body text. Nothing here is ever cut off: every value wraps, ids included. */
+
+.loom-reader { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: 78ch; overflow-wrap: anywhere; font-size: var(--fs-control); line-height: 1.45; color: var(--v-text); }
+/* Among other things (a question shown in a conversation) it is a card of its own. */
+.loom-reader[data-inline] { padding: 12px 14px; border: 1px solid var(--v-border); border-radius: var(--r-md); }
+.loom-reader__meta { font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11.5px; line-height: 1.5; color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-reader__title { font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1.25; color: var(--v-text); overflow-wrap: anywhere; text-wrap: balance; }
+.loom-reader__label { font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; line-height: 1.7; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3); }
+.loom-reader__facts { display: grid; grid-template-columns: minmax(72px, max-content) minmax(0, 1fr); gap: 6px 14px; margin: 0; min-width: 0; }
+.loom-reader__facts > dt { grid-column: 1; max-width: 16ch; }
+.loom-reader__facts > dd { grid-column: 2; margin: 0; min-width: 0; color: var(--v-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.loom-reader__section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--v-border); }
+.loom-reader__section > h3 { margin: 0; }
+.loom-reader__body { color: var(--v-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.loom-reader__body[data-quiet] { color: var(--v-text-2); font-size: var(--fs-small); }
+/* The last, quietest line of a reader: a setting about the item rather than part of it (the Inbox's Notify). */
+.loom-reader__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--v-border); font-size: var(--fs-small); color: var(--v-text-3); }
+/* A reference (a task id, a pull request): small and quiet; a link or a button when the app can open it. */
+.loom-kit-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.loom-kit-chip { display: inline-flex; align-items: center; max-width: 100%; padding: 1px 6px; border: 1px solid var(--v-border); border-radius: var(--r-xs);
+  font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 12px; line-height: 1.5; color: var(--v-text-2); text-align: left; text-decoration: none; overflow-wrap: anywhere; }
+:is(a, button).loom-kit-chip { color: var(--v-text); border-color: var(--v-edge); cursor: pointer; }
+:is(a, button).loom-kit-chip:hover { background: color-mix(in srgb, var(--v-text) 7%, transparent); }
+[data-shell="phone"] :is(a, button).loom-kit-chip { min-height: 40px; padding-inline: 10px; }
+@media (pointer: coarse) { :is(a, button).loom-kit-chip { min-height: 40px; padding-inline: 10px; } }
+
+/* Narrow (a one-pane reader, a slim tile): each fact's label sits over its value. */
+/* (The reader is named a container, and keeps its scrollbar's place, in split.css.) */
+@container loom-reader (max-width: 420px) {
+  .loom-reader__facts { grid-template-columns: minmax(0, 1fr); gap: 1px 0; }
+  .loom-reader__facts > dt, .loom-reader__facts > dd { grid-column: 1; max-width: none; }
+  .loom-reader__facts > dd + dt { margin-top: 8px; }
+}
+
+/* Readers not yet built from these pieces: the reset leaves a bare heading or list of facts looking like body text
+   (styles/cojeev/base.css). In the components layer, so a class on one still wins. */
+@layer components {
+  .loom-split__reader :where(h1) { font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+  .loom-split__reader :where(h2) { font-family: var(--font-display); font-size: 16px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+  .loom-split__reader :where(h3, h4) { font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; line-height: 1.7; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3); }
+  .loom-split__reader :where(dl) { display: grid; grid-template-columns: minmax(72px, max-content) minmax(0, 1fr); gap: 6px 14px; margin: 0; min-width: 0; }
+  .loom-split__reader :where(dl) > :where(dt) { grid-column: 1; max-width: 16ch; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; line-height: 1.7; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3); }
+  .loom-split__reader :where(dl) > :where(dd) { grid-column: 2; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .loom-split__reader :where(header) > :where(p:first-child) { font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11.5px; color: var(--v-text-3); overflow-wrap: anywhere; }
+  @container loom-reader (max-width: 420px) {
+    .loom-split__reader :where(dl) { grid-template-columns: minmax(0, 1fr); gap: 1px 0; }
+    .loom-split__reader :where(dl) > :where(dt, dd) { grid-column: 1; max-width: none; }
+  }
+}

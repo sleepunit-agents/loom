@@ -41,9 +41,9 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
       {dangerous && confirming
         ? <><p className="basis-full">This cannot be undone.</p>
-          <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
+          <Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
           <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
-        : <Button disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
+        : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
       {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
     </div>}
