@@ -16,6 +16,8 @@ import changes from './changes.png?no-inline';
 import changesSmall from './changes.small.png?no-inline';
 import comms from './comms.png?no-inline';
 import commsSmall from './comms.small.png?no-inline';
+import home from './home.png?no-inline';
+import homeSmall from './home.small.png?no-inline';
 import inbox from './inbox.png?no-inline';
 import inboxSmall from './inbox.small.png?no-inline';
 import knowledge from './knowledge.png?no-inline';
@@ -51,6 +53,7 @@ export const HOUSE_ICONS: Readonly<Record<string, { art: string; small: string }
   bridges: { art: bridges, small: bridgesSmall },
   changes: { art: changes, small: changesSmall },
   comms: { art: comms, small: commsSmall },
+  home: { art: home, small: homeSmall },
   inbox: { art: inbox, small: inboxSmall },
   knowledge: { art: knowledge, small: knowledgeSmall },
   launcher: { art: launcher, small: launcherSmall },
