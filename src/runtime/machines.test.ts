@@ -99,3 +99,33 @@ it('counts a machine stamped later than now from now, so a clock set back does n
   advance(120_001);
   expect(service.sweep().map(row => row.words)).toEqual(['Machine worker has stopped reporting.']);
 });
+
+it('says a report moved only the last-seen time when the machine was already reporting the same facts and room', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('box');
+  // The first report, new facts, new room and a fact withdrawn are each a change that is shown.
+  expect(service.report('box', ['os:linux'], 2).stampOnly).toBe(false);
+  advance(1000);
+  expect(service.report('box', ['os:linux'], 2)).toMatchObject({ stampOnly: true, box: { lastSeenAt: now(), slots: 2 } });
+  expect(service.report('box').stampOnly).toBe(true);
+  expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(false);
+  expect(service.report('box', ['gpu', 'os:linux'], 2).stampOnly).toBe(true);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(db.select().from(boxFacts).all().map(row => row.fact)).toEqual(['gpu']);
+  expect(service.report('box', ['gpu'], 3).stampOnly).toBe(false);
+  expect(service.report('box', ['gpu'], null).stampOnly).toBe(false);
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  // An owner's label is not the worker's to report, and is not counted against what it reports.
+  db.insert(boxFacts).values({ box: 'box', fact: 'quiet', fromOwner: true }).run();
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  expect(db.select().from(boxFacts).all()).toEqual([{ box: 'box', fact: 'quiet', fromOwner: true }]);
+  // Heard from again after a silence, with its notice closed: a change. So is a stamp left ahead by a clock set back.
+  advance(120_001); expect(service.sweep()).toHaveLength(1);
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+  expect(db.select().from(inbox).all().map(item => item.state)).not.toContain('waiting');
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  advance(120_000); expect(service.report('box', [], null).stampOnly).toBe(false);
+  db.update(boxes).set({ lastSeenAt: new Date(Date.parse(now()) + 5000).toISOString() }).where(eq(boxes.id, 'box')).run();
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+});

@@ -29,11 +29,17 @@ export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
  const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>existsSync(a.memories)?new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined);
  try{sources.follow();}catch(e){for(const db of sources.end())db.close();throw e;}
- const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},options.sharing());
+ // One listing reads many projects, and each read asks who may see what several times and lists the people
+ // again. The sharing facts are a read of whole tables and nothing in a read writes, so one synchronous call
+ // of this reader reads the facts once and lists the people once (`held`). Nothing is kept past the call.
+ let held:{sharing:Sharing;viewer:Viewer;people?:PersonRecord[]}|undefined;
+ const sharing=()=>held?.sharing??options.sharing();
+ const once=<T>(viewer:Viewer,work:()=>T):T=>{if(held)return work();held={sharing:options.sharing(),viewer};try{return work();}finally{held=undefined;}};
+ const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},sharing());
  function ids(scope?:string){if(scope!==undefined)return scope?[scope]:[];return [...sources].flatMap(([agent,db])=>has(db,'projects')?(db.prepare('SELECT slug FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${agent}:${r.slug}`):[]);}
  function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{
   if(!has(db,'memories'))return {key:'memories',label:'Memories',available:false};
-  if(!maySee(v,{type:'memory',agent:q.agent},options.sharing()))return {key:'memories',label:'Memories',available:false};
+  if(!maySee(v,{type:'memory',agent:q.agent},sharing()))return {key:'memories',label:'Memories',available:false};
   const where=`${activeMemory} AND project IN (${q.names.map(()=>'?').join(',')})`;
   const args=[new Date(q.now).toISOString(),...q.names];
   interface Row {ref:string;category:string;title:string;content:string;created:string;updated:string|null}
@@ -49,7 +55,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  }
  function peopleSection(v:Viewer,q:ProjectQuery):ProjectSection{
   if(!options.people)return {key:'people',label:'People',available:false};
-  const people=options.people.list(v);
+  const people=held?.viewer===v?(held.people??=options.people.list(v)):options.people.list(v);
   const fields=q.names.map(n=>n.replace(/-/g,'_'));
   // A hub may use the household directory and its own agent relationships, never another agent's cards.
   const rows=people.filter(p=>!p.agent||p.agent===q.agent);
@@ -99,7 +105,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
- const hub=(id:string,v:Viewer)=>read(id,v,true);
+ const hub=(id:string,v:Viewer)=>once(v,()=>read(id,v,true));
  const expires=(r:ProjectRecord)=>{
   const db=sources.get(r.agent),now=clock.now(),deadlines=[projectDeadline(r,now)];
   if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT expires_at AS at FROM memories WHERE ${activeMemory} AND expires_at IS NOT NULL AND project IN (${names.map(()=>'?').join(',')}) ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(new Date(now).toISOString(),...names) as {at:string}|undefined;if(row)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
@@ -107,7 +113,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  };
  const memorySource=(id:string,v:Viewer)=>{
   const colon=id.indexOf(':');if(colon<1)return;const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
-  if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories'))return;
+  if(!db||!maySee(v,{type:'memory',agent},sharing())||!has(db,'memories'))return;
   const opaque=(db.pragma('table_info(memories)') as {name:string}[]).some(column=>column.name==='uuid');
   return {agent,db,selector:opaque?'(ref=? OR uuid=?)':'ref=?',params:opaque?[ref,ref]:[ref]};
  };
@@ -117,7 +123,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
  const retained=(agent:string,v:Viewer,kind:'archive'|'proposal',first:number,before?:string|null)=>{
-  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},options.sharing()))return null;
+  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},sharing()))return null;
   const table=kind==='archive'?'memories':'proposals';if(!has(db,table))return {entries:[],nextBefore:null};
   const columns=new Set((db.pragma(`table_info(${table})`) as {name:string}[]).map(column=>column.name));
   if(!columns.has(kind==='archive'?'archived':'status'))throw Error('Retained source schema is unavailable');
@@ -135,7 +141,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  // Every live memory's line, newest first, under the same private Memory
  // visibility as the other reads. A plain read: it adds no recall heat.
  const memoryList=(agent:string,v:Viewer,filter:{category?:string|null;project?:string|null},first:number)=>{
-  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},options.sharing()))return null;
+  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},sharing()))return null;
   if(!has(db,'memories'))return [];
   const columns=new Set((db.pragma('table_info(memories)') as {name:string}[]).map(column=>column.name));
   if(!columns.has('archived'))throw Error('Memory source schema is unavailable');
@@ -152,8 +158,8 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   // rows, under the same current private Memory visibility as the source.
   return row?db.prepare('SELECT id,op,replaced_at AS replacedAt,content FROM memory_revisions WHERE memory_id=? ORDER BY id DESC LIMIT ?').all(row.id,MAX_REVISIONS) as {id:number;op:string;replacedAt:string;content:string}[]:[];
  };
- const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
+ const access=(v:Viewer)=>once(v,()=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)}));
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,retained,memoryList,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:(id:string,v:Viewer)=>once(v,()=>read(id,v)),read:hub,memoryRead,memoryHistory,retained,memoryList,list:(v:Viewer)=>once(v,()=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];})),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }

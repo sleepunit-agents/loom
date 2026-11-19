@@ -33,6 +33,9 @@ export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSet
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;
+/** The longest a last-seen style time waits before open selections are read again for it:
+ * docs/accepted-tradeoffs.md, "A last-seen time reaches an open window up to a minute late". */
+export const STAMP_WAKE_MS = 60_000;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
@@ -88,7 +91,15 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
     schema,
   });
-  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); } });
+  // Times loom stamps as it is used (a machine's last report, a credential's last use, how long a call took)
+  // are written many times a second and decide nothing about who reads what. Open selections are read again
+  // for them at most once in STAMP_WAKE_MS, and not at all while none is written.
+  let cancelStamps: (() => void) | undefined;
+  const stamped = () => {
+    if (stopped || cancelStamps) return;
+    cancelStamps = clock.at(clock.now() + STAMP_WAKE_MS, () => { cancelStamps = undefined; if (!stopped) live.metadataChanged(); });
+  };
+  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); }, stamped });
   const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
@@ -96,8 +107,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     readVersion: () => live.epoch(),
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
-    timingsChanged() { live.timingsChanged(); },
-    credentialUsageChanged() { live.metadataChanged(); },
+    timingsChanged: stamped,
+    credentialUsageChanged: stamped,
     writes,
     close() {
       if (closing) return closing;
@@ -105,7 +116,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       closing = Promise.resolve().then(async () => {
         try { await socketClosing; } finally { await http.drain(); }
       });
-      stopped = true; cancelDeadline?.();
+      stopped = true; cancelDeadline?.(); cancelStamps?.();
       http.stop();
       const socketClosing = socket.close();
       live.close();

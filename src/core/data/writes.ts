@@ -1,5 +1,6 @@
 import { types } from 'node:util';
 import type { DataDatabase } from './database.js';
+import { rowsWritten } from './rows-written.js';
 
 export interface CommittedWrite<T> {
   value: T;
@@ -16,9 +17,16 @@ export interface CommittedWrite<T> {
  * do not notify. One instance per connection must own all composed writes.
  * Nested results remain provisional until the outer run() returns. Callbacks
  * must not schedule later writes: all database work belongs inside this call.
+ *
+ * A commit that wrote no row tells nobody: there is nothing to read again and no
+ * access to refresh. A commit whose every run() said `stampOnly` (it wrote only
+ * what loom keeps for itself and last-seen style times, and nothing that decides
+ * who may read what) is told to `stamped` alone, which may wake readers late and
+ * rarely. Every other commit is told to everyone, at once.
  */
 export class DataWrites {
   private depth = 0;
+  private loud = false;
   private observers = new Set<() => void>();
 
   /** Trusted composition hooks, invoked only after the outer transaction commits.
@@ -31,30 +39,39 @@ export class DataWrites {
   constructor(private readonly db: DataDatabase, private readonly notify: {
     refreshAccess(): void;
     changed(): void;
+    /** Without this, a stamp-only commit is told as any other. */
+    stamped?(): void;
   }) {}
 
-  run<T>(operation: () => T): CommittedWrite<T> {
+  /** `stampOnly` is asked once, after the operation returned and before its transaction commits. */
+  run<T>(operation: () => T, stampOnly?: () => boolean): CommittedWrite<T> {
     // An unrelated outer transaction could roll back after we notified. Refuse
     // that composition rather than mistake a released savepoint for a commit.
     if (this.depth === 0 && this.db.$client.inTransaction) throw new Error('Shared writes must own the outer transaction');
     if (types.isAsyncFunction(operation)) throw new Error('Shared writes must be synchronous');
     const outer = this.depth === 0;
+    if (outer) this.loud = false;
+    const before = outer ? rowsWritten(this.db) : 0;
     this.depth++;
     let value: T;
     try {
       value = this.db.$client.transaction(() => {
         const result = operation();
         if (result != null && typeof (result as { then?: unknown }).then === 'function') throw new Error('Shared writes must be synchronous');
+        // One run that does not vouch for its writes makes the whole commit an ordinary one.
+        if (!stampOnly?.()) this.loud = true;
         return result;
       })();
     } finally {
       this.depth--;
     }
     const notificationErrors: unknown[] = [];
-    if (outer) {
+    if (outer && rowsWritten(this.db) !== before) {
       // Revocation takes effect before live reads are woken. Attempt both hooks
       // even when one fails; notification failure cannot roll back a commit.
-      for (const notify of [() => this.notify.refreshAccess(), () => this.notify.changed(), ...[...this.observers].map(observer => () => { if (this.observers.has(observer)) observer(); })]) {
+      const all = this.loud || !this.notify.stamped ? [() => this.notify.refreshAccess(), () => this.notify.changed(), ...[...this.observers].map(observer => () => { if (this.observers.has(observer)) observer(); })]
+        : [() => this.notify.stamped!()];
+      for (const notify of all) {
         try { notify(); } catch (error) { notificationErrors.push(error); }
       }
     }

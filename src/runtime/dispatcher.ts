@@ -14,6 +14,7 @@ import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
+import { rowsWritten } from '../core/data/rows-written.js';
 /** What loom records on a job on anybody else's word that no harness the agent has can run. */
 export const UNHELD_NOTE = 'Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.';
 export class Dispatcher {
@@ -39,8 +40,14 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false) {
-    this.machines.heartbeat(box, facts, slots ?? null);
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }) {
+    const { stampOnly } = this.machines.report(box, facts, slots ?? null), written = rowsWritten(this.db);
+    const assignment = this.placeNext(box, ended, programs);
+    // A poll that found no work and wrote no row but the machine's last-seen time: its caller may say so.
+    if (poll) poll.stampOnly = stampOnly && !assignment && rowsWritten(this.db) === written;
+    return assignment;
+  }
+  private placeNext(box: string, ended: string[] | undefined, programs: boolean) {
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       // Capability is negotiated by this poll. A downgraded worker clears its previous advertisement.

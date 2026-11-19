@@ -52,12 +52,14 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   if(!active())return refuse(403,'Authentication ended');
   const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit);
   if(!active())return refuse(403,'Authentication ended');
-  // This outer claim publishes exactly one shared epoch. Any reentrant
+  // This outer claim publishes exactly one shared epoch, or none when it wrote
+  // no row (nothing waited, or the same prefix is taken again). Any reentrant
   // postcommit mutation invalidates the prepared words before byte release.
-  const expected=options.version()+1;
+  const base=options.version();
   const committed=options.writes.run(prepared),deliveries=committed.value;
   for(const _error of committed.notificationErrors){try{options.reportError(new Error('Body input notification failed'));}catch{}}
-  if(!active()||options.version()!==expected)return refuse(503,'Mail changed; take it again');
+  const expected=options.version();
+  if(!active()||expected>base+1)return refuse(503,'Mail changed; take it again');
   // The HTTP response projection stays next to its publication lease so every
   // private output field contributes its deadline before any bytes are released.
   // ConversationMail remains reusable by trusted in-process callers.

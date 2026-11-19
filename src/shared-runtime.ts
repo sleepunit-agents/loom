@@ -48,8 +48,11 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     input: z.object({ facts: machineFacts.optional(), slots: z.number().int().min(0).max(SLOTS_MAX).optional() }).strict(), output: ack, may: machine,
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
     run(ctx, input) {
-      const box = runner(ctx.viewer); dispatcher.machines.heartbeat(box, input.facts, input.slots ?? null);
-      ctx.changed('box', box); return { ok: true as const };
+      const box = runner(ctx.viewer);
+      // Told at once only when the report changed more than the machine's last-seen time.
+      if (dispatcher.machines.report(box, input.facts, input.slots ?? null).stampOnly) ctx.stampOnly?.();
+      else ctx.changed('box', box);
+      return { ok: true as const };
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
@@ -62,9 +65,13 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       // distinguishes old binaries that could run jobs directly on the host.
       if (input.execution !== 'container') throw new OperationError('denied',
         'This server gives jobs only to container workers. Update the worker and configure container.socket.');
-      const ended: string[] = [];
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs);
-      ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);
+      const ended: string[] = [], poll: { stampOnly?: boolean } = {};
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll);
+      // An idle worker asks about once a second. A poll that gave no work and moved only the machine's
+      // last-seen time is not a change to tell every open window of.
+      if (poll.stampOnly && !ended.length) ctx.stampOnly?.();
+      else ctx.changed('box', box);
+      if (assignment) ctx.changed('job', assignment.id);
       for (const id of ended) ctx.changed('job', id);
       if (ended.length) unplaced.set(input, ended);
       return assignment ?? null;

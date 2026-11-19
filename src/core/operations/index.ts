@@ -23,7 +23,11 @@ export interface Change { type: string; id: string }
  * Sources store this receipt atomically with their effects; it is not an intent.
  */
 export interface WriteReceipt { viewer: string; id: string; name: string; inputHash: string; expires: number }
-export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt>; window?: boolean }
+export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt>; window?: boolean;
+  /** Say that this call wrote nothing anybody is shown but a last-seen style time, and nothing that decides who
+   * may read what. Readers are then not woken for it at once (core/data/writes.ts). Only an operation that has
+   * checked what it wrote may say so, and one that also announces a change is not believed. */
+  stampOnly?(): void }
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
@@ -99,7 +103,7 @@ function callerKey(viewer: Viewer): string {
 }
 /** Shared connection write boundary supplied only by trusted composition. */
 export interface OperationWrites {
-  run<T>(operation: () => T): { value: T; notificationErrors: unknown[] };
+  run<T>(operation: () => T, stampOnly?: () => boolean): { value: T; notificationErrors: unknown[] };
 }
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
@@ -115,9 +119,9 @@ export class Operations {
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
     this.expire();
   }
-  private transaction<T>(run: () => T, write: boolean): T {
+  private transaction<T>(run: () => T, write: boolean, stampOnly?: () => boolean): T {
     if (!write || !this.options.writes) return this.db.transaction(run)();
-    const committed = this.options.writes.run(run);
+    const committed = this.options.writes.run(run, stampOnly);
     for (const error of committed.notificationErrors) {
       this.report(error);
     }
@@ -281,7 +285,7 @@ export class Operations {
     if (op.requiresWindow?.(parsed.data, viewer) && !signedInWindow(door, viewer, window)) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
-    let result: Result | PreparationNeeded;
+    let result: Result | PreparationNeeded, stampOnly = false;
     if (this.db.inTransaction && !this.frames.length) return failure('unavailable', 'Operations must own the outer transaction');
     this.frames.push(changes);
     try {
@@ -310,7 +314,7 @@ export class Operations {
             return old.result;
           }
         }
-        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + RECEIPT_MS } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
+        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + RECEIPT_MS } } : {}), changed: (type, id) => { changes.push({ type, id }); }, stampOnly: () => { stampOnly = true; } };
         let recovered: RecoveredWrite | undefined;
         if (op.write) for (const recover of this.recoveries) {
           recovered = recover(ctx);
@@ -339,7 +343,7 @@ export class Operations {
         const completed=JSON.parse(serialized) as Result;
         if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + RECEIPT_MS);
         return completed;
-      }, !!op.write);
+      }, !!op.write, () => stampOnly && !changes.length);
     } catch (e) { result = thrown(e, op.refuses); }
     finally { this.frames.pop(); }
     if (result instanceof PreparationNeeded) return result;

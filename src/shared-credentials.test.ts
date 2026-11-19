@@ -271,7 +271,10 @@ it('wakes safe live credential metadata after incoming use without publishing be
  next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'usage',payload:{query:'subscription { observe(query:"{ householdSetup { tokens { label lastUsedAt } sessions { device seenAt } } }") { patches { path value } } }'}}));await next;
  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
  f.clock.advance(1000);next=once(ws,'message');f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));
- expect(String((await next)[0])).toContain(new Date(f.clock.now()).toISOString());
+ // A last-used time decides nothing about who reads what: open selections are read again for it within a minute, not at each use.
+ const used=new Date(f.clock.now()).toISOString(),before=frames.length;await new Promise(resolve=>setTimeout(resolve,50));expect(frames).toHaveLength(before);
+ f.clock.advance(60_000);
+ expect(String((await next)[0])).toContain(used);
  const stored=JSON.stringify({tokens:f.db.select().from(tokens).all(),sessions:f.db.select().from(sessions).all()});
  for(const secret of Object.values(raw)){expect(stored).not.toContain(secret);expect(frames.join(' ')).not.toContain(secret);}
 });

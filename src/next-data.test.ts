@@ -473,3 +473,28 @@ it('refuses unsupported installed coercion at startup before admitting reads', a
   await expect(setup({ installed: { type: installed, resolve() { callbacks++; return 'private'; } } })).rejects.toThrow('Unsupported read scalar');
   expect(callbacks).toBe(0);
 });
+
+it('reads open selections again for stamp-only writes once in a minute, however many there were', async () => {
+  const f = await setup(), ws = await f.open();
+  await read(ws, () => ws.send(JSON.stringify(selection)));
+  const frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  const quiet = async () => { await new Promise(resolve => setTimeout(resolve, 40)); return frames.length; };
+  const before = f.pending.size;
+  // A stamp-only commit, a credential's last use and a timing row are all kept back together.
+  for (const title of ['One', 'Two', 'Later']) f.data.writes.run(() => f.client.prepare('UPDATE tasks SET title=?').run(title), () => true);
+  f.data.credentialUsageChanged(); f.data.timingsChanged(); f.data.timingsChanged();
+  expect(f.pending.size).toBe(before + 1);
+  expect(await quiet()).toBe(0);
+  f.clock.advance(59_999); expect(await quiet()).toBe(0);
+  const late = await read(ws, () => f.clock.advance(1));
+  expect(late.payload.data.observe.patches).toMatchObject([{ path: ['tasks', 0, 'title'], value: 'Later' }]);
+  expect(f.pending.size).toBe(before);
+  // Nothing was written since: no timer is left and nothing is read.
+  f.clock.advance(600_000); expect(await quiet()).toBe(1);
+  // An ordinary commit is told at once, also while stamps wait for their minute.
+  f.data.timingsChanged();
+  const now = await read(ws, () => f.data.writes.run(() => f.client.exec("UPDATE tasks SET title='Now'")));
+  expect(now.payload.data.observe.patches[0].value).toBe('Now');
+  await f.data.close();
+  expect(f.pending.size).toBe(0);
+});
