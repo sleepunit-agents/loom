@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
-vi.mock('../../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode }) => h(name, props, props.children, ...(name === 'Split' ? [props.list, props.reader] : []))])));
+vi.mock('../../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Reader', 'Meta', 'Body'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode }) => h(name, props, props.children, ...(name === 'Split' ? [props.list, props.reader] : []))])));
 import Approvals, { ApprovalCard, type ApprovalActions } from './index';
 import { renderMeasuringChange } from '../measuring/settings';
 import { rows, type ApprovalSnapshot } from './model';

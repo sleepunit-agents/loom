@@ -113,7 +113,7 @@ it('answers the exact shared Inbox question inline', async () => {
   setup(); f.data.commsMessages = [message({ kind: 'ask', inboxItem: 'in-ask' })];
   f.data.item = { id: 'in-ask', source: 'thread', thread: 'th:pump', state: 'waiting', answers: 'yes-no', at: '2026-11-14T18:00:00Z', read: true, refs: [], body: { words: 'PRIVATE QUESTION' }, bodyKeepUntil: new Date(Date.now()+60000).toISOString() };
   await draw(); expect(text()).toContain('PRIVATE QUESTION'); expect(text()).not.toContain('PRIVATE REPLY');
-  await act(async () => { named('Allow').props.onClick(); });
+  await act(async () => { named('Yes').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-ask', answer: 'yes' });
 });
 
@@ -205,7 +205,7 @@ it('shows a current mentioned pull request card, updates it and withdraws denied
 it('marks an owner-visible inline question read for its reader without offering another recipient’s answers',async()=>{
  setup();f.data.homeComms={member:'owner',agents:[]};f.data.commsMessages=[message({kind:'ask',inboxItem:'in-ask'})];
  f.data.item={id:'in-ask',source:'thread',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'OWNER VISIBLE QUESTION'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()};
- await draw();expect(text()).toContain('OWNER VISIBLE QUESTION');expect(f.call).toHaveBeenCalledExactlyOnceWith('inbox.read',{item:'in-ask'});expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();expect(named('Record answer')).toBeUndefined();
+ await draw();expect(text()).toContain('OWNER VISIBLE QUESTION');expect(f.call).toHaveBeenCalledExactlyOnceWith('inbox.read',{item:'in-ask'});expect(named('Yes')).toBeUndefined();expect(named('No')).toBeUndefined();expect(named('Record answer')).toBeUndefined();
 });
 
 function timingQuestion() {
@@ -308,7 +308,7 @@ it('shows an open question once: in the stream where it was asked, or in the one
   expect(order).toEqual(['comms__stream', 'comms__waiting', 'comms__work', 'comms__compose']);
   // A compact card: the question, what Yes and No do in one line, two answers and the way to the whole item.
   const card = block().findByType('Reader');
-  expect(words(card)).toBe('ASKED ELSEWHEREYes: Art orders it. No: Art looks again.AllowDenyOpen in Inbox');
+  expect(words(card)).toBe('ASKED ELSEWHEREYes: Art orders it. No: Art looks again.YesNoOpen in Inbox');
   expect(card.findAllByType('Button')).toHaveLength(2); expect(card.findAllByType('select')).toHaveLength(0); expect(card.findAllByType('Input')).toHaveLength(0);
   await act(async () => { block().findByType('LinkButton').props.onClick(); });
   expect(go).toHaveBeenCalledWith('/p/inbox-preview/ask/in-other');

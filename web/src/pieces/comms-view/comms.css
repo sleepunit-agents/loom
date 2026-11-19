@@ -10,10 +10,11 @@
 /* The kit's reader scrolls as a whole. Here the reader holds still and the messages scroll, so the message bar is
    always in reach. The reader is still the size container the Work column asks (it no longer scrolls, so there is no
    scrollbar to come and go under that question: src/ui/scroll-width.test.ts). */
-.next-page > .loom-split.loom-comms > .loom-split__reader { display: flex; flex-direction: column; overflow: hidden; }
+.next-page > .loom-split.loom-comms > .loom-split__reader { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
 .loom-split.loom-comms:not([data-mode="one"]) > .loom-split__reader { padding: 0; }
-.loom-split.loom-comms[data-mode="one"] > .loom-split__reader { padding-top: 4px; padding-left: 0; padding-right: 0; }
-@media (min-width: 1024px) { .loom-split.loom-comms[data-mode="one"] > .loom-split__reader { padding-bottom: 0; } }
+/* (One pane: the kit leaves room under a reader for a dock laid over it. The shell's dock is under the tile, and the
+   message bar is the foot of this reader, so there is none here.) */
+.loom-split.loom-comms[data-mode="one"] > .loom-split__reader { padding: 4px 0 0; }
 .loom-comms .loom-split__back { flex: none; align-self: flex-start; margin: 0 0 0 10px; }
 /* On a phone the keyboard covers the foot of the page: the split is fitted above it while the bar has focus (viewport.ts). */
 .next-page > .loom-split.loom-comms[data-comms-keyboard] { height: var(--comms-visible-height, 100%); }
@@ -46,9 +47,11 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 .comms-group { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 3px; min-width: 0; }
 .comms-group[data-side="me"] { justify-items: end; }
 .comms-group__who { display: flex; flex-wrap: wrap; gap: 0 8px; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; line-height: 1.5; color: var(--v-text-3); }
-.comms-msg { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: inherit; gap: 2px; min-width: 0; max-width: min(100%, 68ch); }
-.comms-msg[data-card] { width: min(100%, 52ch); }
-.comms-bubble { max-width: 100%; margin: 0; padding: 7px 11px; border: 1px solid transparent; border-radius: 10px; background: color-mix(in srgb, var(--v-text) 7%, transparent); color: var(--v-text); overflow-wrap: anywhere; }
+.comms-msg { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: inherit; gap: 2px; min-width: 0; max-width: min(86%, 68ch); }
+.comms-msg[data-card] { width: min(100%, 52ch); max-width: 100%; }
+/* A question's card in a conversation is a little closer set than the kit's. */
+.comms .loom-reader[data-inline] { gap: 8px; padding: 10px 12px; }
+.comms-bubble { max-width: 100%; margin: 0; padding: 7px 11px; border: 1px solid transparent; border-radius: 10px; background: color-mix(in srgb, var(--v-text) 7%, transparent); color: var(--v-text); overflow-wrap: anywhere; text-wrap: wrap; }
 .comms-bubble[data-plain], .comms-bubble [data-plain] { white-space: pre-wrap; }
 .comms-bubble[data-empty] { color: var(--v-text-3); font-style: italic; }
 /* The person's own: the tile's tint, thin, under the look's own text colour (as the open row in a list is). */
@@ -85,7 +88,7 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 /* ---- a small menu (menu.tsx): More in the head, New over the list ---- */
 .loom-menu { position: relative; display: inline-flex; }
 .loom-menu__box { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; display: grid; gap: 4px; width: max-content; min-width: 148px; max-width: min(260px, 80vw); padding: 6px;
-  border: 1px solid var(--v-edge); border-radius: var(--r-md); background: var(--v-paper); }
+  border: 1px solid var(--v-edge); border-radius: var(--r-md); background: var(--v-paper); font-family: var(--font-sans); letter-spacing: 0; }
 .loom-menu .loom-menu__box > .v-btn[data-slot="button"]:not(.-card) { width: 100%; justify-content: flex-start; text-align: left; }
 
 /* ---- a thread's row: the agent's initial, as the site's .letter ---- */
@@ -104,7 +107,7 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 .comms-work__toggle:focus-visible { outline: 2px solid var(--comms-tint); outline-offset: 2px; }
 .comms-work__body { display: none; grid-template-columns: minmax(0, 1fr); min-width: 0; max-height: min(40vh, 320px); overflow-y: auto; overscroll-behavior: contain; }
 .comms-work[data-open] > .comms-work__body { display: grid; }
-.comms-work .loom-kit-title { display: block; overflow: visible; -webkit-line-clamp: unset; }
+.comms-work .loom-kit-title { display: block; overflow: visible; -webkit-line-clamp: unset; font-size: 13px; }
 .comms-work__rest { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; padding: 10px 14px; }
 .comms-work__rest:empty { display: none; }
 .comms-work__made { margin: 0; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; line-height: 1.5; color: var(--v-text-3); overflow-wrap: anywhere; }
@@ -117,8 +120,8 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 .comms-refc article > .v-btn { justify-self: start; margin-top: 3px; }
 
 /* Wide enough: Work is a column on the right, always open, under its own small heading. */
-@container loom-reader (min-width: 720px) {
-  .comms__body:has(> .comms__work:not(:empty)) { grid-template-columns: minmax(0, 1fr) minmax(200px, 28%); }
+@container loom-reader (min-width: 500px) {
+  .comms__body:has(> .comms__work:not(:empty)) { grid-template-columns: minmax(0, 1fr) minmax(170px, 30%); }
   .comms__work { grid-column: 2; grid-row: 1 / -1; padding: 12px 0; border-left: 1px solid var(--comms-line); overflow-y: auto; overscroll-behavior: contain; }
   .comms-work { border-top: 0; }
   .comms-work__label { display: block; }

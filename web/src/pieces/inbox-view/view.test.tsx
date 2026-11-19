@@ -78,11 +78,12 @@ it('filters question/history/FYI/agent rows and hides retained detail when its c
   expect(JSON.stringify(tree.toJSON())).not.toContain(item.body!.words);
 });
 
-it('uses Allow and Deny for the same yes/no question shown inline in chat', async () => {
+it('says Yes and No for the same question shown in chat as in the Inbox, on a compact card', async () => {
   const answer = vi.fn(async () => {});
   await act(async () => { tree = create(h(InboxQuestionCard, { id: item.id, snapshot, actions: { answer }, inline: true })); });
-  expect(named('Yes')).toBeUndefined(); expect(named('No')).toBeUndefined();
-  await act(async () => { named('Deny').props.onClick(); });
+  expect(named('Allow')).toBeUndefined(); expect(named('Deny')).toBeUndefined();
+  expect(buttons().map((button: { props: { children: string } }) => button.props.children)).toEqual(['Yes', 'No']);
+  await act(async () => { named('No').props.onClick(); });
   expect(answer).toHaveBeenCalledExactlyOnceWith(item.id, 'no', undefined);
 });
 

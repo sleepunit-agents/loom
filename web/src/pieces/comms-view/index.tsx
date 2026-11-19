@@ -55,7 +55,7 @@ function Words({ message, who, refs, drawing }: { message: CommsMessage; who: st
     {message.words == null ? !verdict && <p className="comms-bubble" data-plain="" data-empty="">Message words are unavailable</p>
       : mine(message) ? <p className="comms-bubble" data-plain="">{withRefs(message.words, refs, drawing.cards?.openRef)}</p>
         : <div className="comms-bubble"><Suspense fallback={<p data-plain="">{message.words}</p>}><Prose text={message.words} refs={refs} openRef={drawing.cards?.openRef} /></Suspense></div>}
-    {verdict && <p className="comms-bubble" data-plain="">{verdict}</p>}
+    {verdict && (message.words == null ? <p className="comms-bubble" data-plain="">{verdict}</p> : <p className="comms-delivery">{verdict}</p>)}
     {delivery && <p className="comms-delivery" data-state={message.delivery}>{delivery}</p>}
   </div>;
 }

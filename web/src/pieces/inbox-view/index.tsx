@@ -39,8 +39,8 @@ function useItemActions(item: InboxItem, actions?: InboxActions) {
 }
 
 /** A question where it was asked, in a conversation (the how-it-works site's `.msg--ask`): the question, one small
- * line of what Yes and No do, and the answer (Allow and Deny here, as this card has always said and the site draws).
- * Why, what it is about, an answer in words to a yes-or-no question, Mark done, Dismiss and Notify are the Inbox's: one link there. */
+ * line of what Yes and No do, and the answer with the words the Inbox puts on it for the same ask: Yes and No for a
+ * plain question (an approval is answered on its own card, which says Allow and Deny in both places). Why, what it is about, an answer in words to a yes-or-no question, Mark done, Dismiss and Notify are the Inbox's: one link there. */
 function ChatQuestion({ item, actions, sourceCard, openInbox }: { item: InboxItem; actions?: InboxActions; sourceCard?: ReactNode; openInbox?(): void }) {
   const { busy, error, answer } = useItemActions(item, actions);
   const outcomes = [item.body?.ifYes && `Yes: ${item.body.ifYes}`, item.body?.ifNo && `No: ${item.body.ifNo}`].filter(Boolean).join(' ');
@@ -48,7 +48,7 @@ function ChatQuestion({ item, actions, sourceCard, openInbox }: { item: InboxIte
     <Body><strong>{item.body?.words ?? 'Message words are unavailable'}</strong></Body>
     {outcomes && <Body quiet>{outcomes}</Body>}
     {item.state === 'waiting' && item.answers && item.body && !managed(item) && actions?.answer && <AnswerSection key={`${item.id}:${item.body.words}`} compact answers={item.answers} busy={busy}
-      yes="Allow" no="Deny" onAnswer={(verdict, words) => void answer(verdict, words)} />}
+      onAnswer={(verdict, words) => void answer(verdict, words)} />}
     {sourceCard}
     {item.answer && <Meta>{[answerWord(item.answer), item.answeredBy, item.answeredAt && when(item.answeredAt)].filter(Boolean).join(' · ')}</Meta>}
     {item.answerText && <Body>{item.answerText}</Body>}

@@ -16,7 +16,7 @@
   flex: 1; min-width: 0; min-height: 0; height: auto; max-height: calc(1.45em * 5 + 8px); padding: 4px 0; margin: 0;
   border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; resize: none; field-sizing: content;
   font-size: var(--fs-control); line-height: 1.45; color: var(--v-text); overflow-y: auto; overflow-wrap: anywhere;
-  align-self: center;
+  align-self: center; transition: none;
 }
 .loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input::placeholder { color: var(--v-text-3); opacity: 1; }
 .loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input:read-only { color: var(--v-text-2); cursor: progress; }

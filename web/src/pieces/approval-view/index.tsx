@@ -1,6 +1,6 @@
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useRef, useState, type ReactNode } from 'react';
-import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
+import { Split, List, Row, Empty, Error, Loading, Button, Input, Reader, Meta, Body } from '../../kit';
 import { quotedDecision, folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
 export type { ApprovalSnapshot } from './model';
 
@@ -57,6 +57,21 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
     .reduce<(typeof snapshot.record)[number] | undefined>((last, row) => !last || row.seq > last.seq ? row : last, undefined);
   const attribution = quotedDecision(decision);
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
+  // In a conversation: the same request and the same answer controls on a compact card, built from the kit's reader
+  // parts like a question's (inbox-view ChatQuestion). The whole card, its details and its record are in Approvals.
+  if (inline) return <Reader aria-label={a.ask} data-inline="">
+    <Meta>{a.kind} · {a.state}{a.member && ` · private to ${a.member}`}</Meta>
+    <Body><strong>{a.ask}</strong></Body>
+    <Body quiet>{a.why}</Body>
+    <Body quiet>Allow: {a.ifYes} Deny: {a.ifNo}</Body>
+    {!change && a.changeSummary && <Body>{a.changeSummary}</Body>}
+    {change}
+    {a.problem && <Body>This cannot be allowed as it stands: {a.problem}</Body>}
+    <Meta>Allows {a.kind}: {a.target}</Meta>
+    <Answer key={a.id} approval={a} actions={actions} />
+    {a.decidedBy && <Meta>{attribution ?? 'Answered by '+a.decidedBy}</Meta>}
+    {a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)} · {snapshot.timezone}</Meta>}
+  </Reader>;
   return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
     <section><h3>Why</h3><p>{a.why}</p></section>

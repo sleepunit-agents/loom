@@ -372,3 +372,11 @@ it('says a time briefly: the time alone today, a short date with it on another d
   // A zone the device does not know falls back to the device's own, and a stamp that is no date says nothing.
   expect(briefTime('2026-11-19T20:31:07Z', 'Not/AZone', now)).toMatch(/^(Nov \d+, )?\d{1,2}:31 [AP]M$/); expect(briefTime('never', 'America/Chicago', now)).toBe('');
 });
+it('says an answer under its words as a quiet note, and as the bubble itself when it has no words', async () => {
+  const answered: CommsDetail = { ...detail, messages: [
+    { thread: thread.id, seq: 1, kind: 'answer', sender: 'alice', at: thread.lastAt, words: 'Go ahead', verdict: 'yes' },
+    { thread: thread.id, seq: 2, kind: 'answer', sender: 'alice', at: thread.lastAt, words: null, verdict: 'no' }] };
+  await act(async () => { tree = create(h(CommsView, { snapshot, detail: answered, selected: thread.id, select: vi.fn(), actions: actions() })); });
+  expect(classed('comms-bubble').map(words)).toEqual(['Go ahead', 'Answered No']);
+  expect(classed('comms-delivery').map(words)).toEqual(['Answered Yes']);
+});
