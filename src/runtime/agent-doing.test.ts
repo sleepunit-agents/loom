@@ -203,6 +203,11 @@ it('refuses to read without a rule for every source, and reads in three statemen
     const rules = { ...sqlVisibility(alex, guarded) } as QueryVisibility; delete rules[missing];
     expect(() => new JobSummaries(h.db, () => rules).doing('art')).toThrow(`SQL visibility required for ${missing}`);
   }
+  // A rule that answers with nothing would fall out of the join it guards: that is refused too, not read open.
+  for (const empty of guarded) {
+    const rules = { ...sqlVisibility(alex, guarded), [empty]: () => undefined } as unknown as QueryVisibility;
+    expect(() => new JobSummaries(h.db, () => rules).doing('art')).toThrow(`SQL visibility required for ${empty}`);
+  }
   const statements: string[] = [], prepare = h.client.prepare.bind(h.client);
   h.client.prepare = ((source: string) => { statements.push(source); return prepare(source); }) as typeof h.client.prepare;
   h.as(alex).doing('art');

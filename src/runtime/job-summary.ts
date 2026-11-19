@@ -85,7 +85,12 @@ export class JobSummaries {
   private rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
     const rule = this.visibility()[name];
     if (typeof rule !== 'function') throw new Error(`SQL visibility required for ${name}`);
-    return rule;
+    // A rule that answered with nothing would be dropped from the join it guards, leaving it open: refuse, as allowed() does.
+    return ((columns: Parameters<typeof rule>[0]) => {
+      const answer = rule(columns);
+      if (!is(answer, SQL)) throw new Error(`SQL visibility required for ${name}`);
+      return answer;
+    }) as typeof rule;
   }
   /** What the agent is doing now, for its card: its current jobs, each said by where it runs, and the tasks
    * it has in progress.
@@ -102,6 +107,7 @@ export class JobSummaries {
     if (!Number.isInteger(limit) || limit < 1 || limit > doingMost) throw new Error(`Doing limit must be 1–${doingMost}`);
     const allowed = this.allowed(), from = alias(jobs, 'doing_handed_from');
     const fromRule = this.visibility().jobs!(getTableColumns(from));
+    if (!is(fromRule, SQL)) throw new Error('SQL visibility required for jobs');
     const seen = { conversations: this.rule('conversations'), boxes: this.rule('boxes'), tasks: this.rule('tasks'), triggers: this.rule('triggers') };
     this.observed?.();
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
