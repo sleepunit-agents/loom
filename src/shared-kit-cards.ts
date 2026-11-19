@@ -2,21 +2,21 @@ import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { projectState } from './core/data/project-in-use.js';
-import { agents, agentPeople, projectMembers, agentKits, agentKitMembers, agentKitProjects, agentKitOutsidePeople, bridgePeople, members, projectOutsidePeople } from './core/data/schema.js';
+import { agents, agentPeople, bridgeConnections, projectMembers, agentKits, agentKitMembers, agentKitProjects, agentKitOutsidePeople, bridgePeople, members, projectOutsidePeople } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
 import { hasControlCharacter } from './core/line-name.js';
 import { kitTools } from './runtime/kit-manifest.js';
-import { householdId } from './slug.js';
+import { householdId, projectId } from './slug.js';
 
 const addressPart = z.string().min(1).max(200).refine(s => s.trim() === s && !hasControlCharacter(s));
-const outside = z.object({platform:z.enum(['slack','discord']),workspace:addressPart,user:addressPart}).strict();
+const outside = z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:addressPart,user:addressPart}).strict();
 const kit = {agent:householdId,kit:householdId};
-const recipient = z.union([z.object({member:householdId}).strict(), z.object({project:householdId}).strict(), outside]);
+const recipient = z.union([z.object({member:householdId}).strict(), z.object({project:projectId}).strict(), outside]);
 export const kitChanges = {
   kit:z.object({...kit,tools:kitTools.nullable()}).strict(),
   kitGrant:z.object({...kit,to:recipient,grant:z.boolean()}).strict(),
-  projectOutsidePerson:outside.extend({project:householdId,on:z.boolean()}).strict(),
+  projectOutsidePerson:outside.extend({project:projectId,on:z.boolean()}).strict(),
 };
 type Change = {[K in keyof typeof kitChanges]: {change:K,input:z.infer<(typeof kitChanges)[K]>}}[keyof typeof kitChanges];
 

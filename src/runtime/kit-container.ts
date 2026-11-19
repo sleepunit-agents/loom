@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { isHouseSecretAlias, secretValueSize } from '../pieces/secrets/input.js';
+import { SHA256_HEX } from '../core/sha256-hex.js';
 import { saysNoSecret } from './body-secrets.js';
 import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
@@ -51,7 +52,7 @@ async function stdout(socket:Duplex):Promise<Buffer> {
 }
 
 export async function runKitContainer(engine:DockerEngine,input:Invocation):Promise<Buffer> {
-  if (!/^sha256:[0-9a-f]{64}$/.test(input.image)) throw new Error('Kit needs an immutable house image');
+  if (!input.image.startsWith('sha256:') || !SHA256_HEX.test(input.image.slice(7))) throw new Error('Kit needs an immutable house image');
   const path = input.entrypoint;
   if (!path.startsWith(HOUSE_REPOSITORY + '/') || path.slice(1).split('/').some(part=>!part || !/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$/.test(part)))
     throw new Error('Kit program must be inside its house');

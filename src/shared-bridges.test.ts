@@ -1,4 +1,4 @@
-import { grantedKits } from './shared-kit-access.js';
+import { kitAccess } from './shared-kit-access.js';
 import { agentKitMembers, agentKits } from './core/data/schema.js';
 import Database from 'better-sqlite3';
 import { setupCall } from '../test/fixtures/setup-call.js';
@@ -777,12 +777,12 @@ it('forms one job for one asker at admission: the owners\' first, then the other
  // Then the others, the oldest first: Sam wrote before the lodger. One job holds one such person's mail, never two guests' together.
  started=all.admission(pond);
  expect(started).toMatchObject({started:true,behind:true});expect(held(started.job!.id)).toEqual(['sam 1','sam 2']);
- expect(grantedKits(f.db,'art',jobWord(f.db,started.job!)).map(row=>row.kit)).toEqual(['field']);
+ expect(kitAccess(f.db,'art',jobWord(f.db,started.job!)).kits.map(row=>row.kit)).toEqual(['field']);
  expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'sam'}});
  end(started.job!.id);
  started=all.admission(pond);
  expect(started).toMatchObject({started:true});expect(started.behind).toBeFalsy();expect(held(started.job!.id)).toEqual(['lodger 1']);
- expect(grantedKits(f.db,'art',jobWord(f.db,started.job!))).toEqual([]);
+ expect(kitAccess(f.db,'art',jobWord(f.db,started.job!)).kits).toEqual([]);
  expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
 });
 it('sets a guest\'s job aside while no machine has taken it when an owner writes: the owners\' job is formed ahead of it, and a job a machine has taken is left to finish',async()=>{
