@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry','cleanup-week-journal'] as const;
+export const laneFactKinds = ['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry','cleanup-week-journal','mirror-unit-state'] as const;
 export type LaneFact = typeof laneFactKinds[number];
 export const factDirectory = '/var/lib/loom/machine-facts';
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -12,7 +12,11 @@ const alert = z.strictObject({
   at: stamp, kind: alertKind, source: identifier, id: identifier.optional(),
   verdict: z.enum(['real','fixed','false-alarm']).optional(),
 });
+const unitField = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 const schemas = {
+  'mirror-unit-state': z.strictObject({
+    observedAt:stamp,LoadState:unitField,ActiveState:unitField,SubState:unitField,Result:unitField,
+  }),
   'cleanup-week-journal': z.strictObject({
     observedAt:stamp,since:stamp,total:count,
     recent:z.array(z.strictObject({at:stamp,priority:z.number().int().min(0).max(7)})).max(100),

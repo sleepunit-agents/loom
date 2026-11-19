@@ -32,6 +32,7 @@ Use the tracked `scripts/project-lane-machine-fact.py KIND` outside the worker t
 
 | Kind | Complete input to the publisher | Released evidence |
 | --- | --- | --- |
+| `mirror-unit-state` | As the owner of the mirror service, capture `systemctl --user show --property=Id,LoadState,ActiveState,SubState,Result art-live-sync.service`. | Only the four measured state fields for that fixed service. User-scope systemctl in the enrolled worker sees its own bus. |
 | `login-expiry` | The publisher reads the single configured Claude account login JSON locally on stdin. Keep that input outside the worker. | Only the observation time and refresh expiry as integer Unix seconds. Withdraw the projection when the source is unavailable. |
 | `mirror-freshness` | Fresh stdout of Art's `bin/taskstore-mirror-check` from its live checkout. A stale result exits 1 and still prints the measured counts. A failed lookup supplies no counts. | Highest tracked and live task numbers. The groom threshold is live minus tracked greater than 15. |
 | `alert-ledger` | Art's complete append-only `.alerts/ledger.jsonl`, including the previous 30 days | Each entry's timestamp, kind, source, optional alert ID and verdict. Up to 100 records in 26 hours. tuneSources lists recent sources whose normalized false-alarm cause recurred in 30 days. Detail, messages, causes, and facts stay private. |
