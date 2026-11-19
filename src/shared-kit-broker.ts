@@ -65,7 +65,8 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
       const first=ordered[0];
       if (!first) return c.json({tools:[]});
       // Even one full tool can contain 64 long fixed arguments. Page by one complete definition.
-      return c.json({tools:[first],...(ordered.length>1?{next:{kit:first.kit,tool:first.tool.name}}:{})});
+      const {kit,tool,definition}=first;
+      return c.json({tools:[{kit,tool,definition}],...(ordered.length>1?{next:{kit,tool:tool.name}}:{})});
     }
     if (operation==='finish') {
       const result=finish.safeParse(raw);
