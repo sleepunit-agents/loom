@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'node:fs';
-import { Actions, Button, Empty, Fact, Facts, Meta, Pager, Reader, Row, Search, Section, Split, Title } from './index';
+import { Actions, Button, Empty, Fact, Facts, Head, Meta, Pager, Reader, Row, Search, Section, Split, Title } from './index';
 
 const draw = renderToStaticMarkup;
 const split = (extra: object = {}) => draw(h(Split, { label: 'Tasks', folders: [{ id: 'open', label: 'Open', count: 3 }], folder: 'open', onFolder() {}, listTitle: 'Open', list: null, reader: null, open: false, onBack() {}, backLabel: 'Back', ...extra }));
@@ -75,4 +75,9 @@ it('opening an item leaves the rows mounted and where they were scrolled; only a
     expect(tree.root.findByProps({ className: 'loom-split__rows' }).props['aria-busy']).toBe(true);
     await act(async () => tree.unmount());
   } finally { globalThis.ResizeObserver = had; }
+});
+it('heads an item that scrolls under it: something small at the left, the title over its quiet line, the actions at the right', () => {
+  const html = draw(h(Head, { leading: h('i', null), actions: h(Actions, null, h(Button, null, 'More')) }, h(Title, null, 'Pond pump'), h(Meta, null, 'with Art')));
+  expect(html).toMatch(/^<header class="loom-reader__head "><i><\/i><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Pond pump<\/h2><p class="loom-reader__meta ">with Art<\/p><\/div><div class="loom-kit-actions "><button/);
+  expect(draw(h(Head, null, h(Title, null, 'Bare')))).toBe('<header class="loom-reader__head "><div class="loom-reader__head-words"><h2 class="loom-reader__title ">Bare</h2></div></header>');
 });

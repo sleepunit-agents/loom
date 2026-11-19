@@ -6,7 +6,7 @@ import type { InboxItem } from '../inbox-view/model';
  * replaced question cannot receive an answer from an old card or retry.
  * It is drawn as the same answer section every Inbox item has; a task takes
  * Yes, No or words, and is closed in Tasks, so it offers no Mark done or Dismiss. */
-export function TaskQuestionAnswer({item}: {item: InboxItem}) {
+export function TaskQuestionAnswer({item,compact}: {item: InboxItem;compact?:boolean}) {
   const submit = useTaskCommandSubmitter();
   const [busy,setBusy] = useState(false), [error,setError] = useState('');
   const locked = useRef(false);
@@ -19,7 +19,7 @@ export function TaskQuestionAnswer({item}: {item: InboxItem}) {
     finally {locked.current=false;setBusy(false);}
   };
   return <>
-    <AnswerSection answers={item.answers} busy={busy} onAnswer={(verdict, words) => { if (verdict === 'yes' || verdict === 'no' || verdict === 'words') void answer(verdict, words); }}/>
+    <AnswerSection answers={item.answers} busy={busy} compact={compact} onAnswer={(verdict, words) => { if (verdict === 'yes' || verdict === 'no' || verdict === 'words') void answer(verdict, words); }}/>
     {error&&<p role="alert">{error}</p>}
   </>;
 }

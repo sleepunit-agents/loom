@@ -19,6 +19,13 @@
 .loom-reader__section > h3 { margin: 0; }
 .loom-reader__body { color: var(--v-text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .loom-reader__body[data-quiet] { color: var(--v-text-2); font-size: var(--fs-small); }
+/* A head that stays put over what scrolls (the site's .cm__head): a small face, the title over its quiet line, the actions. */
+.loom-reader__head { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 10px 14px; border-bottom: 1px solid var(--v-border); }
+.loom-reader__head-words { display: grid; flex: 1; gap: 1px; min-width: 0; }
+.loom-reader__head .loom-reader__title { font-size: 16px; }
+.loom-reader__head .loom-kit-chip { vertical-align: 1px; }
+.loom-reader__head > .loom-kit-actions { flex: none; justify-content: flex-end; }
+@media (prefers-contrast: more) { .loom-reader__head { border-bottom-color: var(--v-edge); } }
 /* The last, quietest line of a reader: a setting about the item rather than part of it (the Inbox's Notify). */
 .loom-reader__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--v-border); font-size: var(--fs-small); color: var(--v-text-3); }
 /* A reference (a task id, a pull request): small and quiet; a link or a button when the app can open it. */

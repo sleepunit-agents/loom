@@ -13,15 +13,21 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Re
   if (f.status === 'live' && query.includes('query CommsThread(')) {
     if (f.thread !== 'live') return { status: f.thread };
     if (f.heldThread && options?.keep) return { status: 'live', data: f.lastThread, settling: true };
-    return { status: 'live', data: f.lastThread = { commsThread: f.data.commsThread, commsMessages: f.data.commsMessages, commsRefs: f.data.commsRefs } };
+    // A page of messages is the ones before its cursor, as the server answers it.
+    const before = variables.before as number | null, rows = f.data.commsMessages as { seq: number }[] | undefined;
+    return { status: 'live', data: f.lastThread = { commsThread: f.data.commsThread, commsMessages: before == null ? rows : rows?.filter(row => row.seq < before), commsRefs: f.data.commsRefs } };
   }
   if (f.status === 'live' && query.includes('query Comms(')) return f.hold && options?.keep ? { status: 'live', data: f.last, settling: true } : { status: 'live', data: f.last = { ...f.data } };
   return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {taskQuestions:((f.data.taskQuestions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11),approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { conversationMadeChanges:((f.data.sourceMembership ?? f.data.madeChanges ?? []) as {id:string}[]).filter(row=>row.id===variables.id),changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
-vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
-  (props: { children?: ReactNode; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown; listBusy?: boolean }) => name === 'Split'
-    ? h(name, { folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
+vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','NoteRow','Empty','Error','Loading','Button','LinkButton','Input','Textarea','Actions','Search','Pager','Reader','Head','Meta','Title','Facts','Fact','Section','Body','Foot','Chips','Chip'].map(name => [name,
+  (props: { children?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown; listBusy?: boolean; icon?: ReactNode }) => name === 'Split'
+    ? h(name, { folders: props.folders, onFolder: props.onFolder, listBusy: props.listBusy }, props.listAction, props.listTop, props.list, props.reader, props.search)
+    // (A row's icon is an element: drawn as a child, so the tree still prints.)
+    : name === 'Row' ? h(name, { ...props, icon: undefined }, props.icon)
+    // (So is what a head carries at its sides.)
+    : name === 'Head' ? h('header', null, (props as { leading?: ReactNode }).leading, props.children, (props as { actions?: ReactNode }).actions) : h(name, props, props.children)])));
 import CommsApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -41,22 +47,32 @@ function setup() {
 }
 const named = (label: string) => tree.root.findAllByType('Button').find((b: { props: { children: ReactNode } }) => Children.toArray(b.props.children).join('') === label);
 const text = () => JSON.stringify(tree.toJSON());
+const press = async (label: string) => act(async () => { named(label).props.onClick(); });
+/** Send is the bar's submit button: sending is submitting its form. */
+const send = async () => act(async () => { void tree.root.findByType('form').props.onSubmit({ preventDefault() {} }); });
+const pager = (label: string) => tree.root.findAllByType('Pager').find((node: { props: { label: string } }) => node.props.label === label);
+type Drawn = { children: (Drawn | string)[] };
+const words = (node: Drawn): string => node.children.map(child => typeof child === 'string' ? child : words(child)).join('');
+/** A piece of work: its row (the kit's), by a word of its title. */
+const work = (word: string) => tree.root.findByProps({ className: 'comms__work' }).findAllByType('Row').find((node: { props: { title: string } }) => node.props.title.includes(word));
+const drawnMessages = () => tree.root.findAll((node: { type: unknown; props: { className?: string } }) => node.type === 'div' && node.props.className === 'comms-msg').length;
 async function draw(path = '/p/comms-preview/thread/pump', go = vi.fn()) { await act(async () => { tree = create(h(CommsApp, { path, go })); }); return go; }
 it('mounts the shared Comms app, records reads and sends through authenticated shared HTTP operations', async () => {
   setup(); await draw(); expect(text()).toContain('PRIVATE REPLY'); expect(f.records).not.toHaveBeenCalled();
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'read', seq: 1 });
-  const input = tree.root.findAllByType('Textarea').find((n: { props: { 'aria-label': string } }) => n.props['aria-label'] === 'Message art');
+  const input = tree.root.findAllByType('Textarea').find((n: { props: { 'aria-label': string } }) => n.props['aria-label'] === 'Message Art');
   await act(async () => { input.props.onChange({ target: { value: 'Find a pump' } }); });
-  await act(async () => { named('Send').props.onClick(); });
+  await send();
   expect(f.call).toHaveBeenCalledWith('comms.send', { thread: 'th:pump', words: 'Find a pump', clientId: expect.any(String) });
   expect(fetch).toHaveBeenCalledWith('/api/comms/send', expect.objectContaining({ method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: expect.any(String) }));
-  await act(async () => { named('Pin').props.onClick(); });
+  await press('More'); await press('Pin');
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'pin', pinned: true });
 });
 it('creates conversations for owned agents without passing a member identity', async () => {
   setup(); f.data.commsThread = null; delete f.data.commsMessages; delete f.data.commsRefs; const go = await draw('/p/comms-preview');
-  expect(named('Chat with art')).toBeDefined(); expect(named('Chat with bob')).toBeUndefined();
-  await act(async () => { named('Chat with art').props.onClick(); });
+  // One agent of their own: New starts the conversation with it. Nobody else's agent is offered.
+  expect(named('New').props['aria-label']).toBe('New conversation with Art'); expect(text()).not.toContain('bob');
+  await press('New');
   expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/) });
   expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/p\/comms-preview\/thread\//));
 });
@@ -65,13 +81,17 @@ it('uses server counts, search and thread/message pages without caching old priv
   f.data.commsMessages = Array.from({ length: 51 }, (_, n) => message({ seq: n+1 }));
   await draw(); expect(tree.root.findAllByType('Row')).toHaveLength(50);
   expect(tree.root.findByType('Split').props.folders[0].count).toBe(120);
-  await act(async () => { named('Next page').props.onClick(); }); expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables.offset).toBe(50);
-  await act(async () => { tree.root.findByType('Input').props.onChange({ target: { value: 'needle' } }); });
+  expect(pager('Conversation pages').props).toMatchObject({ hasPrevious: false, hasNext: true });
+  await act(async () => { pager('Conversation pages').props.next(); }); expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables.offset).toBe(50);
+  await act(async () => { tree.root.findByType('Search').props.onChange('needle'); });
   expect(f.requests.findLast(row => row.query.includes('query Comms('))?.variables).toMatchObject({ search: 'needle', offset: 0 });
-  await act(async () => { named('Earlier messages').props.onClick(); });
-  expect(f.requests.findLast(row => row.query.includes('query CommsThread('))?.variables.before).toBe(2);
-  await act(async () => { named('Latest messages').props.onClick(); });
-  expect(f.requests.findLast(row => row.query.includes('query CommsThread('))?.variables.before).toBeNull();
+  // Earlier messages are a page of their own, read above the newest ones: the thread's own reading never moves.
+  const threadReads = () => new Set(f.requests.filter(row => row.query.includes('query CommsThread(')).map(row => row.variables.before));
+  expect(threadReads()).toEqual(new Set([null])); expect(drawnMessages()).toBe(50);
+  await press('Earlier messages');
+  expect(threadReads()).toEqual(new Set([null, 2])); expect(named('Latest messages')).toBeUndefined();
+  // The page before 2 is message 1 alone: it is drawn above, the newest fifty stay, and there is nothing earlier to ask for.
+  expect(drawnMessages()).toBe(51); expect(named('Earlier messages')).toBeUndefined();
 });
 it('withdraws still-retained private words and drafts when the read is denied', async () => {
   setup(); await draw(); expect(text()).toContain('PRIVATE REPLY');
@@ -111,7 +131,9 @@ it('renders actual source and mentioned task work and withdraws it on current vi
   setup(); f.data.commsRefs = [{ ref: 't-12', messageSeq: 1 }];
   f.data.sourceTasks = [{ id: 't-10', title: 'SOURCE TASK', status: 'open' }];
   f.data.mentionedTasks = { 't-12': [{ id: 't-12', title: 'MENTIONED TASK', status: 'in_progress' }] };
-  const go = await draw(); expect(text()).toContain('SOURCE TASK'); expect(text()).toContain('MENTIONED TASK'); expect(text()).toContain('in_progress');
+  const go = await draw(); expect(text()).toContain('SOURCE TASK'); expect(text()).toContain('MENTIONED TASK');
+  // A task's stored state is said in plain words.
+  expect(work('MENTIONED TASK').props.status).toBe('t-12 · in progress'); expect(text()).not.toContain('in_progress');
   f.data.sourceTasks = [{ id: 't-10', title: 'UPDATED TASK', status: 'closed' }];
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
   expect(text()).toContain('UPDATED TASK'); expect(text()).toContain('closed'); expect(text()).not.toContain('SOURCE TASK');
@@ -123,24 +145,25 @@ it('renders actual source and mentioned task work and withdraws it on current vi
 it('pages source work beyond fifty visible tasks', async () => {
   setup(); f.data.sourceTasks = Array.from({ length: 51 }, (_, n) => ({ id: `t-${n}`, title: `SOURCE-${n}`, status: 'open' }));
   await draw(); expect(text()).toContain('SOURCE-49'); expect(text()).not.toContain('SOURCE-50');
-  const next = tree.root.findAllByType('button').find((node: { props: { children: ReactNode } }) => node.props.children === 'Next work');
+  expect(pager('Conversation work pages').props).toMatchObject({ hasPrevious: false, hasNext: true });
   f.data.sourceTasks = [{ id: 't-50', title: 'SOURCE-50', status: 'open' }];
-  await act(async () => { next.props.onClick(); });
+  await act(async () => { pager('Conversation work pages').props.next(); });
   expect(f.requests.findLast(row => row.query.includes('ConversationWork('))?.variables.offset).toBe(50);
   expect(text()).toContain('SOURCE-50'); expect(text()).not.toContain('SOURCE-49');
 });
 it('archives, restores and confirms deletion through shared operations', async () => {
   setup(); const go = await draw();
-  await act(async () => { named('Archive').props.onClick(); });
+  await press('More'); await press('Archive');
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'archive', archived: true });
   f.data.commsThread = thread({ archivedAt: '2026-11-14T18:00:01Z' });
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
   expect(named('Send')).toBeUndefined();
-  await act(async () => { named('Restore').props.onClick(); });
+  expect(text()).toContain('This conversation is archived. Restore it from More to write here.');
+  await press('More'); await press('Restore');
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'archive', archived: false });
-  await act(async () => { named('Delete').props.onClick(); });
+  await press('More'); await press('Delete');
   expect(f.call).not.toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' });
-  await act(async () => { named('Delete thread').props.onClick(); });
+  await press('Delete thread');
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' }); expect(go).toHaveBeenCalledWith('/p/comms-preview');
 });
 
@@ -156,16 +179,16 @@ it('keeps hidden-tile arrivals unread and marks the latest reply when the tile b
 });
 it('keeps replies unread while scrolled into earlier messages and reads them on following down', async () => {
   setup(); const listeners = new Map<string,()=>void>();
-  const scroll = {scrollTop:800,scrollHeight:1000,clientHeight:200,querySelector:()=>({}),addEventListener:(name:string,fn:()=>void)=>listeners.set(name,fn),removeEventListener:(name:string)=>listeners.delete(name)};
+  const scroll = {scrollTop:800,scrollHeight:1000,clientHeight:200,firstElementChild:{},addEventListener:(name:string,fn:()=>void)=>listeners.set(name,fn),removeEventListener:(name:string)=>listeners.delete(name)};
   vi.stubGlobal('ResizeObserver',class {observe() {} disconnect() {}});
   const go = vi.fn();
-  await act(async () => { tree = create(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}),{createNodeMock:(node:{type:string})=>node.type==='article'?{closest:()=>scroll}:null}); });
+  await act(async () => { tree = create(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}),{createNodeMock:(node:{props:Record<string,unknown>})=>node.props['data-comms-scroll']===''?scroll:null}); });
   f.call.mockClear(); f.data.commsThread = thread({readSeq:1});
   await act(async () => { scroll.scrollTop=0; listeners.get('scroll')?.(); });
   f.data.commsMessages = [message(),message({seq:2,words:'UNSEEN AT BOTTOM'})];
   await act(async () => { tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go})); });
   expect(f.call).not.toHaveBeenCalledWith('comms.change',{thread:'th:pump',change:'read',seq:2});
-  await act(async () => { named('1 new messages').props.onClick(); });
+  await press('1 new message');
   expect(f.call).toHaveBeenCalledWith('comms.change',{thread:'th:pump',change:'read',seq:2});
 });
 it('shows a current mentioned pull request card, updates it and withdraws denied metadata', async () => {
@@ -238,30 +261,73 @@ it('labels source tasks as Made here and pages a change-only source list without
  f.data.mentionedChanges=Object.fromEntries(Array.from({length:51},(_,n)=>[`github:house/loom#${n+1}`,[{id:`github:house/loom#${n+1}`,title:`CHANGE TITLE ${n+1}`,state:'open',checks:'passing',review:'approved',waitingOn:'agent',draft:false}]]));
  f.data.commsRefs=[{ref:'github:house/loom#51',messageSeq:1}];
  await draw();
- expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('SOURCE TASK LABEL')).props.children).toContain(' · Made here');
+ expect(work('SOURCE TASK LABEL').props.status).toBe('t-90 · open · Made here');
  expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');expect(JSON.stringify(tree.root.findByProps({'aria-label':'Conversation change github:house/loom#51'}).findAllByType('p').map((node:{props:{children:ReactNode}})=>node.props.children))).toContain('Made here');
- const next=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>node.props.children==='Next work');expect(next.props.disabled).toBe(false);
+ expect(pager('Conversation work pages').props).toMatchObject({hasNext:true,disabled:false});
  f.data.sourceTasks=[];f.data.madeChanges=[{id:'github:house/loom#51'}];
- await act(async()=>{next.props.onClick();});
+ await act(async()=>{pager('Conversation work pages').props.next();});
  expect(f.requests.findLast(row=>row.query.includes('ConversationWork('))?.variables.offset).toBe(50);expect(text()).not.toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
 });
 
 it('keeps a mentioned source task labelled Made here while the source list is on a different page',async()=>{
  setup();f.data.sourceTasks=[];f.data.commsRefs=[{ref:'t-77',messageSeq:1}];f.data.mentionedTasks={'t-77':[{id:'t-77',title:'MENTIONED SOURCE',status:'open',sourceKind:'conversation',sourceId:'cv-pump'}]};
- await draw();expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('MENTIONED SOURCE')).props.children).toContain(' · Made here');
+ await draw();expect(work('MENTIONED SOURCE').props.status).toBe('t-77 · open · Made here');
 });
 
 it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
  setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TO OPEN',status:'open'}];f.data.commsRefs=[{ref:'t-91',messageSeq:1}];f.data.mentionedTasks={'t-91':[{id:'t-91',title:'MENTION TO OPEN',status:'open'}]};
  const go=await draw();
  for(const [label,id] of [['SOURCE TO OPEN','t-90'],['MENTION TO OPEN','t-91']]){
-  const button=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes(label));await act(async()=>{button.props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
+  await act(async()=>{work(label).props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
  }
 });
 
 it('shows the exact setting proposal to its private conversation member while the owner answer waits in a different Inbox',async()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.owner=false;f.data.questions=[];f.data.commsMessages=[];f.data.ordinaryApprovals=[{id:'a-tempo'}];
  await draw();expect(text()).toContain('Tempo settings change');expect(text()).toContain('Before');expect(text()).toContain('After');expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();
+});
+
+it('shows an open question once: in the stream where it was asked, or in the one block over the message bar', async () => {
+  setup(); f.data.owner = true;
+  const item = (id: string, body: string, extra = {}) => ({ id, source: 'thread', thread: 'th:pump', state: 'waiting', answers: 'yes-no', at: '2026-11-14T18:00:00Z', read: true, refs: [], body: { words: body, ifYes: 'Art orders it.', ifNo: 'Art looks again.' }, bodyKeepUntil: new Date(Date.now()+60000).toISOString(), ...extra });
+  // One question was asked in a message; the conversation's own list of questions names it too, and one more.
+  f.data.commsMessages = [message(), message({ seq: 2, kind: 'ask', inboxItem: 'in-ask' })];
+  f.data.questions = [{ id: 'in-ask' }, { id: 'in-other' }];
+  f.data.items = { 'in-ask': item('in-ask', 'ASKED IN THE STREAM'), 'in-other': item('in-other', 'ASKED ELSEWHERE') };
+  f.data.commsThread = thread({ working: false });
+  const go = await draw();
+  const count = (needle: string) => text().split(needle).length - 1;
+  expect(count('ASKED IN THE STREAM')).toBe(1); expect(count('ASKED ELSEWHERE')).toBe(1);
+  // The one in the stream is inside the messages; the other is in the block named for what it is, after them and before the bar.
+  expect(tree.root.findByProps({ 'data-comms-scroll': '' }).findAllByType('Reader').map(words).join(' ')).toContain('ASKED IN THE STREAM');
+  const block = () => tree.root.findByProps({ className: 'comms__waiting' });
+  expect(block().findByType('Section').props.label).toBe('Waiting on you');
+  expect(block().findAllByType('Reader')).toHaveLength(1);
+  expect(tree.root.findByProps({ className: 'comms__work' }).findAllByType('Reader')).toHaveLength(0);
+  const order = tree.root.findByProps({ className: 'comms__body' }).children.map((child: { props: { className: string } }) => child.props.className);
+  expect(order).toEqual(['comms__stream', 'comms__waiting', 'comms__work', 'comms__compose']);
+  // A compact card: the question, what Yes and No do in one line, two answers and the way to the whole item.
+  const card = block().findByType('Reader');
+  expect(words(card)).toBe('ASKED ELSEWHEREYes: Art orders it. No: Art looks again.AllowDenyOpen in Inbox');
+  expect(card.findAllByType('Button')).toHaveLength(2); expect(card.findAllByType('select')).toHaveLength(0); expect(card.findAllByType('Input')).toHaveLength(0);
+  await act(async () => { block().findByType('LinkButton').props.onClick(); });
+  expect(go).toHaveBeenCalledWith('/p/inbox-preview/ask/in-other');
+  // No pager under one page of questions (the kit's Pager draws nothing then).
+  expect(pager('Question pages').props).toMatchObject({ hasPrevious: false, hasNext: false });
+  // The thread's head says it waits on this person, as nothing else is going on in it.
+  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Art · Waiting on you'); expect(text()).not.toContain('Newer questions'); expect(text()).not.toContain('Older questions');
+});
+
+it('says times in the household\'s zone, briefly, and names an agent as the shared directory does', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-14T19:00:00Z')); setup();
+  f.data.deskTime = { at: Date.now(), timezone: 'Asia/Tokyo' };
+  f.data.memoryPeopleAccess = { directory: true }; f.data.memoryPeople = [{ id: 'commons:art', slug: 'art', agent: null, name: 'Arthur', kind: 'agent' }];
+  await draw();
+  // 18:00 UTC is three in the morning in Tokyo, the same day there as now: the time alone, with no zone's name.
+  expect(tree.root.findAllByType('time').map((node: Drawn) => words(node))).toEqual(['3:00 AM']);
+  expect(text()).not.toContain('Asia/Tokyo'); expect(text()).not.toContain(' CT');
+  expect(tree.root.findByType('Textarea').props['aria-label']).toBe('Message Arthur'); expect(tree.root.findByType('Row').props.meta).toBe('Arthur');
+  expect(words(tree.root.findByType('header').findByType('Meta'))).toBe('with Arthur · Working');
 });
 
 // Only the part that changes is replaced: opening a thread is the reader's business, another folder, search or page the list's.
@@ -275,7 +341,7 @@ it('opening a thread leaves the list, counts, search and pages as they were, and
   f.thread = 'loading';
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/filter', go })); });
   expect(titles()).toEqual(rows); expect(tree.root.findByType('Split').props).toMatchObject({ folders, listBusy: undefined });
-  expect(tree.root.findByType('Input').props.disabled).toBe(false); expect(named('Previous page').props.disabled).toBe(true);
+  expect(tree.root.findByType('Search').props.disabled).toBe(false); expect(pager('Conversation pages').props).toMatchObject({ disabled: false, hasPrevious: false });
   expect(asked('Comms')).toEqual(list); expect(asked('Comms')?.variables).toMatchObject({ selected: false });
   expect(asked('CommsThread')).toMatchObject({ variables: { id: 'th:filter', before: null }, options: { keep: true, pause: false } });
   expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(named('Send')).toBeUndefined();
@@ -283,7 +349,7 @@ it('opening a thread leaves the list, counts, search and pages as they were, and
   f.thread = 'live'; f.heldThread = true;
   f.lastThread = { commsThread: thread(), commsMessages: [message()], commsRefs: [] };
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/filter', go })); });
-  expect(text()).not.toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined(); expect(named('Pin')).toBeUndefined();
+  expect(text()).not.toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined(); expect(named('More')).toBeUndefined();
   expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(titles()).toEqual(rows); expect(f.call).not.toHaveBeenCalled();
 });
 it('keeps the rows and counts in place while another folder loads, and a thread’s messages while an earlier page loads', async () => {
@@ -294,11 +360,14 @@ it('keeps the rows and counts in place while another folder loads, and a thread�
   await act(async () => { tree.root.findByType('Split').props.onFolder('1'); });
   expect(asked('Comms')).toMatchObject({ variables: { archived: true, offset: 0 }, options: { keep: true } });
   expect(titles()).toEqual(rows); expect(tree.root.findByType('Split').props).toMatchObject({ folders, listBusy: true });
-  expect(tree.root.findByType('Input').props.disabled).toBe(false); expect(tree.root.findAllByType('Loading')).toHaveLength(0);
-  f.heldThread = true;
-  await act(async () => { named('Earlier messages').props.onClick(); });
-  expect(asked('CommsThread')?.variables).toMatchObject({ id: 'th:pump', before: 2 });
-  expect(text()).toContain('PRIVATE REPLY'); expect(tree.root.findAllByType('Loading')).toHaveLength(0); expect(named('Send')).toBeDefined();
+  expect(tree.root.findByType('Search').props.disabled).toBe(false); expect(tree.root.findAllByType('Loading')).toHaveLength(0);
+  // An earlier page is read on its own: while it loads, the one line where it will be says so and every message shown stays.
+  const before = drawnMessages(); f.heldThread = true;
+  await press('Earlier messages');
+  expect(asked('CommsThread')).toMatchObject({ variables: { id: 'th:pump', before: 2 }, options: { keep: true } });
+  expect(text()).toContain('PRIVATE REPLY'); expect(drawnMessages()).toBe(before); expect(named('Send')).toBeDefined();
+  expect(tree.root.findAllByType('Loading').map((node: { props: { label?: string } }) => node.props.label)).toEqual(['Loading earlier messages…']);
+  expect(f.requests.filter(row => row.query.includes('query CommsThread(')).at(-2)?.variables).toMatchObject({ id: 'th:pump', before: null });
   // The moment the feed fails, everything kept goes with it.
   f.hold = false; f.heldThread = false; f.status = 'offline';
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go: vi.fn() })); });
