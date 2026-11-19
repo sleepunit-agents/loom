@@ -84,3 +84,13 @@
 [data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar:not([data-peek]){transform:translateY(100%);opacity:0;visibility:hidden;pointer-events:none}
 @media(prefers-reduced-motion:reduce){.next-rail,.next-dock-bar{transition:none!important}}
 [data-motion=reduce] .next-rail,[data-motion=reduce] .next-dock-bar{transition:none!important}
+
+/* The app switcher (Ctrl+`): the launcher's tiles, centred, with the one a release lands on marked. */
+.next-switcher{position:fixed;inset:0;z-index:80;margin:auto;width:fit-content;height:fit-content;max-width:min(720px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:16px;background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 55%,transparent),0 12px 40px #0006;animation:next-in .12s ease-out}
+.next-switcher .next-switch-item{gap:8px;padding:12px 4px;cursor:pointer}
+.next-switcher .next-switch-item[aria-selected=true]{background:color-mix(in srgb,var(--t) 16%,transparent);box-shadow:inset 0 0 0 2px var(--t)}
+.next-switch-name{max-width:100%;font:600 12.5px var(--font-display);letter-spacing:.03em;overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.next-switcher{animation:none}}
+[data-motion=reduce] .next-switcher{animation:none}
+@media (prefers-contrast:more){.next-switcher .next-switch-item[aria-selected=true]{box-shadow:inset 0 0 0 3px var(--v-text)}}
+[data-contrast=more] .next-switcher .next-switch-item[aria-selected=true]{box-shadow:inset 0 0 0 3px var(--v-text)}
