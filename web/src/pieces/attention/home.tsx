@@ -35,7 +35,7 @@ function HomeCard({ agent, names, needs, state, display, conversations, go }: {
       <a className="desk-home-open" href={page} onClick={open}>Open {agent.name} ›</a>
       <p>{agentStateLine(state,count,needs)}</p>
     </header>
-    <Doing doing={doing} name={agent.name} names={names} go={go} />
+    <Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go} />
     <HomeTalk talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread} all={page} go={go} />
     <HomeComposer agent={agent.id} name={agent.name} reading={conversations} go={go} />
   </section>;

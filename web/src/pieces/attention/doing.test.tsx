@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import { Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
+import { claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Node = { children: Array<Node | string>; props: Record<string, any>; type: unknown };
 const item = (kind: string, fields: Partial<DoingItem> = {}): DoingItem => ({ id: `id-${kind}`, kind, title: null, with: null, place: null, direct: null, ref: null,
@@ -12,10 +12,12 @@ let tree: ReturnType<typeof create> | undefined;
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; });
 const draw = async (doing: DoingReading, props: Record<string, unknown> = {}) => { const go = vi.fn();
   await act(async () => { tree = create(h(Doing, { doing, name: 'Art', go, ...props })); }); return go; };
-const live = (items: DoingItem[], more = 0): DoingReading => ({ status: 'live', items, more });
+const live = (items: DoingItem[], more = 0, claimed = 0): DoingReading => ({ status: 'live', items, more, claimed });
 
 it.each([
-  ['At a terminal on loom · claude · loom', item('terminal', { title: 'loom · claude · loom' })],
+  ['At a terminal on loom · claude · loom', item('terminal', { machine: 'loom', title: 'claude · loom' })],
+  ['At a terminal · claude · loom', item('terminal', { title: 'claude · loom' })],
+  ['At a terminal on loom', item('terminal', { machine: 'loom' })],
   ['At a terminal', item('terminal')],
   ['Talking on Discord with Mark', item('discord', { with: 'mark', direct: 'person', title: 'Discord direct message with mark' })],
   ['Talking on Discord in #pond', item('discord', { place: '#pond', title: 'Discord channel #pond' })],
@@ -45,12 +47,20 @@ it('takes a display name where it is given one, and says since when, where and a
   expect(doingMeta(item('job'), now)).toBe('since 2:15 PM');
   expect(doingMeta(item('job', { machine: 'one', state: 'queued' }), now)).toBe('Queued · on one · since 2:15 PM');
   expect(doingMeta(item('job', { state: 'starting' }), now)).toBe('Starting · since 2:15 PM');
-  expect(doingMeta(item('task', { state: 'in_progress' }), now)).toBe('since 2:15 PM');
+  // A task says when it was last touched; a terminal's machine is in its phrase, not said twice.
+  expect(doingMeta(item('task', { state: 'in_progress', ref: 't-7' }), now)).toBe('touched 2:15 PM');
+  expect(doingMeta(item('terminal', { machine: 'loom' }), now)).toBe('since 2:15 PM');
+  // A job in the conversation a task was filed from names the task, quietly.
+  expect(doingMeta(item('loom', { ref: 't-2190', task: 'Order the pump', machine: 'one' }), now)).toBe('t-2190 · Order the pump · on one · since 2:15 PM');
+  // A job nothing has been heard from says so, with its true state.
+  expect(doingMeta(item('job', { state: 'running', quietSince: '2026-11-14T20:15:00.000Z' }), now)).toBe('no word since Nov 14, 2:15 PM');
+  expect(doingMeta(item('job', { state: 'queued', quietSince: '2026-11-14T20:15:00.000Z' }), now)).toBe('Queued · no word since Nov 14, 2:15 PM');
 });
 
 it('shows one quiet line with nothing to show, and no heading or count', async () => {
   await draw(live([]));
   expect(words(tree!.toJSON() as Node)).toBe('Nothing right now.');
+  expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
   expect(tree!.root.findAllByType('ul')).toHaveLength(0);
   expect(JSON.stringify(tree!.toJSON())).not.toMatch(/Runtime jobs|Current jobs|· 0/);
 });
@@ -70,8 +80,26 @@ it('opens what a pill names through go, and leaves a pill with nowhere to go as 
 });
 
 it('reads nothing from a selection that is not live or not whole', () => {
-  expect(doingReading({ status: 'loading' })).toEqual({ status: 'loading', items: [], more: 0 });
-  expect(doingReading({ status: 'denied', data: { agentDoing: { items: [item('job')], more: 0 } } })).toEqual({ status: 'denied', items: [], more: 0 });
-  expect(doingReading({ status: 'live', data: { agentDoing: null } })).toEqual({ status: 'offline', items: [], more: 0 });
-  expect(doingReading({ status: 'live', data: { agentDoing: { items: [item('job')], more: 1 } } })).toMatchObject({ status: 'live', more: 1, items: [{ kind: 'job' }] });
+  expect(doingReading({ status: 'loading' })).toEqual({ status: 'loading', items: [], more: 0, claimed: 0 });
+  expect(doingReading({ status: 'denied', data: { agentDoing: { items: [item('job')], more: 0 } } })).toEqual({ status: 'denied', items: [], more: 0, claimed: 0 });
+  expect(doingReading({ status: 'live', data: { agentDoing: null } })).toEqual({ status: 'offline', items: [], more: 0, claimed: 0 });
+  expect(doingReading({ status: 'live', data: { agentDoing: { items: [item('job')], more: 1, claimed: 52 } } })).toMatchObject({ status: 'live', more: 1, claimed: 52, items: [{ kind: 'job' }] });
+});
+
+it('says the tasks an agent has only claimed in one quiet line under the pills, opening Tasks on them, and never counts them as more', async () => {
+  const go = await draw(live([item('job', { title: 'Rebuild' })], 0, 54), { agent: 'art/1' });
+  const line = tree!.root.findByProps({ className: 'desk-doing-claimed' });
+  expect(words(line)).toBe('54 tasks in progress ›'); expect(line.props.href).toBe('/p/tasks-preview/?folder=progress&assignee=art%2F1');
+  expect(claimedPath('art')).toBe('/p/tasks-preview/?folder=progress&assignee=art');
+  const preventDefault = vi.fn(); await act(async () => line.props.onClick({ button: 0, preventDefault }));
+  expect(preventDefault).toHaveBeenCalled(); expect(go).toHaveBeenCalledWith('/p/tasks-preview/?folder=progress&assignee=art%2F1');
+  expect(JSON.stringify(tree!.toJSON())).not.toContain(' more');
+  // With no pill at all the line still stands, under "Nothing right now."; one task is singular.
+  await act(async () => tree!.update(h(Doing, { doing: live([], 0, 1), name: 'Art', agent: 'art', go })));
+  expect(JSON.stringify(tree!.toJSON())).toContain('Nothing right now.'); expect(words(tree!.root.findByProps({ className: 'desk-doing-claimed' }))).toBe('1 task in progress ›');
+  // None, or a compact card (the rail, a folded card): no line.
+  await act(async () => tree!.update(h(Doing, { doing: live([item('job')], 0, 0), name: 'Art', agent: 'art', go })));
+  expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
+  await act(async () => tree!.update(h(Doing, { doing: live([item('job')], 0, 54), name: 'Art', agent: 'art', go, compact: true })));
+  expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
 });

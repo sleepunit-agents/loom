@@ -19,8 +19,12 @@ export interface TasksAppProps {
 }
 export default function TasksApp({ path: shellPath, go, questionFor = '', conversation, openConversation, submit, people = [], projects = [] }: TasksAppProps = {}) {
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/tasks-preview' : location.pathname);
-  const path = (shellPath ?? localPath).split('?')[0];
-  const base = path.split('/task/')[0];
+  const [whole, search = ''] = (shellPath ?? localPath).split('?');
+  // The path may ask for a folder and one agent's tasks (Home's "tasks in progress" does):
+  // /p/tasks-preview/?folder=progress&assignee=art
+  const asked = new URLSearchParams(search), startFolder = asked.get('folder') ?? undefined, startAssignee = asked.get('assignee') ?? undefined;
+  const path = whole;
+  const base = path.split('/task/')[0].replace(/\/$/, '');
   const selected = taskId(path);
   const [action, setAction] = useState<{ action: TaskAction; id?: string }>();
   const snapshot = useDataQuery<TasksSelection>(tasksQuery);
@@ -42,7 +46,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   // A removed row also revokes its draft while the rest of the query stays live.
   useEffect(() => { if (status !== 'live' || (action?.id && !target)) setAction(undefined); }, [status, action?.id, target]);
   return <>
-    <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor}
+    <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor} startFolder={startFolder} startAssignee={startAssignee}
       changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
       links={tasks.flatMap(task => task.taskLinksByTask)} comments={tasks.flatMap(task => task.taskCommentsByTask)}
       ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
