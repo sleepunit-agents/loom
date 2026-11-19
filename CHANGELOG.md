@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Three keyboard shortcuts that work while typing: Ctrl+Space or a double tap of Shift opens and closes the launcher (Ctrl+Shift+Space still does), and holding Control while tapping the key under Escape switches between open apps, most recently used first. The launcher lists them.
 - Owner cards can define pinned kit tools, grant kits to people or projects, and confirm outside project members. Kit calls use the current job’s asker and leave a metadata-only use record. Schema 15 starts existing households with empty kit tables.
 - Tempo can schedule a named house program and record its decision, pass data to a wake, queue a ruled channel post, and keep small state between firings. Schema 16 retains existing schedules and job usage.
 - Loom tracks each model account sign-in by account, machine, harness and place (the directory houses mount, or the machine user's own). The worker reads its machine's sign-in files and a job that got a model reply confirms its sign-in; no model takes part. The owner gets one notice when a sign-in is gone and one when it ends within three days, and placement passes over a machine whose houses are signed out. Workers take `hostLogins` and `loginCheckMs`. Schema 18 starts existing households with no sign-in records.

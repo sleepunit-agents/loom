@@ -5,6 +5,7 @@ import { tintOf } from '../tint';
 import type { RegisteredApp } from './index';
 import '../launcher.css';
 import { launcherSections, launcherFirst } from './launch-list';
+import { onMac, shortcutHints } from './shortcuts';
 
 /** The registrations are the inventory; no legacy Shell or route discovery. */
 export default function Launcher({ apps, open, onOpenChange, launch }: { apps: readonly RegisteredApp[]; open: boolean; onOpenChange(open: boolean): void; launch(id: string): void }) {
@@ -48,6 +49,7 @@ export default function Launcher({ apps, open, onOpenChange, launch }: { apps: r
           </button>)}
         </div></section>)}{!shown.length&&<p className="loom-launcher__none" role="status">No app called “{query.trim()}”.</p>}</div>
         <div className="loom-launcher__foot" aria-hidden="true"><span><kbd>Enter</kbd> opens the first match</span><span><kbd>←↑↓→</kbd> move</span><span><kbd>Esc</kbd> closes</span></div>
+        <p className="loom-launcher__foot loom-launcher__keys">{shortcutHints(onMac()).map(hint=><span key={hint.does}>{hint.keys.map((keys,i)=><span key={keys}>{i>0&&' · '}<kbd>{keys}</kbd></span>)} {hint.does}</span>)}</p>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;

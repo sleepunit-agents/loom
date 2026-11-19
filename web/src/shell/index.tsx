@@ -15,6 +15,8 @@ import { RailContext } from '../desk-rail';
 import { useMemberPreferences } from './member-preferences';
 import { buzz, HapticLabel, useHaptics } from '../haptic';
 import { oneWindowKept } from '../look';
+import { recency, useShortcuts } from './shortcuts';
+import Switcher from './switcher';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -62,6 +64,14 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
+  // Open apps are the route's tiles, shown or minimized: what the dock marks as open. Most recently in front first;
+  // kept here for this visit only, and seeded from the router's own use order for apps not yet seen in front.
+  const [recent,setRecent] = useState<readonly string[]>([]);
+  const recentNow = recency(recent,[...route.tiles].sort((a,b)=>b.used-a.used).map(t=>t.id),focused?.id);
+  if (recentNow !== recent) setRecent(recentNow);
+  // Where the caret was in each app, so landing on an app puts typing back where it was.
+  const carets = useRef(new Map<string,HTMLElement>());
+  const [landed,setLanded] = useState<{id:string}>();
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
   const open = (id: string, tap = false) => {
@@ -70,10 +80,20 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
     if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
   };
+  const keys = useShortcuts({
+    toggleLauncher: () => setLauncher(v => !v),
+    apps: () => ({ order: recentNow, focused: focused?.id }),
+    land: id => { open(id); setLanded({id}); },
+  });
+  // The switcher takes no focus; a landing moves it, once the app is on the page, to where it last was in that app.
+  useEffect(() => {
+    if (!landed) return;
+    const tile = document.querySelector<HTMLElement>(`[data-tile="${landed.id}"]`), caret = carets.current.get(landed.id);
+    (caret?.isConnected && tile?.contains(caret) ? caret : tile)?.focus();
+  },[landed]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable=true]');
-      if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.code==='Space'){e.preventDefault();setLauncher(v=>!v);return;}
       if (!typing && e.key === 'Escape') setLauncher(false);
       if(typing||document.querySelector('[role=dialog],[role=menu]')||!e.altKey) return;
       if(!e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();router.home();return;}
@@ -117,7 +137,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         const app = apps.find(a => a.id === tile.id)!;
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
-          style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={() => { if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
+          style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={e => { if(e.target!==e.currentTarget) carets.current.set(tile.id,e.target as HTMLElement); if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
           <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button,summary'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
             <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon label={app.title} name={app.icon} size="sm" /></button>
             <Button variant="ghost" size="sm" aria-label={`Back in ${app.title}`} disabled={!tile.at} onClick={() => router.travel(tile.id,-1)}>←</Button>
@@ -134,7 +154,8 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       })}
     </div>
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
-    <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
+    <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
+    <Switcher apps={apps} switching={keys.switching} pick={keys.pick} />
     {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}
       onClick={()=>hiding.show('dock',true)} onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('dock',true);}} onContextMenu={e=>setMenu(hiding.menu('dock',e))}><span aria-hidden="true">⌃</span></button>}
     <div className="next-dock-bar loom-dock-bar" data-hide-part="dock" data-peek={hiding.peek.dock||undefined} inert={!phone&&hiding.modes.dock!=='always'&&!hiding.peek.dock}

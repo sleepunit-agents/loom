@@ -264,9 +264,12 @@ be busier and say the same thing twice.
 ## The launcher (t-1925 G)
 
 Every app in one grid, the desktop's own app list (`web/src/launcher.tsx`, its list in `web/src/launch-list.ts`): the
-dock's last key (All apps, nine lit dots) opens it, and so does **Ctrl+Shift+Space** (⌘⇧Space on a Mac). Not ⌘Space or
-Ctrl+Space, the mockup's first pick: ⌘Space is Spotlight's on a Mac and Ctrl+Space switches the input language on
-Windows, Linux and any Mac with two keyboards, so the browser doesn't reliably get either.
+dock's last key (All apps, nine lit dots) opens it, and so do **Ctrl+Space**, a **double tap of Shift**, and the first
+binding, **Ctrl+Shift+Space** (⌘⇧Space on a Mac). Not ⌘Space: it is Spotlight's on a Mac. Ctrl+Space switches the input
+language on some Windows and Linux setups and on a Mac with two keyboards, and the browser never gets it there, which is
+why the other two stay. The bindings are one declared list (`web/src/shell/shortcuts.ts`), with **Ctrl+`** (hold
+Control, tap the key under Escape) to switch between open apps, most recently used first; the launcher's last line
+shows them.
 
 - Sections come from loom's own list: **Work** (the Inbox, Activity, Projects, then each piece that's a place), **People
   & agents** (Comms, each agent, People), **Library** (Knowledge), **System** (pieces whose kind is a setting, and loom's
