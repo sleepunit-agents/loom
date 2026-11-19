@@ -1,3 +1,5 @@
+import { grantedKits } from './shared-kit-access.js';
+import { agentKitMembers, agentKits } from './core/data/schema.js';
 import Database from 'better-sqlite3';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -760,6 +762,8 @@ it('forms one job for one asker at admission: the owners\' first, then the other
  const say=(words:string,fromId:string)=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:pond,toKind:'agent',to:'art',source:'notice',sourceId:words,words,fromKind:'person',fromId}).id;});return id;};
  const held=(job:string)=>f.db.select().from(inbox).where(eq(inbox.job,job)).all().map(item=>item.words).sort();
  const end=(job:string)=>f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,job)).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,job)).run();});
+ f.db.insert(agentKits).values({agent:'art',kit:'field',tools:[]}).run();
+ f.db.insert(agentKitMembers).values({agent:'art',kit:'field',member:'sam'}).run();
  // Two guests and the owner have written, in this order, before any job was formed.
  say('sam 1','sam');say('lodger 1','lodger');say('owner 1','owner');say('sam 2','sam');say('owner 2','owner');
  // Owners first, though a guest wrote before them: the first job holds the owner's mail and nobody else's, on owners' word.
@@ -773,10 +777,12 @@ it('forms one job for one asker at admission: the owners\' first, then the other
  // Then the others, the oldest first: Sam wrote before the lodger. One job holds one such person's mail, never two guests' together.
  started=all.admission(pond);
  expect(started).toMatchObject({started:true,behind:true});expect(held(started.job!.id)).toEqual(['sam 1','sam 2']);
+ expect(grantedKits(f.db,'art',jobWord(f.db,started.job!)).map(row=>row.kit)).toEqual(['field']);
  expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'sam'}});
  end(started.job!.id);
  started=all.admission(pond);
  expect(started).toMatchObject({started:true});expect(started.behind).toBeFalsy();expect(held(started.job!.id)).toEqual(['lodger 1']);
+ expect(grantedKits(f.db,'art',jobWord(f.db,started.job!))).toEqual([]);
  expect(jobWord(f.db,started.job!)).toEqual({woke:'others',person:{kind:'member',id:'lodger'}});
 });
 it('sets a guest\'s job aside while no machine has taken it when an owner writes: the owners\' job is formed ahead of it, and a job a machine has taken is left to finish',async()=>{
