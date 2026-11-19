@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agentKitMembers, agentKitOutsidePeople, agentKitProjects, agentKits, kitUses, projectAgents, projectMembers, projectOutsidePeople } from './core/data/schema.js';
+import { agentKitMembers, agentKitOutsidePeople, agentKitProjects, agentKits, kitUses, projectAgents, projectMembers, projectOutsidePeople, projects } from './core/data/schema.js';
 import { dataValue } from './core/data/subscriptions.js';
 import { directsAgent, isHouseholdOwner, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
@@ -26,8 +26,10 @@ export function kitCatalogQueries(db:DataDatabase, held:(viewer:Viewer)=>boolean
       ...db.select().from(agentKitMembers).where(eq(agentKitMembers.agent,agent)).all(),
       ...db.select().from(agentKitOutsidePeople).where(eq(agentKitOutsidePeople.agent,agent)).all().map(row=>({kit:row.kit,outside:row})),
     ]},
-    projects:{type:new GraphQLList(roster),resolve:agent=>{
-      const ids = [...new Set([
+    projects:{type:new GraphQLList(roster),resolve:(agent,_args,{viewer})=>{
+      const ids = isHouseholdOwner(viewer,sharedSharing(db))
+        ? db.select({id:projects.id}).from(projects).orderBy(asc(projects.id)).all().map(row=>row.id)
+        : [...new Set([
         ...db.select({project:agentKitProjects.project}).from(agentKitProjects).where(eq(agentKitProjects.agent,agent)).all(),
         ...db.select({project:projectAgents.project}).from(projectAgents).where(eq(projectAgents.agent,agent)).all(),
       ].map(row=>row.project))].sort();

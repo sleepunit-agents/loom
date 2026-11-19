@@ -1,6 +1,7 @@
+import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
-import { agentKitProjects, agentKits, projectOutsidePeople, kitUses, memberAgents } from './core/data/schema.js';
+import { agentKitProjects, agentKits, projectOutsidePeople, kitUses, memberAgents, members } from './core/data/schema.js';
 
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse()) await close();});
@@ -31,4 +32,6 @@ it('shows grants, the exact outside roster and filtered history only to the owne
   f.db.delete(memberAgents).run();
   expect(await read(bodyCredentials.body)).toBeNull();
   expect(await read(bodyCredentials.member)).toBeNull();
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'alice')).run();
+  expect((await read(bodyCredentials.member)).projects.map((row:{project:string})=>row.project)).toEqual(['other','pond']);
 });
