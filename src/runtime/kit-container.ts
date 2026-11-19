@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { isHouseSecretAlias, secretValueSize } from '../pieces/secrets/input.js';
-import { KIT_IMAGE } from './kit-manifest.js';
+import { canonicalKitImage, KIT_IMAGE } from './kit-manifest.js';
 import { saysNoSecret } from './body-secrets.js';
 import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
@@ -66,7 +66,7 @@ export async function runKitContainer(engine:DockerEngine,input:Invocation):Prom
   }
   const signal = AbortSignal.any([input.signal,AbortSignal.timeout(30_000)]);
   const inspect = await engine.json('GET','/images/'+input.image+'/json',undefined,signal) as {Id?:string;Config?:{Volumes?:object|null}};
-  if (inspect?.Id !== input.image || !inspect.Config || Object.keys(inspect.Config.Volumes ?? {}).length)
+  if (canonicalKitImage(inspect?.Id) !== input.image || !inspect.Config || Object.keys(inspect.Config.Volumes ?? {}).length)
     throw new Error('Kit needs an immutable house image without volumes');
   const name = 'loom-kit-'+randomUUID(), container = '/containers/'+name;
   let socket:Duplex|undefined;

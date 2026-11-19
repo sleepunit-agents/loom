@@ -5,14 +5,14 @@ import { runKitContainer } from './kit-container.js';
 
 const image = 'sha256:' + 'e'.repeat(64);
 const input = { job:'test-job', box:'test-box', image, entrypoint:'/home/agent/repo/bin/status', argv:['a b'], secrets:{ POND_TOKEN:Buffer.from('fixture-secret') }, signal:new AbortController().signal };
-function fixture(output:string) {
+function fixture(output:string, inspectedImage=image) {
   const calls: {method:string; path:string; body:unknown}[] = [];
   const socket = new Duplex({read(){},write(_chunk, _encoding, done){done();}});
   const engine: DockerEngine = {
     build:vi.fn(), attach:async()=>socket,
     async json(method,path,body) {
       calls.push({method,path,body});
-      if (path.startsWith('/images/')) return {Id:image,Config:{Volumes:null}};
+      if (path.startsWith('/images/')) return {Id:inspectedImage,Config:{Volumes:null}};
       if (path.includes('/create')) return {Id:'a'.repeat(64)};
       if (path.endsWith('/start')) {
         const data = Buffer.from(output), header = Buffer.alloc(8);
@@ -43,4 +43,12 @@ it('rejects mutable image references before contacting the engine',async()=>{
   const {engine,calls}=fixture('');
   await expect(runKitContainer(engine,{...input,image:'house:latest'})).rejects.toThrow('immutable');
   expect(calls).toHaveLength(0);
+});
+
+it('accepts a bare inspect digest only when it identifies the approved image',async()=>{
+  const same=fixture('online',image.slice(7));
+  expect((await runKitContainer(same.engine,input)).toString()).toBe('online');
+  const other=fixture('private','1'.repeat(64));
+  await expect(runKitContainer(other.engine,input)).rejects.toThrow('immutable');
+  expect(other.calls.some(call=>call.path.includes('/create'))).toBe(false);
 });
