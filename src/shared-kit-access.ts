@@ -3,9 +3,10 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { projectRefusal } from './core/data/project-in-use.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agentKitMembers, agentKitOutsidePeople, agentKitProjects, agentKits, agents, bridgeConnections, bridgePeople, jobs,
-  projectMembers, projectOutsidePeople, projects } from './core/data/schema.js';
+  projectMembers, projectOutsidePeople } from './core/data/schema.js';
 import { holds, rules, type OnWord, type Viewer, type Woke } from './policy.js';
 import { kitRoom, stillKnown } from './shared-place-mail.js';
 import { sharedSharing } from './shared-sharing.js';
@@ -44,8 +45,7 @@ export function kitAccess(db: DataDatabase, agent: string, word: Word) {
       .where(and(eq(projectOutsidePeople.platform,platform),eq(projectOutsidePeople.workspace,workspace),
         eq(projectOutsidePeople.user,user))).all();
   }
-  const activeProjects=db.select({id:projects.id}).from(projects).where(and(isNull(projects.removedAt),isNull(projects.retiredAt),
-    inArray(projects.id,roster.map(row=>row.project)))).all().map(row=>row.id).sort();
+  const activeProjects=roster.map(row=>row.project).filter(project=>!projectRefusal(db,project)).sort();
   if (unrestricted) return {kits:all,projects:activeProjects};
   const grants = db.select({kit:agentKitProjects.kit, project:agentKitProjects.project}).from(agentKitProjects)
     .where(and(eq(agentKitProjects.agent,agent),inArray(agentKitProjects.project,activeProjects))).all();
