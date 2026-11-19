@@ -240,7 +240,9 @@ with an inbox target whose `target` is exactly one of a closed list (`wake`, or 
 (`wakeRows`). Tempo lists the wait by its note ("Wake Art when checks finish on acme/app#12"), whoever sees
 the trigger sees the wait, `tempo.stop` cancels it, and the agent's card says "Waiting on checks on
 acme/app#12". `tempo.set` refuses any target that begins like a wake's, in any case: a wake is made only at
-its own door.
+its own door. `tempo.wakeCancel` (the tool `wake_cancel`) cancels a pending wait of the calling agent's own,
+and gives one answer ("That is not one of your waits.") to anything else, whether or not the id names a
+trigger.
 
 The note to self is not on the trigger. A trigger is read by household owners, everybody in its project and
 everybody who has its agent, which is wider than one member's private conversation. The note is kept as a
@@ -251,7 +253,11 @@ handed back with the wake. The title and what is watched are on the trigger, as 
 
 What `tempo.set` asks of the same caller, in the same order: a job that is not working for the agent's
 owners sets none; the caller may set the trigger as it is recorded (`maySetTrigger`); and it reads what is
-watched. Every check that needs no network is made before anything is read outside.
+watched. Every one of these is decided before anything is read outside (`shared-wake.ts`, `allowed`): who is
+calling, the word its job works on, where it is, whether it may set the trigger, how many waits it holds, on
+whose word it asks and whether that word may name the conversation, and whether it may watch what it names.
+Only what needs the pull request itself comes after the read: that it was found, that the caller reads the
+stored row, and that it is still open.
 
 Where the caller is, is proven by its credential and never named freely:
 
@@ -265,9 +271,15 @@ Where the caller is, is proven by its credential and never named freely:
 No credential aims a wake at a conversation of any other venue.
 
 An agent holds at most 50 pending waits, held ones counted. The engine holds that bound wherever a wake
-comes to stand: when one is set and when a stopped one is started (`triggers.ts`, `wakeRoom`). A wake is not
-changed after it is asked: `tempo.edit` refuses one. A wait ends 14 days after it was asked, whatever it
-watches and whatever state it is in; a time further off is refused.
+comes to stand: when one is set and when a stopped one is started (`triggers.ts`, `wakeRoom`); the same
+function refuses to start a wake asked more than 14 days ago. A wake is not changed after it is asked:
+`tempo.edit` refuses one.
+
+A wait ends 14 days after it was asked, whatever it watches and whatever state it is in, and none ends
+silently: it is told that the watch ended, through the same delivery as any wake, and then stopped with
+`expired` in its log. A time may be asked for at most 14 days less an hour ahead, so it always comes due
+before that; and if the sweep that ends old waits meets a time wake that is due, it has the engine fire it
+and does not end it.
 
 ### Pull requests
 
@@ -312,13 +324,29 @@ One function, `deliverWake` (`shared-wake.ts`), for every wake:
 3. Nothing is awake there: the wake is mail in the conversation, and waiting mail starts a job there.
 4. No session to resume (asked outside any conversation, its thread archived or deleted, its bridge place
    closed, or a terminal session that has ended): a new conversation for the agent, with the same words and
-   which conversation it continues. **It is never readable by anybody who could not read the one it
-   replaces.** It carries exactly the old conversation's labels: its member, household owner or not, whether
-   it is direct, and its project. Who reads a conversation is decided by those labels and the agent alone
-   (`policy.ts`, `conversation`), so the same people read the new one and nobody else.
+   which conversation it continues. Two things must both hold for it (`shared-wake.ts`, `rehome`):
+   - **Nobody reads it who could not read the one it replaces.** It carries exactly the old conversation's
+     labels: its member, household owner or not, whether it is direct, and its project. Who reads a
+     conversation is decided by those labels and the agent alone (`policy.ts`, `conversation`).
+   - **A job started in it works on the same principal as a job started in the old one would**, asked of
+     `workPrincipal` for both. The principal decides whose standing approval rules answer the job's cards.
 
-Where step 4 cannot make a place that private (the old conversation's row is gone, or its member may no
-longer be worked for), the wake's words are not delivered. The trigger is stopped, its log says why
+| Asked in | Work there is on | When it can no longer take the wake |
+| --- | --- | --- |
+| A Comms thread (a household owner's or any member's) | that member | re-homed, private to that member |
+| A terminal session (of an owner or any member) | that member, as its conversation is labelled | re-homed, private to that member |
+| A bridge direct conversation that is one member's | that member | re-homed, private to that member and direct |
+| A bridge direct or group conversation with nobody's label | nobody (`unknown`) | ended |
+| A bridge channel, with a project or without | nobody (`unknown`) | ended |
+| A hand-off for nobody | nobody (`unknown`) | ended |
+| A lane's wake conversation, a hand-off for a member | the agent's own, or that member | never closed: the wake is mail there |
+
+A shared place with no member is nobody's account, and the wake's own conversation with no member would be
+the agent's own, whose cards the household's standing rules answer. So a closed shared place means the wake
+ends: it is never moved to where its job would get answers no rule gives the work it came from.
+
+Where step 4 cannot make such a place (the account would change, the old conversation's row is gone, or its
+member may no longer be worked for), the wake's words are not delivered. The trigger is stopped, its log says why
 (`undelivered`), and one bare line with no note, no subject and no conversation id ("A wait you set has
 ended; the conversation it was set in is gone.") goes to a conversation private to whoever asked: the member
 on whose word it was asked, or for the agent's own work the one member who has the agent. With no such

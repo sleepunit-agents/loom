@@ -11,7 +11,7 @@ import type { Clock } from '../clock.js';
 import { householdTimezone } from '../data/household-settings.js';
 import { localDate, nextTime } from './calendar.js';
 import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
-import { WAKES_MAX, WAKE_EDIT_REFUSAL, isWake, wakeRows, wakesFull } from './wake.js';
+import { WAKES_MAX, WAKE_EDIT_REFUSAL, WAKE_MS, WAKE_TOO_OLD, isWake, wakeRows, wakesFull } from './wake.js';
 
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
@@ -141,11 +141,15 @@ export class TriggerEngine {
     const agent = this.agent(t);
     return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
-  /** The one place the bound on pending waits is held (core/tempo/wake.ts, WAKES_MAX): asked wherever a wake comes
+  /** The one place the bounds on a wake are held as it comes to stand: how many an agent has pending
+   * (core/tempo/wake.ts, WAKES_MAX) and how old one may be (WAKE_MS). Asked wherever a wake comes
    * to stand, which is when one is set and when a stopped one is turned back on. A held wake is still standing and
    * is counted, so resuming an agent adds none. Throws, in words for the caller, when the agent's waits are full. */
-  private wakeRoom(t: { targetKind?: string | null; target?: string | null; to?: string | null }): void {
+  private wakeRoom(t: { targetKind?: string | null; target?: string | null; to?: string | null; askedAt?: string | null; createdAt?: string }): void {
     if (!isWake(t) || !t.to) return;
+    // Nor does one stand past its life: a wait asked more than WAKE_DAYS ago is not turned back on.
+    const asked = t.askedAt ?? t.createdAt;
+    if (asked && this.clock.now() - Date.parse(asked) >= WAKE_MS) throw new Error(WAKE_TOO_OLD);
     const pending = this.db.select({ n: sql<number>`count(*)` }).from(triggers).where(and(eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, t.to), wakeRows())).get()!.n;
     if (pending >= WAKES_MAX) throw new Error(wakesFull(t.to));
   }

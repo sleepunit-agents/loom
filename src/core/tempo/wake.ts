@@ -21,6 +21,10 @@ export const wakeConditions = ['changed', 'checks-finished', 'checks-failed', 'r
 export type WakeCondition = typeof wakeConditions[number];
 /** How many waits one agent may have pending, how long one may live, and how long its words may be. */
 export const WAKES_MAX = 50, WAKE_DAYS = 14, WAKE_MS = WAKE_DAYS * DAY_MS, WAKE_NOTE_MAX = 2_000, WAKE_WORDS_MAX = 4_000;
+/** A time may be asked for at most this far ahead: the life of a wait less a clear margin, so a time wake always
+ * comes due well before the sweep that ends old waits could meet it (src/shared-wake.ts, expireWakes). */
+export const WAKE_TIME_MARGIN_MS = 3_600_000, WAKE_TIME_MOST_MS = WAKE_MS - WAKE_TIME_MARGIN_MS;
+export const WAKE_TOO_OLD = `That wait was asked more than ${WAKE_DAYS} days ago and has ended: ask again.`;
 /** The trigger log rows a wake keeps for itself: what it last read of a change, as JSON. */
 export const WAKE_FACTS = 'wake-facts';
 
@@ -29,7 +33,7 @@ export const wakeInput = z.object({
    * `question:<id>`, `secret-request:<id>`, `at:<instant with offset>` or `in:<minutes>`. */
   what: z.string().min(1).max(300),
   when: z.enum(wakeConditions).optional(),
-  /** A note to self: what I was doing, and what to do when woken. Kept as plain text on the trigger. */
+  /** A note to self: what I was doing, and what to do when woken. Kept with the conversation the wake belongs to, never on the trigger (src/shared-wake.ts, keepNote). */
   note: z.string().max(WAKE_NOTE_MAX).optional(),
   /** A terminal session says which session it is, by either of the two ids its hook holds: its harness session id
    * (`session`) or the conversation `terminal.session` answered (`conversation`). loom checks that it is a live
@@ -88,7 +92,7 @@ export function readWatched(what: string, now: number): Watched {
 }
 function time(at: number, now: number): Watched {
   if (at <= now) throw new Error('That time has passed');
-  if (at - now > WAKE_MS) throw new Error(`A wait lives at most ${WAKE_DAYS} days`);
+  if (at - now > WAKE_TIME_MOST_MS) throw new Error(`A time to be woken at is at most ${WAKE_DAYS} days less an hour away`);
   return { kind: 'time', sourceKind: 'time', at: new Date(at).toISOString() };
 }
 /** What was asked, read back from a stored wake. */
@@ -214,6 +218,8 @@ export const wakesFull = (agent: string): string => `${agent} already has ${WAKE
 /** What a wake says when the thing it watched is no longer the asker's to read: that the watch ended, and no more. */
 export const WATCH_ENDED = 'The watch ended: what it watched is no longer yours to read.';
 export const watchExpired = (clause: string): string => `The watch ended: ${WAKE_DAYS} days passed and it never happened that ${clause}.`;
+/** The same, for a time that never came because the wait could not fire (its agent was held). */
+export const TIME_EXPIRED = `The wait ended: ${WAKE_DAYS} days passed since you asked, and it could not be delivered at its time.`;
 /** The whole message of a wake, bounded: loom's own lines first, and the agent's note last and named as its own. */
 export function wakeWords(parts: { clause: string; askedAt: string; askedBy: string; happened: string; link?: string | null; note?: string | null; also?: string }): string {
   const cut = (text: string, most: number) => text.length > most ? text.slice(0, most - 1) + '…' : text;

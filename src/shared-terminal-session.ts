@@ -40,7 +40,7 @@ export function registerTerminalSession(operations: Operations, db: DataDatabase
       // waiting for it. A report from an instance that has been superseded, a repeated turn, a usage report and
       // one that ends the session are handed none and close none: `accepted` is the session's own word on that.
       const handed = wakes && input.wakes && accepted ? wakes(result.conversation, result.job) : [];
-      if (handed.length) ctx.changed('inbox', result.conversation);
+      for (const item of handed) ctx.changed('inbox', item.id);
       return handed.length ? { ...result, wakes: handed } : result;
     },
   });

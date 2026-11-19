@@ -5,15 +5,35 @@ import { and, eq } from 'drizzle-orm';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
 import { agentAccounts, agentModels, agentRunSettings, approvals, boxes, changes, conversations, inbox, inboxRefs, jobs, memberAgents, members, projectMembers, projectRepositories, threads, tokens, triggerLog, triggers } from './core/data/schema.js';
 import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
-import { WAIT_ENDED_BARE, WAKES_MAX, WAKE_EDIT_REFUSAL, WAKE_MS, WATCH_ENDED, wakesFull } from './core/tempo/wake.js';
+import { TIME_EXPIRED, WAIT_ENDED_BARE, WAKES_MAX, WAKE_EDIT_REFUSAL, WAKE_MS, WAKE_TIME_MOST_MS, WAKE_TOO_OLD, WATCH_ENDED, wakesFull } from './core/tempo/wake.js';
 import { readsRepository } from './apps/changes.js';
 import { canReadSharedConversation } from './shared-sharing.js';
-import { NO_CONVERSATION_REFUSAL, PULL_REFUSAL, SESSION_NEEDED, SESSION_REFUSAL, WATCH_REFUSAL } from './shared-wake.js';
+import { NO_CONVERSATION_REFUSAL, PULL_REFUSAL, SESSION_NEEDED, SESSION_REFUSAL, WATCH_REFUSAL, rehome } from './shared-wake.js';
+import { workPrincipal } from './policy.js';
+import { secretRequests, secrets } from './core/data/schema.js';
 import { credentialHash } from '../test/fixtures/conversation-body.js';
 import type { Viewer } from './policy.js';
 import { change } from './pieces/changes/change.fixture.js';
 import type { Change } from './pieces/changes/model.js';
 
+/** Every place a wake can be asked in: who reads it (of Otto and Olive, who run the household; Pam, on the project;
+ * Hal and Alice, who have Art; and Art's own plain credential), whose account work there is on, and what step four
+ * does when the place can no longer take the wake. */
+const TABLE: string[][] = [
+  ['Comms thread, private to a household owner', 'olive', 'olive', 're-homed'],
+  ['Comms thread, private to a member who is no owner', 'alice', 'alice', 're-homed'],
+  ['terminal session of a household owner', 'olive', 'olive', 're-homed'],
+  ['terminal session of a member who is no owner', 'alice', 'alice', 're-homed'],
+  ['bridge direct conversation with a member', 'alice', 'alice', 're-homed'],
+  ['bridge direct conversation with nobody\'s label', 'alice hal olive', 'unknown', 'ended (would be agent:art)'],
+  ['bridge group conversation', 'alice hal olive', 'unknown', 'ended (would be agent:art)'],
+  ['bridge channel', 'alice art hal olive otto', 'unknown', 'ended (would be agent:art)'],
+  ['bridge channel of a project', 'alice art hal olive otto pam', 'unknown', 'ended (would be agent:art)'],
+  ['a lane\'s wake conversation', 'alice art hal olive otto', 'agent:art', 're-homed'],
+  ['a member\'s lane', 'alice', 'alice', 're-homed'],
+  ['hand-off for nobody', 'alice art hal olive otto pam', 'unknown', 'ended (would be agent:art)'],
+  ['hand-off for a member', 'alice', 'alice', 're-homed'],
+];
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
 
@@ -101,6 +121,9 @@ it('starts a new conversation with the right information when the one it was ask
   const fresh = f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()!;
   // A member's private work stays that member's: the new conversation is private to her, as the old one was.
   expect(fresh).toMatchObject({ agent: 'art', venue: 'wake', member: 'alice', label: f.trigger(asked.body.value!.id).note });
+  const old = f.db.select().from(conversations).where(eq(conversations.id, f.cv)).get()!, w = widen(f);
+  expect(w.readers(fresh.id)).toEqual(w.readers(f.cv)); expect(w.readers(fresh.id)).toEqual(['alice']);
+  expect(workPrincipal('art', fresh)).toBe(workPrincipal('art', old)); expect(workPrincipal('art', fresh)).toBe('alice');
   expect(sent[0].words).toContain('"Look at the deploy log."');
   expect(sent[0].words).toContain(`This is a new conversation: the thread it was asked from was archived. It continues conversation ${f.cv}.`);
   expect(f.db.select().from(inboxRefs).where(eq(inboxRefs.item, sent[0].id)).all().map(row => row.ref).sort()).toEqual([asked.body.value!.id, f.cv].sort());
@@ -342,12 +365,12 @@ it('bounds how many waits an agent holds and how long one lives, and cancels one
   f.put({ checks: passing });
   expect(f.mail()).toEqual([]);
   // A wait that is 14 days old ends, and says so. A time further off than that is refused.
-  expect((await f.wake({ what: `in:${WAKE_MS / 60_000 + 1}` })).body).toMatchObject({ ok: false, code: 'invalid', message: 'A wait lives at most 14 days' });
+  expect((await f.wake({ what: `in:${WAKE_TIME_MOST_MS / 60_000 + 1}` })).body).toMatchObject({ ok: false, code: 'invalid', message: 'A time to be woken at is at most 14 days less an hour away' });
   f.db.update(triggers).set({ askedAt: new Date(f.clock.now() - WAKE_MS - 1_000).toISOString() }).where(eq(triggers.id, first.body.value!.id)).run();
   expect(f.root.services.tempo.wakes.sweep()).toBe(true);
   expect(f.mail()).toHaveLength(1);
   expect(f.mail()[0].words).toContain('The watch ended: 14 days passed and it never happened that acme/app#3 is merged or closed. Now: checks: all passed; review: approved.');
-  expect(f.trigger(first.body.value!.id)).toMatchObject({ enabled: false, state: 'fired' });
+  expect(f.trigger(first.body.value!.id)).toMatchObject({ enabled: false, state: 'stopped' });
   // Nothing left to end: the sweep writes nothing.
   expect(f.root.services.tempo.wakes.sweep()).toBe(false);
   // A wake is made only at its own door.
@@ -416,24 +439,88 @@ it('starts the new conversation for an owner\'s ended terminal session no wider 
   expect(w.readers(moved[0].conversation!)).toEqual(['olive']);
 });
 
-it('keeps a direct conversation with no member direct, so only the agent\'s owners read what replaces it', async () => {
+it('ends a wake asked in a shared place with no member when the place is closed: no job starts anywhere on another account', async () => {
   const f = await fixture(), w = widen(f);
-  // A group direct message on Discord: no one member's, read by the people who have the agent and nobody else.
-  f.db.insert(conversations).values({ id: 'cv-group', agent: 'art', venue: 'discord', place: JSON.stringify(['guild', 'G1', null, ['group']]), label: 'Group', direct: true, startedAt: f.now(), lastAt: f.now(), turnCount: 0 }).run();
-  const body = w.body('job-group', 'cv-group');
-  expect(w.readers('cv-group')).toEqual(['alice', 'hal', 'olive']);
-  expect((await f.wake({ what: 'in:1', note: 'Said in the group.' }, body.token)).body).toMatchObject({ ok: true });
-  body.end();
-  // Its bridge connection is gone, so nothing can be posted there: there is no session to resume.
-  f.clock.advance(60_000);
-  const sent = f.mail().filter(item => item.conversation !== 'cv-group');
-  expect(sent).toHaveLength(1);
-  expect(sent[0].words).toContain('"Said in the group."');
-  const fresh = f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()!;
-  expect(fresh).toMatchObject({ venue: 'wake', member: null, direct: true });
-  expect(w.readers(fresh.id)).toEqual(['alice', 'hal', 'olive']);
+  const places = { 'cv-channel': { place: JSON.stringify(['guild', 'C1', null, null]), direct: false, project: 'pond' }, 'cv-group': { place: JSON.stringify(['guild', 'G1', null, ['group']]), direct: true, project: null } };
+  for (const [id, labels] of Object.entries(places)) {
+    f.db.insert(conversations).values({ id, agent: 'art', venue: 'discord', label: id, ...labels, startedAt: f.now(), lastAt: f.now(), turnCount: 0 }).run();
+    // Alice has Art and is no household owner. In the shared place her word starts the body's job.
+    const body = w.body(`job-${id}`, id, labels.project ? { project: labels.project } : {});
+    f.db.insert(inbox).values({ id: `in-${id}`, toKind: 'agent', to: 'art', agent: 'art', conversation: id, seq: 1, source: 'discord', fromKind: 'person', fromId: 'alice', words: 'run it later', at: f.now(), changedAt: f.now(), state: 'taken', job: `job-${id}`, project: labels.project }).run();
+    const asked = await f.wake({ what: 'in:1', note: 'Then merge the release branch.' }, body.token);
+    expect(asked.body, id).toMatchObject({ ok: true });
+    expect(f.trigger(asked.body.value!.id)).toMatchObject({ conversation: id, askedByKind: 'member', askedBy: 'alice' });
+    // Work in this place is nobody's account: no standing rule answers its cards.
+    const old = f.db.select().from(conversations).where(eq(conversations.id, id)).get()!;
+    expect(workPrincipal('art', old)).toBe('unknown');
+    body.end();
+    // Its bridge connection is gone, so nothing can be posted there when the time comes.
+    f.clock.advance(60_000);
+    expect(f.trigger(asked.body.value!.id), id).toMatchObject({ enabled: false, state: 'stopped' });
+    expect(f.db.select().from(triggerLog).where(and(eq(triggerLog.trigger, asked.body.value!.id), eq(triggerLog.event, 'undelivered'))).all()).toMatchObject([{ note: 'the place it was asked in is closed, and work started anywhere else would not be on the same account' }]);
+    // All that is said is the bare line, to Alice alone, in a conversation whose work is hers: never the agent's own.
+    const said = f.mail().filter(item => f.db.select().from(inboxRefs).where(and(eq(inboxRefs.item, item.id), eq(inboxRefs.ref, asked.body.value!.id))).get());
+    expect(said.map(item => item.words), id).toEqual([WAIT_ENDED_BARE]);
+    const home = f.db.select().from(conversations).where(eq(conversations.id, said[0].conversation!)).get()!;
+    expect(home).toMatchObject({ venue: 'wake', member: 'alice' });
+    expect(workPrincipal('art', home)).toBe('alice'); expect(w.readers(home.id)).toEqual(['alice']);
+  }
+  // Nowhere is there a conversation of the agent's own account made by a wake, nor the note outside where it was written.
+  expect(f.db.select().from(conversations).where(eq(conversations.venue, 'wake')).all().filter(cv => cv.member === null)).toEqual([]);
+  expect(f.db.select().from(inbox).all().filter(item => item.words?.includes('merge the release') && !Object.keys(places).includes(item.conversation ?? ''))).toEqual([]);
 });
 
+it('re-homes a direct bridge conversation that is one member\'s to a place the same people read, on the same account', async () => {
+  const f = await fixture(), w = widen(f);
+  f.db.insert(conversations).values({ id: 'cv-dm', agent: 'art', venue: 'discord', place: JSON.stringify(['guild', 'D1', null, 'alice']), label: 'Alice, directly', direct: true, member: 'alice', startedAt: f.now(), lastAt: f.now(), turnCount: 0 }).run();
+  const body = w.body('job-dm', 'cv-dm', { member: 'alice' });
+  expect((await f.wake({ what: 'in:1', note: 'Said to Alice alone.' }, body.token)).body).toMatchObject({ ok: true });
+  body.end();
+  f.clock.advance(60_000);
+  const sent = f.mail().filter(item => item.conversation !== 'cv-dm');
+  expect(sent).toHaveLength(1);
+  expect(sent[0].words).toContain('"Said to Alice alone."');
+  const old = f.db.select().from(conversations).where(eq(conversations.id, 'cv-dm')).get()!, fresh = f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()!;
+  expect(fresh).toMatchObject({ venue: 'wake', member: 'alice', direct: true });
+  expect(w.readers(fresh.id)).toEqual(w.readers('cv-dm')); expect(w.readers(fresh.id)).toEqual(['alice']);
+  expect(workPrincipal('art', fresh)).toBe(workPrincipal('art', old));
+});
+
+it('re-homes a wake only where the same people read the new place and its work is on the same account: every place a wake can be asked in', async () => {
+  const f = await fixture(), w = widen(f);
+  type Place = { venue: typeof conversations.$inferInsert.venue; member: string | null; direct: boolean; project: string | null };
+  const places: [string, Place][] = [
+    ['Comms thread, private to a household owner', { venue: 'loom', member: 'olive', direct: false, project: 'pond' }],
+    ['Comms thread, private to a member who is no owner', { venue: 'loom', member: 'alice', direct: false, project: 'pond' }],
+    ['terminal session of a household owner', { venue: 'terminal', member: 'olive', direct: false, project: null }],
+    ['terminal session of a member who is no owner', { venue: 'terminal', member: 'alice', direct: false, project: null }],
+    ['bridge direct conversation with a member', { venue: 'discord', member: 'alice', direct: true, project: null }],
+    ['bridge direct conversation with nobody\'s label', { venue: 'discord', member: null, direct: true, project: null }],
+    ['bridge group conversation', { venue: 'slack', member: null, direct: true, project: null }],
+    ['bridge channel', { venue: 'discord', member: null, direct: false, project: null }],
+    ['bridge channel of a project', { venue: 'slack', member: null, direct: false, project: 'pond' }],
+    ['a lane\'s wake conversation', { venue: 'wake', member: null, direct: false, project: null }],
+    ['a member\'s lane', { venue: 'wake', member: 'alice', direct: false, project: null }],
+    ['hand-off for nobody', { venue: 'handoff', member: null, direct: false, project: 'pond' }],
+    ['hand-off for a member', { venue: 'handoff', member: 'alice', direct: false, project: 'pond' }],
+  ];
+  const table = places.map(([name, place], n) => {
+    const at = f.now(), old = `old-${n}`, fresh = `new-${n}`;
+    f.db.insert(conversations).values({ id: old, agent: 'art', place: old, label: name, ...place, startedAt: at, lastAt: at, turnCount: 0 }).run();
+    const answer = rehome('art', f.db.select().from(conversations).where(eq(conversations.id, old)).get()!);
+    // What step four would open: the wake's own conversation with the labels the rule answers, or with the old labels to show what refusing prevents.
+    const labels = 'labels' in answer ? answer.labels : { member: place.member, direct: place.direct, project: place.project };
+    f.db.insert(conversations).values({ id: fresh, agent: 'art', venue: 'wake', place: fresh, label: name, ...labels, startedAt: at, lastAt: at, turnCount: 0 }).run();
+    const row = (id: string) => f.db.select().from(conversations).where(eq(conversations.id, id)).get()!;
+    return { name, outcome: 'labels' in answer ? 're-homed' : 'ended', readers: w.readers(old).join(' '), newReaders: w.readers(fresh).join(' '), principal: workPrincipal('art', row(old)), newPrincipal: workPrincipal('art', row(fresh)) };
+  });
+  // Re-homed only where both are the same; and every place that is ended is one where the account would have changed.
+  for (const row of table) {
+    expect(row.newReaders, row.name).toBe(row.readers);
+    expect(row.outcome, row.name).toBe(row.principal === row.newPrincipal ? 're-homed' : 'ended');
+  }
+  expect(table.map(row => [row.name, row.readers, row.principal, row.outcome === 'ended' ? `ended (would be ${row.newPrincipal})` : 're-homed'])).toEqual(TABLE);
+});
 it('says one bare line, or nothing, when nowhere as private can be made, and tells the agent\'s people nothing of the wake', async () => {
   const f = await fixture(), w = widen(f);
   // Asked at Alice's terminal, as the agent's own work. Before it fires the session ends and Alice no longer has Art.
@@ -526,7 +613,13 @@ it('holds the bound on waits when a stopped one is started, refuses to change a 
   expect(f.db.select({ id: triggers.id, enabled: triggers.enabled, state: triggers.state }).from(triggers).all().sort((a, b) => a.id.localeCompare(b.id))).toEqual([
     { id: 'old-held', enabled: false, state: 'stopped' }, { id: first.body.value!.id, enabled: false, state: 'stopped' }]);
   expect(f.db.select().from(triggerLog).where(eq(triggerLog.event, 'expired')).all()).toHaveLength(2);
+  // Neither ended silently: the held time wake says so where it was asked, with its note.
+  const ended = f.mail(f.cv).filter(item => item.words?.includes(TIME_EXPIRED));
+  expect(ended).toHaveLength(1); expect(ended[0].words).toContain('"A note."');
   expect(f.root.services.tempo.wakes.sweep()).toBe(false);
+  // A wait past its life is not turned back on, by the same function that holds the bound.
+  expect((await f.post('tempo.start', { id: first.body.value!.id }, bodyCredentials.member)).body).toMatchObject({ ok: false, message: WAKE_TOO_OLD });
+  expect(f.trigger(first.body.value!.id).enabled).toBe(false);
   // Only the wake door writes a wake's target, in any spelling.
   for (const target of ['wake', 'Wake:x', 'WAKE', 'wake:bogus', ' wake:review'])
     expect((await f.post('tempo.set', { ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: new Date(f.clock.now() + 60_000).toISOString(), lifespan: 'once', targetKind: 'inbox', target, toKind: 'agent', to: 'art', note: 'Sneaky' }, bodyCredentials.member)).body, target)
@@ -566,3 +659,64 @@ it('says a time wake fired by hand was fired by hand', async () => {
   expect(f.mail()[0].words).not.toContain('the time you asked to be woken at');
 });
 
+
+it('never loses a time wake at the edge of a wait\'s life, whichever of the sweep and the engine looks first', async () => {
+  // The furthest time that may be asked is an hour inside the life of a wait.
+  const most = WAKE_TIME_MOST_MS / 60_000;
+  for (const sweepFirst of [true, false]) {
+    const f = await fixture();
+    expect((await f.wake({ what: `in:${most + 1}` })).body).toMatchObject({ ok: false, code: 'invalid' });
+    expect((await f.wake({ what: `at:${new Date(f.clock.now() + WAKE_MS).toISOString()}` })).body).toMatchObject({ ok: false, code: 'invalid' });
+    const asked = await f.wake({ what: `in:${most}`, note: 'At the edge.' });
+    expect(asked.body).toMatchObject({ ok: true });
+    const id = asked.body.value!.id, due = f.trigger(id).nextDueAt!;
+    expect(Date.parse(due) - f.clock.now()).toBe(WAKE_TIME_MOST_MS);
+    if (sweepFirst) {
+      // The worst case, made by hand: the wake is as old as a wait may be and due this instant, and the sweep meets
+      // it before the engine's own timer has run.
+      f.db.update(triggers).set({ askedAt: new Date(f.clock.now() - WAKE_MS).toISOString(), nextDueAt: f.now(), times: f.now() }).where(eq(triggers.id, id)).run();
+      expect(f.root.services.tempo.wakes.sweep()).toBe(true);
+    } else {
+      f.db.update(triggers).set({ askedAt: new Date(f.clock.now() - WAKE_MS + 1_000).toISOString(), nextDueAt: new Date(f.clock.now() + 1_000).toISOString(), times: new Date(f.clock.now() + 1_000).toISOString() }).where(eq(triggers.id, id)).run();
+      f.root.services.tempo.triggers.tick();
+      f.beat(); f.clock.advance(1_000);
+      expect(f.root.services.tempo.wakes.sweep()).toBe(false);
+    }
+    // Either way it fired as itself, once, and says the time came: it was not stopped unsaid.
+    const sent = f.mail();
+    expect(sent.map(item => item.words!.includes('the time you asked to be woken at')), String(sweepFirst)).toEqual([true]);
+    expect(sent[0].words).toContain('"At the edge."');
+    expect(f.trigger(id)).toMatchObject({ enabled: false, state: 'fired' });
+    expect(f.db.select().from(triggerLog).where(and(eq(triggerLog.trigger, id), eq(triggerLog.event, 'expired'))).all()).toEqual([]);
+    expect(f.root.services.tempo.wakes.sweep()).toBe(false); expect(f.mail()).toHaveLength(1);
+  }
+});
+
+it('wakes when a question or a secret request is answered, from real rows', async () => {
+  const f = await fixture();
+  // A question put to the agent itself, in the conversation it works in, and a request it made for a secret.
+  f.db.insert(inbox).values({ id: 'in-q1', toKind: 'agent', to: 'art', agent: 'art', member: 'alice', project: 'pond', conversation: f.cv, seq: 900, source: 'thread', fromKind: 'person', fromId: 'alice',
+    words: 'Ship it?', answers: 'yes-no', at: f.now(), changedAt: f.now(), state: 'waiting' }).run();
+  f.db.insert(secrets).values({ name: 'deploy-key', description: 'The deploy key', changedAt: f.now(), changedBy: 'alice' }).run();
+  f.db.insert(secretRequests).values({ id: 'sr-1', secret: 'deploy-key', agent: 'art', why: 'To deploy', state: 'pending', minutes: 30, always: false, askedAt: f.now() }).run();
+  const question = await f.wake({ what: 'question:in-q1' }), secret = await f.wake({ what: 'secret:sr-1', note: 'Then deploy.' });
+  expect([question.body, secret.body]).toMatchObject([{ ok: true }, { ok: true }]);
+  expect(f.trigger(question.body.value!.id)).toMatchObject({ sourceKind: 'answer', watches: 'question:in-q1', target: 'wake', note: 'Wake Art when question in-q1 is answered' });
+  expect(f.trigger(secret.body.value!.id)).toMatchObject({ sourceKind: 'answer', watches: 'secret-request:sr-1', note: 'Wake Art when secret request sr-1 is answered' });
+  f.clock.advance(30_000); f.beat();
+  expect(f.mail()).toEqual([]);
+  f.root.writes.run(() => f.db.update(inbox).set({ state: 'answered', answer: 'yes', answeredBy: 'alice', answeredAt: f.now(), changedAt: f.now() }).where(eq(inbox.id, 'in-q1')).run());
+  const said = (id: string) => f.mail().filter(item => f.db.select().from(inboxRefs).where(and(eq(inboxRefs.item, item.id), eq(inboxRefs.ref, id))).get()).map(item => item.words!);
+  expect(said(question.body.value!.id)).toHaveLength(1);
+  expect(said(question.body.value!.id)[0]).toContain('Alice answered: Yes.');
+  expect(said(question.body.value!.id)[0]).toContain('See question in-q1');
+  expect(said(secret.body.value!.id)).toEqual([]);
+  f.root.writes.run(() => f.db.update(secretRequests).set({ state: 'denied', answeredBy: 'alice', answeredAt: f.now() }).where(eq(secretRequests.id, 'sr-1')).run());
+  expect(said(secret.body.value!.id)).toHaveLength(1);
+  expect(said(secret.body.value!.id)[0]).toContain('Alice answered the request for the secret "deploy-key": Deny.');
+  expect(said(secret.body.value!.id)[0]).toContain('"Then deploy."');
+  // Once each.
+  f.root.writes.run(() => f.db.update(secretRequests).set({ state: 'revoked' }).where(eq(secretRequests.id, 'sr-1')).run());
+  expect(f.mail()).toHaveLength(2);
+  for (const asked of [question, secret]) expect(f.trigger(asked.body.value!.id)).toMatchObject({ enabled: false, state: 'fired' });
+});

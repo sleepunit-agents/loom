@@ -25,9 +25,9 @@ import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
 import { logTrigger, type NewTrigger, type Trigger, type TriggerEngine } from './core/tempo/triggers.js';
 import { wakePlace } from './core/tempo/tempo.js';
 import { SOURCE_SNAPSHOT, changeSnapshot } from './core/tempo/sources.js';
-import { WAIT_ENDED_BARE, WAKES_MAX, WAKE_DAYS, WAKE_FACTS, WAKE_MS, WATCH_ENDED, changeHappened, changeName, factsDiffer, parseFacts, readWatched, standsNow, wakeClause, wakeCondition,
+import { TIME_EXPIRED, WAIT_ENDED_BARE, WAKES_MAX, WAKE_DAYS, WAKE_FACTS, WAKE_MS, WATCH_ENDED, changeHappened, changeName, factsDiffer, parseFacts, readWatched, standsNow, wakeClause, wakeCondition,
   wakeInput, wakeRows, wakeTarget, wakeTitle, wakeWords, wakesFull, watchExpired, watchName, watchedOf, type ChangeFacts, type WakeInput, type Watched } from './core/tempo/wake.js';
-import { mayRunPrivateWork, membersWithAgent, type Asker, type Viewer } from './policy.js';
+import { mayRunPrivateWork, membersWithAgent, workPrincipal, type Asker, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { PRIVATE_PLACE_REFUSAL, isBridgeVenue, named, placeClosed, privateRefusal, stillKnown, tellOwners, wordReach } from './shared-place-mail.js';
 import { asking } from './shared-place-triggers.js';
@@ -64,8 +64,9 @@ const wakeReader = (t: Trigger): Viewer => ({ kind: 'agent', id: t.to!, ...(t.ow
  * watch ended. */
 function whatHappened(db: DataDatabase, t: Trigger, watched: Watched, event: string, now: string): { happened: string; link?: string | null } | undefined {
   const condition = wakeCondition(t), clause = wakeClause(watched, condition);
-  const byHand = event.startsWith('manual:'), old = Date.parse(now) - Date.parse(askedAt(t)) >= WAKE_MS;
-  if (watched.kind === 'time') return { happened: byHand ? `This wait was fired by hand before ${clause}.` : `It is ${now}: the time you asked to be woken at.` };
+  // `expired:` is the sweep ending a wait that is past its life (expireWakes): it always says so, and never waits.
+  const byHand = event.startsWith('manual:'), expired = event.startsWith('expired:'), old = expired || Date.parse(now) - Date.parse(askedAt(t)) >= WAKE_MS;
+  if (watched.kind === 'time') return { happened: expired ? TIME_EXPIRED : byHand ? `This wait was fired by hand before ${clause}.` : `It is ${now}: the time you asked to be woken at.` };
   if (!watchAllowed(db, wakeReader(t), t.sourceKind, t.watches)) return { happened: WATCH_ENDED };
   if (watched.kind === 'change') {
     const read = changeFacts(db, watched.id);
@@ -174,6 +175,23 @@ function bringUp(d: WakeDelivery, t: Trigger, cv: Conversation, id: string, word
  * member's and the agent's own with them; a direct one with no member is the agent's owners'; any other is read
  * by household owners, its project and whoever has the agent. Nothing else decides who reads one. */
 type Labels = { member: string | null; direct: boolean; project: string | null };
+/** Whether a wake asked in this conversation may be re-homed when the conversation can no longer take it, and if
+ * so with what labels. Both must hold for the new conversation, which is the wake's own (`venue: 'wake'`):
+ *  - nobody reads it who could not read the old one. It carries the old one's labels exactly, and the read rule is
+ *    a function of those labels and the agent alone;
+ *  - a job started in it works on the same principal as a job started in the old one would (policy.ts,
+ *    `workPrincipal`, asked of both: never reasoned from the labels). A principal decides whose standing approval
+ *    rules answer the job's cards. A conversation with a member keeps that member as its principal. A place with
+ *    no member that is not a lane (a bridge channel, a group or direct message with nobody's label, a hand-off for
+ *    nobody) is nobody's account, and a `wake` conversation with no member is the agent's own: so a wake asked in
+ *    such a place is never re-homed, or its job would get answers no rule gives the work it came from
+ *    (policy.ts, rulesPerson). A closed shared place means the wake ends.
+ * Answers the labels, or why not. */
+export function rehome(agent: string, old: Pick<Conversation, 'member' | 'direct' | 'project' | 'venue'>): { labels: Labels } | { why: string } {
+  const labels: Labels = { member: old.member, direct: old.direct, project: old.project };
+  return workPrincipal(agent, old) === workPrincipal(agent, { member: labels.member, venue: 'wake' }) ? { labels }
+    : { why: 'the place it was asked in is closed, and work started anywhere else would not be on the same account' };
+}
 /** Step 4: there is no session to resume, so loom starts a new conversation for the agent with the right
  * information: what was asked and when, the note to self, what changed, and which conversation it continues.
  *
@@ -183,14 +201,19 @@ type Labels = { member: string | null; direct: boolean; project: string | null }
  * and the agent alone, so the same people read the new one as read the old, and nobody else. A wake asked outside
  * any conversation is private to the member recorded on it when it was asked (the agent's one owner).
  *
- * Where that cannot be done, the wake's words are not delivered at all (undelivered): the old conversation's row
- * is gone, so its labels are not known; or its member may no longer be worked for. */
+ * And a job started in it works on the same principal as one started in the old conversation would (rehome).
+ *
+ * Where either cannot be had, the wake's words are not delivered at all (undelivered): the old conversation's row
+ * is gone, so its labels are not known; its member may no longer be worked for; or it was a shared place with no
+ * member, whose work is nobody's account while a wake conversation's would be the agent's own. */
 function startAnew(d: WakeDelivery, t: Trigger, session: Extract<Session, { is: 'gone' }>, id: string, words: string): void | 'stop' {
   const { db } = d, agent = t.to!;
   let labels: Labels;
   if (t.conversation) {
     if (!session.cv) return undelivered(d, t, id, 'the conversation it was asked from is gone, so nowhere as private can be made');
-    labels = { member: session.cv.member, direct: session.cv.direct, project: session.cv.project };
+    const home = rehome(agent, session.cv);
+    if ('why' in home) return undelivered(d, t, id, home.why);
+    labels = home.labels;
   } else {
     if (!t.member) return undelivered(d, t, id, 'it was asked outside any conversation and names nobody to be private to');
     labels = { member: t.member, direct: false, project: t.project };
@@ -292,14 +315,22 @@ export function rehomeTerminalWakes(d: WakeDelivery): number {
   });
 }
 /** A wait lives WAKE_DAYS at most, measured from when it was asked, whatever it watches and whatever state it is
- * in. One still standing after that is fired by hand here, and its delivery says the watch ended (whatHappened).
- * One that cannot be fired (held while its agent is paused, a time that never came) is stopped, and its log says
- * so. Either way it is no longer enabled, so nothing is asked of it again. Writes nothing when none is old. */
-export function expireWakes(db: DataDatabase, engine: Pick<TriggerEngine, 'runNow' | 'stop'>, now: string): number {
+ * in, and none ends silently. A time wake that has come due is fired, not ended: the engine is asked to look
+ * first, so whichever of the two timers runs first the wake is delivered as itself. Every other old wait is
+ * told that the watch ended, through the same delivery as any wake (deliverWake: the session it was asked from, or
+ * a new one no wider), and then stopped with `expired` in its log; a held one too, since its agent being paused
+ * is no reason to end it unsaid. After this none of them is enabled, so nothing is asked of one twice. Writes
+ * nothing when none is old. Answers how many it ended or fired. */
+export function expireWakes(d: WakeDelivery, engine: Pick<TriggerEngine, 'tick' | 'stop'>): number {
+  const { db } = d, now = d.now();
+  const stands = (id: string) => db.select().from(triggers).where(and(eq(triggers.id, id), eq(triggers.enabled, true))).get();
   const old = db.select().from(triggers).where(and(eq(triggers.enabled, true), wakeRows())).all().filter(t => Date.parse(now) - Date.parse(askedAt(t)) >= WAKE_MS);
-  for (const t of old) {
-    if (t.state === 'standing' && t.sourceKind !== 'time') { try { engine.runNow(t.id); } catch { /* stopped below */ } }
-    if (db.select({ enabled: triggers.enabled }).from(triggers).where(eq(triggers.id, t.id)).get()?.enabled) { engine.stop(t.id); logTrigger(db, now, t.id, 'expired', `Older than ${WAKE_DAYS} days`); }
+  if (old.some(t => t.sourceKind === 'time' && t.state === 'standing' && !!t.nextDueAt && t.nextDueAt <= now)) engine.tick();
+  for (const { id } of old) {
+    const t = stands(id);
+    if (!t) continue;
+    try { db.transaction(() => { deliverWake(d, t, `${t.id}:expired:${now}`); }); } catch { /* nowhere to say it: the log below still does */ }
+    engine.stop(t.id); logTrigger(db, now, t.id, 'expired', `Older than ${WAKE_DAYS} days`);
   }
   return old.length;
 }
@@ -318,6 +349,10 @@ export interface WakeDoor {
   wordRefusal(viewer: Viewer, trigger: NewTrigger): string | undefined;
   /** Told once the trigger is set, as for any trigger. */
   stood(viewer: Viewer, trigger: Trigger): void;
+  /** What `tempo.stop` asks of the same caller for this trigger: whether it may stop it at all, and why not in words
+   * about the caller (the word its job works on), if there is such a reason. */
+  mayStop(viewer: Viewer, trigger: Trigger): boolean;
+  stopRefusal(viewer: Viewer, trigger: Trigger): string | undefined;
   /** The household's GitHub read and the Changes cache, for a pull request the cache does not hold yet in a
    * repository loom reads. Without it only pull requests already held can be watched. */
   changes?: { read: PullRequestReader; put(change: Change): unknown };
@@ -329,14 +364,29 @@ const refuse = (code: 'denied' | 'invalid' | 'conflict' | 'not-found' | 'unavail
 export const PULL_REFUSAL = 'That is not a pull request you can watch.';
 /** The same, for a job or an ask: one it does not read and one that is not there are told apart by nothing. */
 export const WATCH_REFUSAL = 'That is not something you can watch.';
+export const NOT_YOUR_WAIT = 'That is not one of your waits.';
 export const SESSION_NEEDED = 'Say which terminal session you are: pass `session` (your harness session id) or `conversation` (the conversation id terminal.session answered your hook).';
 export const SESSION_REFUSAL = 'That is not a live terminal session of yours on this machine.';
 export const NO_CONVERSATION_REFUSAL = 'This credential is in no conversation, so it names none. Asked this way, a wake starts a new conversation.';
 
 /** `tempo.wake`: wake me when. It makes a once-only trigger for the asking agent, aimed at the conversation it asks
  * from, and answers the trigger's id and a plain sentence of what will happen. */
-export function registerWake(operations: Operations, db: DataDatabase, clock: Clock, engine: Pick<TriggerEngine, 'set'>, d: WakeDelivery, door: WakeDoor): void {
+export function registerWake(operations: Operations, db: DataDatabase, clock: Clock, engine: Pick<TriggerEngine, 'set' | 'stop'>, d: WakeDelivery, door: WakeDoor): void {
   const now = () => new Date(clock.now()).toISOString();
+  /** `tempo.wakeCancel`: cancel a wait. It stops only a pending wake that is the calling agent's own and that the
+   * caller may stop as `tempo.stop` would let it. Anything else (another agent's wait, a schedule that is no wait,
+   * one already over, an id that names nothing) gets one answer, which does not say whether the id exists. */
+  operations.register(operation({ name: 'tempo.wakeCancel', write: true, recheckPolicy: true, refuses: true, input: z.object({ id: z.string().min(1).max(200) }).strict(),
+    output: z.object({ saved: z.literal(true) }).strict(),
+    may: viewer => viewer.kind === 'agent',
+    run(ctx, input) {
+      const wait = db.select().from(triggers).where(and(eq(triggers.id, input.id), eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, ctx.viewer.kind === 'agent' ? ctx.viewer.id : ''), wakeRows())).get();
+      if (!wait || !door.mayStop(ctx.viewer, wait)) return refuse('denied', NOT_YOUR_WAIT);
+      const refused = door.stopRefusal(ctx.viewer, wait); if (refused) return refuse('denied', refused);
+      engine.stop(wait.id); ctx.changed('triggers', wait.id);
+      return { saved: true as const };
+    },
+  }));
   /** Where the caller is, proven by its credential and never named freely:
    *  - a runtime body is in the conversation its job works in, and names no other;
    *  - a terminal credential is in a terminal session of its own machine, member and agent that is live now. It
@@ -379,7 +429,9 @@ export function registerWake(operations: Operations, db: DataDatabase, clock: Cl
   };
   /** Everything that is decided without the network, in the order `tempo.set` asks it, and before anything is read
    * outside: who is calling, the word its job works on, where it is, whether it may set the trigger, how many waits
-   * it holds, and whether it may watch what it names. Throws the refusal. `prepare` asks it before its one outside
+   * it holds, on whose word it asks and whether that word may name the conversation, and whether it may watch what
+   * it names. What is left for `run` alone needs the pull request itself: that it was found, that the caller reads
+   * the stored row, and that it is still open. Throws the refusal. `prepare` asks it before its one outside
    * read, so a refused caller causes none; `run` asks it again, in the write. */
   const allowed = (viewer: Viewer, input: WakeInput) => {
     if (viewer.kind !== 'agent') return refuse('denied', 'Only an agent asks to be woken');
@@ -390,9 +442,13 @@ export function registerWake(operations: Operations, db: DataDatabase, clock: Cl
     // Said here in the door's own words; the engine holds the same bound wherever a wake comes to stand (triggers.ts, wakeRoom).
     const pending = db.select({ n: sql<number>`count(*)` }).from(triggers).where(and(eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, agent), wakeRows())).get()!.n;
     if (pending >= WAKES_MAX) return refuse('conflict', wakesFull(agent));
+    // Who is asking, for a wake that names a conversation: one member's private conversation is named only on that
+    // member's word, or by the agent's own work.
+    const work = door.bodyWork(viewer), asked = built.cv ? asking(db, viewer, agent, work) : undefined;
+    if (built.cv && privateRefusal(built.cv.member, asked)) return refuse('denied', PRIVATE_PLACE_REFUSAL);
     const way = built.watched.kind === 'change' ? pullWatchable(db, judged, built.watched.id, built.watched.repository) : undefined;
     if (built.watched.kind === 'change' ? !way : !watchAllowed(db, judged, built.trigger.sourceKind, built.trigger.watches)) return refuse('denied', built.watched.kind === 'change' ? PULL_REFUSAL : WATCH_REFUSAL);
-    return { ...built, agent, judged, way };
+    return { ...built, agent, judged, way, work, asked };
   };
   operations.register(operation({ name: 'tempo.wake', write: true, recheckPolicy: true, refuses: true, input: wakeInput,
     output: z.object({ id: z.string(), says: z.string() }).strict(),
@@ -411,7 +467,7 @@ export function registerWake(operations: Operations, db: DataDatabase, clock: Cl
       catch { return { unreadable: true }; }
     },
     run(ctx, input, prepared) {
-      const { watched, condition, place, cv, trigger, agent, judged, way } = allowed(ctx.viewer, input), viewer = ctx.viewer as Viewer & { kind: 'agent' };
+      const { watched, condition, place, cv, trigger, agent, judged, way, work, asked } = allowed(ctx.viewer, input), viewer = ctx.viewer as Viewer & { kind: 'agent' };
       let facts: ReturnType<typeof changeFacts>;
       if (watched.kind === 'change') {
         const name = changeName(watched.id);
@@ -429,12 +485,8 @@ export function registerWake(operations: Operations, db: DataDatabase, clock: Cl
         facts = changeFacts(db, watched.id)!;
         if (facts.state !== 'open') return refuse('invalid', `${name} is already ${facts.state === 'merged' ? 'merged' : 'closed'}: there is nothing left to wait for.`);
       }
-      const work = door.bodyWork(viewer);
       // Recorded as any trigger is: for a member who is not a household owner, as that member's (recordedTrigger).
       const as = recordedTrigger(db, judged, trigger);
-      const asked = cv ? asking(db, viewer, agent, work) : undefined;
-      // One member's private conversation is named only on that member's word, or by the agent's own work.
-      if (cv && privateRefusal(cv.member, asked)) return refuse('denied', PRIVATE_PLACE_REFUSAL);
       const row = engine.set({ ...as.trigger, id: `tr-wake-${randomUUID()}` }, cv ? undefined : place.member, asked);
       if (watched.kind === 'change') {
         // The watch begins from what the change is now: its snapshot for the source (sources.ts), and what this wake compares with.

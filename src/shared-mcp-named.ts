@@ -374,9 +374,11 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    return pending.length?pending.map(row=>'- **'+row.note+'** _'+row.id+' · asked '+row.createdAt+(row.state==='held'?' · held while you are paused':'')+'_').join('\n'):'You are waiting on nothing.';
   });
 
+ // `tempo.wakeCancel` stops only a pending wait of the caller's own, and gives one answer to anything else. The check
+ // is the operation's, in its write: a tool that read and then wrote would have its read released stale.
  tool('wake_cancel','Cancel a wait by its id (wake_me_when answered it; waits lists them). You are then not woken for it.',
   z.object({id:z.string().min(1).max(200)}).strict(),
-  async input=>{await run('tempo.stop',{id:input.id});return 'Cancelled '+input.id+'.';});
+  async input=>{await run('tempo.wakeCancel',{id:input.id});return 'Cancelled '+input.id+'.';});
 }
 interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}
 interface PersonCard{slug:string;name:string;updated:string;card:{summary:string|null;where:{key:string;label:string|null;source:string|null;verified_at:string|null;value:CardValue|null}[]|null;how:{key:string;value:CardValue|null}[]|null;may:{text:string;source:string}[]|null}|null}

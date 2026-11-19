@@ -48,8 +48,8 @@ export interface SharedTempoOptions {
   askOwners?(agent: string, ask: PlaceScheduleAsk, why: string, where: { conversation: string; member: string | null; project: string | null }): string;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
-  /** The machine, member and agent of a terminal credential: a terminal session that asks to be woken and names no
-   * conversation is woken in its one live session (shared-wake.ts). */
+  /** The machine, member and agent of a terminal credential: a terminal session that asks to be woken says which
+   * session it is, and loom checks that it is a live one of that machine, member and agent (shared-wake.ts, placeOf). */
   terminal?: WakeDoor['terminal'];
   /** The household's GitHub read and the Changes cache, so a wake can watch a pull request loom does not track yet. */
   changes?: WakeDoor['changes'];
@@ -159,14 +159,16 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
   registerWake(operations, db, clock, installed.triggers, wakes, { judgedAs, bodyWork: viewer => options.bodyWork?.(viewer), bodyJob: viewer => options.bodyJob?.(viewer),
     terminal: options.terminal, changes: options.changes,
     heldRefusal: viewer => commands.heldRefusal?.(viewer, 'set'), wordRefusal: (viewer, trigger) => commands.wordRefusal?.(viewer, 'set', trigger),
-    stood: (viewer, trigger) => commands.stood?.(viewer, 'set', trigger) });
+    stood: (viewer, trigger) => commands.stood?.(viewer, 'set', trigger),
+    mayStop: (viewer, trigger) => commands.authorize(viewer, { action: 'stop', trigger }),
+    stopRefusal: (viewer, trigger) => commands.heldRefusal?.(viewer, 'stop') ?? commands.wordRefusal?.(viewer, 'stop', trigger) });
   return { ...installed,
     /** Carry out a `placeSchedule` card an owner allowed (shared-household-proposals.ts), in that write. */
     placeSchedule(ask: PlaceScheduleAsk) { stood(applyPlaceSchedule(db, installed.triggers, ask)); },
     wakes: {
       /** Asked on the runtime's tick: wakes a terminal session did not pick up go to a new conversation, and waits
        * past their life end. Both write nothing when there is nothing to do; answers whether anything was written. */
-      sweep(): boolean { const moved = rehomeTerminalWakes(wakes), ended = expireWakes(db, installed.triggers, wakes.now()); return moved + ended > 0; },
+      sweep(): boolean { const moved = rehomeTerminalWakes(wakes), ended = expireWakes(wakes, installed.triggers); return moved + ended > 0; },
       /** The wakes waiting for a live terminal session, handed to its hook and closed (shared-terminal-session.ts). */
       takeTerminal: (conversation: string, job: string) => takeTerminalWakes({ db, conversations }, conversation, job),
     } };
