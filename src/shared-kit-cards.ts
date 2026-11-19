@@ -117,3 +117,22 @@ export function applyKitChange(db:DataDatabase,value:Change) {
     throw new OperationError('conflict','That is how it already is');
   apply();
 }
+
+/** Text shown above the sealed details on the owner's review page. */
+export function kitReview(value:Change,before:unknown):string {
+  const lines=[kitQuestion(value)+'.'];
+  if (value.change==='kit' && value.input.tools) {
+    for (const tool of value.input.tools) {
+      const argv=tool.args.map(arg=>typeof arg==='string'?JSON.stringify(arg):'{'+arg.parameter+'}').join(' ');
+      lines.push('Run '+tool.name+' with program '+JSON.stringify(tool.program)+(argv?' '+argv:'')+'.');
+      lines.push('Use '+tool.repository+' at '+tool.commit+', image '+tool.image+'.');
+      const secrets=Object.entries(tool.secrets).map(([alias,name])=>name+' as '+alias);
+      lines.push(secrets.length?'Give this program '+secrets.join(', ')+'.':'This program receives no kit credentials.');
+    }
+  }
+  if (value.change==='projectOutsidePerson') {
+    const grants=z.object({grants:z.array(z.object({agent:z.string(),kit:z.string()}))}).parse(before).grants;
+    lines.push(grants.length?'Project kits: '+grants.map(({agent,kit})=>agent+'/'+kit).join(', ')+'.':'This project currently grants no kits.');
+  }
+  return lines.join('\n');
+}

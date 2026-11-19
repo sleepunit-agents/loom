@@ -769,6 +769,13 @@ it('requires owner cards for kit definitions, their grants and outside project m
     const filed = await propose(change, input);
     expect(filed.body).toMatchObject({ok:true,value:{state:'pending'}});
     const id = filed.body.value!.id;
+    if (change==='kit' && (input as {tools?:unknown}).tools) {
+      const preview=await look(f,id);
+      expect(preview.summary).toContain('Run forecast with program "tools/forecast" {city}');
+      expect(preview.summary).toContain('weather-key as KIT_WEATHER');
+    }
+    if (change==='projectOutsidePerson') expect((await look(f,id)).summary).toContain('Project kits: art/tools.');
+
     expect((await f.call('approvals/answer', {id, answer:'allow'}, 'lee')).status).toBe(403);
     expect((await f.call('approvals/answer', {id, answer:'allow'}, 'sam')).body.ok).toBe(true);
   };

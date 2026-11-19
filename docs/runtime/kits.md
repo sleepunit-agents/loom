@@ -58,3 +58,5 @@ A running body calls `kits.available` with an empty input. A person can ask the 
 ```
 
 The old people file also contains individual standing instructions. A fleet setup permission and an action-level change permission describe writes. Neither belongs in the read-only Pond kit. Each would need a separately reviewed tool, named credential, explicit recipient and implementation of its resource limits. A restriction on writing to the work GitHub org stays a restriction. Never translate the absence of a prohibition into a kit grant.
+
+The grant read describes what the owner allows. Compare it with the named tools advertised by the running body to find what this particular worker can execute. A newly granted tool may first appear in the next body. A revoked tool may still appear in a running body's list but its next invocation is refused. A missing approved image, a machine configured for nested Docker, or an unavailable worker socket can leave a permitted tool unusable. On a machine that can give a job the Docker socket, a second container would not isolate that job from another helper on the same engine; kit execution stays closed there.
