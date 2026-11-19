@@ -190,6 +190,18 @@ export class Conversations {
     });
   }
 
+  /** Mail handed to a body that takes none through the runtime: a live terminal session, whose hook is given it in
+   * the answer to its own report (shared-wake.ts, takeTerminalWakes). Taken and done by that job in one step, since
+   * such a body confirms nothing. Only what still waits is handed, and what was handed is answered. */
+  handOver(ids: readonly string[], jobId: string): Item[] {
+    if (!ids.length) return [];
+    return this.db.transaction(() => {
+      const at = this.now();
+      return this.db.update(inbox).set({ state: 'done', job: jobId, takenAt: at, doneAt: at, changedAt: at }).where(and(inArray(inbox.id, [...ids]), eq(inbox.state, 'waiting'))).returning().all()
+        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    });
+  }
+
   /** Permission and recipient checks belong at the external door. This method
    * receives the authenticated member, never a claimed sender from message text. */
   answer(itemId: string, member: string, answer: NonNullable<Item['answer']>, words?: string): Item {

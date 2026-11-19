@@ -251,7 +251,7 @@ export function sharedRoot(options: {
       if (meter?.enabled()) meter.run('job', name, work); else work();
     }),
   });
-  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); tempo?.wakes.sweep(); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
@@ -301,7 +301,7 @@ export function sharedRoot(options: {
   comms?.install(operations);
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
-  if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
+  if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now, (conversation, job) => tempo?.wakes.takeTerminal(conversation, job) ?? []);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
@@ -372,9 +372,12 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>commsLifetime?.close());
 
   const settingsBinding = sharedTempoSettings(bodyScope);
+  const changesReader = options.changes ? 'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github) : undefined;
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
-    bodyWork: viewer => bodyScope(viewer), bodyJob,
+    bodyWork: viewer => bodyScope(viewer), bodyJob, terminal: credentials.terminalMachine,
+    // A wake on a pull request loom does not track reads it with the same reader the one poller uses, and stores it as Changes stores any.
+    changes: changesReader && { read: changesReader, put: change => services.changes.put(change) },
     // A repeating schedule asked for on anybody else's word is an owner's to allow: filed as a household card.
     askOwners: (agent, ask, why, where) => householdProposals.file(services.approvals, agent, { change: 'placeSchedule', input: ask, why }, where).id,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
@@ -387,7 +390,7 @@ export function sharedRoot(options: {
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
-  const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
+  const changePolling=changesReader ? pollChanges(services.changes,changesReader,clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
   const workLife=workLifetime(db,clock,data.writes,options.reportError);
   startupCleanups.push(()=>workLife.close());

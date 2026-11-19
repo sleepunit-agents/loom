@@ -10,7 +10,7 @@ import AgentFace, { faceState } from './agent-face';
 import { agentPath, agentStateLine, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
 import { LastSteps } from './last-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
-import { Doing, useDoing } from './doing';
+import { Doing, useDoing, busyCount } from './doing';
 import { AgentJobs } from './agent-jobs';
 import { ConversationsSection, LastAnswerSection, useCardTalk } from './talk';
 import { stamp } from './time';
@@ -27,7 +27,7 @@ function AgentReader({ agent, names, go }: { agent: Agent; names: ReadonlyMap<st
   const status=statuses.status==='live'?latestStatus(statuses.records,agent.id):undefined;
   const needs=waiting.status==='live'?(waiting.agents.get(agent.id)??0):undefined;
   const summary=comms.reading?.summaries.find(s=>s.agent===agent.id),thread=summary?.first??summary?.last;
-  const count=doing.items.length;
+  const count=busyCount(doing.items);
   const links=[
     {title:'Conversation',meta:comms.status==='live'?'First unread or latest open thread':'Open Comms to reconnect',href:thread?threadPath(thread.thread):'/p/comms-preview'},
     {title:'Activity',meta:'Recent work and conversations',href:`/p/activity-preview/?who=${encodeURIComponent(agent.id)}`},

@@ -203,7 +203,7 @@ it('names a trigger, a task and a machine each under its own rule', () => {
   expect(h.as(house).doing('art').items.map(item => item.id)).toEqual(['t-7', 't-8']);
 });
 
-it('refuses to read without a rule for every source, and reads in four statements at most however many rows there are', async () => {
+it('refuses to read without a rule for every source, and reads in five statements at most however many rows there are', async () => {
   const h = busy();
   for (const missing of guarded) {
     const rules = { ...sqlVisibility(alex, guarded) } as QueryVisibility; delete rules[missing];
@@ -217,11 +217,15 @@ it('refuses to read without a rule for every source, and reads in four statement
   const statements: string[] = [], prepare = h.client.prepare.bind(h.client);
   h.client.prepare = ((source: string) => { statements.push(source); return prepare(source); }) as typeof h.client.prepare;
   h.as(alex).doing('art');
-  expect(statements.map(source => /from "(\w+)"/.exec(source)?.[1])).toEqual(['jobs', 'triggers', 'tasks', 'tasks']);
+  expect(statements.map(source => /from "(\w+)"/.exec(source)?.[1])).toEqual(['jobs', 'triggers', 'tasks', 'tasks', 'triggers']);
   statements.length = 0; h.db.delete(jobs).where(sql`${jobs.conversation} in ('cv-night','cv-program','cv-sweep')`).run(); statements.length = 0;
-  h.as(alex).doing('art'); expect(statements).toHaveLength(3);
+  h.as(alex).doing('art'); expect(statements).toHaveLength(4);
   // With no task in progress the count is the only read of tasks.
-  statements.length = 0; h.db.delete(tasks).run(); statements.length = 0; h.as(alex).doing('art'); expect(statements).toHaveLength(2);
+  statements.length = 0; h.db.delete(tasks).run(); statements.length = 0; h.as(alex).doing('art'); expect(statements).toHaveLength(3);
+  // Fifty waits are one statement still.
+  for (let n = 0; n < 50; n++) h.trigger(`tr-wait-${n}`, `Wake Art when job j-${n} ends`, { sourceKind: 'job', watches: `job:j-${n}`, lifespan: 'once', target: 'wake', ownerKind: 'agent', owner: 'art' });
+  statements.length = 0; h.as(alex).doing('art'); expect(statements).toHaveLength(3);
+  h.db.delete(triggers).where(sql`${triggers.target} = 'wake'`).run();
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(h.as(house)) }) });
   const result = await graphql({ schema, source: '{ agentDoing(agent:"art") { more items { id kind title with place direct ref task quietSince machine since state href } claimed } }' });
   expect(result.errors).toBeUndefined();
@@ -309,4 +313,26 @@ it('still lists a job the sweep should have ended and has not, last, with when i
     ['j-edge', 'running', null], ['j-live', 'running', null], ['j-waiting', 'queued', null], ['t-1', 'in_progress', null],
     ['j-unplaced', 'queued', ago(QUEUE_DEADLINE_MS + 60_000)], ['j-silent', 'running', '2026-11-14T12:00:00.000Z'],
   ]);
+});
+
+it('says what an agent is waiting to be woken for, quietly after everything with a body, to whoever sees the trigger', () => {
+  const h = household();
+  h.talk('cv-loom', 'loom', 'th:garden/1', 'Repair the garden pump', { member: 'alex' });
+  h.job('j-loom', { conversation: 'cv-loom', member: 'alex', queuedAt: hour(9), claimedAt: hour(9) });
+  h.task('t-7', 'Order the pump', { changedAt: at });
+  const wait = (id: string, extra: Partial<typeof triggers.$inferInsert>) => h.trigger(id, `Wake Art when ${id}`, { ownerKind: 'agent', owner: 'art', lifespan: 'once', target: 'wake', ...extra });
+  wait('tr-checks', { sourceKind: 'pull-request', watches: 'change:github:sleepunit-agents/loom#33', target: 'wake:checks-finished', createdAt: hour(15) });
+  wait('tr-job', { sourceKind: 'job', watches: 'job:job-1', createdAt: hour(14) });
+  wait('tr-time', { times: '2026-11-19T21:00:00.000Z', nextDueAt: '2026-11-19T21:00:00.000Z', createdAt: hour(13) });
+  // Done, stopped and other agents' waits are not waiting; nor is an ordinary trigger.
+  wait('tr-fired', { sourceKind: 'job', watches: 'job:job-2', enabled: false, state: 'fired' });
+  wait('tr-mark', { sourceKind: 'job', watches: 'job:job-3', to: 'mark', owner: 'mark' });
+  h.trigger('tr-night', 'Plan the night');
+  const items = h.as(alex).doing('art').items;
+  expect(items.map(item => [item.kind, item.id])).toEqual([['loom', 'j-loom'], ['task', 't-7'], ['waiting', 'tr-checks'], ['waiting', 'tr-job'], ['waiting', 'tr-time']]);
+  expect(items.slice(2)).toMatchObject([
+    { title: 'checks on sleepunit-agents/loom#33', ref: null, since: hour(15), state: 'standing', href: '/p/tempo', machine: null },
+    { title: 'job job-1', ref: null }, { title: null, ref: '2026-11-19T21:00:00.000Z' }]);
+  // Under the triggers rule: somebody who does not see Art's triggers is told of no wait.
+  expect(h.as({ kind: 'member', id: 'bo' }).doing('art').items.filter(item => item.kind === 'waiting')).toEqual([]);
 });

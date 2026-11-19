@@ -7,6 +7,7 @@ import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
+import { waitingOn, wakeCondition, wakeRows, watchedOf } from '../core/tempo/wake.js';
 import { TASK_ID } from '../slug.js';
 import { jobClaimed, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
@@ -29,8 +30,10 @@ export function nextTerminalDeadline(db: DataDatabase, now: number) {
  * `kind` says which phrase: a terminal session a person is driving, a conversation on a bridge or in Comms,
  * a hand-off taken from another agent, a trigger's firing, a wake with no trigger to name, a task in progress,
  * a job that is none of these, or `private`: a job in a conversation this viewer may not read, which carries
- * nothing of that conversation (no venue, place, person, title or link). */
-export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private';
+ * nothing of that conversation (no venue, place, person, title or link). `waiting` is no job at all: something
+ * the agent asked loom to wake it for (core/tempo/wake.ts), with what it waits on as the title, or for a time
+ * its instant in `ref`. */
+export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private' | 'waiting';
 export interface Doing {
   /** The job's id, or the task's. */
   id: string; kind: DoingKind;
@@ -62,8 +65,9 @@ export const doingCap = 8, doingMost = 100;
  * a pill of its own only while it was touched this recently (its `changedAt`: a claim, a comment, an edit,
  * a link, a move), and at most this many do; the rest are counted (`claimed`). */
 export const taskRecentMs = 8 * 3_600_000, taskPills = 3;
-/** Things a person is in come first, then what a schedule or another agent started and plain jobs, then tasks. */
-const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2 };
+/** Things a person is in come first, then what a schedule or another agent started and plain jobs, then tasks,
+ * then what the agent is only waiting on: quiet, after everything that has a body. */
+const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2, waiting: 2.5 };
 const threadPath = (place: string) => `/p/comms-preview/thread/${encodeURIComponent(place.replace(/^th:/, ''))}`;
 const conversationPath = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
 /** As web/src/pieces/tasks/route.ts writes a task's segment: a current id as it is, an imported one marked. */
@@ -117,9 +121,11 @@ export class JobSummaries {
    * machine's name is joined under the machines rule, the agent a hand-off came from under the jobs rule
    * (the job it was handed from), a trigger's note under the triggers rule, a task under the tasks rule.
    *
-   * Four statements at most, whatever the number of rows: jobs with their conversations and machines,
-   * triggers (only when a visible wake names one), the count of tasks in progress, and (only when there
-   * are any) the few tasks that may be said. */
+   * What it waits on is its pending wakes, under the triggers rule: whoever sees the trigger sees the wait.
+   *
+   * Five statements at most, whatever the number of rows: jobs with their conversations and machines,
+   * triggers (only when a visible wake names one), the count of tasks in progress, (only when there
+   * are any) the few tasks that may be said, and the agent's pending waits. */
   doing(agent: string, limit = doingCap): { items: Doing[]; more: number; claimed: number } {
     if (!Number.isInteger(limit) || limit < 1 || limit > doingMost) throw new Error(`Doing limit must be 1–${doingMost}`);
     const allowed = this.allowed(), from = alias(jobs, 'doing_handed_from');
@@ -198,6 +204,13 @@ export class JobSummaries {
     });
     for (const task of working) items.push({ ...none, id: task.id, kind: 'task', title: task.title, ref: task.id, machine: null,
       since: task.changedAt, state: 'in_progress', href: taskPath(task.id) });
+    // What the agent asked loom to wake it for, and has not been woken for yet: an ordinary trigger, read under the triggers rule.
+    const waits = this.db.select({ id: triggers.id, sourceKind: triggers.sourceKind, watches: triggers.watches, times: triggers.times, target: triggers.target,
+      nextDueAt: triggers.nextDueAt, createdAt: triggers.createdAt, state: triggers.state }).from(triggers)
+      .where(and(seen.triggers(getTableColumns(triggers)), eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, agent), wakeRows())).orderBy(desc(triggers.createdAt), asc(triggers.id)).limit(doingMost).all();
+    for (const wait of waits) { const watched = watchedOf(wait);
+      items.push({ ...none, id: wait.id, kind: 'waiting', title: watched ? waitingOn(watched, wakeCondition(wait)) : null, ref: watched?.kind === 'time' ? wait.nextDueAt ?? watched.at : null,
+        machine: null, since: wait.createdAt, state: wait.state, href: '/p/tempo' }); }
     // Jobs nothing has been heard from go last, whatever they are.
     const rank = (item: Doing) => item.quietSince ? 3 : doingRank[item.kind];
     items.sort((a, b) => rank(a) - rank(b) || b.since.localeCompare(a.since) || a.id.localeCompare(b.id));

@@ -67,7 +67,9 @@ export class TerminalSessions {
       const thread = session.thread ? this.messages.threads.thread(session.thread)
         : this.db.select().from(deletedThreads).where(eq(deletedThreads.id,cv.place)).get();
       if (!thread || thread.id !== cv.place || thread.conversation !== cv.id) throw new Error('Terminal records disagree');
-      const result = {conversation:cv.id,thread:thread.id,job:parent.id};
+      // `accepted`: the report was taken as the current instance of a session that is live. Only then is anything
+      // loom has for the session handed back with the answer (shared-terminal-session.ts).
+      const result: {conversation:string;thread:string;job:string;accepted?:true} = {conversation:cv.id,thread:thread.id,job:parent.id};
       if (!session.thread && event.action !== 'usage' && event.action !== 'end')
         throw new OperationError('conflict','Terminal thread was deleted');
       const instance = event.instanceId ?? null;
@@ -91,7 +93,7 @@ export class TerminalSessions {
       if (event.action === 'turn' && !this.messages.recordObserved(thread.id,event.role,event.eventId,words!,parent.id))
         return result;
       this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at}).where(eq(jobs.id,parent.id)).run();
-      return result;
+      return {...result,accepted:true as const};
     });
   }
 

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import { claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
+import { busyCount, claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Node = { children: Array<Node | string>; props: Record<string, any>; type: unknown };
 const item = (kind: string, fields: Partial<DoingItem> = {}): DoingItem => ({ id: `id-${kind}`, kind, title: null, with: null, place: null, direct: null, ref: null,
@@ -102,4 +102,20 @@ it('says the tasks an agent has only claimed in one quiet line under the pills, 
   expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
   await act(async () => tree!.update(h(Doing, { doing: live([item('job')], 0, 54), name: 'Art', agent: 'art', go, compact: true })));
   expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
+});
+
+it('says what an agent is waiting to be woken for, quietly, and does not count a wait as work', async () => {
+  const wait = item('waiting', { id: 'tr-wake-1', title: 'checks on sleepunit-agents/loom#33', state: 'standing', href: '/p/tempo' });
+  expect(doingPhrase(wait)).toBe('Waiting on checks on sleepunit-agents/loom#33');
+  expect(doingPhrase(item('waiting', { ref: '2026-11-14T20:15:00.000Z' }))).toBe('Waiting until Nov 14, 2:15 PM');
+  expect(doingPhrase(item('waiting'))).toBe('Waiting to be woken');
+  // When it asked, not a task reference; and no "since", which is for something running.
+  expect(doingMeta(item('waiting', { ref: '2026-11-14T20:15:00.000Z', state: 'standing' }), Date.parse('2026-11-19T21:00:00.000Z'))).toBe('asked 2:15 PM');
+  expect(busyCount([wait, item('loom'), item('task')])).toBe(2);
+  expect(busyCount([wait])).toBe(0);
+  const go = await draw(live([item('loom', { href: '/p/comms-preview/thread/1' }), wait]));
+  const pills = (tree!.root as unknown as { findAll(test: (node: Node) => boolean): Node[] }).findAll(node => node.type === 'li');
+  expect(pills.map(node => [node.props['data-kind'], node.props['data-quiet']])).toEqual([['loom', undefined], ['waiting', '']]);
+  expect(words(pills[1])).toContain('Waiting on checks on sleepunit-agents/loom#33');
+  expect(go).not.toHaveBeenCalled();
 });
