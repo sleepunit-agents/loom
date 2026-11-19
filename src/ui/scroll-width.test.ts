@@ -43,12 +43,10 @@ it('keeps it too where a script measures the box to decide its layout, and where
   expect(readFileSync(join(root, 'pieces/attention/home.tsx'), 'utf8')).toContain('desk-home-details');
 });
 
-it('centres a dock key\'s name once: the look\'s rule places it with translate and clears the library\'s transform', () => {
+it('centres a dock key\'s name by its margins, with no transform or translate to be folded, doubled or cleared', () => {
   const look = readFileSync(join(root, 'looks/looks.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const rule = /\.loom-dock-bar \.v-dock:not\(\[data-variant="rail"\]\) \[data-part="label"\]\{position:absolute;[^}]*\}/.exec(look)?.[0] ?? '';
-  expect(rule).toMatch(/left:50%/);
-  expect(rule).toMatch(/translate:-50% 0/);
-  expect(rule).toMatch(/transform:none/);
-  // The library still shifts by half with transform; if that goes, this rule's clearing can go with it.
-  expect(readFileSync(join(root, 'styles/cojeev/dock.css'), 'utf8')).toMatch(/transform:\s*translate\(-50%, 0\)/);
+  const rules = [...look.matchAll(/\.loom-dock-bar \.v-dock[^{]*\[data-part="label"\]\{([^}]*)\}/g)].map(match => match[1]);
+  expect(rules.length).toBeGreaterThan(3);
+  expect(rules.some(body => /left:-200px;right:-200px;margin-inline:auto;transform:none/.test(body) && /width:max-content/.test(body))).toBe(true);
+  expect(rules.filter(body => /(^|;)\s*translate\s*:/.test(body) || /transform:\s*translate/.test(body))).toEqual([]);
 });
