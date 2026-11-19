@@ -9,9 +9,10 @@ import type { DataDatabase } from './core/data/database.js';
 import { boxes, modelAccounts } from './core/data/schema.js';
 import type { Operations, Door } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
+import { AccountLogins } from './runtime/account-logins.js';
 import type { ModelRole } from './runtime/placement.js';
 import { lineName as name } from './core/line-name.js';
-export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,roles:()=>readonly ModelRole[]){
+export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,roles:()=>readonly ModelRole[],now:()=>string){
  const account=(id:string)=>db.select().from(modelAccounts).where(eq(modelAccounts.id,id)).get();
  const owns=(viewer:Viewer,id:string)=>{
   const row=account(id);
@@ -51,6 +52,8 @@ export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,
  operations.register({...common,name:'runtime.accountSignedOut',input:binding,output:saved,
   may:(viewer,input)=>owns(viewer,input.account),
   run(ctx,input){
+   // What was learned about its sign-ins there goes with it, and any notice about them closes.
+   new AccountLogins(db,now).forget(input.account,input.box);
    if(signIns.signedOut(input,input.account,input.box))ctx.changed('modelAccount',input.account);
    return{saved:true as const};
   },

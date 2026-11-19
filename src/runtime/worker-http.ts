@@ -135,6 +135,7 @@ async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attemp
   throw new WorkerOperationFailure(name, true);
 }
 export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
+export interface WorkerLoginCheck { account: string; harness: string; place: 'containers' | 'host'; state: 'signed-in' | 'signed-out'; expiresAt?: string | null; why?: string | null }
 export function readWorkerAccountBasis(input: WorkerHttpOptions, identity: WorkerAccountIdentity) {
   return operationCaller(input)('accountUsageBasis', identity, z.object({ basis: z.uuid() }).strict());
 }
@@ -143,6 +144,10 @@ export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observa
 }
 export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
+}
+/** What this machine's files say about each sign-in it watches (account-login-check.ts), all of them each time. */
+export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: readonly WorkerLoginCheck[]) {
+  return operationCaller(input)('accountLogins', { logins }, z.object({ changed: z.number().int().nonnegative() }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

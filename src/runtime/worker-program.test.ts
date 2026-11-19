@@ -456,3 +456,27 @@ it('a diagnostics-only worker polls and reports health without constructing an e
  expect(result).toBe(0);expect(next).toHaveBeenCalledWith(['memory']);expect(health).toHaveBeenCalledWith(expect.objectContaining({slots:0}));
  expect(f.run).not.toHaveBeenCalled();expect(f.containerExecutor).not.toHaveBeenCalled();expect(f.control).not.toHaveBeenCalled();
 });
+
+it('tells loom what the sign-in files on its machine say, for houses and for the machine itself, and only again when that changes', async () => {
+  const f = fixture(), sent: unknown[] = [];
+  const configured = { ...config, loginCheckMs: 1_000, accountLogins: { subscription: { claude: { source: '/logins/claude' }, gemini: { source: '/logins/gemini' } } },
+    hostLogins: { subscription: { claude: { source: '/home/.claude' } }, other: { codex: { source: '/home/.codex' } } } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
+  let round = 0;
+  const readLogin = vi.fn(async (harness: string, directory: string) => {
+    if (directory === '/home/.codex' && round === 1) throw new Error('Sign-in file unreadable');
+    return directory === '/logins/claude' && round >= 3 ? { state: 'signed-out' as const, why: 'There is no sign-in file.' } : { state: 'signed-in' as const, ...(harness === 'claude' && { expiresAt: '2026-12-14T12:30:00.000Z' }) };
+  });
+  const reportLogins = vi.fn(async (_remote: unknown, logins: unknown) => { sent.push(logins); return { changed: 1 }; });
+  // Five rounds of the check, then the worker is stopped from outside.
+  const pause = vi.fn(async () => { if (++round > 4) throw new Error('stop'); });
+  f.run.mockImplementation(() => new Promise<void>(resolve => { const wait = setInterval(() => { if (round > 4) { clearInterval(wait); resolve(); } }, 1); }));
+  expect(await workerProgram({ ...f, readLogin: readLogin as never, reportLogins: reportLogins as never, pause })).toBe(0);
+  const good = [{ account: 'subscription', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z' },
+    { account: 'subscription', harness: 'claude', place: 'host', state: 'signed-in', expiresAt: '2026-12-14T12:30:00.000Z' },
+    { account: 'other', harness: 'codex', place: 'host', state: 'signed-in' }];
+  // Round 0 says it; round 1 cannot read one file and says nothing; round 2 is unchanged; round 3 has changed.
+  expect(sent).toEqual([good, [{ ...good[0], state: 'signed-out', why: 'There is no sign-in file.', expiresAt: undefined }, good[1], good[2]].map(row => JSON.parse(JSON.stringify(row)))]);
+  expect(readLogin.mock.calls.every(([harness]) => harness !== 'gemini')).toBe(true);
+  expect(f.error.mock.calls.flat().filter(line => String(line).includes('sign-in state'))).toEqual(['Worker sign-in state unavailable\n']);
+});

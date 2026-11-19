@@ -41,7 +41,7 @@ describe('the approved data model', () => {
     actual.jobs = actual.jobs.filter(n => !['account', 'harness'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
-    expect(Object.values(plumbing).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
+    expect(Object.values(plumbing).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','model_account_logins','program_tokens','program_record_grants','program_operation_grants'].sort());
     const { client } = fresh();
     for (const table of [...Object.values(tables), ...Object.values(plumbing)]) {
       const columns = client.prepare(`PRAGMA table_info("${getTableName(table)}")`).all() as { name: string }[];

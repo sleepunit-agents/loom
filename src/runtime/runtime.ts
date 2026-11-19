@@ -6,6 +6,7 @@ import type { Clock } from '../core/clock.js';
 import type { DataDatabase } from '../core/data/database.js';
 import { Jobs, agentMailAdmission } from './jobs.js';
 import { Machines } from './machines.js';
+import { AccountLogins } from './account-logins.js';
 import { SILENCE_MS } from './silence.js';
 
 export interface RuntimeOptions {
@@ -24,7 +25,7 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
   const interval = options.sweepMs ?? 30_000;
   if (!Number.isFinite(interval) || interval <= 0) throw new Error('Invalid runtime sweep interval');
   const now = () => new Date(clock.now()).toISOString();
-  const jobs = new Jobs(db, now), machines = new Machines(db, now);
+  const jobs = new Jobs(db, now), machines = new Machines(db, now), logins = new AccountLogins(db, now);
   let started = false, closed = false;
   let cancel: (() => void) | undefined;
   const available = () => { if (closed) throw new Error('Runtime is closed'); };
@@ -52,7 +53,8 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
     const over = judge ? jobs.sweep(SILENCE_MS, undefined, listeningSince) : [];
     // These services commit separately. Publish ended-job events even if the
     // machine notice pass fails, so a later tick need not rediscover them.
-    try { try { if (judge) machines.sweep(); } finally { options.expire?.(); } }
+    // A sign-in notice is for a machine that is reporting, so it waits for the same judgement.
+    try { try { try { if (judge) machines.sweep(); } finally { if (judge) logins.sweep(); } } finally { options.expire?.(); } }
     finally { ended(over.map(job => job.id)); }
   };
   const tick = () => {

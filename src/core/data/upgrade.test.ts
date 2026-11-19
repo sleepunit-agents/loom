@@ -459,3 +459,8 @@ it('starts upgraded machines without inspection grants or diagnostic history',()
  expect(db.prepare('select id,readers,hosts_any from boxes').all()).toEqual([{id:'legacy',readers:null,hosts_any:1}]);
  expect(db.prepare('select * from machine_reads').all()).toEqual([]);
 });
+
+it('starts upgraded households with no sign-in records',()=>{
+ const db=household(17);upgradeDataSchema(db);
+ expect(db.prepare('select * from model_account_logins').all()).toEqual([]);
+});

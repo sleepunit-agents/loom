@@ -18,10 +18,16 @@ export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
   }).sync();
   const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),
     columns: { id: true, owner: true, provider: true, usage: true, usageReadAt: true, resetsAt: true },
-    with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } } },
+    with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } },
+      modelAccountLoginsByAccount: { columns: { harness: true, place: true, state: true, expiresAt: true, checkedAt: true, since: true, learnedFrom: true, why: true }, with: { boxRow: { columns: { id: true, name: true } } } } },
   }).sync();
-  return { rows, privateRows: new Map(privateRows.map(({ modelAccountBoxesByAccount, ...row }) => [row.id,
-    { ...row, signedInOn: modelAccountBoxesByAccount.map(link => link.boxRow!).filter(Boolean).sort((a,b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))) }])) };
+  const text = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+  return { rows, privateRows: new Map(privateRows.map(({ modelAccountBoxesByAccount, modelAccountLoginsByAccount, ...row }) => [row.id,
+    { ...row,
+      // Each sign-in of the account loom has learned about: machine, harness and place, never a credential.
+      logins: modelAccountLoginsByAccount.filter(login => login.boxRow).map(({ boxRow, ...login }) => ({ ...login, box: boxRow! }))
+        .sort((a, b) => text(a.box.name, b.box.name) || text(a.box.id, b.box.id) || text(a.harness, b.harness) || text(a.place, b.place)),
+      signedInOn: modelAccountBoxesByAccount.map(link => link.boxRow!).filter(Boolean).sort((a,b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))) }])) };
 }
 /** One current-authority statement for every private account witnessed by a read. */
 export function allowedModelAccounts(db: DataDatabase, viewer: Viewer, ids: readonly string[]) {

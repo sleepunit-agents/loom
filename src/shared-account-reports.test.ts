@@ -9,10 +9,10 @@ import { workerProgram } from './runtime/worker-program.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens, operationResults, sessions, agents, memberAgents, agentBoxes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens, operationResults, sessions, agents, memberAgents, agentBoxes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import type { ModelRole } from './runtime/placement.js';
-import { reportWorkerAccountUsage } from './runtime/worker-http.js';
+import { reportWorkerAccountLogins, reportWorkerAccountUsage } from './runtime/worker-http.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), other = 'b'.repeat(64), owner = 'c'.repeat(64);
@@ -331,4 +331,27 @@ it('refreshes from the normal worker before claims and reports later failure thr
   expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
   expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
   expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
+});
+it('records what a worker read about the sign-ins on its own machine, and only its own', async () => {
+  const f = fixture();
+  const remote = (key: string) => ({ url: 'https://loom.example', token: key, signal: new AbortController().signal, fetch: async (input: RequestInfo | URL, init?: RequestInit) => f.root.http.fetch(new Request(input, init)) });
+  const ends = new Date(f.clock.now() + 20 * 86400_000).toISOString();
+  expect(await reportWorkerAccountLogins(remote(token), [
+    { account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: ends },
+    { account: 'account', harness: 'claude', place: 'host', state: 'signed-out', why: 'There is no sign-in file.' },
+  ])).toEqual({ changed: 1 });
+  expect(f.db.select().from(modelAccountLogins).all().map(row => [row.box, row.place, row.state, row.expiresAt])).toEqual([
+    ['worker', 'containers', 'signed-in', ends], ['worker', 'host', 'signed-out', null]]);
+  // The other machine does not have the account enabled: nothing of what it says is kept, and it cannot name a machine.
+  expect(await reportWorkerAccountLogins(remote(other), [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-out' }])).toEqual({ changed: 0 });
+  expect(f.db.select().from(modelAccountLogins).all()).toHaveLength(2);
+  expect((await f.operation('accountLogins', { logins: [] }, 'by-owner', owner)).status).toBe(403);
+  expect((await f.operation('accountLogins', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', box: 'other' }] }, 'names-a-box')).status).toBe(400);
+  expect((await f.operation('accountLogins', { logins: [{ account: 'account', harness: 'claude', place: 'containers', state: 'signed-in', token: 'secret' }] }, 'carries-more')).status).toBe(400);
+  // The owner reads the sign-ins with the account, by machine, harness and place.
+  const read = await f.root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + owner, 'content-type': 'application/json' },
+    body: JSON.stringify({ query: '{ modelAccounts { ... on RuntimeAccountDetail { logins { box { name } harness place state expiresAt learnedFrom why } } } }' }) });
+  expect((await read.json()).data.modelAccounts[0].logins).toEqual([
+    { box: { name: 'worker' }, harness: 'claude', place: 'containers', state: 'signed-in', expiresAt: ends, learnedFrom: 'check', why: null },
+    { box: { name: 'worker' }, harness: 'claude', place: 'host', state: 'signed-out', expiresAt: null, learnedFrom: 'check', why: 'There is no sign-in file.' }]);
 });

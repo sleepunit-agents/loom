@@ -233,7 +233,7 @@ export function sharedRoot(options: {
   registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer)||currentMember(db,viewer));
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
-  registerModelAccountAdmin(operations, db, roles);
+  registerModelAccountAdmin(operations, db, roles, now);
   const stopMachineReads=registerMachineReads(operations,db,now,bodyScope,credentials.runner);
   const accountSignIns = registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);
   let tempo!: ReturnType<typeof installSharedTempo>;
@@ -302,7 +302,7 @@ export function sharedRoot(options: {
   // A conversation's harness session, kept sealed between bodies: needs the words key, as Comms does.
   const sessions=options.commsKey?new ConversationSessions(db,now,options.commsKey):undefined;
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
-  registerJobUsage(operations, db, credentials.body);
+  registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;

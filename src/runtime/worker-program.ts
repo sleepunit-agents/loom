@@ -10,7 +10,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider } from './worker-process.js';
-import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, type WorkerLoginCheck } from './worker-http.js';
+import { readLogin, watchesLogin } from './account-login-check.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
@@ -60,6 +61,12 @@ const configSchema = z.object({
   // An entry is the machine's directory and nothing else. A `target` is what an entry used to carry: read
   // here so that the worker can stop on it with its own line (WorkerStop 'retired').
   accountLogins: z.record(z.string().min(1), z.record(z.string().min(1), z.object({ source: z.string(), target: z.unknown().optional() }).strict())).optional(),
+  /** The machine user's own sign-ins, by account and harness: the directory each harness keeps its sign-in in
+   * (for example `~/.claude`). They are only watched, so their owner hears when one is gone or ending; no body
+   * is given them. The sign-ins houses mount (accountLogins) are watched without being named here. */
+  hostLogins: z.record(z.string().min(1), z.record(z.string().min(1), z.object({ source: z.string().min(1) }).strict())).optional(),
+  /** How often the worker reads the sign-in files on its machine. */
+  loginCheckMs: z.number().int().min(1_000).max(3_600_000).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
    * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests.
@@ -81,6 +88,8 @@ const configSchema = z.object({
   const most = config.slots ?? HOUSE_SLOTS_DEFAULT;
   if ((typeof config.accountSlots === 'number' ? [config.accountSlots] : Object.values(config.accountSlots ?? {})).some(count => count > most)) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
 });
+/** How long the worker lets an unchanged answer about its sign-ins stand before saying it again. */
+const LOGIN_REPORT_MS = 15 * 60_000;
 export async function workerProgram(input: {
   args: readonly string[];
   read: (path: string) => Promise<string>;
@@ -91,6 +100,8 @@ export async function workerProgram(input: {
   output?: (text: string) => void;
   readRemote?: typeof workerMachineReads;
   relaySignIn?: typeof relaySignIn;
+  readLogin?: typeof readLogin;
+  reportLogins?: typeof reportWorkerAccountLogins;
   signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
   reportUsage?: typeof reportWorkerAccountUsage;
@@ -251,6 +262,24 @@ export async function workerProgram(input: {
       if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
       else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: signIn.timeoutMs });
     });
+    // What the sign-in files on this machine say, for every sign-in houses mount and every one of the machine's
+    // own that is named. Loom is told when that changes, and again every so often so that it knows the answer
+    // is still current. A file that cannot be read leaves that sign-in out of this round: loom keeps what it
+    // last learned only when nothing is sent, so a round with an unreadable file is not sent at all.
+    const watched = [['containers', config.accountLogins], ['host', config.hostLogins]] as const;
+    let lastLogins: string | undefined, lastLoginsAt = -Infinity;
+    const loginChecks = watched.some(([, logins]) => Object.values(logins ?? {}).some(harnesses => Object.keys(harnesses).some(watchesLogin)))
+      ? poll(config.loginCheckMs ?? 60_000, 'Worker sign-in state unavailable\n', async () => {
+        const logins: WorkerLoginCheck[] = [];
+        for (const [place, accounts] of watched) for (const [account, harnesses] of Object.entries(accounts ?? {})) for (const [harness, login] of Object.entries(harnesses)) {
+          if (!watchesLogin(harness)) continue;
+          logins.push({ account, harness, place, ...await (input.readLogin ?? readLogin)(harness, login.source) });
+        }
+        const said = JSON.stringify(logins);
+        if (abort.signal.aborted || (said === lastLogins && performance.now() - lastLoginsAt < LOGIN_REPORT_MS)) return;
+        await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
+        lastLogins = said; lastLoginsAt = performance.now();
+      }) : undefined;
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
@@ -268,7 +297,7 @@ export async function workerProgram(input: {
         if (failed) throw failed.reason;
       }
     }
-    finally { abort.abort(); await settled; await signIns; }
+    finally { abort.abort(); await settled; await signIns; await loginChecks; }
     return 0;
   } catch (error) {
     // One fixed line and code for the stage; never the error's own words.
