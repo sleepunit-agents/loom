@@ -46,7 +46,9 @@
 .next-tile[data-focused]::after{box-shadow:inset 0 0 0 1px var(--tile-ring),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
 .next-strip{min-height:32px;height:32px;padding:0 4px 0 0;gap:2px;user-select:none;background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)));border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border))}
 .next-tile[data-focused] .next-strip{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
-.next-strip>.next-app-key{display:grid;place-items:center;align-self:stretch;flex:none;width:44px;padding-left:6px;background:var(--t);color:var(--v-on-accent);clip-path:polygon(var(--next-cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--next-cut))}
+/* The key's right edge slopes in by 10px at the foot, so what shows is narrower than its box: the icon sits at the
+   box's middle with no padding pushing it right (it had 6px on the left, and read as 3px off toward the slope). */
+.next-strip>.next-app-key{display:grid;place-items:center;align-self:stretch;flex:none;width:44px;padding-left:0;background:var(--t);color:var(--v-on-accent);clip-path:polygon(var(--next-cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--next-cut))}
 .next-strip>.next-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 11px var(--font-display);text-transform:uppercase;letter-spacing:.12em}
 .next-strip>button:not(.next-app-key){height:26px;min-width:26px;padding:0 5px;color:var(--v-text-2);border-radius:0}
 .next-strip>button:focus-visible{outline:2px solid var(--t);outline-offset:-2px}

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- A bare drop-down, text box or fieldset in an app keeps the kit's padding, corners and labels: the build had placed the kit's layer under the reset, which took them away. The icon in a tile's bar sits 3px further left, at the middle of its key.
 - Opening an item no longer redraws the whole app. In Inbox and Comms, clicking a row changes the open item alone: the list keeps its place and the clicked row keeps the keyboard focus, and an Inbox item shows at once from what its row already holds. Changing folder, typing in search or turning a page keeps the folders, their counts, the search box and the last rows on screen until the new rows arrive, then starts the list from its top. Paging a thread's messages, a conversation's work, questions or activity, and changing Job usage's dates keep what was shown the same way. Anything kept is dropped the moment its feed fails or is refused.
 - A dock key's name sits centred over its key again; it had been shifted left by its own width.
 - A dock key's name is centred over its key, with a mouse and on a touch screen: measured in a browser this time. The earlier fix moved it from one side to the other.
