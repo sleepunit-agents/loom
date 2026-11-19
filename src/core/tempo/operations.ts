@@ -11,7 +11,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { isWake } from './wake.js';
+import { WAKE_EDIT_REFUSAL, isWake, looksLikeWake } from './wake.js';
 import { HOST_SCHEDULE_REFUSAL, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
@@ -67,7 +67,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     run(ctx, trigger) {
       if (trigger.execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       // A wake is made only by its own door, which says where it is delivered and bounds it (src/shared-wake.ts).
-      if (isWake(trigger)) throw new OperationError('invalid', 'A wake is asked for with tempo.wake');
+      if (looksLikeWake(trigger.target)) throw new OperationError('invalid', 'A wake is asked for with tempo.wake');
       const held = options.heldRefusal?.(ctx.viewer, 'set'); if (held) throw new OperationError('denied', held);
       const refused = options.wordRefusal?.(ctx.viewer, 'set', trigger); if (refused) throw new OperationError('denied', refused);
       const first = options.ownersFirst?.(ctx.viewer, { action: 'set', trigger });
@@ -95,6 +95,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);
+      // A wake's bounds are set at its own door and nothing moves them after (src/shared-wake.ts).
+      if (stored && isWake(stored)) throw new OperationError('invalid', WAKE_EDIT_REFUSAL);
       if (refused) throw new OperationError('denied', refused);
       const first = stored && options.ownersFirst?.(ctx.viewer, { action: 'edit', trigger: stored, change });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { saved: false, waits: first.waits }; }

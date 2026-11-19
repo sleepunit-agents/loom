@@ -11,6 +11,7 @@ import type { Clock } from '../clock.js';
 import { householdTimezone } from '../data/household-settings.js';
 import { localDate, nextTime } from './calendar.js';
 import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
+import { WAKES_MAX, WAKE_EDIT_REFUSAL, isWake, wakeRows, wakesFull } from './wake.js';
 
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
@@ -140,6 +141,14 @@ export class TriggerEngine {
     const agent = this.agent(t);
     return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
+  /** The one place the bound on pending waits is held (core/tempo/wake.ts, WAKES_MAX): asked wherever a wake comes
+   * to stand, which is when one is set and when a stopped one is turned back on. A held wake is still standing and
+   * is counted, so resuming an agent adds none. Throws, in words for the caller, when the agent's waits are full. */
+  private wakeRoom(t: { targetKind?: string | null; target?: string | null; to?: string | null }): void {
+    if (!isWake(t) || !t.to) return;
+    const pending = this.db.select({ n: sql<number>`count(*)` }).from(triggers).where(and(eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, t.to), wakeRows())).get()!.n;
+    if (pending >= WAKES_MAX) throw new Error(wakesFull(t.to));
+  }
   /** `member` is whom the trigger's work is for, when that is a member and not the agent itself; `asked` is
    * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
    * shared-place-triggers.ts) and never part of what a caller sends. */
@@ -171,6 +180,7 @@ export class TriggerEngine {
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
+      this.wakeRoom(v);
       this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();
       this.log(id, 'set');
@@ -190,6 +200,7 @@ export class TriggerEngine {
       if (t.enabled) throw new Error('Trigger is already on');
       if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
       if (this.expired(t)) throw new Error('No time left today');
+      this.wakeRoom(t);
       this.db.update(triggers).set({ enabled: true, state: this.paused(t) ? 'held' : 'standing', nextDueAt: this.due(t.sourceKind, t.times, t.days, t.lifespan), changedAt: this.now() }).where(eq(triggers.id, id)).run();
       this.log(id, 'started');
     });
@@ -204,6 +215,7 @@ export class TriggerEngine {
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {
       const t = this.get(id);
+      if (isWake(t)) throw new Error(WAKE_EDIT_REFUSAL);
       // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;

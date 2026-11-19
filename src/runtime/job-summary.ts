@@ -1,13 +1,13 @@
 /** Home's current-job projection, and what each agent is doing. The outside composition supplies its current
  * SQL policy for jobs and for what a job is said by (conversations, machines, triggers, tasks); this module never invents sharing rules or reads credentials. */
-import { and, asc, desc, eq, getTableColumns, inArray, is, like, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
-import { WAKE_TARGET, waitingOn, wakeCondition, watchedOf } from '../core/tempo/wake.js';
+import { waitingOn, wakeCondition, wakeRows, watchedOf } from '../core/tempo/wake.js';
 import { TASK_ID } from '../slug.js';
 import { jobClaimed, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
@@ -207,8 +207,7 @@ export class JobSummaries {
     // What the agent asked loom to wake it for, and has not been woken for yet: an ordinary trigger, read under the triggers rule.
     const waits = this.db.select({ id: triggers.id, sourceKind: triggers.sourceKind, watches: triggers.watches, times: triggers.times, target: triggers.target,
       nextDueAt: triggers.nextDueAt, createdAt: triggers.createdAt, state: triggers.state }).from(triggers)
-      .where(and(seen.triggers(getTableColumns(triggers)), eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, agent), eq(triggers.targetKind, 'inbox'),
-        or(eq(triggers.target, WAKE_TARGET), like(triggers.target, `${WAKE_TARGET}:%`)))).orderBy(desc(triggers.createdAt), asc(triggers.id)).limit(doingMost).all();
+      .where(and(seen.triggers(getTableColumns(triggers)), eq(triggers.enabled, true), eq(triggers.toKind, 'agent'), eq(triggers.to, agent), wakeRows())).orderBy(desc(triggers.createdAt), asc(triggers.id)).limit(doingMost).all();
     for (const wait of waits) { const watched = watchedOf(wait);
       items.push({ ...none, id: wait.id, kind: 'waiting', title: watched ? waitingOn(watched, wakeCondition(wait)) : null, ref: watched?.kind === 'time' ? wait.nextDueAt ?? watched.at : null,
         machine: null, since: wait.createdAt, state: wait.state, href: '/p/tempo' }); }

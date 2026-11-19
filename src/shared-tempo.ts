@@ -156,7 +156,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
         return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } } satisfies TempoOperationOptions),
   });
   // Wake me when: its own door, held to what `tempo.set` holds the same caller to (shared-wake.ts).
-  registerWake(operations, db, clock, installed.triggers, { judgedAs, bodyWork: viewer => options.bodyWork?.(viewer), bodyJob: viewer => options.bodyJob?.(viewer),
+  registerWake(operations, db, clock, installed.triggers, wakes, { judgedAs, bodyWork: viewer => options.bodyWork?.(viewer), bodyJob: viewer => options.bodyJob?.(viewer),
     terminal: options.terminal, changes: options.changes,
     heldRefusal: viewer => commands.heldRefusal?.(viewer, 'set'), wordRefusal: (viewer, trigger) => commands.wordRefusal?.(viewer, 'set', trigger),
     stood: (viewer, trigger) => commands.stood?.(viewer, 'set', trigger) });

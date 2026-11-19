@@ -1,4 +1,8 @@
 import { expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { createDataSchema } from '../data/database.js';
+import { agents, triggers } from '../data/schema.js';
+import { WAKE_TARGETS, looksLikeWake, wakeClause, wakeRows } from './wake.js';
 import { changeHappened, isWake, readWatched, waitingOn, wakeCondition, wakeTitle, wakeWords, watchName, watchedOf, WAKE_MS, WAKE_WORDS_MAX, type ChangeFacts } from './wake.js';
 
 const now = Date.parse('2026-11-19T18:00:00.000Z');
@@ -57,4 +61,35 @@ it('bounds the words of a wake, and quotes the note as the agent\'s own', () => 
   expect(words.startsWith('[A wake from loom, not a person speaking now. You asked at 2026-11-19T18:00:00.000Z to be woken when a/b#1 changes.]')).toBe(true);
   expect(words).toContain('See https://github.com/a/b/pull/1');
   expect(words).toContain('Your note to yourself when you asked, in the words written then: "line one\\nline \\"two\\"');
+});
+
+it('tells a wake by one exact test, the same in code and in SQL, over every odd target', () => {
+  const client = new Database(':memory:'), at = '2026-11-19T18:00:00.000Z', db = createDataSchema(client, () => at);
+  try {
+    db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    const targets = [...WAKE_TARGETS, null, '', 'Wake', 'WAKE', 'wake ', ' wake', 'Wake:review', 'WAKE:REVIEW', 'wake:Review', 'wake:review ', 'wake:bogus', 'wake:', 'wake%', 'wake:%', 'wake_', 'wakeful', 'awake', 'tempo.sweep'];
+    targets.forEach((target, n) => db.insert(triggers).values({ id: `t-${n}`, ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:j', lifespan: 'once', targetKind: 'inbox', target,
+      toKind: 'agent', to: 'art', note: 'n', enabled: true, state: 'standing', createdAt: at, changedAt: at }).run());
+    // An operation trigger is never a wake, whatever it is called.
+    db.insert(triggers).values({ id: 'op', ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:j', lifespan: 'once', targetKind: 'operation', target: 'wake', note: 'n', enabled: true, state: 'standing', createdAt: at, changedAt: at }).run();
+    const rows = db.select().from(triggers).all();
+    const bySql = db.select({ id: triggers.id }).from(triggers).where(wakeRows()).all().map(row => row.id).sort();
+    expect(bySql).toEqual(rows.filter(isWake).map(row => row.id).sort());
+    expect(bySql).toEqual(WAKE_TARGETS.map((_target, n) => `t-${n}`).sort());
+    // Everything that is a wake, and everything that could be mistaken for one, is refused at the ordinary door.
+    for (const row of rows) if (isWake(row)) expect(looksLikeWake(row.target)).toBe(true);
+    for (const target of ['Wake', 'WAKE:REVIEW', ' wake', 'wake:bogus', 'wakeful']) expect(looksLikeWake(target), target).toBe(true);
+    for (const target of [null, '', 'awake', 'tempo.sweep']) expect(looksLikeWake(target), String(target)).toBe(false);
+  } finally { client.close(); }
+});
+
+it('calls the review condition what it is: the review changing, either way', () => {
+  const pull = readWatched('a/b#1', now);
+  expect(wakeClause(pull, 'review')).toBe('the review of a/b#1 changes');
+  expect(waitingOn(pull, 'review')).toBe('the review of a/b#1 to change');
+  const approved = facts({ review: 'approved', reviewers: ['jo'] });
+  // An approval taken back by a push is a change of the review, and the words say which way it went.
+  expect(changeHappened('review', 'a/b#1', approved, facts({ review: 'required', reviewers: ['jo'], head: 'b'.repeat(40) }))).toBe('Review on a/b#1: review required, none given yet (before: approved).');
+  expect(changeHappened('review', 'a/b#1', facts(), approved)).toBe('Review on a/b#1: approved (before: review required, none given yet). Reviewed by jo.');
+  expect(changeHappened('review', 'a/b#1', approved, { ...approved, head: 'b'.repeat(40) })).toBeUndefined();
 });

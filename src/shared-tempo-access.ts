@@ -5,7 +5,8 @@ import { eq } from 'drizzle-orm';
 import { addressee, holds, inHousehold, maySetTrigger, mayStartTrigger, rules, tableRules, triggerAsSet, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { triggers, approvals, changes, conversations, inbox, jobs, secretRequests } from './core/data/schema.js';
+import { triggers, approvals, changes, conversations, inbox, jobs, projectRepositories, secretRequests } from './core/data/schema.js';
+import { repositoryKey } from './pieces/changes/model.js';
 import type { TempoAccess } from './core/tempo/operations.js';
 import type { NewTrigger } from './core/tempo/triggers.js';
 
@@ -32,16 +33,26 @@ export function watchAllowed(db: DataDatabase, viewer: Viewer, kind: string, wat
   if (kind === 'job') return holds(tableRules.jobs, viewer, row, sharing, (_table, parent) => db.select().from(conversations).where(eq(conversations.id, parent)).get());
   return holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
 }
-/** Whether this caller may set this wake: the same two questions `tempo.set` asks of any trigger (it reads what
- * is watched, and may set the trigger as it will be recorded). `untracked` is for the first asking only: a pull
- * request the shared cache does not hold yet has no record to judge, and the door asks again, without it, once
- * it has read the pull request (src/shared-wake.ts). Nothing is set on the first answer alone. */
-export function wakeAllowed(db: DataDatabase, viewer: Viewer, trigger: NewTrigger, untracked = false): boolean {
+/** Whether this caller may set this wake as it will be recorded: the question `tempo.set` asks of any trigger
+ * (policy.ts, maySetTrigger). What it watches is asked apart (watchAllowed, pullWatchable). */
+export function maySetWake(db: DataDatabase, viewer: Viewer, trigger: NewTrigger): boolean {
   const sharing = sharedSharing(db);
-  if (!inHousehold(viewer, sharing)) return false;
-  const unread = untracked && trigger.sourceKind === 'pull-request' && !!trigger.watches?.startsWith('change:')
-    && !db.select({ id: changes.id }).from(changes).where(eq(changes.id, trigger.watches.slice(7))).get();
-  return (unread || watchAllowed(db, viewer, trigger.sourceKind, trigger.watches)) && maySetTrigger(viewer, triggerAsSet(viewer, trigger, sharing), sharing);
+  return inHousehold(viewer, sharing) && maySetTrigger(viewer, triggerAsSet(viewer, trigger, sharing), sharing);
+}
+/** Whether this caller may watch this pull request, decided from what loom already holds and never from GitHub:
+ *  - `row`: loom holds the pull request, and the caller reads it by the changes rule (watchAllowed);
+ *  - `repository`: loom does not hold it yet, and the caller would read any pull request of its repository by that
+ *    same rule's project part: the repository is one project's (project_repositories), and the caller is in that
+ *    project or is a household owner. The rule's other part, "its own pull request" (ownsAgent on the row's agent),
+ *    cannot be asked without a row, since who opened a pull request is GitHub's to say. So a pull request loom does
+ *    not hold can be watched only in a repository loom reads for a project the caller is in;
+ *  - nothing: anything else. The door then reads nothing outside and gives one refusal, whatever the cause. */
+export function pullWatchable(db: DataDatabase, viewer: Viewer, change: string, repository: string): 'row' | 'repository' | undefined {
+  const sharing = sharedSharing(db);
+  if (!inHousehold(viewer, sharing)) return undefined;
+  if (db.select({ id: changes.id }).from(changes).where(eq(changes.id, change)).get()) return watchAllowed(db, viewer, 'pull-request', `change:${change}`) ? 'row' : undefined;
+  const projects = [...new Set(db.select().from(projectRepositories).all().filter(row => repositoryKey(row.repository) === repositoryKey(repository)).map(row => row.project))];
+  return projects.length === 1 && holds(tableRules.changes, viewer, { project: projects[0], agent: null }, sharing) ? 'repository' : undefined;
 }
 
 /** `chatMember` is the door's proof that the caller is the current body of a member's chat, and names that

@@ -1,13 +1,18 @@
 /** Wake me when: what an agent may ask loom to watch for it, and the words a wake is said in.
  *
  * A wait is an ordinary once-only trigger with an inbox target. What makes it a wake is its `target`, which an
- * inbox trigger otherwise leaves empty: `wake`, or `wake:<condition>` for a pull request. Nothing else on a
- * trigger holds settings of its own, and this needs no column. Its `instructions` are the agent's note to
- * itself, its `note` the title a person reads in Tempo, and its `conversation` the one it was asked from.
+ * inbox trigger otherwise leaves empty: exactly one of WAKE_TARGETS (`wake`, or `wake:<condition>` for a pull
+ * request). Nothing else on a trigger holds settings of its own, and this needs no column. It is one of a closed
+ * list of exact strings and never a prefix, so the test in code (isWake) and the test in SQL (wakeRows) are the
+ * same comparison and cannot disagree. Its `note` is the title a person reads in Tempo, and its `conversation`
+ * the one it was asked from. The agent's note to itself is NOT on the trigger: a trigger is read more widely than
+ * a private conversation, so the note is kept with the conversation (src/shared-wake.ts, keepNote).
  *
  * Everything here is pure: reading what was asked, judging a condition between two readings of a change, and
  * building plain sentences from records. Who may ask, and where a wake is delivered, is src/shared-wake.ts. */
 import { z } from 'zod';
+import { and, eq, inArray } from 'drizzle-orm';
+import { triggers } from '../data/schema.js';
 import { DAY_MS } from '../day.js';
 
 export const WAKE_TARGET = 'wake';
@@ -26,14 +31,25 @@ export const wakeInput = z.object({
   when: z.enum(wakeConditions).optional(),
   /** A note to self: what I was doing, and what to do when woken. Kept as plain text on the trigger. */
   note: z.string().max(WAKE_NOTE_MAX).optional(),
-  /** The conversation to be woken in, for a caller that is not a body: a terminal session names its own. */
+  /** A terminal session says which session it is, by either of the two ids its hook holds: its harness session id
+   * (`session`) or the conversation `terminal.session` answered (`conversation`). loom checks that it is a live
+   * session of the caller's own machine, member and agent. A body names nothing: it is woken where it works. */
+  session: z.string().min(1).max(200).optional(),
   conversation: z.string().min(1).max(200).optional(),
 }).strict();
 export type WakeInput = z.infer<typeof wakeInput>;
 
-export const isWake = (t: { targetKind?: string | null; target?: string | null }): boolean =>
-  t.targetKind === 'inbox' && (t.target === WAKE_TARGET || !!t.target?.startsWith(`${WAKE_TARGET}:`));
 export const wakeTarget = (condition?: WakeCondition): string => condition ? `${WAKE_TARGET}:${condition}` : WAKE_TARGET;
+/** Every target a wake can have, exactly. */
+export const WAKE_TARGETS: readonly string[] = [WAKE_TARGET, ...wakeConditions.map(wakeTarget)];
+/** Is this trigger a wake: an inbox trigger whose target is exactly one of WAKE_TARGETS. */
+export const isWake = (t: { targetKind?: string | null; target?: string | null }): boolean =>
+  t.targetKind === 'inbox' && typeof t.target === 'string' && WAKE_TARGETS.includes(t.target);
+/** The same test as a filter on trigger rows: `=` on the same exact strings (SQLite compares text exactly). */
+export const wakeRows = () => and(eq(triggers.targetKind, 'inbox'), inArray(triggers.target, [...WAKE_TARGETS]));
+/** A target no ordinary trigger may carry: anything that begins like a wake's, in any case. Only the wake door
+ * writes one, and it writes only WAKE_TARGETS, so nothing that looks like a wake and is not one can be stored. */
+export const looksLikeWake = (target: string | null | undefined): boolean => !!target && target.trim().toLowerCase().startsWith(WAKE_TARGET);
 export function wakeCondition(t: { target?: string | null }): WakeCondition | undefined {
   const named = t.target?.startsWith(`${WAKE_TARGET}:`) ? t.target.slice(WAKE_TARGET.length + 1) : undefined;
   return (wakeConditions as readonly string[]).includes(named ?? '') ? named as WakeCondition : undefined;
@@ -95,7 +111,7 @@ export function wakeClause(w: Watched, condition?: WakeCondition): string {
   switch (w.kind) {
     case 'change': { const name = changeName(w.id);
       return condition === 'checks-finished' ? `checks finish on ${name}` : condition === 'checks-failed' ? `a check fails on ${name}`
-        : condition === 'review' ? `${name} is reviewed` : condition === 'merged-or-closed' ? `${name} is merged or closed` : `${name} changes`; }
+        : condition === 'review' ? `the review of ${name} changes` : condition === 'merged-or-closed' ? `${name} is merged or closed` : `${name} changes`; }
     case 'job': return `job ${shown(w.id)} ends`;
     case 'approval': return `approval ${shown(w.id)} is answered`;
     case 'question': return `question ${shown(w.id)} is answered`;
@@ -108,7 +124,7 @@ export function waitingOn(w: Watched, condition?: WakeCondition): string | null 
   switch (w.kind) {
     case 'change': { const name = changeName(w.id);
       return condition === 'checks-finished' ? `checks on ${name}` : condition === 'checks-failed' ? `a failing check on ${name}`
-        : condition === 'review' ? `a review of ${name}` : condition === 'merged-or-closed' ? `${name} to merge or close` : `${name} to change`; }
+        : condition === 'review' ? `the review of ${name} to change` : condition === 'merged-or-closed' ? `${name} to merge or close` : `${name} to change`; }
     case 'job': return `job ${shown(w.id)}`;
     case 'approval': return `an answer to approval ${shown(w.id)}`;
     case 'question': return `an answer to question ${shown(w.id)}`;
@@ -148,7 +164,10 @@ export function standsNow(f: ChangeFacts): string {
   if (f.state !== 'open') return f.state === 'merged' ? 'it is merged' : 'it is closed, not merged';
   return `${f.draft ? 'a draft; ' : ''}checks: ${checksWords(f)}; review: ${reviewWords[f.review]}`;
 }
-/** What happened, in plain words with before and after, when this wake's condition has come true between the last
+/** `review` is any change in where the review stands: a review submitted (a new reviewer), or its state moving
+ * either way, which includes an approval taken back by a new push. The words say which.
+ *
+ * What happened, in plain words with before and after, when this wake's condition has come true between the last
  * reading (`before`) and this one; nothing when it has not. A wake fires on its condition becoming true, never on
  * its staying true: checks that finished on one head commit are said once for that head, and a new head starts
  * unfinished. A change that is merged or closed ends every other wait on it, and says so. */
@@ -186,6 +205,12 @@ export function changeHappened(condition: WakeCondition, name: string, before: C
 /** Whether two readings differ in anything a later "before" would say. */
 export const factsDiffer = (a: ChangeFacts | undefined, b: ChangeFacts): boolean => !a || JSON.stringify(a) !== JSON.stringify(b);
 
+/** All that is said when a wake's words cannot be delivered anywhere as private as where it was asked: no note, no
+ * subject, no conversation id. */
+export const WAIT_ENDED_BARE = 'A wait you set has ended; the conversation it was set in is gone.';
+/** Why a wake is not changed after it is asked: its bounds (how long it lives, how much it says) are set at its door. */
+export const WAKE_EDIT_REFUSAL = 'A wait is not changed once it is asked for: cancel it (tempo.stop) and ask again.';
+export const wakesFull = (agent: string): string => `${agent} already has ${WAKES_MAX} waits pending. Cancel one first (tempo.stop).`;
 /** What a wake says when the thing it watched is no longer the asker's to read: that the watch ended, and no more. */
 export const WATCH_ENDED = 'The watch ended: what it watched is no longer yours to read.';
 export const watchExpired = (clause: string): string => `The watch ended: ${WAKE_DAYS} days passed and it never happened that ${clause}.`;

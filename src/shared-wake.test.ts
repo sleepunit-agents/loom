@@ -3,9 +3,14 @@
 import { afterEach, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { bodyCredentials, bodyFixture } from '../test/fixtures/conversation-body.js';
-import { agentAccounts, agentModels, agentRunSettings, approvals, changes, conversations, inbox, inboxRefs, jobs, projectMembers, projectRepositories, threads, triggerLog, triggers } from './core/data/schema.js';
+import { agentAccounts, agentModels, agentRunSettings, approvals, boxes, changes, conversations, inbox, inboxRefs, jobs, memberAgents, members, projectMembers, projectRepositories, threads, tokens, triggerLog, triggers } from './core/data/schema.js';
 import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
-import { WAKES_MAX, WAKE_MS, WATCH_ENDED } from './core/tempo/wake.js';
+import { WAIT_ENDED_BARE, WAKES_MAX, WAKE_EDIT_REFUSAL, WAKE_MS, WATCH_ENDED, wakesFull } from './core/tempo/wake.js';
+import { readsRepository } from './apps/changes.js';
+import { canReadSharedConversation } from './shared-sharing.js';
+import { NO_CONVERSATION_REFUSAL, PULL_REFUSAL, SESSION_NEEDED, SESSION_REFUSAL, WATCH_REFUSAL } from './shared-wake.js';
+import { credentialHash } from '../test/fixtures/conversation-body.js';
+import type { Viewer } from './policy.js';
 import { change } from './pieces/changes/change.fixture.js';
 import type { Change } from './pieces/changes/model.js';
 
@@ -17,6 +22,8 @@ async function fixture(options: Parameters<typeof bodyFixture>[1] = {}) {
   f.db.insert(agentModels).values({ agent: 'art', model: 'model', position: 0 }).run();
   f.db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'fixture', houseFile: 'HOUSE.md', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
   f.db.insert(agentAccounts).values({ agent: 'art', service: 'github', login: 'art-bot' }).run();
+  // loom reads acme/app for the pond project, which Alice and Art are in.
+  f.db.insert(projectRepositories).values({ project: 'pond', repository: 'acme/app' }).run();
   let n = 0;
   const post = async (name: string, input: unknown, token = bodyCredentials.body, id = `call-${++n}`) => {
     const response = await f.root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ input, id }) });
@@ -27,7 +34,7 @@ async function fixture(options: Parameters<typeof bodyFixture>[1] = {}) {
   const beat = () => f.db.update(jobs).set({ heardAt: now(), claimedAt: now() }).where(eq(jobs.id, 'job')).run();
   beat();
   const put = (values: Partial<Change> = {}) => f.root.services.changes.put(change(values));
-  const mail = (conversation?: string) => f.db.select().from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'trigger'), conversation ? eq(inbox.conversation, conversation) : undefined)).all();
+  const mail = (conversation?: string) => f.db.select().from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'trigger'), eq(inbox.fromKind, 'schedule'), conversation ? eq(inbox.conversation, conversation) : undefined)).all();
   const trigger = (id: string) => f.db.select().from(triggers).where(eq(triggers.id, id)).get()!;
   const endBody = () => { f.root.writes.run(() => f.db.update(jobs).set({ state: 'done', endedAt: now() }).where(eq(jobs.id, 'job')).run()); };
   return { ...f, now, post, wake, put, mail, trigger, beat, endBody, cv: f.thread.conversation };
@@ -46,7 +53,11 @@ it('makes one once-only trigger for a time, aimed at the asking conversation, an
   expect(f.db.select().from(triggers).all()).toHaveLength(1);
   // Recorded as any trigger a body sets for a member who is not a household owner: that member's, on her word.
   expect(f.trigger(asked.body.value!.id)).toMatchObject({ lifespan: 'once', sourceKind: 'time', times: at, targetKind: 'inbox', target: 'wake', toKind: 'agent', to: 'art', ownerKind: 'member', owner: 'alice',
-    conversation: f.cv, askedByKind: 'member', askedBy: 'alice', note: `Wake Art at ${at}`, enabled: true, state: 'standing', project: 'pond' });
+    conversation: f.cv, askedByKind: 'member', askedBy: 'alice', note: `Wake Art at ${at}`, enabled: true, state: 'standing', project: 'pond', instructions: null });
+  // The note is kept with the conversation, where only who reads the conversation reads it: nothing of it is on the
+  // trigger, which household owners, the project and everybody who has the agent can read.
+  expect(JSON.stringify(f.trigger(asked.body.value!.id))).not.toContain('migration');
+  expect(f.db.select().from(inbox).where(eq(inbox.sourceId, `wake-note:${asked.body.value!.id}`)).all()).toMatchObject([{ conversation: f.cv, member: 'alice', state: 'resolved', words: 'I was halfway through the migration; run the tests next.' }]);
   f.clock.advance(59_000); f.beat(); expect(f.mail()).toEqual([]);
   f.clock.advance(1_000);
   const sent = f.mail();
@@ -130,6 +141,7 @@ it('says the right thing for each pull request condition, and only when it becom
   f.put({ checks: running(['build']), review: { state: 'required', by: [] } });
   const ids: Record<string, string> = {};
   for (const when of ['changed', 'checks-failed', 'review', 'merged-or-closed'] as const) ids[when] = (await f.wake({ what: 'acme/app#3', when })).body.value!.id;
+  expect(f.trigger(ids.review).note).toBe('Wake Art when the review of acme/app#3 changes');
   const said = (when: string) => f.db.select({ words: inbox.words }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id)).where(eq(inboxRefs.ref, ids[when])).all().map(row => row.words!);
   // The same snapshot again is no change, and writes nothing.
   const logged = f.db.select().from(triggerLog).all().length;
@@ -157,32 +169,52 @@ it('ends a wait on checks or review when the pull request is merged first, and s
   expect((await f.wake({ what: 'acme/app#3' })).body).toMatchObject({ ok: false, code: 'invalid', message: 'acme/app#3 is already closed: there is nothing left to wait for.' });
 });
 
-it('makes an untracked pull request tracked, keeps it fresh with the one poller, and refuses what it cannot read', async () => {
-  let rows: Change[] = [change({ id: 'github:else/where#7', repo: 'github:else/where', number: 7, url: 'https://github.com/else/where/pull/7', checks: running(['build']) }),
-    change({ id: 'github:else/where#8', repo: 'github:else/where', number: 8, author: { login: 'stranger' } })];
+it('reads GitHub only for a pull request in a repository the asker may read, and gives one refusal for every other cause', async () => {
+  const pull = (repository: string, number: number, values: Partial<Change> = {}) => change({ id: `github:${repository}#${number}`, repo: `github:${repository}`, number, url: `https://github.com/${repository}/pull/${number}`, ...values });
   const reads: string[] = [];
-  const f = await fixture({ changes: { read: async repository => { reads.push(repository); if (repository !== 'github:else/where' && repository !== 'else/where') throw new Error('no'); return rows; } } });
-  await Promise.resolve();
-  // A pull request the household's GitHub sign-in cannot read is refused plainly, and nothing is kept.
-  expect((await f.wake({ what: 'github:secret/repo#1' })).body).toMatchObject({ ok: false, code: 'unavailable', message: 'The household\'s GitHub sign-in cannot read secret/repo, so loom cannot watch secret/repo#1.' });
-  expect((await f.wake({ what: 'github:else/where#99' })).body).toMatchObject({ ok: false, code: 'not-found' });
-  // One it can read but the asking agent may not (nobody's project, not its own pull request) is refused, and is not left tracked.
-  expect((await f.wake({ what: 'github:else/where#8' })).body).toMatchObject({ ok: false, code: 'denied', message: 'else/where#8 is not a pull request you may read.' });
-  expect(f.db.select().from(changes).all()).toEqual([]); expect(f.db.select().from(triggers).all()).toEqual([]);
-  // Its own pull request in a repository no project lists: tracked by the asking.
-  const asked = await f.wake({ what: 'https://github.com/else/where/pull/7', when: 'checks-finished' });
-  expect(asked.status).toBe(200);
-  expect(f.db.select().from(changes).all()).toMatchObject([{ id: 'github:else/where#7', agent: 'art', project: null, checks: 'running' }]);
-  // The poller reads it from then on, and of that repository keeps only what is watched.
-  rows = [{ ...rows[0], checks: passing }, rows[1]];
-  reads.length = 0; f.clock.advance(60_000); await new Promise(resolve => setImmediate(resolve));
-  expect(reads.length).toBeGreaterThan(0);
-  expect(f.db.select({ id: changes.id, checks: changes.checks }).from(changes).all()).toEqual([{ id: 'github:else/where#7', checks: 'passing' }]);
-  expect(f.mail()).toHaveLength(1);
-  expect(f.mail()[0].words).toContain('Checks on else/where#7 finished on aaaaaaa: all passed. Before: 1 still running.');
-  // The watch is over: the repository is read no more.
-  reads.length = 0; f.clock.advance(60_000); await new Promise(resolve => setImmediate(resolve));
+  const f = await fixture({ changes: { read: async repository => { reads.push(repository);
+    if (/secret\/repo/.test(repository)) throw new Error('no');
+    return /else\/where/.test(repository) ? [pull('else/where', 8, { author: { login: 'stranger' } })] : [pull('acme/app', 5, { checks: running(['build']) })]; } } });
+  // The poller's own first read is over before anything is asked.
+  await new Promise(resolve => setImmediate(resolve)); f.db.delete(changes).run(); reads.length = 0;
+  // loom reads else/where for a project neither Alice nor Art is in, and holds one of its pull requests.
+  f.db.insert(projectRepositories).values({ project: 'other', repository: 'else/where' }).run();
+  f.root.services.changes.put(pull('else/where', 9, { author: { login: 'stranger' } }));
+  expect(f.db.select().from(changes).get()).toMatchObject({ id: 'github:else/where#9', project: 'other', agent: null });
+  const refused = [];
+  for (const what of ['github:secret/repo#1',     // a repository loom knows nothing of, which the sign-in cannot reach
+    'github:nobody/knows#7',                     // one it could reach
+    'github:else/where#8',                       // a pull request that exists, in a repository of a project the asker is not in
+    'github:else/where#404',                     // one that does not exist there
+    'github:else/where#9'])                      // one loom holds, which the asker does not read
+    refused.push(await f.wake({ what, when: 'checks-finished' }));
+  for (const answer of refused) expect(answer).toEqual({ status: 403, body: { ok: false, code: 'denied', message: PULL_REFUSAL } });
+  // Not one of them caused a read, kept a row or set a trigger, and no repository came to count as read by it.
   expect(reads).toEqual([]);
+  expect(f.db.select({ id: changes.id }).from(changes).all()).toEqual([{ id: 'github:else/where#9' }]);
+  expect(f.db.select().from(triggers).all()).toEqual([]);
+  expect(readsRepository(f.db, 'secret/repo')).toBe(false); expect(readsRepository(f.db, 'nobody/knows')).toBe(false);
+  // A caller that is refused for any reason loom can see without the network causes no read either: a person, a
+  // body in another conversation, and an agent whose waits are full.
+  expect((await f.wake({ what: 'acme/app#5' }, bodyCredentials.member)).status).toBe(403);
+  expect((await f.wake({ what: 'acme/app#5', conversation: 'somewhere-else' })).body).toMatchObject({ ok: false, code: 'denied' });
+  for (let n = 0; n < WAKES_MAX; n++) f.db.insert(triggers).values({ id: `filler-${n}`, ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:none', lifespan: 'once', targetKind: 'inbox', target: 'wake',
+    toKind: 'agent', to: 'art', note: 'Filler', enabled: true, state: 'standing', createdAt: f.now(), changedAt: f.now() }).run();
+  expect((await f.wake({ what: 'acme/app#5' })).body).toMatchObject({ ok: false, code: 'conflict', message: wakesFull('art') });
+  f.db.delete(triggers).run();
+  expect(reads).toEqual([]);
+  // In a repository loom reads for a project the asker is in, a pull request the cache does not hold yet (opened a
+  // moment ago) is read once and tracked by the asking; and there the asker may be told how the read went.
+  expect((await f.wake({ what: 'acme/app#6' })).body).toMatchObject({ ok: false, code: 'not-found', message: 'There is no pull request acme/app#6 that is open or was closed in the last week.' });
+  expect(reads).toHaveLength(1); expect(f.db.select().from(triggers).all()).toEqual([]);
+  const asked = await f.wake({ what: 'https://github.com/acme/app/pull/5', when: 'checks-finished' });
+  expect(asked.body).toMatchObject({ ok: true });
+  expect(reads).toHaveLength(2);
+  expect(f.db.select().from(changes).where(eq(changes.id, 'github:acme/app#5')).get()).toMatchObject({ project: 'pond', checks: 'running' });
+  expect(f.trigger(asked.body.value!.id)).toMatchObject({ watches: 'change:github:acme/app#5', enabled: true });
+  // Held now: asking again reads nothing.
+  expect((await f.wake({ what: 'acme/app#5', when: 'merged-or-closed' })).body).toMatchObject({ ok: true });
+  expect(reads).toHaveLength(2);
 });
 
 it('wakes when a job ends and when an ask is answered, in plain words', async () => {
@@ -213,8 +245,7 @@ it('relays a wake to a live terminal session through its hook, once, and only to
   const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' }, 'alice');
   const key = { machine: 'box', sessionId: 's', harness: 'claude' };
   const opened = (await f.post('terminal.session', { ...key, action: 'open', model: null, cwd: '/home/alice/Code/pond' }, token)).body.value as unknown as { conversation: string; job: string };
-  // It names no conversation: its one live session on this machine is where it is woken.
-  const asked = await f.wake({ what: 'in:1', note: 'Check the review.' }, token);
+  const asked = await f.wake({ what: 'in:1', note: 'Check the review.', session: 's' }, token);
   expect(asked.status).toBe(200);
   expect(asked.body.value!.says).toContain('in this terminal session, or in a new conversation if it has ended');
   expect(f.trigger(asked.body.value!.id)).toMatchObject({ conversation: opened.conversation, ownerKind: 'agent', owner: 'art', askedByKind: 'agent', askedBy: 'art' });
@@ -256,10 +287,12 @@ it('moves a wake a terminal session never picked up to a new conversation once t
   expect(moved[0].words).toContain(`It continues conversation ${opened.conversation}.`);
   expect(f.db.select().from(conversations).where(eq(conversations.id, moved[0].conversation!)).get()).toMatchObject({ venue: 'wake', agent: 'art', member: 'alice' });
   // And a session that has already ended when the wake fires gets a new conversation at once.
-  const later = await f.wake({ what: 'in:1', conversation: opened.conversation }, token);
+  const again = (await f.post('terminal.session', { ...key, sessionId: 's2', action: 'open', model: null, cwd: '/work' }, token)).body.value as unknown as { conversation: string };
+  const later = await f.wake({ what: 'in:1', conversation: again.conversation }, token);
   expect(later.status).toBe(200);
+  expect((await f.post('terminal.session', { ...key, sessionId: 's2', action: 'end' }, token)).status).toBe(200);
   f.clock.advance(60_000);
-  const second = f.mail().filter(item => item.conversation !== opened.conversation && item.id !== moved[0].id);
+  const second = f.mail().filter(item => item.conversation !== opened.conversation && item.conversation !== again.conversation && item.id !== moved[0].id);
   expect(second).toHaveLength(1);
   expect(second[0].words).toContain('the terminal session it was asked from has ended, and loom cannot start a terminal');
 });
@@ -270,15 +303,16 @@ it('refuses a watch on what the asker may not read, and says only that the watch
   f.db.insert(conversations).values({ id: 'cv-bob', agent: 'mark', member: 'bob', venue: 'loom', place: 'th:bob', label: 'Bob', startedAt: f.now(), lastAt: f.now(), turnCount: 0 }).run();
   f.db.insert(jobs).values({ id: 'job-bob', agent: 'mark', member: 'bob', conversation: 'cv-bob', title: 'Private', state: 'running', brief: '', model: 'model', startedByKind: 'agent', startedBy: 'mark',
     houseRepository: 'fixture', houseFile: 'HOUSE.md', houseBranch: 'next', queuedAt: f.now() }).run();
-  expect((await f.wake({ what: 'job:job-bob' })).status).toBe(403);
-  expect((await f.wake({ what: 'job:job-nowhere' })).status).toBe(403);
+  // A job it does not read and a job that is not there are told apart by nothing.
+  const unread = await f.wake({ what: 'job:job-bob' });
+  expect(unread).toEqual({ status: 403, body: { ok: false, code: 'denied', message: WATCH_REFUSAL } });
+  expect(await f.wake({ what: 'job:job-nowhere' })).toEqual(unread);
   // Another conversation is not one this body is in.
   expect((await f.wake({ what: 'in:5', conversation: 'cv-bob' })).body).toMatchObject({ ok: false, code: 'denied' });
   // A person does not ask to be woken.
   expect((await f.wake({ what: 'in:5' }, bodyCredentials.member)).status).toBe(403);
   expect(f.db.select().from(triggers).all()).toEqual([]);
   // A pull request read through a project: the member the body works for is in it when it asks, and has left when it fires.
-  f.db.insert(projectRepositories).values({ project: 'pond', repository: 'acme/app' }).run();
   f.put({ author: { login: 'stranger' }, checks: running(['build']) });
   expect(f.db.select().from(changes).get()).toMatchObject({ project: 'pond', agent: null });
   const asked = await f.wake({ what: 'acme/app#3', note: 'My own note.' });
@@ -300,7 +334,7 @@ it('bounds how many waits an agent holds and how long one lives, and cancels one
   expect(first.status).toBe(200);
   for (let n = 1; n < WAKES_MAX; n++) f.db.insert(triggers).values({ id: `filler-${n}`, ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:none', lifespan: 'once', targetKind: 'inbox', target: 'wake',
     toKind: 'agent', to: 'art', note: 'Filler', enabled: true, state: 'standing', createdAt: f.now(), changedAt: f.now() }).run();
-  expect((await f.wake({ what: 'in:5' })).body).toMatchObject({ ok: false, code: 'conflict', message: `You already have ${WAKES_MAX} waits pending. Cancel one first (tempo.stop).` });
+  expect((await f.wake({ what: 'in:5' })).body).toMatchObject({ ok: false, code: 'conflict', message: wakesFull('art') });
   f.db.delete(triggers).where(eq(triggers.note, 'Filler')).run();
   // Cancelled: nothing is said when it then happens.
   const cancelled = await f.wake({ what: 'acme/app#3', when: 'changed' });
@@ -309,7 +343,7 @@ it('bounds how many waits an agent holds and how long one lives, and cancels one
   expect(f.mail()).toEqual([]);
   // A wait that is 14 days old ends, and says so. A time further off than that is refused.
   expect((await f.wake({ what: `in:${WAKE_MS / 60_000 + 1}` })).body).toMatchObject({ ok: false, code: 'invalid', message: 'A wait lives at most 14 days' });
-  f.db.update(triggers).set({ createdAt: new Date(f.clock.now() - WAKE_MS - 1_000).toISOString() }).where(eq(triggers.id, first.body.value!.id)).run();
+  f.db.update(triggers).set({ askedAt: new Date(f.clock.now() - WAKE_MS - 1_000).toISOString() }).where(eq(triggers.id, first.body.value!.id)).run();
   expect(f.root.services.tempo.wakes.sweep()).toBe(true);
   expect(f.mail()).toHaveLength(1);
   expect(f.mail()[0].words).toContain('The watch ended: 14 days passed and it never happened that acme/app#3 is merged or closed. Now: checks: all passed; review: approved.');
@@ -320,3 +354,215 @@ it('bounds how many waits an agent holds and how long one lives, and cancels one
   expect((await f.post('tempo.set', { ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: new Date(f.clock.now() + 60_000).toISOString(), lifespan: 'once', targetKind: 'inbox', target: 'wake', toKind: 'agent', to: 'art', note: 'Sneaky' })).body)
     .toMatchObject({ ok: false, message: 'A wake is asked for with tempo.wake' });
 });
+
+/** More of the household, for who reads what: Olive and Otto run it, Pam is on the pond project, Hal has Art too. */
+function widen(f: Awaited<ReturnType<typeof fixture>>) {
+  f.db.insert(members).values([{ id: 'olive', role: 'owner', joinedAt: f.now() }, { id: 'otto', role: 'owner', joinedAt: f.now() }, { id: 'pam', role: 'member', joinedAt: f.now() }, { id: 'hal', role: 'member', joinedAt: f.now() }]).run();
+  f.db.insert(memberAgents).values([{ member: 'olive', agent: 'art' }, { member: 'hal', agent: 'art' }]).run();
+  f.db.insert(projectMembers).values({ project: 'pond', member: 'pam' }).run();
+  f.db.insert(boxes).values({ id: 'box-olive', name: 'Olive', owner: 'olive', sameMachineAsLoom: false, hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: f.now() }).run();
+  /** A body of Art's working in a conversation, with its own credential. */
+  const body = (job: string, conversation: string, labels: { member?: string; project?: string } = {}) => {
+    const token = (job + '-').repeat(8).slice(0, 64);
+    f.db.insert(jobs).values({ id: job, agent: 'art', box: 'box', ...labels, conversation, title: 'Body', state: 'running', brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art',
+      houseRepository: 'fixture', houseFile: 'HOUSE.md', houseBranch: 'next', queuedAt: f.now(), claimedAt: f.now(), heardAt: f.now() }).run();
+    f.db.insert(tokens).values({ fingerprint: credentialHash(token), label: job, kind: 'agent', agent: 'art', job, createdAt: f.now() }).run();
+    return { token, end: () => { f.root.writes.run(() => f.db.update(jobs).set({ state: 'done', endedAt: f.now() }).where(eq(jobs.id, job)).run()); } };
+  };
+  /** Everybody who must not come to read more: a second household owner, somebody on the project, another member
+   * who has the agent, the agent's own plain credential, and the people the old conversation is for. */
+  const viewers: Record<string, Viewer> = { otto: { kind: 'member', id: 'otto' }, pam: { kind: 'member', id: 'pam' }, hal: { kind: 'member', id: 'hal' }, alice: { kind: 'member', id: 'alice' },
+    olive: { kind: 'member', id: 'olive' }, art: { kind: 'agent', id: 'art' } };
+  const readers = (conversation: string) => Object.keys(viewers).filter(name => canReadSharedConversation(f.db, viewers[name], conversation)).sort();
+  return { body, readers };
+}
+
+it('starts the new conversation for an owner\'s archived private thread no wider than the thread was', async () => {
+  const f = await fixture(), w = widen(f);
+  const thread = f.root.services.comms!.threads.open({ member: 'olive', agent: 'art', project: 'pond', title: 'Olive, privately' });
+  const body = w.body('job-olive', thread.conversation, { member: 'olive', project: 'pond' });
+  expect(w.readers(thread.conversation)).toEqual(['olive']);
+  const asked = await f.wake({ what: 'in:1', note: 'What Olive told me in confidence.' }, body.token);
+  expect(asked.body).toMatchObject({ ok: true });
+  body.end();
+  f.root.writes.run(() => f.db.update(threads).set({ archivedAt: f.now() }).where(eq(threads.id, thread.id)).run());
+  f.clock.advance(60_000);
+  const sent = f.mail().filter(item => item.conversation !== thread.conversation);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].words).toContain('"What Olive told me in confidence."');
+  const fresh = f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()!;
+  // A household owner's private conversation stays that owner's: the member label is kept, owner or not.
+  expect(fresh).toMatchObject({ venue: 'wake', member: 'olive', project: 'pond', direct: false });
+  expect(w.readers(fresh.id)).toEqual(w.readers(thread.conversation));
+  // And the mail in it is read as the conversation is.
+  expect(sent[0]).toMatchObject({ member: 'olive', project: 'pond' });
+  f.clock.advance(10_000);
+  expect(f.db.select().from(jobs).where(eq(jobs.conversation, fresh.id)).all()).toMatchObject([{ state: 'queued', member: 'olive' }]);
+});
+
+it('starts the new conversation for an owner\'s ended terminal session no wider than the session was', async () => {
+  const f = await fixture(), w = widen(f);
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box-olive' }, 'olive');
+  const key = { machine: 'box-olive', sessionId: 's', harness: 'claude' };
+  const opened = (await f.post('terminal.session', { ...key, action: 'open', model: null, cwd: '/work' }, token)).body.value as unknown as { conversation: string };
+  expect(w.readers(opened.conversation)).toEqual(['olive']);
+  expect((await f.wake({ what: 'in:1', note: 'Olive\'s branch.', session: 's' }, token)).body).toMatchObject({ ok: true });
+  // The session goes silent and is never heard from again: the wake waits out the silence, then moves.
+  f.clock.advance(60_000 + terminalSilenceMs + 60_000);
+  const moved = f.mail().filter(item => item.conversation !== opened.conversation);
+  expect(moved).toHaveLength(1);
+  expect(moved[0].words).toContain('"Olive\'s branch."');
+  expect(f.db.select().from(conversations).where(eq(conversations.id, moved[0].conversation!)).get()).toMatchObject({ venue: 'wake', member: 'olive', direct: false });
+  expect(w.readers(moved[0].conversation!)).toEqual(['olive']);
+});
+
+it('keeps a direct conversation with no member direct, so only the agent\'s owners read what replaces it', async () => {
+  const f = await fixture(), w = widen(f);
+  // A group direct message on Discord: no one member's, read by the people who have the agent and nobody else.
+  f.db.insert(conversations).values({ id: 'cv-group', agent: 'art', venue: 'discord', place: JSON.stringify(['guild', 'G1', null, ['group']]), label: 'Group', direct: true, startedAt: f.now(), lastAt: f.now(), turnCount: 0 }).run();
+  const body = w.body('job-group', 'cv-group');
+  expect(w.readers('cv-group')).toEqual(['alice', 'hal', 'olive']);
+  expect((await f.wake({ what: 'in:1', note: 'Said in the group.' }, body.token)).body).toMatchObject({ ok: true });
+  body.end();
+  // Its bridge connection is gone, so nothing can be posted there: there is no session to resume.
+  f.clock.advance(60_000);
+  const sent = f.mail().filter(item => item.conversation !== 'cv-group');
+  expect(sent).toHaveLength(1);
+  expect(sent[0].words).toContain('"Said in the group."');
+  const fresh = f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()!;
+  expect(fresh).toMatchObject({ venue: 'wake', member: null, direct: true });
+  expect(w.readers(fresh.id)).toEqual(['alice', 'hal', 'olive']);
+});
+
+it('says one bare line, or nothing, when nowhere as private can be made, and tells the agent\'s people nothing of the wake', async () => {
+  const f = await fixture(), w = widen(f);
+  // Asked at Alice's terminal, as the agent's own work. Before it fires the session ends and Alice no longer has Art.
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' }, 'alice');
+  const key = { machine: 'box', sessionId: 's', harness: 'claude' };
+  const opened = (await f.post('terminal.session', { ...key, action: 'open', model: null, cwd: '/work' }, token)).body.value as unknown as { conversation: string };
+  const asked = await f.wake({ what: 'in:1', note: 'Alice\'s secret plan.', conversation: opened.conversation }, token);
+  expect(asked.body).toMatchObject({ ok: true });
+  expect((await f.post('terminal.session', { ...key, action: 'end' }, token)).status).toBe(200);
+  f.root.writes.run(() => { f.db.delete(memberAgents).where(eq(memberAgents.member, 'alice')).run(); f.db.delete(memberAgents).where(eq(memberAgents.member, 'hal')).run(); });
+  f.clock.advance(60_000);
+  // Alice's private conversation cannot be made again. Olive is now the one member who has Art, and is told one bare line.
+  const said = f.mail();
+  expect(said).toHaveLength(1);
+  expect(said[0].words).toBe(WAIT_ENDED_BARE);
+  expect(f.db.select().from(conversations).where(eq(conversations.id, said[0].conversation!)).get()).toMatchObject({ venue: 'wake', member: 'olive', label: 'A wait ended' });
+  expect(w.readers(said[0].conversation!)).toEqual(['olive']);
+  const everything = JSON.stringify([f.db.select().from(inbox).where(eq(inbox.conversation, said[0].conversation!)).all(), f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all()]);
+  expect(everything).not.toContain('secret plan'); expect(everything).not.toContain(opened.conversation);
+  expect(f.trigger(asked.body.value!.id)).toMatchObject({ enabled: false, state: 'stopped' });
+  expect(f.db.select().from(triggerLog).where(and(eq(triggerLog.trigger, asked.body.value!.id), eq(triggerLog.event, 'undelivered'))).all()).toMatchObject([{ note: 'the member alice, whose conversation it was, no longer has art or is not in its project' }]);
+});
+
+it('wakes a credential only where it is: a body in its conversation, a terminal in its own live session, any other in none', async () => {
+  const f = await fixture(), w = widen(f);
+  f.db.insert(conversations).values([{ id: 'cv-channel', agent: 'art', venue: 'discord', place: JSON.stringify(['guild', 'C1', null, null]), label: 'Discord channel #pond', startedAt: f.now(), lastAt: f.now(), turnCount: 0 },
+    { id: 'cv-lane', agent: 'art', venue: 'wake', place: 'tr-night', label: 'Plan the night', startedAt: f.now(), lastAt: f.now(), turnCount: 0 }]).run();
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' }, 'alice');
+  const olives = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Olive terminal', terminalMachine: 'box-olive' }, 'olive').token;
+  const open = async (bearer: string, machine: string, sessionId: string) => (await f.post('terminal.session', { machine, sessionId, harness: 'claude', action: 'open', model: null, cwd: '/work' }, bearer)).body.value as unknown as { conversation: string };
+  const mine = await open(token, 'box', 's1'), ended = await open(token, 'box', 's2'), hers = await open(olives, 'box-olive', 's9');
+  expect((await f.post('terminal.session', { machine: 'box', sessionId: 's2', harness: 'claude', action: 'end' }, token)).status).toBe(200);
+  const elsewhere = { 'her Comms thread': f.cv, 'a bridge channel': 'cv-channel', 'a lane\'s wake conversation': 'cv-lane', 'a session that has ended': ended.conversation, 'another member\'s session': hers.conversation, 'nowhere': 'cv-none' };
+  // A terminal credential: it says which session it is, and only a live session of its own machine, member and agent will do.
+  expect((await f.wake({ what: 'in:5' }, token)).body).toEqual({ ok: false, code: 'invalid', message: SESSION_NEEDED });
+  for (const [where, conversation] of Object.entries(elsewhere))
+    expect((await f.wake({ what: 'in:5', note: 'x'.repeat(2_000), conversation }, token)).body, where).toEqual({ ok: false, code: 'denied', message: SESSION_REFUSAL });
+  for (const session of ['s2', 's9', 'nope']) expect((await f.wake({ what: 'in:5', session }, token)).body, session).toEqual({ ok: false, code: 'denied', message: SESSION_REFUSAL });
+  expect((await f.wake({ what: 'in:5', session: 's1', conversation: hers.conversation }, token)).body).toMatchObject({ ok: false, message: SESSION_REFUSAL });
+  // A plain credential of the agent is in no conversation and names none.
+  for (const [where, conversation] of Object.entries({ ...elsewhere, 'a live terminal session': mine.conversation }))
+    expect((await f.wake({ what: 'in:5', conversation }, bodyCredentials.agent)).body, where).toEqual({ ok: false, code: 'denied', message: NO_CONVERSATION_REFUSAL });
+  expect((await f.wake({ what: 'in:5', session: 's1' }, bodyCredentials.agent)).body).toMatchObject({ ok: false, message: NO_CONVERSATION_REFUSAL });
+  // A body: its own conversation and no other.
+  for (const [where, conversation] of Object.entries({ ...elsewhere, 'a live terminal session': mine.conversation }).filter(([, id]) => id !== f.cv))
+    expect((await f.wake({ what: 'in:5', conversation })).body, where).toMatchObject({ ok: false, code: 'denied' });
+  expect((await f.wake({ what: 'in:5', session: 's1' })).body).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.db.select().from(triggers).all()).toEqual([]);
+  // Allowed: each in its own place.
+  expect(f.trigger((await f.wake({ what: 'in:5', session: 's1' }, token)).body.value!.id).conversation).toBe(mine.conversation);
+  expect(f.trigger((await f.wake({ what: 'in:5', conversation: mine.conversation }, token)).body.value!.id).conversation).toBe(mine.conversation);
+  expect(f.trigger((await f.wake({ what: 'in:5', conversation: f.cv })).body.value!.id).conversation).toBe(f.cv);
+  // Outside any conversation with several owners there is nobody's private conversation to go to: refused. With one, it is theirs.
+  expect((await f.wake({ what: 'in:5' }, bodyCredentials.agent)).body).toMatchObject({ ok: false, code: 'invalid', message: expect.stringContaining('art has more than one owner') });
+  f.root.writes.run(() => { for (const member of ['olive', 'hal']) f.db.delete(memberAgents).where(eq(memberAgents.member, member)).run(); });
+  const alone = await f.wake({ what: 'in:1', note: 'Only for Alice.' }, bodyCredentials.agent);
+  expect(alone.body.value!.says).toContain('in a new conversation, private to alice');
+  expect(f.trigger(alone.body.value!.id)).toMatchObject({ conversation: null, member: 'alice', instructions: null });
+  f.clock.advance(60_000);
+  const sent = f.mail().filter(item => item.words?.includes('Only for Alice.'));
+  expect(sent).toHaveLength(1);
+  expect(f.db.select().from(conversations).where(eq(conversations.id, sent[0].conversation!)).get()).toMatchObject({ venue: 'wake', member: 'alice' });
+  expect(w.readers(sent[0].conversation!)).toEqual(['alice']);
+});
+
+it('holds the bound on waits when a stopped one is started, refuses to change a wake, and ends an old one whatever its state', async () => {
+  const f = await fixture();
+  const first = await f.wake({ what: 'in:60', note: 'A note.' });
+  expect((await f.post('tempo.stop', { id: first.body.value!.id })).status).toBe(200);
+  for (let n = 0; n < WAKES_MAX; n++) f.db.insert(triggers).values({ id: `filler-${n}`, ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:none', lifespan: 'once', targetKind: 'inbox', target: 'wake',
+    toKind: 'agent', to: 'art', note: 'Filler', enabled: true, state: n % 2 ? 'held' : 'standing', createdAt: f.now(), changedAt: f.now() }).run();
+  // Fifty stand (a held one stands too): the stopped one cannot be turned back on as a fifty-first.
+  expect((await f.post('tempo.start', { id: first.body.value!.id }, bodyCredentials.member)).body).toMatchObject({ ok: false, message: wakesFull('art') });
+  expect(f.trigger(first.body.value!.id).enabled).toBe(false);
+  f.db.delete(triggers).where(eq(triggers.id, 'filler-0')).run();
+  expect((await f.post('tempo.start', { id: first.body.value!.id }, bodyCredentials.member)).status).toBe(200);
+  expect(f.db.select().from(triggers).where(eq(triggers.enabled, true)).all()).toHaveLength(WAKES_MAX);
+  // Nothing about a wake is changed after it is asked: not its time, not its title, not its words.
+  for (const change of [{ times: new Date(f.clock.now() + 400 * 86_400_000).toISOString() }, { note: 'x'.repeat(50_000) }, { instructions: 'y'.repeat(50_000) }])
+    for (const bearer of [bodyCredentials.member, bodyCredentials.body])
+      expect((await f.post('tempo.edit', { id: first.body.value!.id, ...change }, bearer)).body).toMatchObject({ ok: false, message: WAKE_EDIT_REFUSAL });
+  expect(f.trigger(first.body.value!.id)).toMatchObject({ note: expect.stringMatching(/^Wake Art at /), instructions: null });
+  // Fourteen days after it was asked a wait ends, held or not, a time or not: none is left enabled, and the sweep then has nothing to do.
+  const old = new Date(f.clock.now() - WAKE_MS - 1_000).toISOString();
+  f.db.delete(triggers).where(eq(triggers.note, 'Filler')).run();
+  f.db.update(triggers).set({ askedAt: old, state: 'held' }).where(eq(triggers.id, first.body.value!.id)).run();
+  f.db.insert(triggers).values({ id: 'old-held', ownerKind: 'agent', owner: 'art', sourceKind: 'job', watches: 'job:none', lifespan: 'once', targetKind: 'inbox', target: 'wake', toKind: 'agent', to: 'art', note: 'Old',
+    enabled: true, state: 'held', createdAt: old, changedAt: old }).run();
+  expect(f.root.services.tempo.wakes.sweep()).toBe(true);
+  expect(f.db.select({ id: triggers.id, enabled: triggers.enabled, state: triggers.state }).from(triggers).all().sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+    { id: 'old-held', enabled: false, state: 'stopped' }, { id: first.body.value!.id, enabled: false, state: 'stopped' }]);
+  expect(f.db.select().from(triggerLog).where(eq(triggerLog.event, 'expired')).all()).toHaveLength(2);
+  expect(f.root.services.tempo.wakes.sweep()).toBe(false);
+  // Only the wake door writes a wake's target, in any spelling.
+  for (const target of ['wake', 'Wake:x', 'WAKE', 'wake:bogus', ' wake:review'])
+    expect((await f.post('tempo.set', { ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: new Date(f.clock.now() + 60_000).toISOString(), lifespan: 'once', targetKind: 'inbox', target, toKind: 'agent', to: 'art', note: 'Sneaky' }, bodyCredentials.member)).body, target)
+      .toMatchObject({ ok: false, message: 'A wake is asked for with tempo.wake' });
+});
+
+it('hands a terminal session\'s wakes only to a report the session took as its current instance\'s', async () => {
+  const f = await fixture();
+  const { token } = f.root.services.signin.issue({ kind: 'agent', agent: 'art', label: 'Terminal', terminalMachine: 'box' }, 'alice');
+  const key = { machine: 'box', sessionId: 's', harness: 'claude' };
+  const opened = (await f.post('terminal.session', { ...key, instanceId: 'one', action: 'open', model: null, cwd: '/work' }, token)).body.value as unknown as { conversation: string };
+  expect((await f.post('terminal.session', { ...key, instanceId: 'one', action: 'turn', role: 'member', eventId: 'm1', words: 'go', wakes: true }, token)).status).toBe(200);
+  expect((await f.wake({ what: 'in:1', session: 's' }, token)).body).toMatchObject({ ok: true });
+  // The session is resumed as a new instance; the old process is still reporting.
+  expect((await f.post('terminal.session', { ...key, instanceId: 'two', action: 'open', model: null, cwd: '/work' }, token)).status).toBe(200);
+  f.clock.advance(60_000);
+  const waiting = () => f.mail(opened.conversation).map(item => item.state);
+  expect(waiting()).toEqual(['waiting']);
+  // A report from the superseded instance, a turn the session has already recorded, and a usage report: each is
+  // answered, handed nothing, and closes nothing.
+  for (const report of [{ ...key, instanceId: 'one', action: 'heartbeat', wakes: true }, { ...key, instanceId: 'one', action: 'turn', role: 'agent', eventId: 'a1', words: 'late', wakes: true },
+    { ...key, instanceId: 'two', action: 'turn', role: 'member', eventId: 'm1', words: 'go', wakes: true }]) {
+    const answer = await f.post('terminal.session', report, token);
+    expect(answer.status, JSON.stringify(report)).toBe(200); expect(answer.body.value).not.toHaveProperty('wakes'); expect(waiting()).toEqual(['waiting']);
+  }
+  const current = await f.post('terminal.session', { ...key, instanceId: 'two', action: 'heartbeat', wakes: true }, token);
+  expect((current.body.value as unknown as { wakes: unknown[] }).wakes).toHaveLength(1);
+  expect(waiting()).toEqual(['done']);
+});
+
+it('says a time wake fired by hand was fired by hand', async () => {
+  const f = await fixture();
+  const asked = await f.wake({ what: 'in:60' });
+  expect((await f.post('tempo.runNow', { id: asked.body.value!.id }, bodyCredentials.member)).status).toBe(200);
+  expect(f.mail()).toHaveLength(1);
+  expect(f.mail()[0].words).toContain('This wait was fired by hand before it is ');
+  expect(f.mail()[0].words).not.toContain('the time you asked to be woken at');
+});
+

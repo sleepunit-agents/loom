@@ -28,16 +28,18 @@ export function registerTerminalSession(operations: Operations, db: DataDatabase
     },
     run(ctx, input, prepared) {
       const current = scope(ctx.viewer);
-      const { identity, commit } = prepared as { identity: Scope; commit: () => {conversation:string;thread:string;job:string} };
+      const { identity, commit } = prepared as { identity: Scope; commit: () => {conversation:string;thread:string;job:string;accepted?:true} };
       if (!current || current.machine !== input.machine || current.member !== identity.member || current.agent !== identity.agent)
         throw new OperationError('denied', 'Machine terminal changed');
-      const result = commit();
+      const { accepted, ...result } = commit();
       ctx.changed('conversations', result.conversation);
       ctx.changed('threads', result.thread);
       ctx.changed('job', result.job);
-      // The return path to a live terminal session: a report that opens it, carries a turn or is its heartbeat is
-      // answered with the wakes waiting for it. A session that is ending, or a usage report, is handed none.
-      const handed = wakes && input.wakes && input.action !== 'usage' && input.action !== 'end' ? wakes(result.conversation, result.job) : [];
+      // The return path to a live terminal session: a report the session took as its current instance's (it opened
+      // it, carried a new turn or was its heartbeat, and moved its last-heard time) is answered with the wakes
+      // waiting for it. A report from an instance that has been superseded, a repeated turn, a usage report and
+      // one that ends the session are handed none and close none: `accepted` is the session's own word on that.
+      const handed = wakes && input.wakes && accepted ? wakes(result.conversation, result.job) : [];
       if (handed.length) ctx.changed('inbox', result.conversation);
       return handed.length ? { ...result, wakes: handed } : result;
     },

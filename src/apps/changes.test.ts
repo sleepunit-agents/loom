@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { agents, agentAccounts, projects, projectRepositories, tasks, triggers } from '../core/data/schema.js';
-import { changeService, watchedChanges } from './changes.js';
+import { agents, agentAccounts, projects, projectRepositories, tasks } from '../core/data/schema.js';
+import { changeService } from './changes.js';
 import type { Change, Rule } from '../pieces/changes/model.js';
 
 let db: DataDatabase;
@@ -82,22 +82,4 @@ it('refuses ambiguous account attribution instead of assigning a copy to the wro
   db.insert(agentAccounts).values({ agent: 'mark', service: 'github', login: 'ART-E-FISH' }).run();
   expect(() => service.put(change())).toThrow('more than one agent');
   expect(service.list()).toEqual([]);
-});
-
-it('reads a watched pull request of a repository no project lists, keeps only what is watched, and lets its failure stop nothing', async () => {
-  const elsewhere = (n: number): Change => ({ ...change(n), id: `github:else/where#${n}`, repo: 'github:else/where', url: `https://github.com/else/where/pull/${n}` });
-  const watch = (id: string, change: string, enabled = true) => db.insert(triggers).values({ id, ownerKind: 'agent', owner: 'art', sourceKind: 'pull-request', watches: `change:${change}`, lifespan: 'once',
-    targetKind: 'inbox', target: 'wake', toKind: 'agent', to: 'art', note: 'Wake', enabled, state: enabled ? 'standing' : 'fired', createdAt: at, changedAt: at }).run();
-  watch('w1', 'github:else/where#7'); watch('w2', 'github:gone/away#1'); watch('w3', 'github:else/where#9', false); watch('w4', 'github:house/loom#1');
-  expect([...watchedChanges(db)].sort()).toEqual(['github:else/where#7', 'github:gone/away#1', 'github:house/loom#1']);
-  const seen: string[] = [];
-  await service.sync(async repo => { seen.push(repo); if (repo === 'gone/away') throw new Error('not readable'); return repo === 'else/where' ? [elsewhere(7), elsewhere(8), elsewhere(9)] : [change()]; }, '2026-11-14T20:05:00.000Z');
-  // The projects' repositories first, each watched one once, and a project's repository never twice.
-  expect(seen).toEqual(['house/loom', 'else/where', 'gone/away']);
-  expect(service.list().map(c => c.id).sort()).toEqual(['github:else/where#7', 'github:house/loom#1']);
-  expect(service.syncStatus()).toMatchObject({ failed: false });
-  // With the watch over, the repository is read no more.
-  db.update(triggers).set({ enabled: false }).run(); seen.length = 0;
-  await service.sync(async repo => { seen.push(repo); return [change()]; }, '2026-11-14T20:10:00.000Z');
-  expect(seen).toEqual(['house/loom']);
 });
