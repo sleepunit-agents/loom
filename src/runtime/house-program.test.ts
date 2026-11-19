@@ -7,7 +7,8 @@ it('accepts a quiet observation and an explicit wake with state and post', () =>
     expect(parseProgramResult(JSON.stringify(value))).toEqual(value);
 });
 it('refuses extra output, ambiguous types, secrets and excess bytes with a fixed error', () => {
-  for (const text of ['{}', '{"version":1,"wake":"yes"}', '{"version":1,"wake":false}{}',
+  for (const text of [
+    ...['loom_' + 'A'.repeat(43), 'github_pat_' + 'a'.repeat(40)].map(line => JSON.stringify({version:1,wake:true,line})), '{}', '{"version":1,"wake":"yes"}', '{"version":1,"wake":false}{}',
     '{"version":1,"wake":true,"state":{"x":"my-\\u0073ecret"}}',
     '{"version":1,"wake":false,"post":{"channel":"x","text":"Bearer privatevalue"}}',
     JSON.stringify({version:1,wake:false,state:Buffer.from('my-secret').toString('base64')}),

@@ -34,7 +34,7 @@ const resultSchema = z.object({
 }).strict();
 export type ProgramResult = z.infer<typeof resultSchema>;
 
-const credential = /(?:Bearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|AGE-SECRET-KEY-|(?:body_|loom_ui=)[a-f0-9]{32,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[\w-]{10,}|sk-(?:ant-)?[\w-]{20,})/i;
+const credential = /(?:Bearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|AGE-SECRET-KEY-|loom_[a-z0-9_-]{43}|(?:body_|loom_ui=)[a-f0-9]{32,}|(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}|xox[baprs]-[\w-]{10,}|sk-(?:ant-)?[\w-]{20,})/i;
 export function assertSafeProgramOutput(text: string, secrets: readonly string[]) {
   const forms = secrets.filter(Boolean).flatMap(value => [value, Buffer.from(value).toString('base64')]);
   const inspect = (value: string) => {

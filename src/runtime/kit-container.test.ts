@@ -36,7 +36,7 @@ it('uses the approved image without body mounts, host privileges or credentials 
   });
   expect(calls.at(-1)?.method).toBe('DELETE');
 });
-it.each(['fixture-secret', '{"text":"fixture-\\u0073ecret"}', Buffer.from('fixture-secret').toString('base64')])('withholds a secret-bearing result', async(output)=>{
+it.each(['loom_' + 'A'.repeat(43), 'github_pat_' + 'a'.repeat(40), 'fixture-secret', '{"text":"fixture-\\u0073ecret"}', Buffer.from('fixture-secret').toString('base64')])('withholds a secret-bearing result', async(output)=>{
   const {engine,calls}=fixture(output);
   await expect(runKitContainer(engine,input)).rejects.toThrow('Kit result withheld');
   expect(calls.at(-1)?.method).toBe('DELETE');
