@@ -36,17 +36,57 @@ it('keeps idle owned cards in saved position order with stable id ties, without 
   expect(text()).toContain('Nothing right now');expect(text()).not.toContain('other card');
   expect(orderedAgents([{id:'z',name:'ALPHA',position:1},{id:'a',name:'alpha',position:0},{id:'b',name:'Beta',position:2}]).map(a=>a.id)).toEqual(['a','z','b']);
 });
-it('counts every central open ask, shows the first waiting item and remaining count, and opens their exact Inbox reader',async()=>{
-  f.snapshots['attention.ask']=live([ask('four',{createdAt:4}),ask('done',{state:'answered'}),ask('resolved',{state:'resolved'}),ask('three',{createdAt:3}),ask('one',{createdAt:1}),ask('two',{createdAt:2})]);
-  const go=await draw();expect(text()).toContain('Needs you · ');expect(text()).toContain('Inbox · +');
-  const rows=tree!.root.findByProps({'aria-label':'First waiting item'}).findAllByType('button');
-  expect(rows.map((n:Node)=>words(n))).toEqual(['Question fourThe whole reasonart']);
-  await act(async()=>rows[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/four');
-  await click('Inbox · +3 more');expect(go).toHaveBeenLastCalledWith('/p/inbox-preview');
-  expect(text()).not.toContain('Question done');expect(text()).not.toContain('Question resolved');
+const band=()=>tree!.root.findByProps({'aria-label':'Needs you'});
+const chips=()=>band().findAllByType('li');
+const bandLink=()=>band().findAllByType('a');
+it.each([[0,'Needs you · 0',undefined],[1,'Needs you · 1','Inbox ›'],[3,'Needs you · 3','Inbox ›'],[5,'Needs you · 5','+2 more · Inbox ›']] as const)('shows the band with %i waiting: its count, at most three chips, and the Inbox link at its end',async(count,label,link)=>{
+  f.snapshots['attention.ask']=live([...Array.from({length:count},(_,n)=>ask(`q${n+1}`,{createdAt:n+1})),ask('done',{state:'answered'}),ask('resolved',{state:'resolved'})]);
+  const go=await draw();
+  expect(words(band())).toContain(label);expect(chips()).toHaveLength(Math.min(count,3));
+  expect(chips().map((chip:Node)=>words(chip.findAllByType('b')[0]))).toEqual(Array.from({length:Math.min(count,3)},(_,n)=>`Question q${count-n}`));
+  expect(bandLink().map(words)).toEqual(link?[link]:[]);
+  if(!count){expect(words(band())).toContain('All clear. Nothing is waiting on you.');expect(text()).not.toContain('Inbox');return;}
+  expect(words(band())).not.toContain('All clear');expect(text()).not.toContain('Question done');expect(text()).not.toContain('Question resolved');
+  const preventDefault=vi.fn();await act(async()=>bandLink()[0].props.onClick({button:0,preventDefault}));
+  expect(preventDefault).toHaveBeenCalled();expect(go).toHaveBeenLastCalledWith('/p/inbox-preview');expect(bandLink()[0].props.href).toBe('/p/inbox-preview');
 });
-
-
+it('is not an app in a window: no Home heading and no Inbox button outside the band',async()=>{
+  f.snapshots['attention.ask']=live([ask('one',{agent:'other'})]);await draw();
+  expect(tree!.root.findAll((n:Node)=>['h1','h2','h3'].includes(n.type as unknown as string)&&words(n)==='Home')).toHaveLength(0);
+  expect(tree!.root.findAllByProps({className:'loom-kit-frame'})).toHaveLength(0);
+  const inboxes=tree!.root.findAll((n:Node)=>['a','button'].includes(n.type as unknown as string)&&words(n).includes('Inbox'));
+  expect(inboxes.map(words)).toEqual(['Inbox ›']);expect(band().findAll((n:Node)=>n===inboxes[0])).toHaveLength(1);
+});
+it('says who asked, keeps the whole words in the chip’s title, and opens that item in the Inbox',async()=>{
+  f.snapshots['person']=live([{id:'commons:art',slug:'art',name:'Art Fish',kind:'agent'}]);
+  f.snapshots['attention.ask']=live([ask('new/er',{createdAt:2,ask:'Ship the long\nsecond line?'}),ask('older',{createdAt:1,agent:undefined})]);
+  const go=await draw(),open=chips().map((chip:Node)=>chip.findAllByType('button')[0]);
+  expect(open.map(words)).toEqual(['Ship the long\nsecond line?Art Fish','Question olderHousehold']);
+  expect(open[0].props.title).toBe('Ship the long\nsecond line?');expect(open[0].props['aria-label']).toBe('Ship the long\nsecond line? From Art Fish. Open in Inbox');
+  await act(async()=>open[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/new%2Fer');
+  await act(async()=>open[1].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/older');expect(f.once).not.toHaveBeenCalled();
+});
+it('answers a plain yes/no ask where it stands with the Inbox’s own action, and sends everything else to be read whole',async()=>{
+  const plain={if_yes:undefined,if_no:undefined};
+  f.snapshots['attention.ask']=live([ask('plain',{...plain,createdAt:9}),ask('lined',{createdAt:8}),ask('words',{...plain,answers:'words',createdAt:7})]);
+  await draw();
+  const answers=()=>chips().map((chip:Node)=>chip.findAllByType('button').slice(1).map(words));
+  expect(answers()).toEqual([['Yes','No'],[],[]]);
+  await act(async()=>chips()[0].findAllByType('button')[2].props.onClick());
+  expect(f.once).toHaveBeenCalledTimes(1);expect(f.once).toHaveBeenLastCalledWith('inbox.answer',{item:'plain',answer:'no'});
+  expect(chips()[0].findAllByType('button').slice(1).every((n:Node)=>n.props.disabled)).toBe(true);
+  for(const fields of [{source:'approval'},{source:'task'},{source:'secret-request'},{waitsOnKind:'task'},{canAnswer:false}]){
+    await publish('attention.ask',live([ask('managed',{...plain,...fields} as Partial<Ask>)]));expect(answers()).toEqual([[]]);
+  }
+  expect(f.once).toHaveBeenCalledTimes(1);
+});
+it('says plainly when the count is loading or cannot be read, and shows no chip or link then',async()=>{
+  f.snapshots['attention.ask']=live([ask('secret')]);await draw();
+  for(const [status,line] of [['loading','Checking…'],['offline','Can’t tell what is waiting on you right now.'],['denied','Sign in to see what is waiting on you.']] as const){
+    await publish('attention.ask',{records:f.snapshots['attention.ask'].records,status});
+    expect(words(band())).toBe('Needs you'+line);expect(chips()).toHaveLength(0);expect(bandLink()).toHaveLength(0);
+  }
+});
 it.each(['loading','offline','denied'] as const)('shows %s errors without stale asks, statuses or ownership',async(status)=>{
   f.snapshots['attention.ask']=live([ask('secret')]);await draw();
   for(const type of ['attention.ask','attention.agent','attention.ownedAgent'])await publish(type,{records:f.snapshots[type].records,status});

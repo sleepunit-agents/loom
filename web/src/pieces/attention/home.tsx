@@ -11,10 +11,11 @@ import { CurrentJobs } from './current-jobs';
 import { LastAnswer } from './last-answer';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
 import AgentFace, { faceState } from './agent-face';
+import { NeedsBand } from './needs-band';
 import './home.css';
 import { useEffect, useState } from 'react';
 import type { Snapshot } from '../../data';
-import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
+import { Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { latestStatus, namedAgents, orderedAgents } from './home-model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
@@ -37,15 +38,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
     ?? ordered.find(a=>waiting.status==='live'&&(waiting.agents.get(a.id)??0)>0)
     ?? ordered.find(a=>conversations?.summaries.some(s=>s.agent===a.id&&s.unread)) ?? ordered[0])?.id;
   return <div className="desk-home h-full w-full min-w-0 max-w-full [overflow-wrap:anywhere]" data-attention-home="">
-    <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(waitingPath())}>Inbox</Button>}>
-      <div className="grid min-w-0 gap-5">
-        <section aria-label="Needs you" className="desk-home-needs grid min-w-0 gap-2">
-          {waiting.status !== 'live' ? <Unavailable status={waiting.status} label="waiting items" /> : <>
-            <h2 className="text-lg font-semibold">Needs you · {waiting.total}</h2>
-            {waiting.total ? <List label="First waiting item"><WaitingRow go={go}/></List> : <p>All clear.</p>}
-            {(waiting.total??0) > 1 && <Button variant="outline" onClick={()=>go(waitingPath())}>Inbox · +{waiting.total!-1} more</Button>}
-          </>}
-        </section>
+    <div className="desk-home-content">
+        <NeedsBand waiting={waiting} names={new Map(agents.map(agent=>[agent.id,agent.name]))} go={go} />
         {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
           {ordered.map(agent=>{
             const needs = waiting.status==='live'?(waiting.agents.get(agent.id)??0):undefined, first=(needs??0)>0;
@@ -84,7 +78,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             </section>;
           })}
         </div>}
-      </div>
-    </AppFrame></div>
+    </div>
   </div>;
 }
