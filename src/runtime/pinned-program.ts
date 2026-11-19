@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {SHA256_HEX,SHA256_HEX_WITHIN} from '../core/sha256-hex.js';
 import {COMMIT} from '../apps/merge-target.js';
 import {houseSecretAlias,secretName} from '../pieces/secrets/input.js';
-import {houseFile,houseRepository} from './house-source.js';
+import {houseFile,houseRepository} from './house-input.js';
 
 export const KIT_IMAGE=new RegExp('^sha256:'+SHA256_HEX_WITHIN+'$');
 /** Engines can inspect the same immutable image under a bare or prefixed digest. */
