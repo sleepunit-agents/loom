@@ -37,6 +37,18 @@ def records(stream):
 
 def project(kind, stream, now):
     result = {'observedAt': now}
+    if kind == 'mirror-unit-state':
+        raw = stream.read(513)
+        if len(raw) > 512:
+            raise ValueError()
+        fields = dict(line.split('=', 1) for line in raw.decode('ascii').splitlines())
+        if set(fields) != {'Id', 'LoadState', 'ActiveState', 'SubState', 'Result'}:
+            raise ValueError()
+        if fields.pop('Id') != 'art-live-sync.service':
+            raise ValueError()
+        if not all(re.fullmatch(r'[a-z][a-z0-9-]{0,39}', value) for value in fields.values()):
+            raise ValueError()
+        return dict(result, **fields)
     if kind == 'login-expiry':
         raw = stream.read(65537)
         if len(raw) > 65536:
@@ -142,7 +154,7 @@ def project(kind, stream, now):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry', 'cleanup-week-journal'])
+    parser.add_argument('kind', choices=['mirror-freshness', 'alert-ledger', 'cleanup-receipt', 'login-expiry', 'cleanup-week-journal', 'mirror-unit-state'])
     args = parser.parse_args()
     try:
         result = project(args.kind, sys.stdin.buffer, int(time.time()))

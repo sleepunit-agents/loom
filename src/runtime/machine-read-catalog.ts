@@ -39,6 +39,7 @@ export function machineReadCommand(read: MachineReadRequest, journalText = true)
   switch (read.kind) {
     case 'cleanup-week-journal':
     case 'login-expiry':
+    case 'mirror-unit-state':
     case 'mirror-freshness':
     case 'alert-ledger':
     case 'cleanup-receipt':
