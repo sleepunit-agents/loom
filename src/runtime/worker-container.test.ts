@@ -1200,3 +1200,27 @@ it('starts and ends a body without touching anything inside its account\'s sign-
   expect(seen()).toEqual(before);
 });
 
+it('mounts a job-only kit socket and gives the body no worker credential, even with a shell',async()=>{
+  const f=fixture(),state=mkdtempSync(join(houseRoot,'kit-state-'));
+  const executor=containerWorkerExecutor({...f.config,state},{...f.deps,kitAccess:{url:'https://root.invalid',runner:'machine-only'}});
+  const original=f.engine.json.getMockImplementation()!;
+  let path='';
+  f.engine.json.mockImplementation(async(method,url,body,signal)=>{
+    if(url.startsWith('/containers/create')){
+      const mounts=(body as {HostConfig:{Mounts:{Source:string;Target:string;ReadOnly:boolean}[]}}).HostConfig.Mounts;
+      const socket=mounts.find(m=>m.Target==='/run/loom/kit.sock');
+      expect(socket?.ReadOnly).toBe(true);path=socket!.Source;
+    }
+    if(inspecting(url))return {Mounts:[programReport(),reported(path,'/run/loom/kit.sock',false)]};
+    return original(method,url,body,signal);
+  });
+  const body=executor.start(job,built,f.abort.signal);
+  try{
+    await body.spawned;expect(statSync(path).isSocket()).toBe(true);
+    await body.release(bootstrap());
+    expect(JSON.parse(f.writes[0])).toEqual({job,build:built,bootstrap:handed,kitSocket:true});
+    expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain('machine-only');
+    expect(f.writes[0]).not.toContain('machine-only');
+  }finally{await body.stop();await executor.close?.();}
+  expect(()=>statSync(path)).toThrow();
+});

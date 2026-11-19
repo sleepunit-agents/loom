@@ -12,6 +12,8 @@ import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
 import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
+import {KitCapacity} from './kit-refused.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
@@ -38,7 +40,7 @@ import { BODY_START_BYTES } from './body-input-limit.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 /** What a body file is, for whoever writes one: the core house's own are held to it. */
 export const bodyFileSchema = config;
-const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
+const envelope = z.object({ kitSocket:z.literal(true).optional(), job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();
 /** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
@@ -219,7 +221,11 @@ export async function bodyProgram(input: {
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
-      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;},
+      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal).catch(error=>{
+        if(error instanceof KitCapacity){context.push(error.message);continued.push(error.message);}
+        return [];
+      }):[];
+      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();

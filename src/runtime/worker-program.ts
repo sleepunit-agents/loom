@@ -165,7 +165,7 @@ export async function workerProgram(input: {
     executor = config.container
       // (A list of mounts stopped the worker above: what is left is by agent, or nothing.)
       ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: { ...config.container, mounts: config.container.mounts as Exclude<typeof config.container.mounts, unknown[]> }, state },
-        { say: text => input.error(text) })
+        { say: text => input.error(text), kitAccess:{url:config.url,runner:token} })
       : (input.executor ?? commandWorkerExecutor)({ ...config, build: config.build!, runners: config.runners!, state });
     // Before any report or claim: end what a worker killed before this one left running, or the work loom
     // has queued again would run beside it. If that cannot be done, this worker does not start.

@@ -1,3 +1,4 @@
+import {denialCoversTool} from './tool-denial.js';
 import {BODY_CONTACT_MESSAGE} from './body-contact.js';
 /** A body's named tools: remember, task_claim, note_read and the rest, as a terminal session has them.
  *
@@ -57,16 +58,6 @@ export function bodyNamedTools(input:{agent:string;generic:readonly BodyModelToo
   }}));
 }
 
-/** Whether one denial entry (harness-traits.ts, denialEntries) takes away the tool with this full name. The
- * name itself does; so does its server's name alone (`mcp__loom`: every tool of it); and `*` stands for any
- * run of characters. This errs towards yes: an entry that narrows a tool to some inputs (`tool(...)`) counts
- * as the whole tool. Saying yes too often only denies a tool that might have been allowed. */
-function covers(entry:string,tool:string):boolean{
- const pattern=entry.replace(/\([^]*$/,'').trim();
- if(pattern===tool||tool.startsWith(pattern+'__')&&(pattern===server||pattern===formerServer))return true;
- if(!pattern.includes('*'))return false;
- return new RegExp('^'+pattern.split('*').map(part=>part.replace(/[.+?^${}()|[\]\\]/g,'\\$&')).join('.*')+'$').test(tool);
-}
 /** What a harness is told a body is not given, from the entries the job's room carries (deniedTools). Every
  * tool of loom's that an entry takes away is added by the name it is called today, so what the harness
  * does with a `*`, or with a name it no longer knows, does not matter:
@@ -76,7 +67,7 @@ function covers(entry:string,tool:string):boolean{
  *    another name, and would otherwise do what the room was denied.
  * The entries themselves are handed on as they are. */
 export function bodyDeniedTools(entries:readonly string[]):string[]{
- const denied=(tool:string)=>entries.some(entry=>covers(entry,server+'__'+tool)||covers(entry,formerServer+'__'+tool));
+ const denied=(tool:string)=>entries.some(entry=>denialCoversTool(entry,server+'__'+tool)||denialCoversTool(entry,formerServer+'__'+tool));
  const named=bodyNamedToolNames(),all=denied(COMMAND)||denied(QUERY);
  const taken=[...BODY_SECRET_TOOLS,...programToolDefinitions.map(([name])=>name),...named].filter(tool=>denied(tool)||all&&named.includes(tool));
  return [...new Set([...entries,...taken.map(tool=>harnessToolPrefix+tool)])];

@@ -172,7 +172,7 @@ it('selects the actual container executor when configured, without invoking a ho
   const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state }, { say: expect.any(Function) });
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} });
   expect(f.executor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
 });
@@ -298,7 +298,7 @@ it('passes the engine runtime, the sign-in directories and the fixed mounts to c
     container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: 'house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: 'mirror' }] } } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }, { say: expect.any(Function) }); expect(f.executor).not.toHaveBeenCalled();
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }, { say: expect.any(Function),kitAccess:{url:config.url,runner:'private-token'} }); expect(f.executor).not.toHaveBeenCalled();
 });
 for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { container: { socket: '/s', runtime: '' } },
   { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', readOnly: 'yes' }] } } }, { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', propagation: 'shared' }] } } },
