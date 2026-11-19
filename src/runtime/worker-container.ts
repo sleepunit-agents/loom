@@ -488,7 +488,7 @@ export function containerWorkerExecutor(config: {
           if(kit&&dependencies.kitAccess&&payload.bootstrap&&houseId){
             broker=kitBroker({repository:assignment.house.repository,commit:houseCommit(image),image:houseId,denials:deniedTools(assignment.run?.policy),
               post:kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id}),
-              run:invocation=>runKitContainer(engine,invocation)});
+              run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box})});
           }
           await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({...payload,...(broker?{kitSocket:true}:{})}) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
