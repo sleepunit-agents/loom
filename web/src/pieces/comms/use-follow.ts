@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ReplyCursor } from './follow';
 const near=80;
-/** The kit reader owns its scroller on every width. Earlier pages never enter this cursor. */
+/** The thread's messages box is the scroller (comms-view), and its one child holds every message. Earlier pages never enter this cursor. */
 export function useReplyFollow(scroller:RefObject<HTMLDivElement|null>,rows:readonly {seq:number;kind:string}[],live:boolean){
  const cursor=useRef(new ReplyCursor()),drawn=useRef<{height:number;viewport:number}|undefined>(undefined),following=useRef(true);
  const [unread,setUnread]=useState(0);
@@ -24,7 +24,7 @@ export function useReplyFollow(scroller:RefObject<HTMLDivElement|null>,rows:read
   drawn.current=measure(el);
  });
  useEffect(()=>{
-  const el=scroller.current,content=el?.querySelector('ol');if(!live||!el||!content)return;
+  const el=scroller.current,content=el?.firstElementChild;if(!live||!el||!content)return;
   const observer=new ResizeObserver(()=>{
    if(following.current)down();
    drawn.current=measure(el);

@@ -135,8 +135,9 @@ it('shows generated mailbox counts and opens exact last/unread destinations with
 });
 it('withdraws compose eligibility on current ownership, identity and query loss',async()=>{
  f.snapshots['generated.homeComms']=live([{member:'owner',agents:['art'],summaries:[]}]);await draw();
- const composer=()=>tree!.root.findByProps({'aria-label':'Message Art'}).findAllByType('form');
- expect(composer()).toHaveLength(1);expect(tree!.root.findByProps({'aria-label':'Message Mark'}).findAllByType('form')).toHaveLength(0);
+ const composer=()=>tree!.root.findByProps({'data-compose':'art'}).findAllByType('form');
+ expect(composer()).toHaveLength(1);expect(tree!.root.findByProps({'data-compose':'mark'}).findAllByType('form')).toHaveLength(0);
+ expect(tree!.root.findByProps({'data-compose':'art'}).findByType('textarea').props).toMatchObject({'aria-label':'Message Art',placeholder:'Message Art',rows:1});
  await publish('generated.homeComms',live([{member:'owner',agents:[],summaries:[]}]));expect(composer()).toHaveLength(0);
  await publish('generated.homeComms',live([{member:'other',agents:['art'],summaries:[]}]));expect(composer()).toHaveLength(1);
  await publish('generated.homeComms',{...f.snapshots['generated.homeComms'],status:'offline'});expect(composer()).toHaveLength(0);

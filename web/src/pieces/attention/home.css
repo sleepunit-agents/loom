@@ -21,8 +21,8 @@
 @container(max-width:600px){.desk-home-content{padding:12px}.desk-home-needs{padding:12px}.desk-home-needs [aria-label="First three asks"]{display:grid}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
 .desk-home-columns{display:grid;gap:20px;min-width:0}
 .desk-home-compose{min-width:0;padding-top:12px;border-top:1px solid var(--v-border)}
-.desk-home-compose form{padding:8px 0 0;border:0}
-.desk-home-compose textarea{font-size:16px;min-width:0}
+/* (The bar itself is Comms' own: comms/composer.css.) */
+.desk-home-compose>p{font-size:var(--fs-small);color:var(--v-text-2)}
 @container(min-width:760px){.desk-home-card:only-child .desk-home-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .desk-home-compact{min-width:0;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 88%,transparent)}

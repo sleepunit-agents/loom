@@ -8,6 +8,12 @@ import './reader.css';
 export function Reader({ className = '', ...props }: ComponentProps<'article'>) {
   return <article {...props} className={`loom-reader ${className}`} />;
 }
+/** The head of an open item that keeps its place while what is under it scrolls (a conversation's, the site's
+ * `.cm__head`): something small at its left (an agent's face), the title over its quiet line, and the item's few
+ * actions at its right. The words wrap; the actions never shrink. */
+export function Head({ leading, actions, children, className = '', ...props }: ComponentProps<'header'> & { leading?: ReactNode; actions?: ReactNode }) {
+  return <header {...props} className={`loom-reader__head ${className}`}>{leading}<div className="loom-reader__head-words">{children}</div>{actions}</header>;
+}
 /** A small, quiet mono line: who and what state over the title, when and where under it. */
 export function Meta({ className = '', ...props }: ComponentProps<'p'>) {
   return <p {...props} className={`loom-reader__meta ${className}`} />;

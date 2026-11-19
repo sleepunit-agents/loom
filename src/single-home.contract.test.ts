@@ -518,8 +518,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
       'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
-      'web/src/pieces/comms-view/index.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
-      'web/src/pieces/attention/home-composer.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
+      'web/src/pieces/comms/composer.tsx': 'the message bar\'s hint, held to MESSAGE_WORDS_MAX below',
       'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
       'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },
     { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {
@@ -535,8 +534,8 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
   // The same two sizes written as a sum: a Knowledge page's body, and a private key file read whole.
   expect(sources('src').filter(file => /\b(64|16) \* 1024\b/.test(text(file)))).toEqual(['src/backends/knowledge-verification.ts', 'src/pieces/secrets/local-holder.ts']);
   expect(MAX_PAGE_BODY_LENGTH).toBe(65536);
-  // The app's two message boxes show the program's number.
-  for (const file of ['web/src/pieces/comms-view/index.tsx', 'web/src/pieces/attention/home-composer.tsx'])
+  // The app's one message bar (under a thread in Comms and on an agent's card on Home) shows the program's number.
+  for (const file of ['web/src/pieces/comms/composer.tsx'])
     expect([...text(file).matchAll(/<Textarea[^>]*? maxLength=\{(\d+)\}/g)].map(found => Number(found[1])), file).toEqual([MESSAGE_WORDS_MAX]);
 });
 
