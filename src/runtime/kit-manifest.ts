@@ -2,7 +2,7 @@
  * argument is either one literal or one whole typed value. */
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {SHA256_HEX_WITHIN} from '../core/sha256-hex.js';
+import {SHA256_HEX,SHA256_HEX_WITHIN} from '../core/sha256-hex.js';
 import {COMMIT} from '../apps/merge-target.js';
 import {houseSecretAlias,secretName} from '../pieces/secrets/input.js';
 import {houseFile,houseRepository} from './house-source.js';
@@ -22,6 +22,12 @@ export function kitToolDenied(name:string,denials:readonly string[],kit?:string)
   return denials.some(entry=>names.some(model=>denialCoversTool(entry,harnessToolPrefix+model)));
 }
 export const KIT_IMAGE=new RegExp('^sha256:'+SHA256_HEX_WITHIN+'$');
+/** Engines can inspect the same immutable image under a bare or prefixed digest. */
+export function canonicalKitImage(id:unknown):string|undefined{
+  if(typeof id!=='string')return;
+  if(KIT_IMAGE.test(id))return id;
+  if(SHA256_HEX.test(id))return 'sha256:'+id;
+}
 const safeKey=z.string().regex(/^[a-z][a-z0-9_]{0,31}$/).refine(key=>!Object.hasOwn(Object.prototype,key));
 const description=z.string().trim().min(1).max(512);
 const text=z.string().max(4096).refine(value=>!value.includes('\0'));

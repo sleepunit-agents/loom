@@ -6,6 +6,7 @@ import { bodyInput } from './body-bootstrap.js';
  * body program into the container, and starts every body the same way (house-layout.ts). Every house is
  * built on the core house, which the worker builds from its own install (house-core.ts). Nothing about any one
  * agent is set up on the machine but, where wanted, that agent's mounts. */
+import {canonicalKitImage} from './kit-manifest.js';
 import {kitBroker} from './kit-broker.js';
 import {kitSocket} from './kit-socket.js';
 import {kitPrivateClient} from './kit-private-client.js';
@@ -427,10 +428,10 @@ export function containerWorkerExecutor(config: {
           // The image says that it is a house of this layout and serves the harness; one that does not fails
           // this job (UnmetHouseError). How a body starts is the layout's (house-layout.ts).
           const house=await houseStart(engine, image, assignment.harness, abort.signal);
-          houseId=house.id;
+          houseId=canonicalKitImage(house.id);
           // A body on a machine that lends out its engine can inspect other containers there.
           // Such a machine never receives kit secrets. A new socket belongs to one job only.
-          if(dependencies.kitAccess&&!fixed.container.nestedSocket&&!assignment.run?.nestedContainers){
+          if(houseId&&dependencies.kitAccess&&!fixed.container.nestedSocket&&!assignment.run?.nestedContainers){
             kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal).catch(()=>undefined);
             if(kit)mounts=[...mounts,{Type:'bind',Source:kit.path,Target:KIT_SOCKET,ReadOnly:true}];
           }

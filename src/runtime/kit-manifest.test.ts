@@ -1,11 +1,16 @@
 import {describe, expect, it} from 'vitest';
-import {kitArguments,kitTool,kitTools} from './kit-manifest.js';
+import {canonicalKitImage,kitArguments,kitTool,kitTools} from './kit-manifest.js';
 
 const tool = {name:'check_mail',description:'Check mail for a sender',program:'tools/mail',commit:'1'.repeat(40),
   repository:'https://example.com/house.git',image:'sha256:'+'a'.repeat(64),parameters:{sender:{type:'string',description:'Sender'}},
   args:['--sender',{parameter:'sender'}],secrets:{KIT_MAIL_KEY:'mail-key'}};
 
 describe('kit tool manifest',()=>{
+  it('normalizes bare engine image identities without accepting mutable references',()=>{
+    expect(canonicalKitImage(tool.image.slice(7))).toBe(tool.image);
+    expect(canonicalKitImage(tool.image)).toBe(tool.image);
+    expect(canonicalKitImage('house:latest')).toBeUndefined();
+  });
   it('expands only whole typed slots and never interprets punctuation',()=>{
     const manifest=kitTool.parse(tool);
     const sender='a b; echo $(date) -q "x"';
