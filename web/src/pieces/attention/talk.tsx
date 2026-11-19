@@ -78,7 +78,7 @@ export function ConversationsSection({ talk, name, unread = 0, firstUnread, go }
     {talk.status === 'loading' ? <Body quiet>Checking…</Body> : talk.status !== 'live' ? <Body quiet>Can’t read conversations right now.</Body>
       : !talk.recent.length ? <Body quiet>None yet.</Body>
       : <List label={`${name} conversations`}>{talk.recent.map(row => <Row key={row.id} title={row.title} unread={row.path === unreadPath}
-        meta={row.at ? stamp(Date.parse(row.at)) : undefined} onClick={() => go(row.path)} />)}</List>}
+        meta={row.at ? sinceWord(row.at) : undefined} onClick={() => go(row.path)} />)}</List>}
     <LinkButton onClick={() => go('/p/comms-preview')}>All conversations in Comms</LinkButton>
   </Section>;
 }

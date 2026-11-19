@@ -1,6 +1,6 @@
 import { useDataQuery } from '../../data/graphql';
 import { Body, List, NoteRow, Section } from '../../kit';
-import { stamp } from './time';
+import { sinceWord } from './doing';
 
 /** An agent's jobs for its own page: the ones running now, then the ones that ended, newest first. Machine
  * names come only from the machines this viewer may read, in the same request. */
@@ -12,7 +12,8 @@ interface Job { id: string; agent: string; title: string; state: string; box: st
 type Data = { jobHistory: Job[]; boxes?: { id: string; name: string }[] };
 const current = ['queued', 'starting', 'running'];
 const stateWords: Record<string, string> = { queued: 'Queued', starting: 'Starting', running: 'Running', done: 'Done', failed: 'Failed', stopped: 'Stopped', lost: 'Lost' };
-const time = (at: string) => stamp(Date.parse(at));
+/** Short times, as the doing list says them: the hour today, the day too before. */
+const time = (at: string) => sinceWord(at);
 export function AgentJobs({ agent, name }: { agent: string; name: string }) {
   const query = useDataQuery<Data>(agentJobsQuery, { agent });
   const live = query.status === 'live' && !!query.data && Array.isArray(query.data.jobHistory);

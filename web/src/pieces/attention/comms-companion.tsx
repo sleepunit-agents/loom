@@ -8,7 +8,7 @@ import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { useDeskWaitingCounts } from './waiting';
-import { agentPath, latestStatus, namedAgents } from './home-model';
+import { agentPath, agentStateWord, latestStatus, namedAgents } from './home-model';
 import './comms-companion.css';
 
 function Portrait({agent,working,go}:{agent:string;working:boolean;go(path:string):void}) {
@@ -19,7 +19,7 @@ function Portrait({agent,working,go}:{agent:string;working:boolean;go(path:strin
   const status=statuses.status==='live'?latestStatus(statuses.records,agent):undefined;
   const needs=waiting.status==='live'&&(waiting.agents.get(agent)??0)>0;
   const state=faceState(working?'working':status?.state,needs);
-  const word=working||status||needs?({working:'Working',thinking:'Waiting',idle:'Quiet',error:'Needs a look','needs-input':'Waiting on you'} as Record<string,string>)[state]:'No status reported';
+  const word=working||status||needs?({working:'Working',thinking:'Waiting',idle:'Quiet',error:'Needs a look','needs-input':'Waiting on you'} as Record<string,string>)[state]:agentStateWord(undefined);
   const target=rail?.screen?.agent===agent?rail.screen.el:undefined;
   const display=displays.find(row=>row.id===agent);
   // Beside the rail the comm screen is the agent's rail card, large, with its name and how it is. Without the rail it

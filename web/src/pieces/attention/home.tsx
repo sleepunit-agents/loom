@@ -14,7 +14,7 @@ import './home.css';
 import { useEffect, useState, type MouseEvent } from 'react';
 import type { Snapshot } from '../../data';
 import { Empty, Error, Loading, Row } from '../../kit';
-import { agentStateWord, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
+import { agentStateLine, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
 }
@@ -33,7 +33,7 @@ function HomeCard({ agent, names, needs, state, display, conversations, go }: {
       <a className="inline-flex shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 [&>*]:pointer-events-none" aria-label={`Open ${agent.name} agent window`} tabIndex={-1} href={page} onClick={open}><AgentFace display={display} name={agent.name} state={faceState(shownState(state,count), !!needs)} size={96} /></a>
       <h2><a href={page} onClick={open}>{agent.name}</a></h2>
       <a className="desk-home-open" href={page} onClick={open}>Open {agent.name} ›</a>
-      <p>{agentStateWord(state,count)}{needs ? ` · ${needs} ${needs===1?'needs':'need'} you` : ''}</p>
+      <p>{agentStateLine(state,count,needs)}</p>
     </header>
     <Doing doing={doing} name={agent.name} names={names} go={go} />
     <HomeTalk talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread} all={page} go={go} />
@@ -68,7 +68,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               const summary=conversations?.summaries.find(s=>s.agent===agent.id);
               const unread=summary?.unread??0, thread=summary?.first??summary?.last;
               return <WithDoing key={agent.id} agent={agent.id}>{doing=>{
-                const count=doing.items.length, state=shownState(status?.state,count), word=first?'Needs you':agentStateWord(status?.state,count);
+                const count=doing.items.length, state=shownState(status?.state,count), word=agentStateLine(status?.state,count,needs);
                 return <section className="desk-home-compact" data-agent={agent.id} aria-label={`${agent.name} card`}>
                 <Row aria-label={`Open ${agent.name} conversation`} title={agent.name} meta={word}
                   icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,!!first)} size={32}/>}

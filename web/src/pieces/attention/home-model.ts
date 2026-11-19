@@ -23,3 +23,7 @@ export function agentStateWord(state: AgentStatus['state'] | undefined, doing = 
 }
 /** The state its face and dot draw: working while it has something on its list. */
 export const shownState = (state: AgentStatus['state'] | undefined, doing = 0): AgentStatus['state'] | undefined => doing > 0 ? 'working' : state;
+/** The whole line beside a name: the state word, and how many of its questions are waiting on this person. */
+export function agentStateLine(state: AgentStatus['state'] | undefined, doing = 0, needs = 0): string {
+  return `${agentStateWord(state, doing)}${needs > 0 ? ` · ${needs} ${needs === 1 ? 'needs' : 'need'} you` : ''}`;
+}

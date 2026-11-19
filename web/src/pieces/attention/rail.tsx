@@ -8,7 +8,7 @@ import { useDeskRoster } from './roster';
 import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState } from './agent-face';
 import { Row } from '../../kit';
-import { agentStateWord, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
+import { agentStateLine, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
 import './rail.css';
 import { RailContext } from '../../desk-rail';
 import { reducedMotion } from '../../access';
@@ -66,7 +66,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const summary=reading?.summaries.find(s=>s.agent===agent.id);
       const unread=summary?.unread??0,thread=summary?.first??summary?.last;
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
-      const said=(doing=0)=>status?.state!=='offline'&&ask?'Needs you':agentStateWord(status?.state,doing), word=said();
+      const said=(doing=0)=>agentStateLine(status?.state,doing,needs), word=said();
       if(fold&&agent.id!==opened)return <section key={agent.id} className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
         <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
           icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>}

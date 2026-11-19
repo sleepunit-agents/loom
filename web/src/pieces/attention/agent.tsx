@@ -5,9 +5,9 @@ import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
-import { AppFrame, Body, List, Row, Empty, Error, Loading, Button, LinkButton, Meta, Reader, Section, Title } from '../../kit';
+import { AppFrame, Body, List, Row, Empty, Error, Loading, Button, LinkButton, Meta, Reader, Section } from '../../kit';
 import AgentFace, { faceState } from './agent-face';
-import { agentPath, agentStateWord, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
+import { agentPath, agentStateLine, latestStatus, namedAgents, orderedAgents, shownState } from './home-model';
 import { LastSteps } from './last-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { Doing, useDoing } from './doing';
@@ -36,7 +36,7 @@ function AgentReader({ agent, names, go }: { agent: Agent; names: ReadonlyMap<st
   ];
   return <Reader aria-label={`${agent.name} agent window`} className="desk-agent-page">
     <div className="desk-agent-who"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,count),!!needs)} size={96}/>
-      <div className="grid min-w-0 gap-1"><Meta>{[agentStateWord(status?.state,count),needs?`${needs} ${needs===1?'needs':'need'} you`:''].filter(Boolean).join(' · ')}</Meta><Title>{agent.name}</Title></div></div>
+      <Meta>{agentStateLine(status?.state,count,needs)}</Meta></div>
     <Section label="Doing now"><Doing doing={doing} name={agent.name} names={names} go={go}/></Section>
     {profiles.status==='live'&&(profile?.description||profile?.requestedAt)&&<Section label="About">{profile.description&&<Body>{profile.description}</Body>}{profile.requestedAt&&<Body quiet>A description has been asked for.</Body>}</Section>}
     {statuses.status==='live'&&status?.work&&<Section label="Its own report"><Body>{status.work}</Body><Meta><time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></Meta></Section>}

@@ -15,7 +15,7 @@
 .desk-needs-band[data-zero] .desk-needs-label{color:var(--v-text-3)}
 .desk-needs-band[data-zero] .desk-needs-dot{background:var(--v-edge);box-shadow:none}
 .desk-needs-quiet{font-size:13px;color:var(--v-text-3)}
-.desk-needs-items{display:flex;flex:1 1 0;flex-wrap:wrap;gap:8px 10px;min-width:0;margin:0;padding:0;list-style:none}
+.desk-needs-items{display:flex;flex:1 1 0;flex-wrap:nowrap;gap:8px 10px;min-width:0;margin:0;padding:0;list-style:none}
 .desk-needs-all{flex:none;margin-left:auto;padding:4px 2px;font-size:12.5px;white-space:nowrap;text-decoration:none;color:var(--v-text-2)}
 .desk-need{display:flex;align-items:center;gap:10px;flex:0 1 auto;min-width:0;max-width:100%;padding:4px 6px 4px 10px;border-left:2px solid var(--n);background:color-mix(in srgb,var(--v-canvas) 70%,transparent)}
 .desk-need-open{display:grid;gap:1px;flex:1 1 auto;min-width:0;max-width:360px;padding:0;border:0;background:none;text-align:left;line-height:1.25;color:var(--v-text);cursor:pointer}
@@ -42,8 +42,8 @@
 /* The last answer in brief: three lines, since the whole of it is one click away. */
 .desk-home-answer{display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--v-border);color:var(--v-text);text-decoration:none}
 .desk-home-answer-words{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:pre-wrap;font-size:13.5px;line-height:1.45}
-.desk-home-talks{display:grid;gap:4px;min-width:0}
-.desk-home-talks ul{display:grid;min-width:0;margin:0;padding:0;list-style:none}
+.desk-home-talks{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;min-width:0}
+.desk-home-talks ul{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;margin:0;padding:0;list-style:none}
 .desk-home-talk{display:flex;align-items:baseline;gap:8px;min-width:0;padding:5px 0;border-bottom:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
 .desk-home-talk[data-unread]{color:var(--v-text)}
 .desk-home-talk-title{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -54,11 +54,16 @@
 .desk-home-card a:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
 @media(pointer:coarse){.desk-home-talk{min-height:40px;align-items:center}:is(.desk-home-open,.desk-home-all){padding-block:10px}}
 .desk-home-identity p{flex-basis:100%;font:500 11px var(--font-data,monospace);text-transform:uppercase;letter-spacing:.1em;color:var(--v-text-2)}
-@container(max-width:600px){.desk-home-content{padding:12px}.desk-needs-band{align-items:stretch;flex-direction:column;padding:10px 12px}.desk-needs-items{flex:none;flex-direction:column}.desk-need{flex-wrap:wrap}.desk-need-open{max-width:none}.desk-needs-all{margin-left:0}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
+/* One row while there is room for three chips side by side; below that the label and the Inbox link keep the first
+   row and the chips wrap under them, and on a phone they stack. */
+@container(max-width:900px){.desk-needs-items{order:3;flex:1 1 100%;flex-wrap:wrap}}
+@container(max-width:600px){.desk-home-content{padding:12px}.desk-needs-band{align-items:stretch;flex-direction:column;padding:10px 12px}.desk-needs-items{order:0;flex:none;flex-direction:column}.desk-need{flex-wrap:wrap}.desk-need-open{max-width:none}.desk-needs-all{margin-left:0}.desk-home-card{padding:24px 18px}.desk-home-identity h2{font-size:26px}}
 .desk-home-compose{min-width:0;padding-top:12px;border-top:1px solid var(--v-border)}
 /* (The bar itself is Comms' own: comms/composer.css.) */
 .desk-home-compose>p{font-size:var(--fs-small);color:var(--v-text-2)}
 
+/* A folded card's own list sits inside its edge, under the row that opens the conversation. */
+.desk-home-compact>:is(.desk-doing,.desk-doing-quiet){margin:8px 12px 10px}
 .desk-home-compact{min-width:0;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 88%,transparent)}
 .desk-home-flags{display:flex;gap:8px;align-items:center;font:500 10px var(--font-data,monospace);color:var(--v-blue)}
 
