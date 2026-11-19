@@ -8,12 +8,12 @@ import { refileConversations, refileInbox } from './core/conversations/index.js'
 import { refileTriggers } from './core/tempo/triggers.js';
 import { refileJobs } from './runtime/jobs.js';
 /** Project sharing is plain household metadata, checked only at the outside door. */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
+import { agentKitProjects, projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
 import { householdId, projectId } from './slug.js';
@@ -35,6 +35,8 @@ export const projectMergeInput=z.object({from:id,into:id}).strict();
  * `project:<id>` (`approval_rules.scope`). It is an owner's word about one project, and carried over it
  * would answer for every card of the project merged into. It stays, and answers nothing more. */
 export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string,into:string)=>void>>={
+ // A merge never copies owner grants or outside identities onto a different project.
+ agent_kit_projects(){},project_outside_people(){},
  tasks:refileTasks,
  conversations:refileConversations,
  inbox:refileInbox,
@@ -129,6 +131,8 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
    // A repository has one project. After the merge every repository of either is the other's alone, unless a
    // third project also lists it.
    const bound=db.select().from(projectRepositories).all(),merged=[value.from,value.into];
+   if(db.select({kit:agentKitProjects.kit}).from(agentKitProjects).where(inArray(agentKitProjects.project,merged)).get())
+    return new OperationError('conflict','Withdraw the kit grants on both projects before merging them');
    const theirs=new Set(bound.filter(row=>merged.includes(row.project)).map(row=>repoId(row.repository)));
    if(bound.some(row=>!merged.includes(row.project)&&theirs.has(repoId(row.repository))))return new OperationError('conflict','A repository would belong to two projects');
    return undefined;

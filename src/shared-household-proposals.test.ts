@@ -761,3 +761,66 @@ it('lets a standing rule for settings answer a retire and a revive: each is undo
   expect(ask('projectRevive')).toMatchObject({ state: 'used', kind: 'setting' });
   expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: false });
 });
+
+it('requires owner cards for kit definitions, their grants and outside project membership', async () => {
+  const f = fixture();
+  const propose = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Configure the project kit' }, 'art');
+  const apply = async (change: string, input: unknown) => {
+    const filed = await propose(change, input);
+    expect(filed.body).toMatchObject({ok:true,value:{state:'pending'}});
+    const id = filed.body.value!.id;
+    expect((await f.call('approvals/answer', {id, answer:'allow'}, 'lee')).status).toBe(403);
+    expect((await f.call('approvals/answer', {id, answer:'allow'}, 'sam')).body.ok).toBe(true);
+  };
+  await apply('project', pond);
+  f.db.insert(agentPeople).values({agent:'art',person:JSON.stringify(['discord','server','person']),tier:1}).run();
+  const tool={name:'forecast',description:'Get the weather',program:'tools/forecast',repository:'https://example.com/house.git',
+    commit:'a'.repeat(40),image:'sha256:'+'b'.repeat(64),parameters:{city:{type:'string',description:'City'}},
+    args:[{parameter:'city'}],secrets:{KIT_WEATHER:'weather-key'}};
+  await apply('kit', {agent:'art',kit:'tools',tools:[tool]});
+  await apply('kitGrant', {agent:'art',kit:'tools',to:{project:'pond'},grant:true});
+  await apply('projectOutsidePerson', {project:'pond',platform:'discord',workspace:'server',user:'person',on:true});
+  await apply('kitGrant', {agent:'art',kit:'tools',to:{project:'pond'},grant:false});
+  await apply('kit', {agent:'art',kit:'tools',tools:null});
+});
+
+it('reserves kit grants and membership changes on kit-bearing projects for an owner', async () => {
+  const f=fixture(),at=new Date(f.clock.now()).toISOString();
+  f.db.insert(conversations).values({id:'cv-kits',agent:'art',member:'sam',venue:'loom',place:'th',label:'Sam',startedAt:at,lastAt:at,turnCount:0}).run();
+  f.root.writes.run(()=>f.root.services.setup.rule({kind:'setting',scope:'*',person:'',tier:'do'},'sam'));
+  const ask=(change:string,input:unknown)=>f.root.writes.run(()=>f.root.services.setup.propose('art',{change,input,why:'Configure project access'},{conversation:'cv-kits',member:'sam',project:null})).value;
+  const approve=async(change:string,input:unknown)=>{
+    const card=ask(change,input);
+    expect(card.state).toBe('pending');
+    expect((await f.call('approvals/answer',{id:card.id,answer:'allow'},'sam')).body).toMatchObject({ok:true});
+  };
+  f.db.insert(agentPeople).values({agent:'art',person:JSON.stringify(['slack','W','U']),tier:1}).run();
+  expect(ask('project',pond).state).toBe('used');
+  await approve('kit',{agent:'art',kit:'tools',tools:[]});
+  await approve('kitGrant',{agent:'art',kit:'tools',to:{project:'pond'},grant:true});
+  await approve('project',{...pond,members:['sam']});
+  await approve('projectOutsidePerson',{project:'pond',platform:'slack',workspace:'W',user:'U',on:true});
+  await approve('kitGrant',{agent:'art',kit:'tools',to:{platform:'slack',workspace:'W',user:'U'},grant:true});
+  await approve('kitGrant',{agent:'art',kit:'tools',to:{member:'lee'},grant:true});
+});
+
+it('lets the owner file a kit or outside roster card and seals project grants on that roster card',async()=>{
+  const f=fixture();
+  const ask=(change:string,input:unknown)=>f.call('household/propose',{change,input,why:'Review kit access'},'sam');
+  const allow=(id:string)=>f.call('approvals/answer',{id,answer:'allow'},'sam');
+  const key={agent:'art',kit:'tools'};
+  f.db.insert(projects).values({id:'pond',name:'Pond'}).run();
+  const kit=await ask('kit',{...key,tools:[]});
+  expect(kit.body).toMatchObject({ok:true,value:{state:'pending'}});
+  expect((await allow(kit.body.value!.id)).body).toMatchObject({ok:true});
+  const person={project:'pond',platform:'slack',workspace:'W',user:'U',on:true};
+  const unknown=await ask('projectOutsidePerson',person);
+  expect((await allow(unknown.body.value!.id)).body.message).toContain('already known');
+  await f.call('approvals/answer',{id:unknown.body.value!.id,answer:'deny'},'sam');
+  f.db.insert(agentPeople).values({agent:'mark',person:JSON.stringify(['slack','W','U']),tier:1}).run();
+  const waiting=await ask('projectOutsidePerson',person);
+  expect(waiting.body).toMatchObject({ok:true,value:{state:'pending'}});
+  const grant=await ask('kitGrant',{...key,to:{project:'pond'},grant:true});
+  expect((await allow(grant.body.value!.id)).body).toMatchObject({ok:true});
+  expect((await allow(waiting.body.value!.id)).body.message).toContain('changed since');
+});

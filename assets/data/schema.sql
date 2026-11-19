@@ -1298,6 +1298,70 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `agent_kits` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`tools` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `agent_kit_projects` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`project` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `project`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `agent_kit_members` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`member` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `member`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `agent_kit_outside_people` (
+	`agent` text NOT NULL,
+	`kit` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`user` text NOT NULL,
+	PRIMARY KEY(`agent`, `kit`, `platform`, `workspace`, `user`),
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `project_outside_people` (
+	`project` text NOT NULL,
+	`platform` text NOT NULL,
+	`workspace` text NOT NULL,
+	`user` text NOT NULL,
+	PRIMARY KEY(`project`, `platform`, `workspace`, `user`),
+	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `kit_uses` (
+	`agent` text NOT NULL,
+	`conversation` text,
+	`person_kind` text,
+	`person` text,
+	`id` text PRIMARY KEY NOT NULL,
+	`job` text NOT NULL,
+	`kit` text NOT NULL,
+	`tool` text NOT NULL,
+	`at` text NOT NULL,
+	`outcome` text NOT NULL,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action
+);
+
 CREATE TABLE `terminal_credentials` (
 	`fingerprint` text PRIMARY KEY NOT NULL,
 	`machine` text NOT NULL,
