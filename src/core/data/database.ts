@@ -323,6 +323,15 @@ const upgrades: readonly (readonly string[])[] = [
    'ALTER TABLE triggers ADD COLUMN needs text', 'ALTER TABLE triggers ADD COLUMN prefers text',
    'ALTER TABLE agent_run_settings ADD COLUMN prefers text',
    'ALTER TABLE jobs ADD COLUMN prefers text', 'ALTER TABLE jobs ADD COLUMN placement_decision text'],
+  // 15: named kits, exact grants, outside project people and kit calls.
+  [
+    "CREATE TABLE `agent_kits` (\n\t`agent` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`tools` text NOT NULL,\n\tPRIMARY KEY(`agent`, `kit`),\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action\n);",
+    "CREATE TABLE `agent_kit_projects` (\n\t`agent` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`project` text NOT NULL,\n\tPRIMARY KEY(`agent`, `kit`, `project`),\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade\n);",
+    "CREATE TABLE `agent_kit_members` (\n\t`agent` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`member` text NOT NULL,\n\tPRIMARY KEY(`agent`, `kit`, `member`),\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade\n);",
+    "CREATE TABLE `agent_kit_outside_people` (\n\t`agent` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`platform` text NOT NULL,\n\t`workspace` text NOT NULL,\n\t`user` text NOT NULL,\n\tPRIMARY KEY(`agent`, `kit`, `platform`, `workspace`, `user`),\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`agent`,`kit`) REFERENCES `agent_kits`(`agent`,`kit`) ON UPDATE no action ON DELETE cascade\n);",
+    "CREATE TABLE `project_outside_people` (\n\t`project` text NOT NULL,\n\t`platform` text NOT NULL,\n\t`workspace` text NOT NULL,\n\t`user` text NOT NULL,\n\tPRIMARY KEY(`project`, `platform`, `workspace`, `user`),\n\tFOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action\n);",
+    "CREATE TABLE `kit_uses` (\n\t`agent` text NOT NULL,\n\t`conversation` text,\n\t`person_kind` text,\n\t`person` text,\n\t`id` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\t`kit` text NOT NULL,\n\t`tool` text NOT NULL,\n\t`at` text NOT NULL,\n\t`outcome` text NOT NULL,\n\tFOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action\n);",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

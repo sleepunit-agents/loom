@@ -4,9 +4,9 @@ import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
 import { ageLimit, wordsKept } from './core/conversations/retention.js';
 import { commsKeepDays } from './core/data/comms-days.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, boxes, jobs, threads, terminalSessions, bridgeConnections, bridgeIncoming, bridgePeople, conversations, inbox, inboxRefs, messages } from './core/data/schema.js';
+import { agents, boxes, jobs, threads, terminalSessions, conversations, inbox, messages } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
-import { incomingId, parseInboxSourceId } from './pieces/bridges/keys.js';
+import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 import { workAnswersAllowed } from './shared-work-access.js';
@@ -111,22 +111,8 @@ function mailEvidence(db: DataDatabase, sources: EvidenceSources, job: Job, item
   }
 
   if (item.source !== 'slack' && item.source !== 'discord') refused(personRequired);
-  const source = parseInboxSourceId(item.sourceId);
-  if (!source) refused(personRequired);
-  const receipts = db.select({
-    event: bridgeIncoming, linkedMember: bridgePeople.member, direct: conversations.direct, privateMember: conversations.member,
-  }).from(inboxRefs)
-    .innerJoin(bridgeIncoming, eq(inboxRefs.ref, bridgeIncoming.id))
-    .innerJoin(bridgeConnections, and(eq(bridgeConnections.id, bridgeIncoming.connection),
-      eq(bridgeConnections.agent, job.agent), eq(bridgeConnections.platform, item.source), eq(bridgeConnections.workspace, source.workspace)))
-    .innerJoin(bridgePeople, and(eq(bridgePeople.platform, bridgeConnections.platform),
-      eq(bridgePeople.workspace, bridgeConnections.workspace), eq(bridgePeople.user, bridgeIncoming.user)))
-    .innerJoin(conversations, eq(conversations.id, bridgeIncoming.conversation))
-    .where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, job.conversation), eq(bridgeIncoming.channel, source.channel)))
-    .all().filter(({ event }) => event.id === incomingId(event.connection, source.message));
-  const receipt = receipts.length === 1 && receipts[0];
-  if (!receipt || receipt.linkedMember !== member || receipt.event.member !== member ||
-      receipt.event.bot || receipt.event.webhook || receipt.event.state !== 'delivered') refused(personRequired);
+  const receipt=linkedBridgeReceipt(db,job,item);
+  if (!receipt) refused(personRequired);
   if (receipt.direct || receipt.privateMember !== null) {
     const deadline = ageLimit(Date.parse(receipt.event.receivedAt), commsKeepDays(db));
     if (!(deadline > Date.parse(sources.now()))) refused('The message’s words are no longer kept.');

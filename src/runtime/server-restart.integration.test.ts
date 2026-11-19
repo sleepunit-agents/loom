@@ -42,20 +42,20 @@ function seed(file: string, pendingMail: boolean) {
 /** The first process exercises an actual claim and leaves the body running. Preserve that household
  * in the last shipped shape, as it would have been on disk at an upgrade. The replacement process
  * must recognise it, migrate it and accept the surviving worker and body's existing credentials. */
-function leaveVersion13(file: string) {
+function leaveVersion14(file: string) {
   const sqlite = new Database(file);
   try {
     sqlite.transaction(() => {
       sqlite.exec(`
-        ALTER TABLE boxes DROP COLUMN slots;
-        ALTER TABLE agent_run_settings DROP COLUMN prefers;
-        ALTER TABLE jobs DROP COLUMN prefers;
-        ALTER TABLE jobs DROP COLUMN placement_decision;
-        ALTER TABLE triggers DROP COLUMN needs;
-        ALTER TABLE triggers DROP COLUMN prefers;
-        DELETE FROM migrations WHERE number = 14;
+        DROP TABLE kit_uses;
+        DROP TABLE project_outside_people;
+        DROP TABLE agent_kit_outside_people;
+        DROP TABLE agent_kit_members;
+        DROP TABLE agent_kit_projects;
+        DROP TABLE agent_kits;
+        DELETE FROM migrations WHERE number = 15;
       `);
-      expect(recogniseDataSchema(sqlite)).toBe(13);
+      expect(recogniseDataSchema(sqlite)).toBe(14);
     })();
   } finally { sqlite.close(); }
 }
@@ -138,7 +138,7 @@ it.each([
     await reach(committed.then(reply => {expect(reply).toBe('committed');}));
   }
   await first.stop();
-  if (schema) leaveVersion13(file);
+  if (schema) leaveVersion14(file);
   for (let elapsed = 0; elapsed < seconds*1000; elapsed += REPORT_MS) {
     time = start + elapsed; report = undefined; tick();
     if (report) await Promise.resolve(report).catch(() => {});

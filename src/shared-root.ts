@@ -1,3 +1,4 @@
+import { kitCatalogQueries } from './shared-kit-catalog.js';
 import type {EmbeddingProvider} from './backends/types.js';
 import {sharedMcpRequest} from './shared-mcp.js';
 import {programGrantStore} from './core/data/program-grants.js';
@@ -33,6 +34,8 @@ import { boxes, jobs as jobRows, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
+import { kitBroker } from './shared-kit-broker.js';
+import { registerKitReads } from './shared-kit-reads.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
@@ -85,7 +88,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -177,11 +180,13 @@ export function sharedRoot(options: {
   const programSetup=programStore?sharedProgramSetup(db,clock,programStore,()=>({records:sharedQueryTables,operations:programOperations()})):undefined;
   const programQueries=programSetupQueries(db,programSetup);
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
+  const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
+  const kitQueries=kitCatalogQueries(db,viewer=>{const work=bodyJob(viewer);return !!work && kitRoom(db,work.job).word.woke==='others';});
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
   // Every outside door authenticates here. A body's viewer already says which member its work is for:
   // currentToken writes it where it reads the job (core/data/authentication.ts).
-  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
+  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)&&kitQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   // Mail about a task goes into its conversation only for a person who reads that conversation (policy.ts, addressee).
@@ -193,8 +198,7 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);});
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
@@ -261,6 +265,7 @@ export function sharedRoot(options: {
     options.secretWrites.fingerprintKey, secretCommit);
   const privateInputs=new SecretPrivateInputs(db,clock,options.secretInputs?.source,secretCommit);
   startupCleanups.push(()=>{void Promise.resolve(privateInputs.close()).catch(report);});
+  registerKitReads(operations,db,credentials);
   registerSharedSecretAgentCommands(operations, db, requests, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
@@ -436,6 +441,7 @@ export function sharedRoot(options: {
   http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
+  http.route('/api/kits/private',kitBroker({db,credentials,source:options.secretInputs?.source,now,write:secretCommit,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
     const request = c.req.raw;

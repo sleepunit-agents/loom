@@ -211,3 +211,21 @@ it('checks quote uniqueness again before returning a cached approval answer', as
  expect(await (await answer()).json()).toMatchObject({ok:false,message:'The message changed. Read it again.'});
  expect(f.snapshot()).toEqual(before);
 });
+
+it('applies a kit card on the authenticated household owner’s quoted message',async()=>{
+ const f=await fixture();
+ f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ const card=await f.root.http.request('/api/household/propose',{method:'POST',
+   headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},
+   body:JSON.stringify({input:{change:'kit',input:{agent:'art',kit:'field',tools:[]},why:'Set up Pond'},id:'kit-card'})});
+ expect(card.status).toBe(200);
+ const id=(await card.json()).value.id;
+ expect((await f.send('Approve the field kit for Art.','kit-owner')).status).toBe(200);
+ const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const mail=(await taken.json()).value.items.find((item:{words:string})=>item.words==='Approve the field kit for Art.');
+ expect(mail).toBeDefined();
+ const answer=await f.call('answer',{id,answer:'allow',onWord:{item:mail.id,quote:'Approve the field kit for Art.'}});
+ expect(await answer.json()).toMatchObject({ok:true});
+ expect(f.db.select().from(s.agentKits).all()).toEqual([{agent:'art',kit:'field',tools:[]}]);
+ expect(f.root.services.approvals.get(id).decidedBy).toBe('alice');
+});

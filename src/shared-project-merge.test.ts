@@ -67,11 +67,13 @@ const filedUnder = (db: DataDatabase, table: SQLiteTable, column: string, projec
 it('says what a merge does with every table that names a project, and no table is left out', () => {
   // A new table with a project on it fails here until shared-projects.ts lists it in `projectLabelled`.
   expect([...tablesNamingAProject().keys()].sort()).toEqual(Object.keys(projectLabelled).sort());
-  expect(Object.keys(projectLabelled).sort()).toEqual(['approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_members', 'project_repositories', 'tasks', 'triggers']);
+  expect(Object.keys(projectLabelled).sort()).toEqual(['agent_kit_projects', 'approvals', 'changes', 'conversations', 'inbox', 'jobs', 'project_agents', 'project_members', 'project_outside_people', 'project_repositories', 'tasks', 'triggers']);
 });
 
 it('files every record of the merged project under the other, in every table that names a project', () => {
   const f = fixture(), named = tablesNamingAProject();
+  // Kit grants and outside identities stay bound to the exact project the owner named.
+  named.delete('agent_kit_projects'); named.delete('project_outside_people');
   const pond = fileEverything(f.db, f.client, 'pond'), garden = fileEverything(f.db, f.client, 'garden');
   // The fixture puts a pond record in every one of the tables, so none is passed over for being empty.
   for (const [name, { table, column }] of named) expect(filedUnder(f.db, table, column, 'pond'), name).toBeGreaterThan(0);
@@ -154,4 +156,18 @@ it('leaves links between tasks as they are', () => {
   f.service.merge({ from: 'pond', into: 'garden' });
   expect(f.db.select().from(taskLinks).all()).toEqual([{ task: child.id, dependsOn: parent.id, type: 'parent-child' }]);
   expect([service.get(parent.id).project, service.get(child.id).project]).toEqual(['garden', 'shed']);
+});
+
+it('keeps outside identities on their named project and refuses a merge with project kit grants', () => {
+  const f=fixture();
+  f.client.prepare('INSERT INTO agent_kits(agent,kit,tools) VALUES (?,?,?)').run('art','garden-tools','[]');
+  const grant=f.client.prepare('INSERT INTO agent_kit_projects(agent,kit,project) VALUES (?,?,?)');
+  for(const project of ['pond','garden']){
+    grant.run('art','garden-tools',project);
+    expect(()=>f.service.merge({from:'pond',into:'garden'})).toThrow(/withdraw.*kit/i);
+    f.client.prepare('DELETE FROM agent_kit_projects WHERE project=?').run(project);
+  }
+  f.client.prepare('INSERT INTO project_outside_people(project,platform,workspace,user) VALUES (?,?,?,?)').run('pond','slack','W','U');
+  f.service.merge({from:'pond',into:'garden'});
+  expect(f.client.prepare('SELECT project FROM project_outside_people').all()).toEqual([{project:'pond'}]);
 });

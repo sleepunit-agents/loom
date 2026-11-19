@@ -1191,6 +1191,8 @@ Two things decide it, and the lesser wins.
   `src/runtime/harness-traits.ts`). A room with no `word` comes from an older
   loom and is read as `others`. So is an assignment with no room at all.
 
+An owner can add a [kit](kits.md) for the job's asker or their projects. The named tools run through the worker and keep the held job's restrictions. The [kit doors](DOORS.md) list the credentials each call needs.
+
 For a job on anybody else's word:
 
 | Harness | Can it run loom-only? | What happens |

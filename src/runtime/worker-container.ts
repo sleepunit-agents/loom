@@ -6,6 +6,13 @@ import { bodyInput } from './body-bootstrap.js';
  * body program into the container, and starts every body the same way (house-layout.ts). Every house is
  * built on the core house, which the worker builds from its own install (house-core.ts). Nothing about any one
  * agent is set up on the machine but, where wanted, that agent's mounts. */
+import {canonicalKitImage} from './kit-manifest.js';
+import {kitBroker} from './kit-broker.js';
+import {kitSocket} from './kit-socket.js';
+import {kitPrivateClient} from './kit-private-client.js';
+import {runKitContainer} from './kit-container.js';
+import {KIT_SOCKET} from './body-kit-tools.js';
+import {deniedTools} from './harness-traits.js';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
@@ -188,6 +195,7 @@ export function containerWorkerExecutor(config: {
   tokenFile?: string;
 }, dependencies: {
   engine?: DockerEngine; name?: () => string;
+  kitAccess?: {url:string;runner:string};
   /** Where houses are fetched from; a test names its own. */
   source?: HouseSource;
   /** The directory the worker is installed in. By default, where this program was loaded from. */
@@ -406,6 +414,7 @@ export function containerWorkerExecutor(config: {
       } catch (error) { letGo(); throw error; }
       const abort = new AbortController();
       let socket: Duplex | undefined, id: string | undefined, released = false, createRejected = false, createAsked = false;
+      let kit:Awaited<ReturnType<typeof kitSocket>>|undefined, broker:ReturnType<typeof kitBroker>|undefined, houseId:string|undefined;
       let logs: ReturnType<typeof output> | undefined;
       let stopping: Promise<void> | undefined;
       // Abort must begin reaping even while loom's running acknowledgement is
@@ -418,7 +427,15 @@ export function containerWorkerExecutor(config: {
         try {
           // The image says that it is a house of this layout and serves the harness; one that does not fails
           // this job (UnmetHouseError). How a body starts is the layout's (house-layout.ts).
-          const spec = createSpec(assignment, await houseStart(engine, image, assignment.harness, abort.signal),
+          const house=await houseStart(engine, image, assignment.harness, abort.signal);
+          houseId=canonicalKitImage(house.id);
+          // A body on a machine that lends out its engine can inspect other containers there.
+          // Such a machine never receives kit secrets. A new socket belongs to one job only.
+          if(houseId&&dependencies.kitAccess&&!fixed.container.nestedSocket&&!assignment.run?.nestedContainers){
+            kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal).catch(()=>undefined);
+            if(kit)mounts=[...mounts,{Type:'bind',Source:kit.path,Target:KIT_SOCKET,ReadOnly:true}];
+          }
+          const spec = createSpec(assignment, house,
             { repository: assignment.house.repository, branch: assignment.house.branch, commit: houseCommit(image) }, fixed.container, mounts, bindings);
           if (abort.signal.aborted) throw new Error('Container cancelled');
           let created: unknown; createAsked = true;
@@ -469,7 +486,12 @@ export function containerWorkerExecutor(config: {
           released = true;
           if (bootstrap) logs!.discard();
           const payload = bodyInput(assignment, image, bootstrap, true);
-          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify(payload) + '\n',
+          if(kit&&dependencies.kitAccess&&payload.bootstrap&&houseId){
+            broker=kitBroker({repository:assignment.house.repository,commit:houseCommit(image),image:houseId,denials:deniedTools(assignment.run?.policy),
+              post:kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id}),
+              run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box})});
+          }
+          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({...payload,...(broker?{kitSocket:true}:{})}) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
         },
         stop,
@@ -480,6 +502,7 @@ export function containerWorkerExecutor(config: {
             abort.abort();
             await setup.catch(() => {});
             socket?.destroy();
+            await kit?.close().catch(()=>{}); broker=undefined;
             const cleanup = new AbortController();
             const timer = setTimeout(() => cleanup.abort(), cleanupMs);
             try {

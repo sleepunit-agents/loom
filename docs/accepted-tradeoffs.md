@@ -1507,3 +1507,9 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
 ### A body can answer a card on a household owner's quoted word
 
 The bound job, its admitted mail, current household role and venue account link establish the writer. A stolen linked chat account is a stolen approval. Loom verifies the quoted substring. With `onWord: {quote}`, exactly one eligible message must contain the quote. If several match, quote a longer passage. The agent interprets assent, scope and which cards the words cover. A mistaken or compromised agent with eligible mail could misattribute the decision. Each quote survives message retention on the card's permanent record and is visible to readers of that card. The owner gets an Inbox item with the quote. A terminal attribution cites a unique retained owner turn in an open terminal session when the words can be verified. Otherwise the owner's credential supplies an unverified attestation.
+
+### A kit trusts the approved house image and service scope
+
+A kit pins the repository, commit and image id. Even rebuilding the same commit with a changed interpreter or dependency can require a new approval. This makes the owner's approval reproducible and can leave a tool unavailable on another worker. Helpers execute with network access for their service. An exact byte scan rejects a returned credential in raw or base64 form. It cannot protect against an approved program that deliberately transforms a credential or sends it elsewhere. Review the whole image and use narrowly scoped service credentials. The worker and its local container engine are trusted with the values.
+
+A project grant includes future members. A named tool can return information to a shared room on a member's request. An organization-wide credential can see more than that room should see. The service or pinned helper must impose the actual resource scope independently of the model. See [kits](runtime/kits.md).

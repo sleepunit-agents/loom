@@ -370,7 +370,7 @@ it('lists the kinds of household change once', () => {
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
   // The kinds no standing rule answers are named once, and filing asks that one list.
-  expect([...alwaysAsks].sort()).toEqual(['placeSchedule', 'projectJoin', 'projectMerge', 'rule']);
+  expect([...alwaysAsks].sort()).toEqual(['kit', 'kitGrant', 'placeSchedule', 'projectJoin', 'projectMerge', 'projectOutsidePerson', 'rule']);
   expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
   expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin|projectMerge)'\)return card/);
   // What cannot be put back: three revocations, and a merge of two projects.
@@ -512,6 +512,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/agy-body.ts': 'how much of a harness\'s first output is searched for its session id',
       'src/runtime/claude-body.ts': 'the size of the tools configuration handed to the harness',
       'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
+      'src/runtime/kit-container.ts': 'the maximum framed output from a kit helper',
       'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
     { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX' }, others: {
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',

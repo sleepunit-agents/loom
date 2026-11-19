@@ -1,3 +1,4 @@
+import type {KitTool} from '../../runtime/kit-manifest.js';
 /** Approved how-it-works model. SQL names match model.py; application names use camelCase.
  * Times are UTC ISO-8601 text. Words already encrypted by Comms are opaque bytes.
  * This is the only authored database shape; drizzle-kit emits the fresh database DDL.
@@ -2025,7 +2026,69 @@ export const terminalRuns = sqliteTable('terminal_runs', {
   revision: integer('revision').notNull(),
 }, t => [uniqueIndex('terminal_runs_identity').on(t.parent,t.runId)]);
 
+export const agentKits = sqliteTable('agent_kits', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  tools: text('tools', {mode:'json'}).$type<KitTool[]>().notNull(),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit]}),
+]);
+
+export const agentKitProjects = sqliteTable('agent_kit_projects', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  project: text('project').notNull().references((): AnySQLiteColumn => projects.id),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.project]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const agentKitMembers = sqliteTable('agent_kit_members', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  member: text('member').notNull().references((): AnySQLiteColumn => members.id),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.member]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const agentKitOutsidePeople = sqliteTable('agent_kit_outside_people', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  platform: text('platform').notNull(),
+  workspace: text('workspace').notNull(),
+  user: text('user').notNull(),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.platform, t.workspace, t.user]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const projectOutsidePeople = sqliteTable('project_outside_people', {
+  project: text('project').notNull().references((): AnySQLiteColumn => projects.id),
+  platform: text('platform').notNull(),
+  workspace: text('workspace').notNull(),
+  user: text('user').notNull(),
+}, t => [
+  primaryKey({columns:[t.project, t.platform, t.workspace, t.user]}),
+]);
+
+export const kitUses = sqliteTable('kit_uses', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
+  personKind: text('person_kind', {enum:['member','outside']}),
+  person: text('person'),
+  id: text('id').notNull(),
+  job: text('job').notNull().references((): AnySQLiteColumn => jobs.id),
+  kit: text('kit').notNull(),
+  tool: text('tool').notNull(),
+  at: text('at').notNull(),
+  outcome: text('outcome').notNull(),
+}, t => [
+  primaryKey({columns:[t.id]}),
+]);
+
 export const plumbing = {
+  agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
