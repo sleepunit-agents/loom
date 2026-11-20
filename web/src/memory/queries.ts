@@ -79,7 +79,7 @@ export const memoryQueries = {
   knowledgeAccess:()=>selection<KnowledgeAccess|null>('memoryKnowledgeAccess','query MemoryKnowledgeAccess { memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } }',{},nullable(portable<KnowledgeAccess>)),
   knowledge: () => selection<KnowledgeIndex | null>('memoryKnowledge', `query MemoryKnowledge { memoryKnowledge { total checkDays recentDays pages { ${knowledgeRow} } } }`, {}, nullable(portable<KnowledgeIndex>)),
   page: (slug:string) => selection<KnowledgePage | null>('memoryKnowledgePage', `query MemoryKnowledgePage($slug:String!) { memoryKnowledgePage(slug:$slug) { ${knowledgePage} } }`, {slug}, nullable(portable<KnowledgePage>)),
-  people: () => selection<PersonRecord[]>('memoryPeople', `query MemoryPeople { memoryPeople { ${personFields} } }`, {}, raw => raw.map(person)),
+  people: () => selection<PersonRecord[]>('memoryPeople', `query MemoryPeople { memoryPeople(includeRemovedAgents:false) { ${personFields} } }`, {}, raw => raw.map(person)),
   person: (id:string) => selection<PersonOpen | null>('memoryPerson', `query MemoryPerson($id:String!) { memoryPerson(id:$id) { ${personFields} conversations { available rows { id title href } } history { id op replacedAt actor card { ${personCard} } } } }`, {id}, nullable(person<PersonOpen>)),
   projects: () => selection<ProjectRecord[]>('memoryProjects', `query MemoryProjects { memoryProjects { ${projectFields} } }`, {}, raw => raw.map(project)),
   project: (id:string) => selection<ProjectRecord | null>('memoryProject', `query MemoryProject($id:String!) { memoryProject(id:$id) { ${projectFields} } }`, {id}, nullable(project)),

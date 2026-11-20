@@ -50,3 +50,13 @@ it('keeps server tie order and reports a missing household zone honestly',async(
  expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['Z-order','a-order']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('Time zone unavailable');expect(text).not.toContain(' UTC');
 });
+
+it('keeps visible preferences while the agent roster is unavailable',async()=>{
+ const data={modelAccounts:[detail],agentModels:[{agent:'art',model:'preferred',position:0}]};
+ f.snapshot={status:'live',data};
+ await act(async()=>{tree=create(h(RuntimeAccounts));});
+ expect(tree.root.findAllByType('li').map(node=>node.children.join(''))).toEqual(['preferred']);
+ f.snapshot={status:'live',data:{...data,agents:[]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(tree.root.findAllByType('li')).toHaveLength(0);
+});

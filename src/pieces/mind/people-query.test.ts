@@ -149,3 +149,15 @@ it('offers only live agents in the People filter',async()=>{
  f.sharing.agents=['fiction'];
  expect((await f.query(query)).data).toEqual({memoryPeopleAccess:{allowed:true,agents:['fiction']}});
 });
+
+it('hides removed agents from the contacts list while preserving direct reads',async()=>{
+ const path=join(home(),'people.db'),directory=store(path);
+ directory.write({slug:'fiction',name:'Fiction',how:{kind:'agent'}});
+ const f=fixture(path,[]);
+ const query='{ memoryPeople(includeRemovedAgents:false) { id } memoryPerson(id:"commons:fiction") { id } }';
+ f.sharing.agents=['fiction'];
+ expect(await f.query(query)).toEqual({data:{memoryPeople:[{id:'commons:fiction'}],memoryPerson:{id:'commons:fiction'}}});
+ f.sharing.agents=[];
+ expect(await f.query(query)).toEqual({data:{memoryPeople:[],memoryPerson:{id:'commons:fiction'}}});
+ expect(await f.query('{ memoryPeople { id } }')).toEqual({data:{memoryPeople:[{id:'commons:fiction'}]}});
+});

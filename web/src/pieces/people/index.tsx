@@ -1,5 +1,4 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { useLiveAgentIds } from '../../data/live-agents';
 import type {Call} from '../../data/store';
 import {memoryCall as call} from '../../memory/commands';
 import {useMemoryRecord,useMemoryList} from '../../memory/query';
@@ -43,10 +42,8 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
   const setDraft=(value:typeof blank)=>{peopleSession.draft=value;setDraftState(value);};
   const setRequest=(value:Call|undefined)=>{peopleSession.request=value;setRequestState(value);};
   const answer=useSyncExternalStore(request?.subscribe??noop,request?.getSnapshot??(()=>idle));
-  const liveIds = useLiveAgentIds();
-  const directory = liveIds ? feed.records.filter(record => record.kind !== 'agent' || liveIds.has(record.slug)) : feed.records;
   const selectedAgent = permission?.agents?.includes(agent) ? agent : '';
-  const all=contacts(directory,'all','',''), shown=contacts(directory,folder,query,selectedAgent);
+  const all=contacts(feed.records,'all','',''), shown=contacts(feed.records,folder,query,selectedAgent);
   const target=selected?(all.find(g=>g.person.slug===selected)?.person.id??`commons:${selected}`):undefined;
   const detail=useMemoryRecord(target?memoryQueries.person(target):undefined);
   const direct=detail.status==='live'?detail.records[0]:undefined;

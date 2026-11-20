@@ -11,12 +11,13 @@ const time=(value:string|null,zone:string|undefined)=>value?(zone?new Date(value
 /** Current query policy chooses account columns and visible agents.
  * No retained private details survive an unavailable selection. */
 export function RuntimeAccounts(){
- const feed=useDataQuery<{modelAccounts:RuntimeAccount[];agentModels:AgentModel[];agents:{id:string;removedAt:string|null}[];deskTime:{timezone:string}|null}>(runtimeAccountsQuery);
+ const feed=useDataQuery<{modelAccounts:RuntimeAccount[];agentModels:AgentModel[];agents?:{id:string;removedAt:string|null}[]|null;deskTime:{timezone:string}|null}>(runtimeAccountsQuery);
  const rows=feed.status==='live'?feed.data?.modelAccounts:undefined;
  const zone=feed.data?.deskTime?.timezone,groups=new Map<string,AgentModel[]>();
  // Preferences are listed for agents in use; a removed agent keeps its rows for a restore.
- const inUse = new Set(liveAgents(feed.data?.agents ?? []).map(agent => agent.id));
- if(rows)for(const row of feed.data?.agentModels??[])if(inUse.has(row.agent))groups.set(row.agent,[...(groups.get(row.agent)??[]),row]);
+ const roster = feed.data?.agents;
+ const inUse = roster ? new Set(liveAgents(roster).map(agent => agent.id)) : undefined;
+ if(rows)for(const row of feed.data?.agentModels??[])if(!inUse||inUse.has(row.agent))groups.set(row.agent,[...(groups.get(row.agent)??[]),row]);
  return <section aria-label="Models and accounts" className="grid gap-4">
   <h2>Models and accounts</h2>
   {feed.status==='loading'?<Loading label="Opening models and accounts…"/>:!rows?<ErrorView text="Models and accounts are unavailable. Check the connection."/>:<>
