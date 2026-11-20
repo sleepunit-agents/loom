@@ -22,7 +22,11 @@
     {
       "id": "memory-004",
       "promise": "Keeps notes: longer working documents, by path, each with a lifespan.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "noteLifetimes"
+      }
     },
     {
       "id": "memory-005",
