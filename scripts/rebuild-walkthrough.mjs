@@ -168,8 +168,8 @@ export async function* walkthroughSteps(output) {
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     if(title==='Settings'){
-     const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
-     row.valueAction=await secretValueAction({page,tile,out,home});
+     const savedDefault=await secretDefaultAction({page,tile,out,app,deferReload:true});
+     row.valueAction=await secretValueAction({page,tile,out,home,app});
      row.action=savedDefault.ok&&row.valueAction.ok
       ?await verifySecretDefaultAfterReload({page,out,navigate:true})
       :{...savedDefault,ok:false,persistedAfterReload:false,error:savedDefault.error??'The value sequence did not reach its verified reload.'};

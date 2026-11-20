@@ -54,7 +54,8 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
   const secret = folder === 'secrets' ? snapshot.secrets.find(row => row.name === active) : undefined;
   const request = folder === 'requests' ? snapshot.requests.find(row => row.id === active) : undefined;
   const grant = folder === 'grants' ? snapshot.grants.find(row => row.id === active) : undefined;
-  const open = (id: string) => select({ folder, id });
+  const view = folder === 'add' ? 'secrets' : folder;
+  const open = (id: string) => select({ folder: view, id });
   const row = (id: string, title: string, meta: ReactNode, status?: string) =>
     <Row key={id} title={title} meta={meta} status={status} selected={id === active} onClick={() => open(id)} />;
   let reader: ReactNode = null;
@@ -90,7 +91,6 @@ export function SecretsView({ snapshot, member, zone, folder, selected, select, 
     : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires ${fullTime(value.expiresAt,zone)}`))
     : folder === 'pieces' ? pieces.map(value => <Row key={value.id} title={value.label} meta={value.description} onClick={value.open} />)
     : snapshot.secrets.map(value => row(value.name, value.name, value.description));
-  const view = folder === 'add' ? 'secrets' : folder;
   return <Split label="Settings" folders={[
     { id: 'secrets', label: labels.secrets, count: snapshot.secrets.length },
     { id: 'requests', label: labels.requests, count: snapshot.requests.filter(value => value.state === 'pending').length },
