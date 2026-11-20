@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
-import { inbox } from './schema.js';
+import { agents as agentRows, inbox } from './schema.js';
 import { commsKeepDays } from './comms-days.js';
 import { waitsOnShelvedTask } from './project-in-use.js';
 
@@ -46,14 +46,19 @@ export type InboxReadSet=ReturnType<typeof readInboxSet>;
 /** Counts share one generated metadata scan; the SQL predicate constrains the
  * recipient, source and volume before any row enters the projection. */
 export function readInboxFolders(db: DataDatabase, allowed: SQL) {
+  const removed = sql`exists (select 1 from ${agentRows} where ${agentRows.id} = ${inbox.agent} and ${agentRows.removedAt} is not null)`;
   const rows = db.query.inbox.findMany({
     columns: { agent: true, state: true, source: true, answers: true },
     // A question about a shelved task is counted as mail and not as needing anyone (project-in-use.ts).
     // Wrapped so the relational builder does not rewrite the task columns inside it as the inbox's own.
-    extras: { shelved: sql<number>`${{ getSQL: () => waitsOnShelvedTask(inbox) }}`.as('waits_on_shelved') },
+    extras: {
+      shelved: sql<number>`${{ getSQL: () => waitsOnShelvedTask(inbox) }}`.as('waits_on_shelved'),
+      removed: sql<number>`${{ getSQL: () => removed }}`.as('agent_removed'),
+    },
     where: () => sql`${{ getSQL: () => allowed }}`, orderBy: f => asc(f.agent),
   }).sync();
   const totals = { needs: 0, alerts: 0, answered: 0, fyi: 0, all: rows.length };
+  // The "by agent" folders are for agents in use. A removed agent's items stay in the mailbox and in every total.
   const agents = new Map<string, { id: string; count: number; needs: number }>();
   for (const row of rows) {
     const needs = row.state === 'waiting' && row.answers !== null && !row.shelved;
@@ -63,7 +68,7 @@ export function readInboxFolders(db: DataDatabase, allowed: SQL) {
       if (row.source === 'notice') totals.alerts++;
     }
     if (['answered', 'resolved', 'done'].includes(row.state)) totals.answered++;
-    if (row.agent !== null) {
+    if (row.agent !== null && !row.removed) {
       const agent = agents.get(row.agent) ?? { id: row.agent, count: 0, needs: 0 };
       agent.count++; if (needs) agent.needs++;
       agents.set(row.agent, agent);

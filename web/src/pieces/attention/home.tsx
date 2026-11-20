@@ -1,3 +1,4 @@
+import { useDeskAgentProfiles } from './agent-profiles';
 import { useDeskWaitingCounts } from './waiting';
 import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
@@ -21,13 +22,25 @@ function Unavailable({ status, label }: { status: Snapshot['status']; label: str
 type Agent = ReturnType<typeof namedAgents>[number];
 /** One agent's big card, a summary that leads to the whole of it in the Agents app: who it is and how it is, what
  * it is doing, its last answer and latest conversations in brief, and the box to write to it. */
-function HomeCard({ agent, names, needs, state, display, conversations, go }: {
+function HomeCard({ agent, names, needs, state, display, conversations, go, solo = false }: {
   agent: Agent; names: ReadonlyMap<string,string>; needs?: number; state?: AgentStatus['state'];
-  display: Parameters<typeof AgentFace>[0]['display']; conversations?: Summaries; go(path:string): void;
+  display: Parameters<typeof AgentFace>[0]['display']; conversations?: Summaries; go(path:string): void; solo?: boolean;
 }) {
-  const doing = useDoing(agent.id), talk = useCardTalk(agent.id), count = doing.items.length;
+  const doing = useDoing(agent.id, solo), talk = useCardTalk(agent.id, solo ? 6 : 3), count = doing.items.length;
   const page = agentPath(agent.id), summary = conversations?.summaries.find(s=>s.agent===agent.id);
   const open = (event: MouseEvent) => { if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return; event.preventDefault(); go(page); };
+  if (solo) return <AgentDesk agent={agent} display={display} state={shownState(state, count)} needs={needs} open={open}>
+    <section className="desk-solo-now" aria-label="Right now">
+      <h3>Right now</h3>
+      <Doing doing={{ ...doing, items: doing.items.slice(0, 12), more: doing.more + Math.max(0, count - 12) }}
+        name={agent.name} agent={agent.id} names={names} go={go} />
+    </section>
+    <section className="desk-solo-talk" aria-label="Talk">
+      <h3>Talk</h3>
+      <HomeTalk talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread}
+        all={page} go={go} composer={<HomeComposer agent={agent.id} name={agent.name} reading={conversations} go={go} />} />
+    </section>
+  </AgentDesk>;
   return <section aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">
     <header className="desk-home-identity">
       <a className="inline-flex shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 [&>*]:pointer-events-none" aria-label={`Open ${agent.name} agent window`} tabIndex={-1} href={page} onClick={open}><AgentFace display={display} name={agent.name} state={faceState(shownState(state,count), !!needs)} size={96} /></a>
@@ -38,6 +51,29 @@ function HomeCard({ agent, names, needs, state, display, conversations, go }: {
     <Doing doing={doing} name={agent.name} agent={agent.id} names={names} go={go} />
     <HomeTalk talk={talk} name={agent.name} unread={summary?.unread} firstUnread={summary?.first?.thread} all={page} go={go} />
     <HomeComposer agent={agent.id} name={agent.name} reading={conversations} go={go} />
+  </section>;
+}
+function AgentDesk({ agent, display, state, needs, open, children }: {
+  agent: Agent; display: Parameters<typeof AgentFace>[0]['display']; state?: AgentStatus['state'];
+  needs?: number; open(event: MouseEvent): void; children: React.ReactNode;
+}) {
+  const profiles = useDeskAgentProfiles();
+  const about = profiles.records.find(row => row.agent === agent.id)?.description;
+  const page = agentPath(agent.id);
+  return <section className="desk-solo" aria-label={`${agent.name}’s desk`} data-agent={agent.id}
+    style={{ '--c': display?.mark.bg } as React.CSSProperties}>
+    <header className="desk-solo-hero">
+      <a className="desk-solo-face" href={page} onClick={open} aria-label={`Open ${agent.name} agent window`}>
+        <AgentFace display={display} name={agent.name} state={faceState(state, !!needs)} size={192} />
+      </a>
+      <div className="min-w-0">
+        <h2><a href={page} onClick={open}>{agent.name}</a></h2>
+        {about && <p className="desk-solo-about" title={about}>{about}</p>}
+        <p className="desk-solo-state">{agentStateLine(state, 0, needs)}</p>
+      </div>
+      <a className="desk-home-open" href={page} onClick={open}>Open {agent.name} ›</a>
+    </header>
+    <div className="desk-solo-columns">{children}</div>
   </section>;
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
@@ -60,7 +96,11 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   return <div className="desk-home h-full w-full min-w-0 max-w-full [overflow-wrap:anywhere]" data-attention-home="">
     <div className="desk-home-content">
         <NeedsBand waiting={waiting} names={names} go={go} />
-        {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
+        {roster.status !== 'live' ? <div className="desk-home-placeholder"><Unavailable status={roster.status} label="your agents" /></div> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : ordered.length === 1 ? <HomeCard key={ordered[0].id} agent={ordered[0]} names={names} solo
+          needs={waiting.status === 'live' ? waiting.agents.get(ordered[0].id) ?? 0 : undefined}
+          state={statuses.status === 'live' ? latestStatus(statuses.records, ordered[0].id)?.state : undefined}
+          display={displays.find(d => d.id === ordered[0].id)} conversations={conversations} go={go} />
+        : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
           {ordered.map(agent=>{
             const needs = waiting.status==='live'?(waiting.agents.get(agent.id)??0):undefined, first=(needs??0)>0;
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;

@@ -90,7 +90,8 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
 }
 
 /** The composition supplies one visible, live query snapshot; this view owns no transport. */
-export default function Tempo({ snapshot, actions }: { snapshot: TempoSnapshot; actions?: TempoActions }) {
+/** `inUse`: the agents in use, where the composition knows them; the agent filter then offers no removed agent. */
+export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSnapshot; actions?: TempoActions; inUse?: ReadonlySet<string> }) {
   const [creating, setCreating] = useState(false);
   useEffect(() => { if (snapshot.status !== 'live') setCreating(false); }, [snapshot.status]);
   const [folder, setFolder] = useState<Folder>('due');
@@ -100,15 +101,16 @@ export default function Tempo({ snapshot, actions }: { snapshot: TempoSnapshot; 
   const live = snapshot.status === 'live';
   // Never keep displaying a previous viewer's rows during reconnect or access loss.
   const triggers = live ? snapshot.triggers : [];
-  const shown = rows(triggers, folder, query, agent);
+  const selectedAgent = agent && (!inUse || inUse.has(agent)) ? agent : '';
+  const shown = rows(triggers, folder, query, selectedAgent);
   const trigger = triggers.find(item => item.id === selected);
-  const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent))].sort();
+  const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent && (!inUse || inUse.has(agent))))].sort();
   const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-  return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', agent).length : undefined }))}
+  return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', selectedAgent).length : undefined }))}
     folder={folder} onFolder={id => { setFolder(id as Folder); setSelected(undefined); }}
     search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <label>Agent<select value={agent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</select></label></div>}
+      <label>Agent<select value={selectedAgent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</select></label></div>}
     listTitle={folders.find(item => item.id === folder)?.label} listMeta={live ? shown.length : undefined}
     listTop={live ? <div className="grid gap-2 p-3">{actions?.create && <Button onClick={() => setCreating(true)}>Create trigger</Button>}{snapshot.pauses.length > 0 && <p>Paused: {snapshot.pauses.map(pause => pause.agent).join(', ')}</p>}</div> : undefined}
     list={!live ? snapshot.status === 'loading' ? <Loading label="Opening Tempo…" /> : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />

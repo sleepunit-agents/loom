@@ -133,8 +133,8 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     return next===Infinity?undefined:next;
   }
   return {
-    access(v){return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
-      agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},options.sharing(),'act')};},
+    access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
+      agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer,given?:Sharing) {
       // Synchronous from here to the end: no write of this program can fall inside it.

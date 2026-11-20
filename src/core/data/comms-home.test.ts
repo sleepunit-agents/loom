@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { expect, it } from 'vitest';
 import { createDataSchema } from './database.js';
@@ -41,5 +41,11 @@ it('keeps the actual Home selection at the same few statements for two and ten o
     expect(large.data.summaries).toHaveLength(10);
     for(const row of large.data.summaries)expect(row).toMatchObject({unread:1,last:{thread:'th:visible-'+row.agent.split('-')[1]}});
     expect(JSON.stringify(large.data)).not.toContain('Forbidden');
+    db.update(agents).set({removedAt:at}).where(eq(agents.id,'agent-0')).run();
+    const retired = await read();
+    expect(retired.data.agents).not.toContain('agent-0');
+    const history = await graphql({schema,source:'{ commsThreads { id agent title } }',contextValue:{viewer:{kind:'member',id:'member'}}});
+    expect(history.errors).toBeUndefined();
+    expect(history.data?.commsThreads).toContainEqual({id:'th:visible-0',agent:'agent-0',title:'Visible 0'});
   } finally {client.close();}
 });

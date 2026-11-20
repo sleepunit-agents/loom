@@ -5,6 +5,7 @@ import { peopleReader, mayReadPerson, type PeopleReaderOptions } from './people.
 import type { CardValue, PersonCard, PersonRecord } from './people-model.js';
 import type { MemoryQueryContext } from './knowledge-query.js';
 import type { PeopleConversations } from './people-conversations.js';
+import { holds, tableRules } from '../../policy.js';
 const text={type:GraphQLString}, requiredText={type:new GraphQLNonNull(GraphQLString)};
 const list=(type:GraphQLObjectType)=>new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
 const value=new GraphQLObjectType<CardValue>({name:'MemoryCardValue',fields:{
@@ -31,7 +32,6 @@ const access=new GraphQLObjectType({name:'MemoryPeopleAccess',fields:{allowed:{t
 export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:PeopleConversations}): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;nextDeadline():number|undefined;close():void} {
  let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
  const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
- const anyVisible=(context:MemoryQueryContext)=>visible(context)||options.agents.some(a=>visible(context,a.agent));
  const safe=<T>(read:()=>T,context?:MemoryQueryContext):T=>{try{
   if(context){const until=reader?.nextDeadline();if(until!==undefined)keepReadUntil(context,until);}
   return read();
@@ -48,7 +48,19 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
  }});
  return {nextDeadline:()=>reader?.nextDeadline(),fields:{
   memoryPeopleAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?reader?.access(context.viewer)??null:null},
-  memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),resolve:(_source,_args,context)=>anyVisible(context)?safe(()=>reader?.list(context.viewer)??[],context):[]},
+  memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),args:{includeRemovedAgents:{type:GraphQLBoolean,defaultValue:true}},resolve:(_source,args,context)=>{
+   const viewer=context?.viewer;
+   if(!viewer)return [];
+   const sharing=options.sharing();
+   if(!mayReadPerson(viewer,undefined,sharing)&&!options.agents.some(a=>mayReadPerson(viewer,a.agent,sharing)))return [];
+   return safe(()=>{
+    const rows=reader?.list(viewer,sharing)??[];
+    if(args.includeRemovedAgents!==false||!sharing.agents)return rows;
+    // Use the same roster and visibility rules as the household agent selection.
+    const live=new Set(sharing.agents);
+    return rows.filter(row=>row.kind!=='agent'||(live.has(row.slug)&&holds(tableRules.agents,viewer,{id:row.slug},sharing)));
+   },context);
+  }},
   memoryPerson:{type:person,args:{id:{type:new GraphQLNonNull(GraphQLString)}},resolve:(_source,args,context)=>{
    const colon=(args.id as string).indexOf(':');if(colon<1)return null;
    const agent=(args.id as string).slice(0,colon);if(!visible(context,agent==='commons'?undefined:agent))return null;

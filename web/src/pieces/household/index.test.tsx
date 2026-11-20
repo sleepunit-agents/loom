@@ -4,7 +4,7 @@ import {createElement as h} from 'react';
 import {act,create} from 'react-test-renderer';
 const f=vi.hoisted(()=>({feed:{status:'live',data:{householdSetup:{defaultAgent:null,members:[{id:'sam',role:'owner',fullOwner:true,agents:[]}],agents:[],tokens:[{fingerprint:'f'.repeat(64),label:'Fixture token',kind:'owner',identity:'sam',createdAt:'2026-11-15T00:00:00Z',expiresAt:null,revokedAt:null,lastUsedAt:null}],sessions:[]},boxes:[]}} as {status:string;data?:unknown},operation:vi.fn(),programFeed:{status:'live',data:{programSetup:null}} as {status:string;data?:unknown}}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>query.includes('programSetup')?f.programFeed:f.feed}));vi.mock('../../data/operation',()=>({memberOperation:f.operation}));
-vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
+vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Textarea','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':name==='Textarea'?'textarea':'div',props)])));
 import Setup from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;const original=f.feed.data,privateBearer='loom_'+'p'.repeat(43);beforeEach(()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:{id:'sam'}})));f.feed.data=original;f.programFeed={status:'live',data:{programSetup:null}};vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
@@ -118,3 +118,17 @@ it.each(['token','session'] as const)('reconciles current browser identity after
  try{await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children===(kind==='token'?'Revoke token':'Sign out browser')).props.onClick());expect(location.reload).toHaveBeenCalledOnce();expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('Could not');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledExactlyOnceWith(kind==='token'?'token.revoke':'sessions.revoke',kind==='token'?{fingerprint:'f'.repeat(64)}:{ref:'b'.repeat(64)});}finally{f.feed.data=saved;}
 });
 it('keeps a refused household revocation as unconfirmed when the owner is still signed in',async()=>{f.operation.mockRejectedValue(Error('Could not save'));vi.stubGlobal('location',{reload:vi.fn()});await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Revoke token').props.onClick());expect(location.reload).not.toHaveBeenCalled();expect(JSON.stringify(tree.toJSON())).toContain('Could not confirm revocation');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledOnce();});
+
+it('puts a removed agent under Removed and opens its restore request without sending it', async () => {
+ const appearance={about:'',markBg:'#123456',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot',github:[]};
+ f.feed.data={...(original as {householdSetup:object}),homeComms:{member:'sam',agents:['art']},householdSetup:{
+  ...(original as {householdSetup:object}).householdSetup,defaultAgent:'art',agents:[{...appearance,id:'art'},{...appearance,id:'mark',removedAt:'2026-11-19'}],
+ }};
+ await act(async()=>{tree=create(h(Setup));});
+ expect(tree.root.findAllByProps({'aria-label':'Save appearance for mark'})).toHaveLength(0);
+ const removed=tree.root.findByProps({'aria-label':'Removed agents'});
+ const button=removed.findAllByType('button').find((node:{children:string[]})=>node.children.join('')==='Restore mark');
+ await act(async()=>button.props.onClick());
+ expect(removed.findByType('textarea').props.value).toBe('Please propose restoring the household agent mark.');
+ expect(f.operation).not.toHaveBeenCalled();
+});

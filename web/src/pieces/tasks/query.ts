@@ -25,4 +25,4 @@ export interface TaskSelection extends SharedTask {
 export interface TasksSelection { tasks: TaskSelection[] }
 
 /** Choices inherit each generated table's current outside-door visibility. */
-export const taskChoicesQuery = `query TaskChoices { projects { id name projectMembersByProject { member } } agents { id } members { id } }`;
+export const taskChoicesQuery = `query TaskChoices { projects { id name projectMembersByProject { member } } agents { id removedAt } members { id } }`;

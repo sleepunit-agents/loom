@@ -7,7 +7,9 @@ import type { BridgesData } from './data';
 import { bridgesQuery } from './data';
 import BridgesApp from './index';
 const feed = vi.hoisted(() => ({ query: { status: 'loading' } as DataQuerySnapshot<BridgesData>, hook: vi.fn() }));
-vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.hook(query); return feed.query; } }));
+vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.hook(query); return query.includes('query LiveAgents')
+  ? { status: 'live', data: { agents: [{ id: 'art', removedAt: null }, { id: 'mark', removedAt: '2026-11-19' }] } }
+  : feed.query; } }));
 vi.mock('../../data', () => ({ useRecords() { throw Error('Legacy records used'); }, call() { throw Error('Legacy command used'); } }));
 vi.mock('../../kit', () => ({
   Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.listTop,p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
@@ -101,5 +103,8 @@ it.each(['Disconnect','Remove channel rule','Remove person link','Release send',
 
 it('locks existing connection identity while leaving new connection identity fields editable',async()=>{
  const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};await draw('/p/bridges-preview/item/connections/connection');const forms=tree.root.findAllByType('form');expect(forms).toHaveLength(2);
- for(const [form,fixed] of [[forms[0],false],[forms[1],true]] as const){expect(form.findAllByType('select')[0].props.disabled).toBe(fixed);for(const name of ['workspace','agent','botUser'])expect(form.findAllByType('input').find((input:any)=>input.props.name===name).props.readOnly).toBe(fixed);}
+ for(const [form,fixed] of [[forms[0],false],[forms[1],true]] as const){expect(form.findAllByType('select')[0].props.disabled).toBe(fixed);for(const name of ['workspace','botUser'])expect(form.findAllByType('input').find((input:any)=>input.props.name===name).props.readOnly).toBe(fixed);}
+ const choice=forms[0].findByProps({name:'agent'});
+ expect(choice.findAllByType('option').map((option:any)=>option.props.children)).toEqual(['Choose an agent','art']);
+ expect(forms[1].findAllByType('input').find((input:any)=>input.props.name==='agent').props.readOnly).toBe(true);
 });

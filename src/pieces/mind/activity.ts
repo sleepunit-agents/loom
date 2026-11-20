@@ -133,7 +133,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   const db=sources.get(agent);if(sourceErrors.has(agent))return failure('error','The episode store couldn’t open this entry.');if(!db)return failure('unavailable','The episode store is not available.');
   try{if(!has(db))return failure('unavailable','The episode store is not available.');const row=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories WHERE ref=? AND ${active} AND julianday(created)>=julianday(?) AND julianday(created)<=julianday(?)`).get(key,new Date(now).toISOString(),new Date(oldest).toISOString(),new Date(now+60000).toISOString()) as Episode|undefined;return row?episode(v,agent,row):undefined;}catch{return failure('error','The episode store couldn’t open this entry.');}
  }
- const access=(v:Viewer)=>{const today=isoDay(clock.now(),tz());return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz(),today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz())};};
+ const access=(v:Viewer)=>{const today=isoDay(clock.now(),tz()), sources=agents(v), live=sharing().agents;return {id:'activity',allowed:sources.length>0,agents:sources.map(a=>a.agent).filter(agent=>live?.includes(agent)??true),owner:ownerLabel(v),timezone:tz(),today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz())};};
  let closed=false;
  // Metadata only: all active episode deadlines, regardless of the current
  // viewer or list limit. The listener owns one timer for every projection.

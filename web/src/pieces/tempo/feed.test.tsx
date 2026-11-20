@@ -16,7 +16,7 @@ it('binds the tile and inline card to the same generated selection and root acti
   state.feed = { status: 'live', data };
   const actions = { runNow: vi.fn(), stop: vi.fn(), pause: vi.fn(), resume: vi.fn() };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'America/Chicago', actions })); });
-  expect(state.query).toHaveBeenLastCalledWith(tempoQuery);
+  expect(state.query).toHaveBeenCalledWith(tempoQuery);
   expect(tree.root.findByType('tempo').props).toMatchObject({ snapshot: { status: 'live', events: data.triggerLog, pauses: data.agentPauses, timezone: 'America/Chicago' }, actions });
   await act(async () => tree.update(h(LiveTempoCard, { triggerId: 'tr-1', timezone: 'America/Chicago', actions })));
   expect(tree.root.findByType('card').props).toMatchObject({ triggerId: 'tr-1', actions, snapshot: { events: data.triggerLog } });
