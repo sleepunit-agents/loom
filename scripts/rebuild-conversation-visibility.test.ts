@@ -10,7 +10,9 @@ it('uses the approved private-member override before project or owned-agent acce
  expect(visibleTo(robin,{member:null,project:'other',agent:'moss'})).toBe(true);
  expect(visibleTo(robin,{member:null,project:'other',agent:'fern'})).toBe(false);
  expect(visibleTo({...robin,projects:[],agents:[]},{member:null,project:'garden',agent:'moss'})).toBe(false);
- expect(visibleTo({...robin,role:'owner'},{member:'alex',project:'other',agent:'fern'})).toBe(true);
+ expect(visibleTo({...robin,role:'owner'},{member:'alex',project:'other',agent:'fern'})).toBe(false);
+ expect(visibleTo({...robin,role:'owner'},{member:null,project:'garden',agent:'fern',direct:true})).toBe(false);
+ expect(visibleTo(robin,{member:null,project:null,agent:'moss',direct:true})).toBe(true);
 });
 it('binds the actual conversation and Inbox promises to visibility and mailbox evidence',()=>{
  for(const [page,mapping] of [['conversations',{'conversations-022':'conversationLabels','conversations-023':'conversationLabels','conversations-024':'conversationVisibility','conversations-025':'commsPrivacy'}],['inbox',{'inbox-006':'inboxRecipients','inbox-018':'inboxRecipients','inbox-019':'inboxVisibility'}]]){
