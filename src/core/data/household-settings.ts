@@ -31,3 +31,8 @@ export function householdSettings(db: DataDatabase): Settings {
 /** The zone every time a person reads is shown in, and the one schedules are kept in. */
 export const householdTimezone = (db: DataDatabase): string =>
   db.query.household.findFirst({ columns: { timezone: true } }).sync()?.timezone ?? householdDefaults.timezone;
+
+/** The configured answer displayed to an owner when a secret has no rule. */
+export function readSecretsDefault(db:DataDatabase){
+ return db.query.household.findFirst({columns:{secretsDefault:true}}).sync()?.secretsDefault??householdDefaults.secretsDefault;
+}
