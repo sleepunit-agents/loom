@@ -182,7 +182,9 @@ function ThreadReader({ member, detail, actions, cards, navigation, readVisible 
       {cards?.work && <div className="comms__work">{cards.work(detail.refs, thread.conversation)}</div>}
       <div className="comms__compose">
         {off ? <ComposerOff>{off}</ComposerOff> : <MessageBar name={agent} value={draft.text} busy={busy} onChange={composer.edit} onSend={send}
-          status={failed === 'send' ? 'Could not send. Your words are still here: try again.' : undefined} />}
+          status={failed === 'send' ? 'Could not send. Your words are still here: try again.'
+            : messages.some(message => message.sender === member && message.delivery === 'failed' && message.words != null)
+              ? 'Send a follow-up here to retry delivery of your waiting messages.' : undefined} />}
       </div>
     </div>
   </article>;
