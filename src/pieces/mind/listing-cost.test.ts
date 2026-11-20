@@ -148,3 +148,40 @@ it('finds the next activity deadline without carrying every old episode out of t
     expect(reader.nextDeadline()).toBe(now + 10_000);
   } finally { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone; }
 });
+
+it('batches memory summaries and ranked previews by active card and its aliases', () => {
+  const memories=join(home(),'memories.db'), store=new ProjectsStore({dbPath:memories});
+  const db=new BetterSqlite3(memories);
+  db.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT)');
+  const insert=db.prepare("INSERT INTO memories(ref,category,title,content,created,project,archived,expires_at) VALUES(?,'project','Title','Body',?,?,0,?)");
+  const {state,sharing}=facts();
+  const clock=new FakeClock(now);
+  const reader=createProjectsReader(clock,{agents:[{agent:'fiction',memories}],sharing});
+  closes.push(()=>db.close(),()=>store.close(),()=>reader.close());
+  const deadline=new Date(now+1000).toISOString(), created=new Date(now-5000).toISOString();
+  let small:number|undefined;
+  for(let i=0;i<10;i++){
+    const slug='pond-'+i, alias='alias-'+i;
+    store.write({slug,name:slug,links:{aliases:[alias]}});
+    insert.run('memory-'+i,created,alias,deadline);
+    if(i!==1&&i!==9)continue;
+    const prepared=vi.spyOn(BetterSqlite3.prototype,'prepare');
+    try{
+      const rows=reader.list(viewer);
+      expect(rows).toHaveLength(i+1);
+      for(const row of rows){
+        const section=row.sections.find(s=>s.key==='memories');
+        expect(section).toMatchObject({total:1,counts:{project:1},activity:created,expires:now+1000,items:[{ref:'memory-'+row.slug.slice(5)}]});
+      }
+      const statements=prepared.mock.calls.length;
+      small??=statements;
+      expect(statements).toBe(small);
+      expect(statements).toBeLessThan(10);
+    }finally{prepared.mockRestore();}
+  }
+  state.owns=false;
+  expect(reader.list(viewer)).toEqual([]);
+  state.owns=true;
+  clock.advance(1000);
+  for(const row of reader.list(viewer))expect(row.sections.find(s=>s.key==='memories')).toMatchObject({total:0,items:[]});
+});
