@@ -1,0 +1,83 @@
+/* The Projects index's cards (projects.tsx). Columns by the view's own width (a container), so a narrow tile and a
+   phone get one, a big window two, a very wide one three. Colours are the look's tokens (looks/looks.css), so Neon Noir,
+   Low Light and Daylight each wear it; Higher contrast and reduced motion are at the end. */
+.loom-projects { container: projects / inline-size; display: grid; gap: 12px; min-width: 0; }
+.pj-head { font-size: 12px; color: var(--v-text-3); margin: 0; }
+.pj-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.pj-grid > li { min-width: 0; display: grid; }
+@container projects (min-width: 640px) { .pj-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container projects (min-width: 2000px) { .pj-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.pj-card {
+  --c: var(--v-blue);
+  position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px;
+  border-radius: var(--r-card, 12px); background: var(--v-paper); color: var(--v-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 40%, var(--v-border));
+  transition: box-shadow .15s ease;
+}
+.pj-card[data-tint="pink"] { --c: var(--v-pink); }
+.pj-card[data-tint="blue"] { --c: var(--v-blue); }
+.pj-card[data-tint="yellow"] { --c: var(--v-yellow); }
+.pj-card[data-tint="olive"] { --c: var(--v-olive); }
+.pj-card:hover { box-shadow: inset 0 0 0 1px var(--c), 0 0 24px -10px var(--c); }
+.pj-link:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; border-radius: 4px; }
+/* Where :has() is known, the ring goes round the whole card the link stands for. */
+@supports selector(:has(a)) {
+  .pj-card:has(.pj-link:focus-visible) { outline: 2px solid var(--c); outline-offset: 2px; }
+  .pj-link:focus-visible { outline: none; }
+}
+
+.pj-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pj-name { flex: 1; min-width: 0; margin: 0; font: 600 19px/1.2 var(--font-display, inherit); overflow-wrap: anywhere; }
+.pj-link { color: inherit; text-decoration: none; }
+/* The whole card opens the hub: the name's link stretched over it (one link, one name for a screen reader). */
+.pj-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+
+.pj-pill { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 2px 8px; border-radius: 6px;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--loom-ok-ink, var(--v-text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loom-ok, currentColor) 60%, transparent); }
+.pj-pill[data-status="paused"] { color: var(--loom-warn-ink, var(--v-text)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loom-warn, currentColor) 60%, transparent); }
+.pj-pill[data-status="done"] { color: var(--v-text-2); box-shadow: inset 0 0 0 1px var(--v-border); }
+.pj-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.pj-what { margin: -4px 0 0; font-size: 13px; line-height: 1.45; color: var(--v-text-2); }
+
+.pj-wait { display: flex; gap: 10px; align-items: baseline; margin: 0; padding: 9px 11px; border-radius: 8px; font-size: 13px; line-height: 1.4;
+  background: color-mix(in srgb, var(--v-pink) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--v-pink) 45%, transparent); }
+.pj-wait b { flex: none; font-size: 12px; font-weight: 700; color: var(--v-accent-ink, var(--v-pink)); }
+.pj-wait span { min-width: 0; overflow-wrap: anywhere; }
+.pj-wait-none { background: none; box-shadow: inset 0 0 0 1px var(--v-border); color: var(--v-text-3); }
+
+.pj-eb { margin-bottom: 4px; font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--v-text-3); }
+.pj-acts { list-style: none; margin: 0; padding: 0; }
+.pj-acts li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 3px 0; font-size: 13px; color: var(--v-text-2); }
+.pj-act-text { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.pj-act-status { color: var(--v-text-3); }
+.pj-ago { font-size: 11px; color: var(--v-text-3); }
+
+.pj-spark { display: block; width: 100%; height: 28px; }
+.pj-spark-fill { fill: color-mix(in srgb, var(--c) 14%, transparent); }
+.pj-spark-line { fill: none; stroke: var(--c); stroke-width: 1.5; }
+.pj-spark-dot { fill: var(--c); }
+
+.pj-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--v-border); }
+.pj-chg { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--v-text-2); }
+.pj-chg[data-failing] { color: var(--loom-bad-ink, var(--v-text)); }
+.pj-faces { display: flex; margin-left: auto; }
+.pj-face { display: inline-flex; margin-left: -5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--v-paper); }
+.pj-face:first-child { margin-left: 0; }
+.pj-more { width: 24px; height: 24px; align-items: center; justify-content: center; font-size: 10px; color: var(--v-text-2); background: var(--v-beige); }
+
+.pj-repos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.pj-repos li { padding: 2px 6px; border-radius: 4px; font-size: 11px; color: var(--v-text-3); box-shadow: inset 0 0 0 1px var(--v-border); overflow-wrap: anywhere; }
+
+.pj-quiet > summary { cursor: pointer; padding: 6px 2px; font-size: 13px; color: var(--v-text-2); }
+.pj-quiet > summary span { margin-left: 6px; color: var(--v-text-3); }
+.pj-quiet > .pj-grid { margin-top: 8px; }
+
+/* Higher contrast: full edges, no faded words. */
+:root[data-contrast="more"] .pj-card { box-shadow: inset 0 0 0 1px var(--c); }
+:root[data-contrast="more"] :is(.pj-what, .pj-acts li, .pj-ago, .pj-act-status, .pj-eb, .pj-repos li, .pj-wait-none, .pj-head, .pj-chg) { color: var(--v-text); }
+:root[data-contrast="more"] :is(.pj-wait-none, .pj-repos li, .pj-foot) { border-color: var(--v-edge); box-shadow: inset 0 0 0 1px var(--v-edge); }
+:root[data-contrast="more"] .pj-foot { box-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .pj-card { transition: none; } }

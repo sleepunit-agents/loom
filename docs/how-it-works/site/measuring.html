@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Measuring · loom</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<header class="top"><div class="top__in">
+  <a class="brand" href="index.html"><b>LO<i>O</i>M</b><span>how it works</span></a>
+  <nav class="path" aria-label="Guided path">
+    <ol class="path__dots"><li><a href="index.html" title="Start here"><span class="sr">Start here</span></a></li><li><a href="conversations.html" title="1. Conversations"><span class="sr">1. Conversations</span></a></li><li><a href="desk.html" title="2. The desk"><span class="sr">2. The desk</span></a></li><li><a href="tasks.html" title="3. Tasks"><span class="sr">3. Tasks</span></a></li><li><a href="approvals.html" title="4. Approvals"><span class="sr">4. Approvals</span></a></li><li><a href="tempo.html" title="5. Tempo"><span class="sr">5. Tempo</span></a></li><li><a href="changes.html" title="6. Changes"><span class="sr">6. Changes</span></a></li><li><a href="inbox.html" title="7. Inbox"><span class="sr">7. Inbox</span></a></li><li><a href="memory.html" title="8. Memory"><span class="sr">8. Memory</span></a></li><li><a href="machines.html" title="9. Machines and jobs"><span class="sr">9. Machines and jobs</span></a></li><li><a href="models.html" title="10. Models and accounts"><span class="sr">10. Models and accounts</span></a></li><li><a href="bridges.html" title="11. Discord and Slack"><span class="sr">11. Discord and Slack</span></a></li><li><a href="secrets.html" title="12. Secrets"><span class="sr">12. Secrets</span></a></li><li><a href="people.html" title="13. People and projects"><span class="sr">13. People and projects</span></a></li><li><a href="signing-in.html" title="14. Signing in"><span class="sr">14. Signing in</span></a></li><li><a href="outside.html" title="15. Outside programs"><span class="sr">15. Outside programs</span></a></li><li><a href="data.html" title="16. How a tile gets its data"><span class="sr">16. How a tile gets its data</span></a></li><li><a href="measuring.html" title="17. Measuring" aria-current="page"><span class="sr">17. Measuring</span></a></li><li><a href="decided.html" title="18. What we decided"><span class="sr">18. What we decided</span></a></li></ol>
+    <span class="path__where"><b>17</b> of 18 · Measuring</span>
+    <span class="path__go"><a href="data.html" rel="prev">‹ <span class="pl">How a tile gets its data</span></a><a class="next" href="decided.html" rel="next"><span class="pl">What we decided</span> ›</a></span>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+</div></header>
+<main class="wrap">
+
+
+<section class="hero hero--app">
+  <div class="hero__text t-violet">
+    <p class="eyebrow">Page 17 of 18 · off until you turn it on</p>
+    <h1>Measuring</h1>
+    <p class="lead"><b>Loom keeps count of how long things take, so slow spots are visible.</b> It does this on your own machine, and only when a household owner turns it on.</p>
+    <ul class="does"><li>Off unless a household owner turns it on. Off costs nothing.</li><li>Instrumented once, in the standard way monitoring tools understand.</li><li>Sends measurements to a tool you already run, to loom's own store, or both.</li><li>Lets agents read the local store, so work that judges loom has real numbers.</li></ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="shadowed" aria-hidden="true"><div class="fork">
+      <div class="panel t-violet"><span class="lbl">Set by a household owner</span><h4>Measuring</h4><span class="sw"><i></i>Off</span>
+        <span class="muted">Off by default. Off costs nothing, and someone who never sets it up never sees it.</span>
+        <div class="sec"><span class="lbl">Turned on</span><span>Loom is instrumented once, in the standard way monitoring tools understand.</span></div></div>
+      <div class="fork__to">
+        <div class="node t-amber"><i class="wire"></i><div class="panel"><span class="lbl">Either</span><h4>A monitoring tool you already run</h4><span class="muted">Any tool that accepts the standard format.</span></div></div>
+        <div class="node t-cyan"><i class="wire"></i><div class="panel"><span class="lbl">Or both</span><h4>Loom's own small store</h4><span class="muted">One rolled-up record per day for each kind of request, operation and background job.</span>
+          <div class="agent" style="border:0;padding:6px 0 0;background:none;border-top:1px solid var(--line);border-radius:0"><svg class="face a" viewBox="0 0 40 40"><path class="body" d="M20 3c9 0 16 6 16 16s-6 18-16 18S4 30 4 19 11 3 20 3z"/><circle class="eye" cx="14.5" cy="18" r="2.4"/><circle class="eye" cx="25.5" cy="18" r="2.4"/><path class="mouth" d="M16 26q4 3 8 0"/></svg><div><b>Art reads it</b><span>through the same data endpoint as everything else</span></div></div></div></div>
+      </div>
+    </div></div>
+    <figcaption class="cap">A switch that is off by default, then the two places measurements can go. An agent reads the local one.</figcaption>
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="con-h">
+  <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">How a day's record connects to other parts</h2><p>One record from the local store, with a thread from each part of it that reaches another page. The number on each part is its page on the path.</p></div>
+  <div class="anat"><div class="anat__row"><div class="anat__side anat__l"></div><div class="anat__f"><code>timing_days · one day's record</code><b>Requests for tasks on Nov 14</b></div><div class="anat__side anat__r"></div></div><div class="anat__row "><div class="anat__side anat__l "></div><div class="anat__f"><code>kind, name</code><span>request · tasks</span></div><div class="anat__side anat__r "></div></div><div class="anat__row "><div class="anat__side anat__l "></div><div class="anat__f"><code>count, typical, slowest</code><span>412 times · 12 ms · 80 ms</span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-cyan"><div class="anat__side anat__l t-cyan"></div><div class="anat__f"><code>read by</code><span>an agent</span></div><div class="anat__side anat__r t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">16</span><div class="node__body"><b><a href="data.html">How a tile gets its data</a></b><span>An agent asks for it through the same data endpoint as everything else.</span></div></div></div><div class="anat__row t-pink"><div class="anat__side anat__l t-pink"><span class="key t-pink" aria-hidden="true">1</span><div class="node__body"><b><a href="conversations.html">Conversations</a></b><span>Loom already records these about every turn.</span></div><i class="wire"></i></div><div class="anat__f"><code>alongside</code><span>which model answered, how the turn went, how long the person waited</span></div><div class="anat__side anat__r t-pink"></div></div><div class="anat__row t-amber"><div class="anat__side anat__l t-amber"></div><div class="anat__f"><code>who sees it</code><span>household owners and agents</span></div><div class="anat__side anat__r t-amber"><i class="wire"></i><span class="key t-amber" aria-hidden="true">13</span><div class="node__body"><b><a href="people.html">People and projects</a></b><span>Household owners turn it on and see it. Agents read it.</span></div></div></div></div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">The switch, the two destinations, the store and its readers</h2><p></p></div>
+  <div class="how"><div class="how__p t-violet"><h3>Off by default</h3><div class="how__pic" aria-hidden="true"><span class="sw"><i></i>Off</span></div><p>Measuring is off unless a household owner turns it on. Off costs nothing, and someone who never sets it up never sees it.</p></div><div class="how__p t-amber"><h3>One instrumentation, two destinations</h3><div class="how__pic" aria-hidden="true"><ul class="opts"><li><b>outside tool</b><span>any that accepts the standard format</span></li><li><b>local store</b><span>kept by loom itself</span></li></ul></div><p>Loom is instrumented once with OpenTelemetry, the standard monitoring tools understand. Turned on, the same measurements go to a tool the household already runs, to loom's own store, or both.</p></div><div class="how__p t-cyan"><h3>What the local store holds</h3><div class="how__pic" aria-hidden="true"><ol class="logl"><li><code>request</code><span>tasks · 412 times · typical 12 ms</span></li><li><code>operation</code><span>create a task · 9 times · typical 6 ms</span></li><li><code>job</code><span>reading GitHub · 288 times · slowest 132 ms</span></li></ol></div><p>A rolled-up record per day of how long each kind of request, operation and background job took, and how often it ran.</p></div><div class="how__p t-pink"><h3>Why agents read it</h3><div class="how__pic" aria-hidden="true"><div class="card t-pink" style="flex:none"><span class="lbl">Real numbers</span><b>Did the change make things faster?</b><span class="muted">three weeks before · three weeks after</span></div></div><p>Work that judges loom itself has real numbers to go on: comparing two harnesses, or checking whether an experimental change made things faster or slower over a few weeks.</p></div></div>
+</section>
+
+<div class="ref">
+  <section class="ref__col" aria-labelledby="see-h">
+    <h2 id="see-h">Who can see this</h2>
+    <ul class="see"><li><span class="key key--sm t-ink" aria-hidden="true">a</span><span><b>Who sees it.</b> Household owners and agents.</span></li><li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Who turns it on.</b> A household owner. Until then nothing is counted and nothing is shown.</span></li></ul>
+  </section>
+  <section class="ref__col" aria-labelledby="data-h">
+    <h2 id="data-h">Data model</h2>
+    <p class="muted">Two tables. Open one to see its columns, what each means and what it points to.</p><div class="tgroup"><div class="tgrid"><details class="tbl t-violet" id="t-timing_days"><summary><code>timing_days</code><em>7 columns</em><span>A rolled-up record per day of how long each kind of thing took and how often it ran.</span></summary><div class="cols"><div class="col"><div><code>day</code><small>text</small></div><p>The date.</p><span></span></div><div class="col"><div><code>kind</code><small>choice(request, operation, job)</small></div><p>A request, an operation or a background job.</p><span></span></div><div class="col"><div><code>name</code><small>text</small></div><p>Which one, such as the request for tasks.</p><span></span></div><div class="col"><div><code>count</code><small>number</small></div><p>How many times it ran that day.</p><span></span></div><div class="col"><div><code>total_ms</code><small>number</small></div><p>The total time it took.</p><span></span></div><div class="col"><div><code>slowest_ms</code><small>number</small></div><p>The slowest single run.</p><span></span></div><div class="col"><div><code>typical_ms</code><small>number</small></div><p>The typical run.</p><span></span></div></div></details><details class="tbl t-violet" id="t-measuring_settings"><summary><code>measuring_settings</code><em>4 columns</em><span>One row saying whether measuring is on and where it goes.</span></summary><div class="cols"><div class="col"><div><code>on</code><small>yes/no</small></div><p>Whether loom is measuring. Off by default.</p><span></span></div><div class="col"><div><code>send_outside</code><small>yes/no</small></div><p>Whether measurements also go to an outside monitoring tool.</p><span></span></div><div class="col"><div><code>outside_address</code><small>text</small></div><p>The address of that tool.</p><span></span></div><div class="col"><div><code>keep_days</code><small>number</small></div><p>How many days the local store keeps.</p><span></span></div></div></details></div></div>
+    
+  </section>
+</div>
+<footer class="foot"><p>Next on the path: <b>What we decided</b>. Every decision in plain words, with the page where it shows up.</p><a class="btn" href="decided.html">What we decided <span aria-hidden="true">›</span></a></footer>
+
+</main>
+</body>
+</html>

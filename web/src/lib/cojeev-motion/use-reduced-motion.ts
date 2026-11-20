@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
-let query:MediaQueryList|undefined
+import { motionQuery } from '@/access'
+let query:ReturnType<typeof motionQuery>|undefined
 const listeners=new Set<()=>void>()
 const changed=()=>listeners.forEach(listener=>listener())
-function media(){return query??=window.matchMedia('(prefers-reduced-motion: reduce)')}
+function media(){return query??=motionQuery()}
 function subscribe(listener:()=>void){
  const q=media();if(!listeners.size)q.addEventListener('change',changed);listeners.add(listener)
  return ()=>{listeners.delete(listener);if(!listeners.size){q.removeEventListener('change',changed);query=undefined}}

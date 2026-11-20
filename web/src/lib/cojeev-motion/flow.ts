@@ -2,6 +2,7 @@ import { createMotionLane, motionTokens, resolveChoreography } from "@/lib/cojee
 import { createFlowPainter, animateFlowLanding } from "@/lib/cojeev-motion/flow-motion"
 import { FLOW_CHARACTERS, getSettingsSnapshot, applyFlowSettings, getFlowSettings, getMotionSettings, subscribeSettings, flowTokenMs, type FlowVariant } from "@/lib/cojeev-motion/settings"
 import { scheduleMotion, cancelMotion, getMotionTime, type MotionTimer } from "@/lib/cojeev-motion/clock"
+import {motionQuery,reducedMotion} from '@/access'
 export { flowClock, motionClock } from "@/lib/cojeev-motion/clock"
 
 export type FlowGroupOptions={kind?:"pill"|"bar"|"fill";itemSelector?:string;activeSelector?:string}
@@ -17,11 +18,11 @@ type Group={element:HTMLElement;place:(animate?:boolean)=>void;resolve:()=>void;
 const groups=new Map<HTMLElement,Group>()
 const all=(selector:string,root:ParentNode)=>Array.from(root.querySelectorAll<HTMLElement>(selector))
 let users=0,releaseEnvironment=()=>{},trigger:null|{x:number;y:number;t:number}=null
-export function isFlowQuiet(el?:HTMLElement){return getMotionSettings().mode==='off'||getFlowSettings().variant==='off'||(typeof matchMedia!=='undefined'&&matchMedia('(prefers-reduced-motion: reduce)').matches)||!!el?.closest('[data-flow="off"],[data-no-glide]')}
+export function isFlowQuiet(el?:HTMLElement){return getMotionSettings().mode==='off'||getFlowSettings().variant==='off'||(typeof document!=='undefined'&&reducedMotion())||!!el?.closest('[data-flow="off"],[data-no-glide]')}
 /** Shared activation/settings/visibility subscriptions exist only while a component owns flow. */
 export function acquireFlowEnvironment(){
  if(users++===0){
-  const ac=new AbortController(),opts={signal:ac.signal,capture:true},rm=matchMedia('(prefers-reduced-motion: reduce)')
+  const ac=new AbortController(),opts={signal:ac.signal,capture:true},rm=motionQuery()
   const refresh=()=>{applyFlowSettings();groups.forEach(group=>group.resolve())}
   window.addEventListener('pointerdown',event=>{trigger={x:event.clientX,y:event.clientY,t:getMotionTime()}},opts)
   window.addEventListener('keydown',event=>{if((event.key==='Enter'||event.key===' ')&&event.target instanceof Element){const r=event.target.getBoundingClientRect();trigger={x:r.left+r.width/2,y:r.top+r.height/2,t:getMotionTime()}}},opts)
@@ -133,7 +134,7 @@ export function attachFlowGroup(g:HTMLElement,options:FlowGroupOptions={}):()=>v
  const resolve=()=>{if(disposed)return;const variant=variantFor(g);if(variant==='off'){suspend();return}
   if(g.dataset.flowV&&g.dataset.flowV!==variant){clearPhases();prev=null;markStill()}
   g.dataset.flowV=variant
-  if(document.hidden||matchMedia('(prefers-reduced-motion: reduce)').matches){clearPhases();prev=null;markStill();place(false)}else place(false)
+  if(document.hidden||reducedMotion()){clearPhases();prev=null;markStill();place(false)}else place(false)
  }
  const q=()=>{if(queued||disposed)return;queued=scheduleMotion(()=>{queued=null;if(reseat){reseat=false;place(false)}else place(!initial)},16)}
  g.addEventListener('click',q,opts);g.addEventListener('change',q,opts);g.addEventListener('input',q,opts)

@@ -6,6 +6,7 @@ import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import * as Primitive from "@radix-ui/react-dropdown-menu";
+import { usePortalContainer } from "@/components/ui/portal-container";
 import {
   useFlowAppearance,
   useFlowGroup,
@@ -16,7 +17,8 @@ import { StateChevron, AnimatedIcon } from "@/components/ui/animated-icon";
 
 export type DropdownMenuProps = React.ComponentProps<typeof Primitive.Root>;
 export function DropdownMenu(props: DropdownMenuProps) {
-  return <Primitive.Root {...props} />;
+  const layer = usePortalContainer();
+  return <Primitive.Root {...props} modal={layer ? false : props.modal} />;
 }
 export type DropdownMenuPortalProps = React.ComponentProps<
   typeof Primitive.Portal
@@ -82,8 +84,9 @@ export function DropdownMenuContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal>
+    <Primitive.Portal container={layer ?? undefined}>
       <Primitive.Content
         ref={flowRef}
         data-slot="dropdown-menu-content"
@@ -112,8 +115,9 @@ export function DropdownMenuSubContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal>
+    <Primitive.Portal container={layer ?? undefined}>
       <Primitive.SubContent
         ref={flowRef}
         data-slot="dropdown-menu-sub-content"

@@ -5,6 +5,7 @@
  * becomes visible to knowledge_recall and knowledge_maintain again.
  * Mirror of memory_restore.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeRestoreToolInput {
@@ -14,8 +15,9 @@ export interface KnowledgeRestoreToolInput {
 export async function knowledgeRestore(
   contextDir: string,
   input: KnowledgeRestoreToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.restorePage({ slug: input.slug });
     if (!result.restored) {

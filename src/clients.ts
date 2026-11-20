@@ -21,16 +21,20 @@ import { INSTALL_TARGETS } from './install/harnesses.js';
 // Canonical tool names — used to generate the prefix-specific list per client
 export const TOOLS = [
   'identity', 'dossier', 'remember', 'recall', 'update', 'forget',
-  'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'memory_recompute_salience', 'episodes', 'relay',
+  'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'memory_recompute_salience', 'episodes',
   'memory_archive', 'memory_restore', 'memory_merge', 'memory_history', 'memory_revision_restore',
   'memory_propose', 'memory_proposals', 'memory_ratify', 'memory_reject',
-  'update_identity', 'bootstrap', 'harness_init', 'harness_describe',
+  'update_identity', 'bootstrap', 'harness_init', 'harness_describe', 'harness_patch',
   'knowledge_write', 'knowledge_recall', 'knowledge_maintain',
   'knowledge_archive', 'knowledge_restore', 'knowledge_supersede', 'knowledge_move', 'knowledge_merge',
   'knowledge_purge', 'knowledge_verify', 'knowledge_history',
-  'person_write', 'person_verify', 'person_archive', 'person_restore',
+  'person_write', 'person_verify', 'person_archive', 'person_restore', 'person_merge',
   'person', 'person_list', 'person_history', 'person_revision_restore', 'person_evidence', 'knowledge_list',
+  'project_write', 'project_verify', 'project_archive', 'project_restore', 'project_history',
+  'project_revision_restore', 'project', 'project_list', 'project_hub', 'project_orphans',
   'note_write', 'note_read', 'note_list',
+  'conversation_digest', 'conversations', 'conversation', 'conversation_findings',
+  'comms_title', 'comms_thread', 'describe_self',
 ];
 
 function toolList(prefix: string): string {

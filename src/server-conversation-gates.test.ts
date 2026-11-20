@@ -1,0 +1,169 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { bodyHouseConversation, createLoomServer, houseWriteProblem, type LoomServerConfig } from './server.js';
+import { bindHouseConversation } from './household-store.js';
+import { digestsOf, recordTurn, writeDigest, writeFinding } from './backends/conversations.js';
+import { closeAllBackends } from './backends/index.js';
+import { openProjectsStore } from './backends/projects.js';
+import type { ConversationSelection } from './conversations.js';
+import * as conversations from './conversations.js';
+import * as households from './household.js';
+import * as registry from './household-store.js';
+import * as pulls from './collections/pull.js';
+
+vi.mock('./backends/fastembed.js', () => ({ FastEmbedProvider: class {
+  readonly dimensions = 384;
+  async embed() { return new Array(384).fill(0); }
+  async embedBatch(texts: string[]) { return Promise.all(texts.map(() => this.embed())); }
+} }));
+const homes: string[] = [];
+afterEach(() => { closeAllBackends(); vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+function fixture() {
+  const home = mkdtempSync(join(tmpdir(), 'loom-conversation-gates-')); homes.push(home);
+  const household = { home, v: 1 as const, agents: ['art', 'mark'], default: 'art', members: [{ person: 'jonathan', role: 'owner' as const, agents: '*' as const }] };
+  for (const agent of household.agents) mkdirSync(join(home, 'agents', agent), { recursive: true });
+  writeFileSync(join(home, 'household.json'), JSON.stringify(household));
+  vi.stubEnv('LOOM_HOME', home);
+  return { home, household, contextDir: join(home, 'agents/art') };
+}
+
+it('explicit household and standalone gates ignore even a matching legacy runtime binding', () => {
+  const { home, household, contextDir } = fixture();
+  const conversation = 'cv-000000000001';
+  bindHouseConversation(home, { house: 'h-1', agent: 'art', conversation });
+  const before = readFileSync(join(home, 'household.db'));
+  // Omission keeps the existing runtime binding and cross-agent checks.
+  expect(bodyHouseConversation(contextDir, { house: 'h-1' })).toBe(conversation);
+  expect(bodyHouseConversation(join(home, 'agents/mark'), { house: 'h-1' })).toBeNull();
+  expect(houseWriteProblem(contextDir, { house: 'h-1' }, conversation)).toBeNull();
+  for (const selection of [{ household, agent: 'art' }, { household, agent: 'mark' }, null] satisfies ConversationSelection[]) {
+    for (const caller of [{ house: 'h-1' }, { house: 'h-1', service: 'discord' }, { service: 'discord' }]) {
+      expect(bodyHouseConversation(contextDir, caller, selection)).toBeNull();
+      expect(houseWriteProblem(contextDir, caller, conversation, selection)).toContain('holds no conversation');
+    }
+    expect(bodyHouseConversation(contextDir, undefined, selection)).toBeUndefined();
+    expect(houseWriteProblem(contextDir, undefined, conversation, selection)).toBeNull();
+  }
+  expect(readFileSync(join(home, 'household.db'))).toEqual(before);
+});
+
+it('explicit gates need no household JSON or app database, including a service without a house', () => {
+  const { home, household, contextDir } = fixture();
+  rmSync(join(home, 'household.json'));
+  const discovery = [vi.spyOn(conversations, 'homeFor'), vi.spyOn(households, 'householdOf'), vi.spyOn(registry, 'houseConversation')];
+  for (const selection of [{ household, agent: 'art' }, null] satisfies ConversationSelection[]) {
+    expect(bodyHouseConversation(contextDir, { house: 'h-missing' }, selection)).toBeNull();
+    expect(bodyHouseConversation(contextDir, { service: 'discord' }, selection)).toBeNull();
+    expect(bodyHouseConversation(contextDir, undefined, selection)).toBeUndefined();
+  }
+  for (const read of discovery) expect(read).not.toHaveBeenCalled();
+  expect(existsSync(join(home, 'household.db'))).toBe(false);
+  expect(existsSync(join(home, 'loom.db'))).toBe(false);
+});
+
+it('every MCP conversation gate forwards explicit selection instead of trusting the old registry', async () => {
+  const { home, household, contextDir } = fixture();
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Art');
+  const { conversation } = recordTurn(contextDir, 'art', {
+    venue: 'session', place: 'private', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
+  }, 'test');
+  writeFinding(contextDir, { conversation, seq: 1, measure: 'clarity', score: 1, text: 'private-finding-marker' });
+  writeDigest(contextDir, { conversation, run: 'seed' }, { summary: 'private-conversation-marker', projects: ['loom'] });
+  const projects = openProjectsStore(contextDir)!;
+  projects.write({ slug: 'loom', name: 'Loom' }); projects.close();
+  bindHouseConversation(home, { agent: 'art', house: 'h-1', conversation });
+  const before = readFileSync(join(home, 'household.db'));
+  const binding = vi.spyOn(registry, 'houseConversation');
+  for (const caller of [{ house: 'h-1' }, { house: 'h-1', service: 'discord' }, { service: 'discord' }]) {
+    const config: LoomServerConfig = { contextDir, caller, conversationSelection: { household, agent: 'art' }, memorySelection: { agent: 'art' }, peopleSelection: null };
+    const { server } = createLoomServer(config);
+    const client = new Client({ name: 'conversation-gates', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a); await client.connect(b);
+    try {
+      const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      const identity = await call('identity', { client: 'claude-code', piece: 'last-24h', conversation, run: 'untrusted-run' });
+      for (const result of [identity, await call('episodes'), await call('project_hub', { slug: 'loom' }), await call('conversations'), await call('conversation_findings')]) {
+        expect(result.isError).not.toBe(true);
+        expect(JSON.stringify(result.content)).not.toContain('private-conversation-marker');
+        expect(JSON.stringify(result.content)).not.toContain('private-finding-marker');
+      }
+      const list = await call('conversations'); expect(JSON.stringify(list.content)).not.toContain(conversation);
+      for (const [name, args] of [
+        ['conversation', { id: conversation }], ['conversation_digest', { summary: 'should never be written' }],
+        ['comms_title', { title: 'should never be written' }], ['comms_thread', {}],
+      ] as const) {
+        const result = await call(name, args);
+        expect(result.isError, name).toBe(true);
+        if (name === 'comms_title') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
+        if (name === 'comms_thread') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
+        expect(binding, name).not.toHaveBeenCalled();
+      }
+      expect(binding).not.toHaveBeenCalled();
+    } finally { await client.close(); await server.close(); }
+  }
+  expect(readFileSync(join(home, 'household.db'))).toEqual(before);
+}, 30_000);
+
+it('offline app tools and local digest never discover or mutate legacy app state', async () => {
+  const { home, household, contextDir } = fixture();
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Art');
+  const { conversation } = recordTurn(contextDir, 'art', {
+    venue: 'session', place: 'offline', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
+  }, 'test');
+  // A corrupt legacy registry makes accidental app access fail loudly.
+  writeFileSync(join(home, 'household.db'), 'must never open this');
+  const legacy = readFileSync(join(home, 'household.db'));
+  const discovery = vi.spyOn(households, 'householdOf');
+  const appHome = vi.spyOn(conversations, 'homeFor');
+  for (const selection of [{ household, agent: 'art' }, null] satisfies ConversationSelection[]) {
+    const { server } = createLoomServer({ contextDir, conversationSelection: selection, memorySelection: { agent: 'art' }, peopleSelection: null });
+    const client = new Client({ name: 'offline-apps', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a); await client.connect(b);
+    try {
+      const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      await call('identity', { client: 'claude-code', piece: 'last-24h', conversation, run: 'run-offline' });
+      discovery.mockClear(); appHome.mockClear();
+      for (const [name, args] of [['describe_self', { text: 'Offline description.' }], ['comms_title', { title: 'Offline' }], ['comms_thread', {}], ['comms_thread', { thread: 'th:unknown' }]] as const) {
+        const result = await call(name, args);
+        expect(result.isError, name).toBe(true);
+        expect(JSON.stringify(result.content), name).toContain('unavailable over offline stdio');
+      }
+      const digest = await call('conversation_digest', { summary: 'Offline work recorded', needs_owner: null });
+      expect(digest.isError).not.toBe(true);
+      expect(JSON.stringify(digest.content)).toContain('Offline work recorded');
+      expect(digestsOf(contextDir, conversation).find(d => d.run === 'run-offline')?.summary).toBe('Offline work recorded');
+      expect(discovery).not.toHaveBeenCalled();
+      expect(appHome).not.toHaveBeenCalled();
+    } finally { await client.close(); await server.close(); }
+  }
+  expect(readFileSync(join(home, 'household.db'))).toEqual(legacy);
+  expect(existsSync(join(home, 'loom.db'))).toBe(false);
+}, 30_000);
+
+
+it('omitted selection still notifies old attention after persisting a local digest', async () => {
+  const { home, contextDir } = fixture();
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Art');
+  const { conversation } = recordTurn(contextDir, 'art', {
+    venue: 'session', place: 'legacy', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
+  }, 'test');
+  const nudge = vi.spyOn(pulls, 'nudge').mockImplementation(() => {});
+  const { server } = createLoomServer({ contextDir });
+  const client = new Client({ name: 'legacy-digest', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  try {
+    await client.callTool({ name: 'identity', arguments: { client: 'claude-code', piece: 'last-24h', conversation, run: 'run-legacy' } });
+    nudge.mockClear();
+    const result = await client.callTool({ name: 'conversation_digest', arguments: { summary: 'Legacy work recorded' } });
+    expect(result.isError).not.toBe(true);
+    expect(digestsOf(contextDir, conversation).find(d => d.run === 'run-legacy')?.summary).toBe('Legacy work recorded');
+    expect(nudge).toHaveBeenCalledExactlyOnceWith(home, 'loom/attention');
+  } finally { await client.close(); await server.close(); }
+}, 30_000);

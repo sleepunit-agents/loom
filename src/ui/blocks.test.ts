@@ -13,6 +13,16 @@ import { identityFacts } from './household-pages.js';
 const ok = (p: Page | string): Page => { if (typeof p === 'string') throw new Error(p); return p; };
 const page = (blocks: unknown[], extra: Record<string, unknown> = {}) => parsePage({ title: 'T', sections: [{ id: 's', blocks }], ...extra });
 
+describe('bounded ask candidates before member filtering', () => {
+  it('accepts up to 1000 candidates, and refuses an over-limit manifest whole', () => {
+    const asks = Array.from({ length: 1000 }, (_, i) => ({ text: `Permission ${i}?`, agent: 'art', page: '' }));
+    const manifest = parseManifest({ v: 2, asks });
+    expect(typeof manifest).not.toBe('string');
+    if (typeof manifest !== 'string') expect(manifest.asks).toHaveLength(1000);
+    expect(parseManifest({ v: 2, asks: [...asks, asks[0]] })).toBe('asks has more than 1000 entries');
+  });
+});
+
 describe('meter, code and status blocks', () => {
   it('a long list of plain choices keeps every option and its chosen value', () => {
     const opts = (n: number) => Array.from({ length: n }, (_, i) => ({ value: `p${i}`, label: `Person ${i}` }));
@@ -38,6 +48,13 @@ describe('meter, code and status blocks', () => {
     const m = parseManifest({ v: 2, asks: [{ text: 'Renew the login', page: '', actions: [{ action: 'renew', label: 'Renew', tone: 'primary' }, { action: 'later', label: 'Later' }] }] });
     expect(typeof m === 'string' ? m : m.asks[0].actions?.map((b) => b.label)).toEqual(['Renew', 'Later']);
     expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', actions: [1, 2, 3, 4].map((n) => ({ action: `a${n}`, label: 'x' })) }] })).toBe('string');
+    // Laid out: why, what each answer does, details and the small print, each within its cap.
+    const laid = parseManifest({ v: 2, asks: [{ text: 'OK to start updating lane prompts on loom again?', why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' }] });
+    expect(typeof laid === 'string' ? laid : laid.asks[0]).toMatchObject({ why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' });
+    for (const [k, n] of [['why', 300], ['if_yes', 300], ['if_no', 300], ['details', 2000], ['fine', 400]] as const) {
+      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n) }] }), `${k} at its cap`).not.toBe('string');
+      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n + 1) }] }), `${k} over it`).toBe('string');
+    }
   });
 
   it('a where reads the way a person says it', () => {
@@ -76,6 +93,13 @@ describe('meter, code and status blocks', () => {
     expect(status.items[2].label).toBe('mail');
     expect(status.items[2].tone).toBeUndefined();
     expect(page([{ type: 'status', items: [{ label: 'x', tone: 'purple' }] }])).toMatch(/tone/);
+  });
+
+  it('a callout may say something is under way (busy: a spinner in its icon\'s place)', () => {
+    const p = ok(page([{ type: 'callout', text: 'Checking the code with Anthropic…', busy: true }, { type: 'callout', text: 'Done', tone: 'ok', busy: false }]));
+    expect(p.sections[0].blocks[0]).toEqual({ type: 'callout', text: 'Checking the code with Anthropic…', title: undefined, tone: undefined, busy: true });
+    expect(p.sections[0].blocks[1]).not.toHaveProperty('busy');
+    expect(page([{ type: 'callout', text: 'x', busy: 'yes' }])).toMatch(/busy/);
   });
 
   it('a page may ask to be refreshed, every 2 to 300 seconds, forms or not', () => {
@@ -202,5 +226,110 @@ describe('chart, folding sections and who a row is (Jonathan, 2026-10-31)', () =
     const marked = ok(page([{ type: 'list', who: true, items: [{ text: 'a' }] }])).sections[0].blocks[0];
     expect(marked).toMatchObject({ who: true });
     expect(ok(page([{ type: 'list', who: 'yes', items: [] }])).sections[0].blocks[0]).not.toHaveProperty('who');
+  });
+});
+
+describe('app panels and status screens (Jonathan, 2026-11-03: "app panels, not web forms"; "status screens, not markdown dumps")', () => {
+  const one = (blocks: unknown[]) => ok(page(blocks)).sections[0].blocks[0];
+  it('a panel row states its value and holds one control: a toggle, a segmented choice, an edit sheet, a detail sheet, a link or a button', () => {
+    const p = one([{ type: 'panel', title: 'Knowledge expand', rows: [
+      { label: 'On', value: 'Runs daily', toggle: { action: 'lane-enabled', on: true, fields: { lane: 'knowledge-expand' } } },
+      { label: 'Where', choice: { action: 'lane-where', name: 'where', value: 'house', options: [{ value: 'house', label: 'A house' }, { value: 'local', label: 'loom\'s machine' }] } },
+      { label: 'When', value: '5:17 AM daily', edit: { action: 'lane-when', title: 'When it runs', fields: [{ name: 'at', label: 'Time', kind: 'time', value: '05:17' }, { name: 'days', label: 'Days', kind: 'checks', options: [{ value: 'mon', label: 'M' }] }] } },
+      { label: 'Last run', value: 'Today, 5:17 AM', tone: 'ok', sheet: { title: 'Last run', blocks: [{ type: 'code', text: 'ok' }] } },
+      { label: 'Whose', value: 'Art', agent: 'art', page: 'agent:art' },
+    ], action: { action: 'lane-run', label: 'Run now', tone: 'primary' } }]) as Extract<Block, { type: 'panel' }>;
+    expect(p.rows).toHaveLength(5);
+    expect(p.rows[0].toggle).toEqual({ action: 'lane-enabled', on: true, fields: { lane: 'knowledge-expand' } });
+    expect(p.rows[1].choice?.options).toHaveLength(2);
+    expect(p.rows[2].edit?.fields.map((f) => f.kind)).toEqual(['time', 'checks']);
+    expect(p.rows[3].sheet?.blocks[0]).toMatchObject({ type: 'code' });
+    expect(p.action?.label).toBe('Run now');
+  });
+
+  it('a panel row with two controls, a sheet in a sheet, or a one-option choice is refused whole', () => {
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', toggle: { action: 'a', on: true }, page: 'y' }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', toggle: { action: 'a', on: 'yes' } }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', choice: { action: 'a', name: 'n', value: 'v', options: [{ value: 'v', label: 'V' }] } }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', sheet: { blocks: [{ type: 'panel', rows: [{ label: 'y', sheet: { blocks: [] } }] }] } }] }])).toBe('string');
+  });
+
+  it('a toggle, a segmented control and a stepper are fields too', () => {
+    const f = (one([{ type: 'form', action: 'a', submit: 'Save', fields: [
+      { name: 'on', label: 'On', kind: 'toggle', value: 'on' },
+      { name: 'mode', label: 'Mode', kind: 'segmented', value: 'b', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] },
+      { name: 'keep', label: 'Keep', kind: 'stepper', value: '14', min: 1, max: 90, step: 1, unit: 'days' },
+    ] }]) as Extract<Block, { type: 'form' }>).fields;
+    expect(f.map((x) => x.kind)).toEqual(['toggle', 'segmented', 'stepper']);
+    expect(f[2]).toMatchObject({ min: 1, max: 90, step: 1, unit: 'days', value: '14' });
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'stepper', min: 5, max: 1 }] }])).toBe('string');
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'toggle', value: 'yes' }] }])).toBe('string');
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'segmented', options: Array.from({ length: 6 }, (_, i) => ({ value: `${i}`, label: `${i}` })) }] }])).toBe('string');
+  });
+
+  it('a status screen leads with its health in plain words; a tile may carry a trend or how full it is', () => {
+    expect(one([{ type: 'health', tone: 'ok', text: 'All good', detail: 'Checked a minute ago' }])).toEqual({ type: 'health', tone: 'ok', text: 'All good', detail: 'Checked a minute ago' });
+    expect(typeof page([{ type: 'health', text: 'All good' }])).toBe('string');
+    const s = one([{ type: 'stats', items: [{ label: 'Disk', value: '41%', meter: 0.41, tone: 'ok' }, { label: 'Runs', value: '12', spark: [1, 3, 2, 5] }] }]) as Extract<Block, { type: 'stats' }>;
+    expect(s.items[0].meter).toBe(0.41);
+    expect(s.items[1].spark).toEqual([1, 3, 2, 5]);
+    expect(typeof page([{ type: 'stats', items: [{ label: 'x', value: '1', meter: 2 }] }])).toBe('string');
+    expect(typeof page([{ type: 'stats', items: [{ label: 'x', value: '1', spark: Array(31).fill(1) }] }])).toBe('string');
+  });
+});
+
+describe('one block too long is cut short, not the whole page refused (t-1861)', () => {
+  const over = 'r'.repeat(3332);
+
+  it('a code block over 2000 characters (Approvals\' record, 2026-11-05) draws cut short, ends in "…", and says so', () => {
+    const cut: string[][] = [];
+    const p = ok(parsePage({ title: 'Approvals', sections: [{ id: 's', blocks: [{ type: 'text', text: 'Before' }, { type: 'code', text: over, label: 'The record' }] }] }, (c) => cut.push(c)));
+    const [before, code] = p.sections[0].blocks as [Block, Extract<Block, { type: 'code' }>];
+    expect(before).toEqual({ type: 'text', text: 'Before', tone: undefined });
+    expect(code.text).toHaveLength(2000);
+    expect(code.text.endsWith('r…')).toBe(true);
+    expect(code).toMatchObject({ label: 'The record', cut: true });
+    expect(cut).toEqual([['code.text (3332 characters, at most 2000)']]);
+  });
+
+  it('a page with nothing too long says nothing and marks nothing', () => {
+    const cut: string[][] = [];
+    const p = ok(parsePage({ title: 'T', sections: [{ id: 's', blocks: [{ type: 'code', text: 'x'.repeat(2000) }] }] }, (c) => cut.push(c)));
+    expect(p.sections[0].blocks[0]).not.toHaveProperty('cut');
+    expect(cut).toEqual([]);
+  });
+
+  it('each text-like field is cut: text, callout, a list row\'s text and meta, a cell, a kv value, a status text, a health detail', () => {
+    const p = ok(page([
+      { type: 'text', text: over },
+      { type: 'callout', text: over },
+      { type: 'list', items: [{ text: over, meta: over }] },
+      { type: 'table', columns: ['a', 'b'], rows: [[over, { text: over, page: 'x' }]] },
+      { type: 'kv', items: [{ label: 'k', value: over }] },
+      { type: 'status', items: [{ label: 's', text: over }] },
+      { type: 'health', tone: 'ok', text: 'fine', detail: over },
+    ]));
+    const blocks = p.sections[0].blocks;
+    expect(blocks.every((b) => b.cut)).toBe(true);
+    expect(JSON.stringify(blocks)).not.toContain('r'.repeat(2000));
+  });
+
+  it('a block inside a details marks itself, not the details too', () => {
+    const p = ok(page([{ type: 'details', summary: 'More', blocks: [{ type: 'code', text: over }] }]));
+    const d = p.sections[0].blocks[0] as Extract<Block, { type: 'details' }>;
+    expect(d).not.toHaveProperty('cut');
+    expect(d.blocks[0]).toMatchObject({ type: 'code', cut: true });
+  });
+
+  it('never splits a character made of two halves (an emoji at the cut)', () => {
+    const p = ok(page([{ type: 'text', text: `${'x'.repeat(1998)}😀😀` }]));
+    const t = (p.sections[0].blocks[0] as Extract<Block, { type: 'text' }>).text;
+    expect(t).toBe(`${'x'.repeat(1998)}…`);
+  });
+
+  it('a name, a label or a count over its limit still refuses the page', () => {
+    expect(page([{ type: 'kv', items: [{ label: over, value: 'v' }] }])).toMatch(/kv.label is longer than 2000/);
+    expect(page([{ type: 'code', text: 'x', label: over }])).toMatch(/code.label is longer than 2000/);
+    expect(page(Array.from({ length: 21 }, () => ({ type: 'text', text: 'x' })))).toMatch(/section.blocks/);
   });
 });

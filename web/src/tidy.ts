@@ -34,6 +34,8 @@ export function tidy(text: string, now = new Date()): string {
     .replace(/\(\s*\)/g, '')
     .replace(/\(\s+/g, '(').replace(/\s+\)/g, ')')
     .replace(/\s+([,.;:!?])/g, '$1')
+    // A list an id was in: "Art, h-844, Granted" leaves "Art,, Granted"; a leading or trailing comma too.
+    .replace(/,(?:\s*,)+/g, ',').replace(/^\s*,\s*|\s*,\s*$/g, '')
     .replace(/(?:\s*·\s*){2,}/g, ' · ')
     .replace(/^\s*·\s*|\s*·\s*$/g, '')
     .replace(/[ \t]{2,}/g, ' ')

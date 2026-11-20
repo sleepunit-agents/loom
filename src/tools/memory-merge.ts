@@ -9,18 +9,20 @@
  * and (optionally) body concatenation. Distinct from forget/archive, which
  * only discard one side of a duplicate pair rather than consolidating it.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { MemoryMergeInput } from '../backends/types.js';
 
 export async function memoryMerge(
   contextDir: string,
   input: MemoryMergeInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   if (!input.source_refs || input.source_refs.length === 0) {
     return 'Error: source_refs must not be empty.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   try {
     const result = await backend.mergeMemories(input);
 

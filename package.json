@@ -5,7 +5,22 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "loom": "dist/index.js"
+    "loom": "dist/index.js",
+    "loom-clock-worker": "dist/clock-worker.js",
+    "loom-secret-holder": "dist/secret-holder.js",
+    "loom-secrets-client": "dist/secrets-client.js",
+    "loom-household": "dist/household-client.js",
+    "loom-bridges": "dist/bridges-client.js",
+    "loom-attention": "dist/attention-client.js",
+    "loom-taskstore": "dist/taskstore-client.js",
+    "loom-changes": "dist/changes-client.js",
+    "loom-approvals-client": "dist/approvals-client.js",
+    "loom-wake-client": "dist/wake-client.js",
+    "loom-token": "dist/token-client.js",
+    "loom-account": "dist/account-client.js",
+    "loom-sessions": "dist/sessions-client.js",
+    "loom-claude-worker": "dist/claude-worker.js",
+    "loom-secret-worker": "dist/secret-worker.js"
   },
   "files": [
     "dist",
@@ -32,7 +47,8 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:web": "npm --prefix web ci --no-audit --no-fund --silent && npm --prefix web run build"
+    "build:web": "npm --prefix web ci --no-audit --no-fund --silent && npm --prefix web run build",
+    "schema:generate": "tsx scripts/generate-data-schema.ts"
   },
   "publishConfig": {
     "access": "public",
@@ -49,17 +65,28 @@
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@anush008/tokenizers": "0.6.0",
+    "@hono/node-server": "^2.1.8",
     "@modelcontextprotocol/core": "^2.2.0",
     "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@modelcontextprotocol/server": "^2.2.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.223.2",
+    "@opentelemetry/sdk-trace": "2.12.1",
+    "age-encryption": "0.3.1",
     "better-sqlite3": "^13.0.3",
+    "drizzle-graphql": "0.8.5",
+    "drizzle-orm": "0.45.4",
+    "graphql": "16.15.0",
+    "graphql-yoga": "6.1.0",
+    "hono": "^4.13.18",
     "markdown-it": "^14.3.3",
     "onnxruntime-node": "1.21.0",
     "preact": "^11.0.1",
     "sqlite-vec": "^0.1.9",
     "tar": "^7.5.22",
     "web-push": "^3.6.7",
+    "ws": "^8.23.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -67,7 +94,11 @@
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.4.0",
     "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.2",
+    "drizzle-kit": "0.31.11",
+    "es-module-lexer": "^3.0.4",
     "esbuild": "^0.28.2",
+    "playwright-core": "^1.63.0",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"

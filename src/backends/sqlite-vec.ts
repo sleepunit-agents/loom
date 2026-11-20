@@ -1,3 +1,4 @@
+import { notifyWrites } from '../core/touched/writes.js';
 /**
  * SQLite + sqlite-vec memory backend.
  *
@@ -53,7 +54,8 @@ import { globToMatcher } from './glob.js';
 import { runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
-import { effectiveScope, isVisibleInProject } from './scope.js';
+import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
+import { projectNameSet } from './projects.js';
 import { FEEDBACK_CATEGORY } from '../categories.js';
 import {
   FEEDBACK_CONFIDENCE_DEFAULT,
@@ -144,6 +146,7 @@ export class SqliteVecBackend implements MemoryBackend {
     this.db.pragma('busy_timeout = 5000');
     sqliteVec.load(this.db);
     this.initSchema();
+    notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
   }
 
   // ── MemoryBackend interface ──
@@ -198,9 +201,9 @@ export class SqliteVecBackend implements MemoryBackend {
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
-        created, ttl, expires_at, salience, sourcing, provenance,
+        created, ttl, expires_at, salience, sourcing, provenance, authored_at,
         confidence, evidence_count, observed_at, scope, uniq
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -225,6 +228,7 @@ export class SqliteVecBackend implements MemoryBackend {
         1.0, // a freshly authored memory is hot; the lane decays it from here
         input.sourcing ?? null,
         input.provenance ?? null,
+        timestamp,
         confidence,
         evidenceCount,
         isFeedback ? timestamp : null,
@@ -258,13 +262,15 @@ export class SqliteVecBackend implements MemoryBackend {
     const categoryFilter =
       input.category && input.category !== 'all' ? input.category : null;
     const projectFilter = input.project ?? null;
+    // A project's names resolve both ways, read once before filtering (docs/specs/projects.md).
+    const projectNames = recallNameSet(projectFilter, (n) => projectNameSet(this.db, n));
 
     // With diversity on, over-fetch a candidate pool so MMR has something to
     // trade off. At diversity 0 this is exactly the pre-MMR search: pool == limit.
     const poolSize = diversity > 0 ? Math.max(limit * 3, 12) : limit;
     const candidates = this.searchVectors(queryVector, poolSize, poolSize * 4, (mem) => {
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (!isVisibleInProject(mem, projectFilter)) return false;
+      if (!isVisibleInProject(mem, projectNames)) return false;
       return true;
     });
 
@@ -427,10 +433,10 @@ export class SqliteVecBackend implements MemoryBackend {
         // knowledge wing added after the 2026-06-01 verify run stomped 13
         // pages with no recovery. Only on a real change, to keep history quiet.
         snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
-        sets.push('content = ?', 'uniq = ?');
+        sets.push('content = ?', 'uniq = ?', 'authored_at = ?');
         // The dedup key describes the current body — a stale one would make
         // remember() of the OLD body return this row (PR120 review).
-        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }));
+        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }), updatedAt);
       }
 
       if (input.metadata) {
@@ -619,7 +625,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const limit = input.limit ?? 10;
     const minRelevance = input.minRelevance ?? 0;
     const categoryFilter = input.category ?? null;
-    const projectFilter = input.project ?? null;
+    const projectNames = recallNameSet(input.project ?? null, (n) => projectNameSet(this.db, n));
 
     // Over-fetch so filters + self-exclusion don't starve the result set.
     const startK = Math.max((limit + 1) * 4, 16);
@@ -627,7 +633,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const hits = this.searchVectors(queryVector, limit, startK, (mem, vr) => {
       if (anchorId !== null && vr.rowid === anchorId) return false;
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (!isVisibleInProject(mem, projectFilter)) return false;
+      if (!isVisibleInProject(mem, projectNames)) return false;
       if (1 - vr.distance < minRelevance) return false;
       return true;
     });
@@ -887,7 +893,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const vector = await this.embedder.embed(`${mem.title}\n\n${rev.content}`);
 
     const updateStmt = this.db.prepare(
-      'UPDATE memories SET content = ?, uniq = ?, updated = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, uniq = ?, updated = ?, authored_at = CASE WHEN content != ? THEN ? ELSE authored_at END WHERE id = ?',
     );
     const updateVec = this.db.prepare(
       'UPDATE vec_memories SET embedding = ? WHERE rowid = ?',
@@ -896,6 +902,8 @@ export class SqliteVecBackend implements MemoryBackend {
       updateStmt.run(
         rev.content,
         this.claimableUniq(mem.id, { ...mem, content: rev.content }),
+        timestamp,
+        rev.content,
         timestamp,
         mem.id,
       );
@@ -1010,7 +1018,7 @@ export class SqliteVecBackend implements MemoryBackend {
     }
 
     const updateTarget = this.db.prepare(
-      'UPDATE memories SET content = ?, times_seen = ?, updated = ?, uniq = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, times_seen = ?, updated = ?, uniq = ?, authored_at = CASE WHEN content != ? THEN ? ELSE authored_at END WHERE id = ?',
     );
     const updateVec = this.db.prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?');
     const repointRevisions = this.db.prepare(
@@ -1052,7 +1060,7 @@ export class SqliteVecBackend implements MemoryBackend {
         newContent !== targetRow.content
           ? this.claimableUniq(targetRow.id, { ...targetRow, content: newContent })
           : targetRow.uniq;
-      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
+      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, newContent, timestamp, targetRow.id);
       if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
     });
     retryWrite(() => tx.immediate());
@@ -1088,8 +1096,8 @@ export class SqliteVecBackend implements MemoryBackend {
         .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
       if (!existing) return undefined;
       this.db
-        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ? WHERE id = ?')
-        .run(timestamp, existing.id);
+        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ?, authored_at = ? WHERE id = ?')
+        .run(timestamp, timestamp, existing.id);
       const slashIdx = existing.ref.indexOf('/');
       return {
         ref: existing.ref,

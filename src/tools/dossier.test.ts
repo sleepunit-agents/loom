@@ -25,7 +25,7 @@ describe('loadDossier', () => {
   it('says worker bodies must not write person cards (person-cards criterion 12)', async () => {
     const result = await loadDossier(tempDir);
     expect(result).toContain('Worker bodies must not write person cards');
-    for (const tool of ['person_write', 'person_verify', 'person_archive', 'person_restore', 'person_revision_restore']) {
+    for (const tool of ['person_write', 'person_verify', 'person_archive', 'person_restore', 'person_revision_restore', 'person_merge']) {
       expect(result).toContain(`\`${tool}\``);
     }
   });

@@ -13,6 +13,7 @@ import { readRecord } from './pieces-managed.js';
 import { householdHome } from '../household.js';
 import { PieceStore, readGrant, StoreError, type Grant } from '../stores.js';
 import type { IOStreams } from './io.js';
+import { parseVerb } from './args.js';
 
 const USAGE = `Usage: loom store <piece> get <collection> <key>
        loom store <piece> list <collection> [--prefix P] [--limit N]
@@ -40,16 +41,12 @@ export function writerFor(env: NodeJS.ProcessEnv, home: string, piece: string): 
 
 export async function runStore(argv: string[], io: IOStreams): Promise<number> {
   const env: NodeJS.ProcessEnv = io.env ?? process.env;
-  const flags = new Map<string, string>();
-  const pos: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--help' || a === '-h') { io.stdout(USAGE); return 0; }
-    if (a === '--prefix' || a === '--limit' || a === '--if-rev') { flags.set(a, argv[++i] ?? ''); continue; }
-    pos.push(a);
-  }
-  const [piece, op, collection, key, extra] = pos;
-  if (!piece || !op || !collection) { io.stderr(USAGE); return 2; }
+  // Every flag parsed, and --help answered, before anything is written (t-1950).
+  const p = parseVerb(argv, { prefix: { type: 'string' }, limit: { type: 'string' }, 'if-rev': { type: 'string' } }, USAGE, io);
+  if (typeof p === 'number') return p;
+  const flags = new Map(Object.entries(p.values).filter(([k, v]) => k !== 'help' && typeof v === 'string').map(([k, v]) => [`--${k}`, v as string]));
+  const [piece, op, collection, key, extra, ...more] = p.positionals;
+  if (!piece || !op || !collection || more.length) { io.stderr(USAGE); return 2; }
   const home = householdHome(env);
   const rec = readRecord(env, piece);
   if (!rec) { io.stderr(`loom store: no managed piece named ${piece}\n`); return 3; }

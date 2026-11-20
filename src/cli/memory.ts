@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { memoryList } from '../tools/memory-list.js';
 import { prune } from '../tools/prune.js';
 import { recomputeSalienceForContext, digestForContext } from '../backends/salience.js';
-import { tapeForContext } from '../backends/episodes.js';
+import { heldFromEnv, tapeForContext } from '../backends/episodes.js';
 import { findSimilar } from '../tools/find-similar.js';
 import { memoryAudit } from '../tools/memory-audit.js';
 import { archive } from '../tools/archive.js';
@@ -140,7 +140,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   // Subcommand-level --help, honoured BEFORE any side effect. Without this,
   // the subcommands that take no flags (recompute-salience, digest) fell
   // through to their body and ran: asking for help mutated the store.
-  if (subRest[0] === '--help' || subRest[0] === '-h') {
+  if (subRest.includes('--help') || subRest.includes('-h')) {
     io.stdout(USAGE);
     return 0;
   }
@@ -156,8 +156,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       io.stderr(`memory recompute-salience takes no arguments.\n${USAGE}`);
       return 2;
     }
-    const n = recomputeSalienceForContext(env.contextDir, Date.now());
-    io.stdout(`recomputed salience for ${n ?? 0} memories\n`);
+    const counts = { invalidTimestamps: 0, futureTimestamps: 0 };
+    const n = recomputeSalienceForContext(env.contextDir, Date.now(), counts);
+    io.stdout(`recomputed salience for ${n ?? 0} memories; invalid timestamps: ${counts.invalidTimestamps}; future timestamps: ${counts.futureTimestamps}\n`);
     return 0;
   }
   // digest — preview the assembled boot digest (the same view injected at identity-load).
@@ -181,7 +182,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     }
     const hours = parsed.values.hours ? Number(parsed.values.hours) : undefined;
     if (hours !== undefined && !(hours > 0)) { io.stderr(`--hours must be a positive number\n`); return 2; }
-    const t = tapeForContext(env.contextDir, { hours, tokenBudget: 6000 });
+    const t = tapeForContext(env.contextDir, { hours, tokenBudget: 6000, onlyConversation: heldFromEnv(io.env) });
     io.stdout((t ?? `(no episodes in the last ${hours ?? 24}h)`) + '\n');
     return 0;
   }

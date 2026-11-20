@@ -5,6 +5,7 @@
  * but remain recoverable via restore. The tombstone preserves the original
  * body plus a caller-provided note (who/why retired) and a timestamp.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { ArchiveInput } from '../backends/types.js';
 
@@ -13,6 +14,7 @@ import type { ArchiveInput } from '../backends/types.js';
 export async function archive(
   contextDir: string,
   input: ArchiveInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   const isSingle = input.ref || (input.category && input.title);
 
@@ -20,7 +22,7 @@ export async function archive(
     return 'Nothing to archive. Provide a ref or category+title.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const result = await backend.archive(input);
 
   if (result.archived.length === 0) {

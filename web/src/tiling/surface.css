@@ -1,0 +1,56 @@
+/* An app in a tile is one surface (t-1960; Jonathan, 2026-11-07: "the app is the window"), the way the Inbox and
+   Knowledge are: its page fills the tile's body edge to edge, its headers and toolbars sit on the tile's own surface, and
+   its sections are bands divided by a line, never a card or a page box inset in the tile with its own border, background
+   or radius. The tile's body is the scroller (its scrollbar on the tile's right edge), and every padding is inside it;
+   an app that scrolls its own panes (the Inbox, Knowledge, Comms, Find) fills the body, which then doesn't scroll.
+   Only in a tile: a phone's page keeps its cards. desk-app-surface.integration.test.ts holds it for every app. */
+
+/* ---- a section is a band: flat, the tile's own surface, a line under it ---- */
+:root[data-look] .loom-tile__page [data-band]{background:none;border:0;border-radius:0;box-shadow:none;overflow:visible;
+  border-bottom:1px solid var(--v-border)}
+/* a section that asks for attention (sectionRing: a ring in its tone) keeps its tone as a bar down its left edge */
+:root[data-look] .loom-tile__page [data-band][class*="ring-"]{box-shadow:inset 3px 0 0 var(--tw-ring-color,transparent)}
+/* what a band held as a box of its own (a panel's rows) is the band's rows: dividers only */
+:root[data-look] .loom-tile__page .loom-panel-rows{background:none;border-radius:0;padding-inline:0}
+:root[data-look] .loom-tile__page [data-band] .v-item[data-slot]{background:none;border-radius:0}
+:root[data-look] .loom-tile__page [data-band] .v-item[data-slot]:hover{background:color-mix(in srgb,var(--v-text) 5%,transparent)}
+:root[data-look] .loom-tile__page [data-band] .v-collapsible__body>[data-disclosure-inner]{background:none;border-radius:0;padding-inline:0}
+
+/* ---- a page of sections (PageView): the bands abut, the side column is beside them past a line ---- */
+:root[data-look] .loom-tile__page .loom-pv,:root[data-look] .loom-tile__page .loom-pv__main{gap:0}
+:root[data-look] .loom-tile__page .loom-pv>aside{gap:0;border-left:1px solid var(--v-border)}
+/* what isn't a band (filters, a note, a folded side, a chart's line) keeps the bands' inset */
+:root[data-look] .loom-tile__page .loom-pv__main>:not([data-band]){margin:16px var(--card-pad,24px) 0}
+:root[data-look] .loom-tile__page .loom-pv__main>:not([data-band]):last-child{margin-bottom:16px}
+/* a narrow tile folds the side sections over the page: a band too, its summary inset like a band's title */
+:root[data-look] .loom-tile__page .loom-pv__main>:is(.loom-side-fold,.loom-chartline){margin:0;border-radius:0;box-shadow:none;background:none;border-bottom:1px solid var(--v-border)}
+:root[data-look] .loom-tile__page :is(.loom-side-fold>summary,.loom-pv__main>.loom-chartline){padding-inline:var(--card-pad,24px)}
+:root[data-look] .loom-tile__page .loom-side-fold>.loom-side-col{padding:0}
+
+/* ---- a dashboard (Activity, an agent's Today): its bits on the surface, its asks as banded rows ---- */
+:root[data-look] .loom-tile__page .loom-dash{gap:16px;padding:16px 0 24px}
+:root[data-look] .loom-tile__page .loom-dash>:not(.loom-asks,:has(>.v-activity-feed)){margin-inline:var(--card-pad,24px)}
+:root[data-look] .loom-tile__page .loom-asks{gap:0}
+:root[data-look] .loom-tile__page .loom-dash>.loom-asks:first-child{margin-top:-16px}
+:root[data-look] .loom-tile__page .loom-asks [data-band] [data-slot="card-content"]{padding-block:0}
+:root[data-look] .loom-tile__page .v-activity-feed[data-slot]{background:none;border:0;border-radius:0;border-top:1px solid var(--v-border);
+  padding:var(--s-6,20px) var(--card-pad,24px) 0}
+
+/* ---- a state said on the page (Nothing here yet, didn't load): words on the surface ---- */
+:root[data-look] .loom-tile__page .loom-state{background:none;box-shadow:none;border-radius:0}
+
+/* ---- apps that scroll their own panes fill the body, and the body holds still ---- */
+:root[data-look] .loom-tile__body:has(>.loom-tile__page>:is(.loom-split,.comms[data-wide],.loom-find-page)){overflow:hidden;scrollbar-gutter:auto}
+:root[data-look] .loom-tile__page>.comms[data-wide]{height:100cqh;min-height:300px;border:0;border-radius:0;background:none}
+:root[data-look] .loom-tile__page>.loom-find-page{height:100cqh;border-radius:0;box-shadow:none;background:none}
+
+/* ---- anything else on a page (Projects' cards, Profile, a skeleton, a note that loom is out of reach): inset on the surface ---- */
+:root[data-look] .loom-tile__page>:not(.loom-pv,.loom-dash,.loom-split,.comms,.loom-find-page,.loom-agentwin){padding:16px var(--card-pad,24px) 24px}
+
+/* ---- an agent's window: its sections down the side the tile's height, past a line; its header a band ---- */
+:root[data-look] .loom-tile__page>.loom-agentwin[data-rail]{gap:0;min-height:100cqh}
+:root[data-look] .loom-tile__page .loom-agentwin__nav{min-height:100cqh;align-content:start;padding:12px 10px}
+:root[data-look] .loom-tile__page .loom-agentwin__main{gap:0}
+:root[data-look] .loom-tile__page .loom-aghead{padding:16px var(--card-pad,24px)}
+/* Comms' composer is a toolbar on the surface, past its line (its padding stays: the gap above the line is inside) */
+:root[data-look] .loom-tile__page>.comms[data-wide] .comms-composer{background:none}

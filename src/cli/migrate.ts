@@ -27,6 +27,55 @@ Options:
 `;
 
 export async function run(argv: string[], io: IOStreams): Promise<number> {
+  if(argv[0]==='bridges'){const {migrateBridges}=await import('./migrate-bridges.js');return migrateBridges(argv.slice(1),io);}
+  if (argv[0] === 'runtime') {
+    const { migrateRuntime } = await import('./migrate-runtime.js');
+    return migrateRuntime(argv.slice(1), io);
+  }
+  if (argv[0] === 'verify') {
+    const { migrateVerify } = await import('./migration-verify.js');
+    return migrateVerify(argv.slice(1), io);
+  }
+  if (argv[0] === 'all' || argv[0] === 'plan') {
+    const { migrateAll } = await import('./migration-all.js');
+    return migrateAll(argv.slice(1), io, argv[0] === 'plan');
+  }
+  if (argv[0] === 'snapshot') {
+    const { migrateSnapshot } = await import('./migration-snapshot.js');
+    return migrateSnapshot(argv.slice(1), io);
+  }
+  if (argv[0] === 'secrets') {
+    const { migrateSecrets } = await import('./migrate-secrets.js');
+    return migrateSecrets(argv.slice(1), io);
+  }
+  if (argv[0] === 'changes') {
+    const { migrateChanges } = await import('./migrate-changes.js');
+    return migrateChanges(argv.slice(1), io);
+  }
+  if (argv[0] === 'attention') {
+    const { migrateAttention } = await import('./migrate-attention.js');
+    return migrateAttention(argv.slice(1), io);
+  }
+  if (argv[0] === 'approvals') {
+    const { migrateApprovals } = await import('./migrate-approvals.js');
+    return migrateApprovals(argv.slice(1), io);
+  }
+  if (argv[0] === 'household') {
+    const { migrateHousehold } = await import('./migrate-household.js');
+    return migrateHousehold(argv.slice(1), io);
+  }
+  if (argv[0] === 'comms') {
+    const { migrateComms } = await import('./migrate-comms.js');
+    return migrateComms(argv.slice(1), io);
+  }
+  if (argv[0] === 'tasks') {
+    const { migrateTasks } = await import('./migrate-tasks.js');
+    return migrateTasks(argv.slice(1), io);
+  }
+  if (argv[0] === 'clock') {
+    const { migrateClock } = await import('./migrate-clock.js');
+    return migrateClock(argv.slice(1), io);
+  }
   const { flags: global, rest } = extractGlobalFlags(argv);
   let parsed;
   try {

@@ -4,6 +4,7 @@
  * via node:util parseArgs.
  */
 import { resolve } from 'node:path';
+import { parseArgs } from 'node:util';
 import { resolveDefaultContextPath } from '../config.js';
 import { contextFromHome } from '../household.js';
 
@@ -97,4 +98,50 @@ export function extractGlobalFlags(argv: string[]): {
     rest.push(a);
   }
   return { flags, rest };
+}
+
+export type VerbOptions = Record<string, { type: 'string' | 'boolean'; multiple?: boolean; short?: string }>;
+
+export interface ParsedVerb {
+  values: Record<string, string | boolean | string[] | boolean[] | undefined>;
+  positionals: string[];
+}
+
+/**
+ * A verb's own flags, parsed before it does anything (t-1950). `-h`/`--help`
+ * anywhere prints `usage` to stdout and returns 0; an unknown flag, or a
+ * flag missing its value, prints the reason and `usage` to stderr and
+ * returns 2. Either way the caller returns that number before touching
+ * anything, so `loom token link --help` can't mint a sign-in link and
+ * `loom token link --minuets 5` can't mint one for ten minutes.
+ *
+ * The global flags (--context-dir, --client, --model, --url, --json) are
+ * taken out first, as every verb's own parser does, so they're accepted
+ * here too; pass `keepJson` when the verb reads --json itself.
+ */
+export function parseVerb(
+  argv: string[],
+  options: VerbOptions,
+  usage: string,
+  io: { stdout: (s: string) => void; stderr: (s: string) => void },
+  opts: { keepJson?: boolean } = {},
+): ParsedVerb | number {
+  const { flags, rest } = extractGlobalFlags(argv);
+  if (opts.keepJson && flags.json) rest.push('--json');
+  let parsed: ParsedVerb;
+  try {
+    parsed = parseArgs({
+      args: rest,
+      options: { ...options, help: { type: 'boolean', short: 'h' }, ...(opts.keepJson ? { json: { type: 'boolean' } } : {}) },
+      allowPositionals: true,
+      strict: true,
+    }) as ParsedVerb;
+  } catch (err) {
+    // A --help anywhere still means help, even beside a flag we don't know.
+    if (rest.includes('--help') || rest.includes('-h')) { io.stdout(usage); return 0; }
+    io.stderr(`${(err as Error).message}\n${usage}`);
+    return 2;
+  }
+  if (parsed.values.help) { io.stdout(usage); return 0; }
+  return parsed;
 }

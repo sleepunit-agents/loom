@@ -3,6 +3,7 @@
  */
 import { parseArgs } from 'node:util';
 import { loadIdentity } from '../tools/identity.js';
+import { heldFromEnv } from '../backends/episodes.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import type { IOStreams } from './io.js';
@@ -52,6 +53,11 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     parsed.values.project,
     env.client,
     env.model,
+    undefined,
+    undefined,
+    undefined,
+    heldFromEnv(io.env),
+    'all', // Shell fallback retains the complete historical identity.
   );
   io.stdout(md.endsWith('\n') ? md : md + '\n');
   return 0;

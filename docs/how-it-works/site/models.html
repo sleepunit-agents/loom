@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Models and accounts · loom</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<header class="top"><div class="top__in">
+  <a class="brand" href="index.html"><b>LO<i>O</i>M</b><span>how it works</span></a>
+  <nav class="path" aria-label="Guided path">
+    <ol class="path__dots"><li><a href="index.html" title="Start here"><span class="sr">Start here</span></a></li><li><a href="conversations.html" title="1. Conversations"><span class="sr">1. Conversations</span></a></li><li><a href="desk.html" title="2. The desk"><span class="sr">2. The desk</span></a></li><li><a href="tasks.html" title="3. Tasks"><span class="sr">3. Tasks</span></a></li><li><a href="approvals.html" title="4. Approvals"><span class="sr">4. Approvals</span></a></li><li><a href="tempo.html" title="5. Tempo"><span class="sr">5. Tempo</span></a></li><li><a href="changes.html" title="6. Changes"><span class="sr">6. Changes</span></a></li><li><a href="inbox.html" title="7. Inbox"><span class="sr">7. Inbox</span></a></li><li><a href="memory.html" title="8. Memory"><span class="sr">8. Memory</span></a></li><li><a href="machines.html" title="9. Machines and jobs"><span class="sr">9. Machines and jobs</span></a></li><li><a href="models.html" title="10. Models and accounts" aria-current="page"><span class="sr">10. Models and accounts</span></a></li><li><a href="bridges.html" title="11. Discord and Slack"><span class="sr">11. Discord and Slack</span></a></li><li><a href="secrets.html" title="12. Secrets"><span class="sr">12. Secrets</span></a></li><li><a href="people.html" title="13. People and projects"><span class="sr">13. People and projects</span></a></li><li><a href="signing-in.html" title="14. Signing in"><span class="sr">14. Signing in</span></a></li><li><a href="outside.html" title="15. Outside programs"><span class="sr">15. Outside programs</span></a></li><li><a href="data.html" title="16. How a tile gets its data"><span class="sr">16. How a tile gets its data</span></a></li><li><a href="measuring.html" title="17. Measuring"><span class="sr">17. Measuring</span></a></li><li><a href="decided.html" title="18. What we decided"><span class="sr">18. What we decided</span></a></li></ol>
+    <span class="path__where"><b>10</b> of 18 · Models and accounts</span>
+    <span class="path__go"><a href="machines.html" rel="prev">‹ <span class="pl">Machines and jobs</span></a><a class="next" href="bridges.html" rel="next"><span class="pl">Discord and Slack</span> ›</a></span>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+</div></header>
+<main class="wrap">
+
+
+<section class="hero hero--app">
+  <div class="hero__text t-cyan">
+    <p class="eyebrow">Page 10 of 18 · part of the runtime</p>
+    <h1>Models and accounts</h1>
+    <p class="lead"><b>Which model a body runs on, and the accounts it draws from.</b> The runtime handles model accounts, runners and which model a body uses.</p>
+    <ul class="does"><li>Gives each agent a primary conversational model.</li><li>Shares each account's capacity across the agents that draw on it.</li><li>Starts each body through a runner on a worker machine.</li><li>Records the model each job asked for and each turn used.</li></ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="shadowed" aria-hidden="true"><div class="panels">
+      <div class="panel t-cyan"><span class="lbl">What its owner and household owners see</span><h4>Main subscription</h4><span class="meta">owner jonathan · one provider</span>
+        <div class="sec"><span class="lbl">Usage</span><ul class="bars"><li style="grid-template-columns:minmax(0,1fr) 44px"><i style="--w:58%"></i><span>58%</span></li></ul><span class="meta">read 9:10 AM · resets Thu</span></div>
+        <div class="sec"><span class="lbl">Signed in on</span><span>attic · workshop</span></div>
+        <div class="sec"><span class="lbl">Has room</span><span>yes</span></div></div>
+      <div class="panel t-amber"><span class="lbl">What anyone else sees</span><h4>Main subscription</h4>
+        <div class="sec"><span class="lbl">Level</span><span><span class="chip">getting full</span></span><span class="meta">one of: plenty, getting full, almost full</span></div></div>
+      <div class="panel t-violet"><span class="lbl">Art's models, in order</span><h4>Allowed and preferred</h4>
+        <div class="sec"><span class="lbl">1</span><span>its preferred model</span></div><div class="sec"><span class="lbl">2</span><span>the next it may use</span></div></div>
+    </div></div>
+    <figcaption class="cap">One account seen two ways, with example content: its owner and household owners see everything, anyone else sees the label and a coarse level. On the right, an agent's models in order.</figcaption>
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="con-h">
+  <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">How a model choice connects to other parts</h2><p>One job, with a thread from each part of it that reaches another page. The number on each part is its page on the path.</p></div>
+  <div class="anat"><div class="anat__row"><div class="anat__side anat__l"></div><div class="anat__f"><code>one job</code><b>Reply in Pond pump</b></div><div class="anat__side anat__r"></div></div><div class="anat__row t-amber"><div class="anat__side anat__l t-amber"><span class="key t-amber" aria-hidden="true">13</span><div class="node__body"><b><a href="people.html">People and projects</a></b><span>Each agent has a list of the models it may use, in order of preference. A member owns each account.</span></div><i class="wire"></i></div><div class="anat__f"><code>agent_models</code><span>art's models, in order</span></div><div class="anat__side anat__r t-amber"></div></div><div class="anat__row "><div class="anat__side anat__l "></div><div class="anat__f"><code>model</code><span>the model this job was asked to use</span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-cyan"><div class="anat__side anat__l t-cyan"></div><div class="anat__f"><code>model_accounts</code><span>the subscription it draws from</span></div><div class="anat__side anat__r t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">9</span><div class="node__body"><b><a href="machines.html">Machines and jobs</a></b><span>An account is signed in on particular worker machines.</span></div></div></div><div class="anat__row t-violet"><div class="anat__side anat__l t-violet"><span class="key t-violet" aria-hidden="true">14</span><div class="node__body"><b><a href="signing-in.html">Signing in</a></b><span>A runner's token names its machine. It sees and reports only the jobs assigned to it.</span></div><i class="wire"></i></div><div class="anat__f"><code>runner</code><span>the program that starts the body</span></div><div class="anat__side anat__r t-violet"></div></div><div class="anat__row t-pink"><div class="anat__side anat__l t-pink"></div><div class="anat__f"><code>turns.model</code><span>the model behind each turn</span></div><div class="anat__side anat__r t-pink"><i class="wire"></i><span class="key t-pink" aria-hidden="true">1</span><div class="node__body"><b><a href="conversations.html">Conversations</a></b><span>Each of an agent's turns records the model that produced it.</span></div></div></div></div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">Models, quota, runners and account sign-in</h2><p></p></div>
+  <div class="how"><div class="how__p t-cyan"><h3>Per agent, per account</h3><div class="how__pic" aria-hidden="true"><ul class="opts"><li><b>model</b><span>chosen per agent</span></li><li><b>capacity</b><span>shared per account and window</span></li></ul></div><p>The primary conversational model is per agent. Capacity is shared per actual subscription, account and window, so two agents on one account draw down the same allowance.</p></div><div class="how__p t-amber"><h3>Quota</h3><div class="how__pic" aria-hidden="true"><div class="card t-amber" style="flex:none"><span class="lbl">Fuel</span><b>58% of the week</b><span class="muted">resets Thu</span></div></div><p>An account's use is counted in windows that reset, such as five hours and seven days. A reserve of about five percent is the starting point. It can be lent near a reset when the forecast is safe, and is not a rigid floor.</p></div><div class="how__p t-violet"><h3>Runners</h3><div class="how__pic" aria-hidden="true"><ul class="opts"><li><b>claude</b><span></span></li><li><b>codex</b><span></span></li></ul></div><p>A runner is the program on a machine that starts bodies. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration.</p></div><div class="how__p t-pink"><h3>Signing in to an account</h3><div class="how__pic" aria-hidden="true"><div class="card t-pink" style="flex:none"><span class="lbl">Kept apart</span><b>A separate private program</b><span class="muted">The runtime calls it as a configured command.</span></div></div><p>Signing in to a model account is handled by a separate private program. The runtime handles which account, which runner and which model a body uses.</p></div></div>
+</section>
+
+<div class="ref">
+  <section class="ref__col" aria-labelledby="see-h">
+    <h2 id="see-h">Who can see this</h2>
+    <div class="labels"><span class="t-cyan">owner</span></div><ul class="see"><li><span class="key key--sm t-ink" aria-hidden="true">a</span><span><b>The owner and household owners.</b> They see everything about an account: usage, when it resets, and where it is signed in.</span></li><li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Anyone else.</b> They see only the account's label and a coarse level: plenty, getting full, or almost full.</span></li><li><span class="key key--sm t-ink" aria-hidden="true">c</span><span><b>Checked at the door.</b> Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.</span></li></ul>
+  </section>
+  <section class="ref__col" aria-labelledby="data-h">
+    <h2 id="data-h">Data model</h2>
+    <p class="muted">Three tables. Open one to see its columns, what each means and what it points to.</p><div class="tgroup"><div class="tgrid"><details class="tbl t-cyan" id="t-model_accounts"><summary><code>model_accounts</code><em>8 columns</em><span>One row per subscription with a model provider.</span></summary><div class="cols"><div class="col"><div><code>id</code><small>id</small></div><p>Its identifier.</p><span></span></div><div class="col"><div><code>owner</code><small>id</small></div><p>The member who owns it.</p><span class="to">points to <a href="people.html#t-members">members</a></span></div><div class="col"><div><code>provider</code><small>text</small></div><p>The model provider.</p><span></span></div><div class="col"><div><code>label</code><small>text</small></div><p>The name people see.</p><span></span></div><div class="col"><div><code>usage</code><small>number</small></div><p>How much of it has been used, from 0 to 1.</p><span></span></div><div class="col"><div><code>usage_read_at</code><small>time</small></div><p>When usage was last read.</p><span></span></div><div class="col"><div><code>resets_at</code><small>time</small></div><p>When usage resets.</p><span></span></div><div class="col"><div><code>has_room</code><small>yes/no</small></div><p>Whether there is room to start more work on it.</p><span></span></div></div></details><details class="tbl t-cyan" id="t-model_account_boxes"><summary><code>model_account_boxes</code><em>2 columns</em><span>Which worker machines an account is signed in on.</span></summary><div class="cols"><div class="col"><div><code>account</code><small>id</small></div><p>The account.</p><span class="to">points to <a href="#t-model_accounts">model_accounts</a></span></div><div class="col"><div><code>box</code><small>id</small></div><p>A worker machine it is signed in on.</p><span class="to">points to <a href="machines.html#t-boxes">boxes</a></span></div></div></details><details class="tbl t-cyan" id="t-agent_models"><summary><code>agent_models</code><em>3 columns</em><span>An agent&#x27;s allowed and preferred models, in order.</span></summary><div class="cols"><div class="col"><div><code>agent</code><small>id</small></div><p>The agent.</p><span class="to">points to <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>model</code><small>text</small></div><p>A model it may use.</p><span></span></div><div class="col"><div><code>position</code><small>number</small></div><p>Its place in the order; the first is preferred.</p><span></span></div></div></details></div></div>
+    
+  </section>
+</div>
+<footer class="foot"><p>Next on the path: <b>Discord and Slack</b>. How agents talk to people in other apps.</p><a class="btn" href="bridges.html">Discord and Slack <span aria-hidden="true">›</span></a></footer>
+
+</main>
+</body>
+</html>

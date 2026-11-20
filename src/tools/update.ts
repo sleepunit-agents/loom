@@ -4,6 +4,7 @@
  * Delegates to the configured memory backend. Supports full content
  * replacement or metadata-only updates.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { UpdateInput } from '../backends/types.js';
 
@@ -12,8 +13,9 @@ import type { UpdateInput } from '../backends/types.js';
 export async function update(
   contextDir: string,
   input: UpdateInput,
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const result = await backend.update(input);
 
   if (!result.updated) {

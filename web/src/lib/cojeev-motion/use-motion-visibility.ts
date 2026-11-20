@@ -1,9 +1,10 @@
 "use client";
 import * as React from "react";
 import { getServerSettingsSnapshot, getSettingsSnapshot, subscribeSettings } from "@/lib/cojeev-motion/settings";
+import { motionQuery, reducedMotion } from "@/access";
 
 function subscribePreferences(listener: () => void) {
-  const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const media = motionQuery();
   media.addEventListener("change", listener);
   document.addEventListener("visibilitychange", listener);
   return () => {
@@ -12,7 +13,7 @@ function subscribePreferences(listener: () => void) {
   };
 }
 function readPreferences() {
-  return document.visibilityState === "visible" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return document.visibilityState === "visible" && !reducedMotion();
 }
 /** A shared stillness boundary for optional landing-page effects. */
 export function useMotionVisibility(ref: React.RefObject<Element | null>, mountedElement?: Element | null) {

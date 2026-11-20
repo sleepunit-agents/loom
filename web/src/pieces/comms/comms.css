@@ -1,0 +1,51 @@
+/* Comms owns a bounded message scroller, including on the standalone preview.
+   A tile supplies its own available height instead of the screen height. */
+.loom-comms { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
+.loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
+.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; container: comms-reader / inline-size; }
+.next-page:has(> .loom-comms) { container-type: size; overflow: hidden; scrollbar-gutter: auto; }
+.next-page > .loom-comms { height: 100cqh; }
+/* The next shell already keeps its dock outside the tile. */
+.next-page > .loom-comms[data-mode="one"]:not([data-comms-keyboard]) > .loom-split__reader { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }
+
+/* Visual keyboards can resize only the visual viewport (100dvh stays tall).
+   The local cap also limits a tile without replacing the kit's 100cqh height. */
+.loom-comms { max-height: var(--comms-visible-height, none); }
+.loom-comms[data-comms-keyboard] > .loom-split__reader { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.loom-comms[data-comms-keyboard] article > header { max-height: 30%; flex-shrink: 1; overflow-y: auto; }
+
+/* The Work column follows the reader width, after Split takes its list/folders. */
+.comms-work { flex-shrink: 0; min-width: 0; }
+.comms-work-body { display: none; max-height: 30dvh; overflow-y: auto; overflow-wrap: anywhere; }
+.comms-work[data-open] .comms-work-body { display: block; }
+.comms-work-desktop { display: none; }
+/* A narrow tile still needs room to read while keeping the composer in view. */
+@container comms-reader (max-width: 639px) {
+ .next-page .loom-comms .comms-thread > header { max-height: 30cqh; overflow-y: auto; }
+ .next-page .loom-comms .comms-thread > form textarea { min-height: 72px; height: 72px; }
+}
+@container comms-reader (min-width: 640px) {
+.loom-comms .comms-thread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 30%); grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.loom-comms .comms-thread > header { grid-column: 1; grid-row: 1; }
+.loom-comms .comms-thread > [aria-label="Thread messages"] { grid-column: 1; grid-row: 2; }
+.loom-comms .comms-new-messages { grid-column: 1; grid-row: 3; }
+.loom-comms .comms-thread > :last-child { grid-column: 1; grid-row: 4; }
+.loom-comms .comms-work { grid-column: 2; grid-row: 1 / 5; min-height: 0; overflow-y: auto; border-left: 1px solid var(--v-border); }
+.loom-comms .comms-work-strip { display: none; }
+.loom-comms .comms-work-body { display: block; max-height: none; overflow-y: visible; }
+.loom-comms .comms-work-desktop { display: grid; gap: 8px; }
+}
+
+.comms-work [data-tone="bad"] { color: var(--status-danger-ink, var(--v-pink)); background: var(--status-danger-bg, transparent); }
+.comms-work [data-tone="warn"] { color: var(--status-warn-ink, var(--v-yellow)); background: var(--status-warn-bg, transparent); }
+.comms-work [data-tone="ok"] { color: var(--status-ok-ink, var(--v-olive)); background: var(--status-ok-bg, transparent); }
+
+/* Lists use a letter; the reader's portrait remains a separate surface. */
+.comms-agent-letter { display: inline-grid; place-items: center; width: 32px; height: 32px; flex: none; border: 1px solid var(--v-border); border-radius: 8px; background: var(--v-beige); color: var(--v-text); font-family: var(--loom-font-data, monospace); font-weight: 600; }
+
+/* Inline reference controls and their transcript-owned card use the current look. */
+.comms-chip { display: inline; padding: 1px 4px; border: 1px solid var(--v-border); border-radius: 4px; background: var(--v-beige); color: var(--v-text); font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.comms-chip:focus-visible { outline: 2px solid var(--v-text); outline-offset: 2px; }
+.comms-refcard { position: fixed; z-index: 1000; display: grid; gap: 8px; width: min(300px, calc(100vw - 32px)); max-height: calc(100dvh - 16px); overflow: auto; overflow-wrap: anywhere; padding: 16px; border: 1px solid var(--v-border); border-radius: 8px; color: var(--v-text); background: var(--v-beige); box-shadow: 0 8px 24px #0004; }
+.comms-refcard a { text-decoration: underline; }

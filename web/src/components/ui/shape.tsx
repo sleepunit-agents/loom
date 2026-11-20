@@ -1,5 +1,5 @@
 import * as React from "react"
-import { animate, motion, useMotionValue } from "motion/react"
+import { animate, m, useMotionValue } from "motion/react"
 import { cn } from "@/lib/utils"
 import { shapeData } from "@/lib/cojeev/shape-data"
 import { signatureShapePaths, type SignatureShapeName } from "@/lib/cojeev/signature-shapes"
@@ -36,6 +36,6 @@ export function ShapeMorph({name="daisy-12",variant="fill",label,className,ref,.
   return ()=>animation.stop()
  },[target,quiet,enabled,inView,path,transition])
  return <svg {...props} ref={hostRef} data-slot="shape-morph" data-shape={name} data-variant={variant} className={cn("v-shape-morph",className)} viewBox="0 0 100 100" role={label?"img":undefined} aria-label={label} aria-hidden={label?undefined:true} focusable="false">
-  <motion.path d={path} fill={variant==="fill"?"currentColor":"none"} stroke={variant==="outline"?"currentColor":"none"} strokeWidth={variant==="outline"?2:0} vectorEffect="non-scaling-stroke" />
+  <m.path d={path} fill={variant==="fill"?"currentColor":"none"} stroke={variant==="outline"?"currentColor":"none"} strokeWidth={variant==="outline"?2:0} vectorEffect="non-scaling-stroke" />
  </svg>
 }

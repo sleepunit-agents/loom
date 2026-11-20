@@ -18,6 +18,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'node:fs';
+import type { Household } from './household.js';
 import { commonsKnowledgePath, contextFromHome, householdOf } from './household.js';
 
 /**
@@ -80,16 +81,27 @@ export function resolveRepoRoot(): string {
   return resolve(dirname(thisFile), '..');
 }
 
-export function resolveSqliteDbPath(contextDir: string): string {
-  return process.env.LOOM_SQLITE_DB_PATH ?? resolve(contextDir, 'memories.db');
+/** Trusted private-store selection; null is standalone, undefined preserves legacy overrides. */
+export type MemorySelection = { agent?: string } | null;
+
+// Explicit composition always uses the selected context's private store.
+// Undefined keeps the legacy process-wide override for existing callers.
+export function resolveSqliteDbPath(contextDir: string, selection?: MemorySelection): string {
+  return (selection === undefined ? process.env.LOOM_SQLITE_DB_PATH : undefined) ?? resolve(contextDir, 'memories.db');
 }
+
+/** Null explicitly selects a standalone store; undefined preserves legacy discovery. */
+export type KnowledgeSelection = { household: Household; agent?: string } | null;
 
 /**
  * Knowledge is facts about the world. In a household it's the commons, shared
  * by every agent (docs/specs/household.md); otherwise it lives in the
- * agent's own context dir, as it always has.
+ * agent's own context dir, as it always has. Explicit selection bypasses
+ * environment overrides and JSON discovery; omitted selection preserves both.
  */
-export function resolveKnowledgeDbPath(contextDir: string): string {
+export function resolveKnowledgeDbPath(contextDir: string, selection?: KnowledgeSelection): string {
+  if (selection !== undefined) return selection === null
+    ? resolve(contextDir, 'knowledge.db') : commonsKnowledgePath(selection.household);
   if (process.env.LOOM_KNOWLEDGE_DB_PATH) return process.env.LOOM_KNOWLEDGE_DB_PATH;
   const hh = householdOf(contextDir);
   if (hh) return commonsKnowledgePath(hh.household);
@@ -103,14 +115,19 @@ export function resolveKnowledgeDbPath(contextDir: string): string {
  * spoofable (any caller could claim to be any identity), so it is derived
  * server-side from the connection instead.
  *
- * LOOM_IDENTITY overrides explicitly (useful for the multi-identity
+ * Explicit composition supplies the agent from trusted household metadata (or
+ * null for standalone); it never reads LOOM_IDENTITY. A selection without agent
+ * metadata uses the canonical context directory name.
+ *
+ * With omitted selection, LOOM_IDENTITY overrides explicitly (useful for the multi-identity
  * knowledge service, where each bearer token maps to a known identity).
  * Otherwise derived from the context dir's real path basename — this
  * resolves symlink aliases (e.g. `~/.config/loom/default` -> the real
  * `.../loom/art` dir) to the actual identity name rather than the alias.
  */
-export function resolveIdentityName(contextDir: string): string {
-  if (process.env.LOOM_IDENTITY) return process.env.LOOM_IDENTITY;
+export function resolveIdentityName(contextDir: string, selection?: { agent?: string } | null): string {
+  if (selection?.agent !== undefined) return selection.agent;
+  if (selection === undefined && process.env.LOOM_IDENTITY) return process.env.LOOM_IDENTITY;
   try {
     return basename(realpathSync(contextDir));
   } catch {
@@ -130,9 +147,17 @@ export function resolveTelemetryDir(contextDir: string): string {
  * Assert that the knowledge database path does not co-locate with the memory
  * database path. If they resolve to the same file (or inode), throw.
  */
-export function assertKnowledgePathsNotCoLocated(contextDir: string): void {
-  const memPath = resolveSqliteDbPath(contextDir);
-  const knPath = resolveKnowledgeDbPath(contextDir);
+export function assertKnowledgePathsNotCoLocated(contextDir: string, selection?: KnowledgeSelection): void {
+  const knPath = resolveKnowledgeDbPath(contextDir, selection);
+  const memoryPaths = new Set([resolveSqliteDbPath(contextDir)]);
+  // Explicit continuity must protect its local memory store even while legacy
+  // memory tools still honor an environment override. Keep checking that
+  // active legacy store too until memory composition is fully explicit.
+  if (selection !== undefined) memoryPaths.add(resolve(contextDir, 'memories.db'));
+  for (const memPath of memoryPaths) assertKnowledgeMemoryPathsSeparate(memPath, knPath);
+}
+
+function assertKnowledgeMemoryPathsSeparate(memPath: string, knPath: string): void {
 
   if (memPath === knPath) {
     throw new Error(

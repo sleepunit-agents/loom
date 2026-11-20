@@ -14,7 +14,7 @@ import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { parseActResult, parseManifest, parsePage, splitPage, validPath } from './vocab.js';
 import { listening } from './live.js';
-import { clearPieceCache } from './pieces.js';
+import { MANIFEST_RUN_MS, clearPieceCache } from './pieces.js';
 import { esc, pageHref, pieceSource } from './render.js';
 
 const TOKEN = 'ui-test-token';
@@ -100,7 +100,8 @@ describe('the vocabulary pieces send', () => {
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '/act/loom' }] }] }, /page link/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'html', html: '<b>' }] }] }, /unknown block type/],
     [{ title: 'T', sections: [{ id: 'Bad Id', blocks: [] }] }, /section.id/],
-    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'text', text: 'x'.repeat(2001) }] }] }, /longer than/],
+    // A label over the limit still refuses the page; a block's own words are cut short instead (blocks.test.ts, t-1861).
+    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'kv', items: [{ label: 'x'.repeat(2001), value: 'v' }] }] }] }, /longer than/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 't', tone: 'red' }] }] }] }, /tone/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'table', columns: ['a'], rows: [['1', '2']] }] }] }, /table row/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'details', summary: 'a', blocks: [{ type: 'details', summary: 'b', blocks: [] }] }] }] }, /details/],
@@ -324,7 +325,8 @@ describe('loom UI over HTTP', () => {
   it('Mind explains heat, and an aged memory sits below a fresh one with no recompute', async () => {
     await remember(stack, { category: 'project', title: 'an old memory', content: 'stale' });
     const db = new BetterSqlite3(resolveSqliteDbPath(stack));
-    db.prepare('UPDATE memories SET created = ?, salience = 1 WHERE title = ?').run(new Date(Date.now() - 90 * 86_400_000).toISOString(), 'an old memory');
+    const aged = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    db.prepare('UPDATE memories SET created = ?, authored_at = ?, salience = 1 WHERE title = ?').run(aged, aged, 'an old memory');
     db.close();
     const cookie = await login();
     // The board's Mind: top of mind, ranked, with every memory a link away.
@@ -412,7 +414,7 @@ describe('loom UI over HTTP', () => {
     expect(section(pat, 'summary')).toBeUndefined();
     expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
     expect(section(pat, 'where')).toBeUndefined();
-    expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);
+    expect((pat.page.sections as Array<{ side?: boolean; place?: string }>).filter((x) => x.side || x.place === 'side')).toEqual([]);
     // A piece may link to someone with no card: a page that says so, not an error.
     const nobody = await getJson('/people/no-such-person', cookie);
     expect(nobody.status).toBe(200);
@@ -490,8 +492,8 @@ describe('loom UI over HTTP', () => {
   });
 
   it('a piece that says it\'s a setting goes under Setup, not Places; the catalog says for box, secrets, subscriptions', async () => {
-    const m = (label: string, kind?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
-    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting')}'`);
+    const m = (label: string, kind?: string, icon?: string, accent?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}), ...(icon ? { icon } : {}), ...(accent ? { accent } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
+    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting', 'stamp', 'olive')}'`);
     await piece(bin, 'secrets', `[ "$1 $2" = "ui --json" ] && echo '${m('Secrets')}'`);   // no kind: the catalog's
     await piece(bin, 'daily', `[ "$1 $2" = "ui --json" ] && echo '${m('Daily')}'`);
     const cookie = await login();
@@ -502,11 +504,23 @@ describe('loom UI over HTTP', () => {
     expect(v).toMatchObject({ view: 'sheet', which: 'setup' });
     const kinds = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; kind: string }>).map((p) => [p.label, p.kind]));
     expect(kinds).toEqual({ Daily: 'place', Gizmo: 'setting', Secrets: 'setting' });
+    // A piece's own icon (tab.icon) rides along for its tile; one that names none has none.
+    const icons = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; icon?: string }>).map((p) => [p.label, p.icon]));
+    expect(icons).toEqual({ Daily: undefined, Gizmo: 'stamp', Secrets: undefined });
+    // So does its own colour (tab.accent), for its tile, its dock tile and its header (web/src/tint.ts).
+    const accents = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; accent?: string }>).map((p) => [p.label, p.accent]));
+    expect(accents).toEqual({ Daily: undefined, Gizmo: 'olive', Secrets: undefined });
     // A lone agent's owner is an admin: Setup keeps its own links (Pieces, Passkeys) beside the settings.
     expect(v.chrome.shell.admin).not.toBe(false);
     expect((await view('/places', cookie)).which).toBe('places');
-    // A kind that isn't one is refused with the manifest.
+    // Appearance is an app in Setup's grid (Jonathan, 2026-11-03): a sheet the app draws, at its own address, its tab its own.
+    const look = await view('/appearance', cookie);
+    expect(look).toMatchObject({ view: 'sheet', which: 'appearance' });
+    expect(look.chrome.shell.tab).toBe('appearance');
+    // A kind that isn't one is refused with the manifest; so is an icon that isn't a lucide name.
     expect(parseManifest({ v: 2, tab: { label: 'x', kind: 'drawer' } })).toMatch(/tab.kind/);
+    expect(parseManifest({ v: 2, tab: { label: 'x', icon: '<svg/>' } })).toMatch(/tab.icon/);
+    expect(parseManifest({ v: 2, tab: { label: 'x', icon: 'stamp' } })).toMatchObject({ tab: { label: 'x', icon: 'stamp' } });
   });
 
   it('a piece page renders its forms and buttons; an action reaches the piece on stdin only', async () => {
@@ -773,7 +787,7 @@ describe('loom UI over HTTP', () => {
     expect([again.status, await again.text()]).toEqual([304, '']);
     // Someone else's fingerprint is no way in: signed out is still the sign-in page.
     expect((await fetch(`${base}/`, { headers: { accept: 'application/json', 'if-none-match': etag }, redirect: 'manual' })).status).toBe(303);
-    const js = /src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    const js = /<script type="module"[^>]+src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
     for (const [enc, want] of [['br', 'br'], ['gzip', 'gzip'], ['identity', null]] as const) {
       const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
       expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);
@@ -860,9 +874,10 @@ esac`);
     await piece(bin, 'hangs', `sleep 30 & echo $! > '${pidFile}'; wait`);
     await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
     const pid = Number((await readFile(pidFile, 'utf-8')).trim());
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(pid, 0)).toThrow();
-  }, 10000);
+    // The page stopped waiting at 3 s; the run itself is allowed MANIFEST_RUN_MS (t-2064), and its group goes then.
+    await expect.poll(() => { try { process.kill(pid, 0); return 'alive'; } catch { return 'gone'; } },
+      { timeout: MANIFEST_RUN_MS, interval: 200 }).toBe('gone');
+  }, MANIFEST_RUN_MS + 8000);
 
   it('pieces never see loom\'s bearer token; a piece named loom is ignored', async () => {
     const seen = join(bin, 'seen');

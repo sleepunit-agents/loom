@@ -1,0 +1,93 @@
+/* An agent's face, alive (face.tsx): breathing at rest, a blink and a look around now and then, a bob and a scan while
+ * working, a sway while thinking, a hop while it waits on you, a shiver when it's wrong. Transforms only (scale,
+ * translate, rotate), on two groups: the field (body and face) and the eyes. It runs only while the face is on
+ * screen in a visible page ([data-live]), each face on its own phase (--face-phase), and never with reduced motion.
+ * Small on purpose: a row of faces should look alive, never busy. */
+
+.loom-face { --amp: 1; }
+.loom-face[data-tier="row"] { --amp: .75; }
+.loom-face[data-tier="dock"] { --amp: .6; }
+
+.loom-face__field { transform-box: fill-box; transform-origin: 50% 100%; }
+.loom-face__eyes { transform-box: fill-box; transform-origin: 50% 50%; }
+
+.loom-face[data-live] .loom-face__field,
+.loom-face[data-live] .loom-face__eyes { animation-delay: var(--face-phase, 0s); animation-iteration-count: infinite; animation-timing-function: ease-in-out; }
+
+/* At rest: breathing, with a blink and a glance around now and then. */
+.loom-face[data-live][data-state="idle"] .loom-face__field { animation-name: face-breathe; animation-duration: 4.8s; }
+.loom-face[data-live][data-state="idle"] .loom-face__eyes { animation-name: face-blink, face-look; animation-duration: 5.6s, 11s; }
+
+/* Thinking: a slow sway, the eyes drifting up and off to one side. */
+.loom-face[data-live][data-state="thinking"] .loom-face__field { animation-name: face-breathe, face-sway; animation-duration: 6s, 7s; }
+.loom-face[data-live][data-state="thinking"] .loom-face__eyes { animation-name: face-blink, face-ponder; animation-duration: 7s, 8s; }
+
+/* Working: a quick, happy bob, the eyes reading along a line and back. */
+.loom-face[data-live][data-state="working"] .loom-face__field { animation-name: face-bob; animation-duration: 1.15s; }
+.loom-face[data-live][data-state="working"] .loom-face__eyes { animation-name: face-scan, face-blink; animation-duration: 2.6s, 4.4s; }
+
+/* Waiting on you: breathing quicker, with a small hop now and then. */
+.loom-face[data-live][data-state="needs-input"] .loom-face__field { animation-name: face-breathe, face-hop; animation-duration: 3.6s, 4.2s; }
+.loom-face[data-live][data-state="needs-input"] .loom-face__eyes { animation-name: face-blink; animation-duration: 4.8s; }
+
+/* Done: a slow, contented breath (its eyes are closed in a smile, so no blink). */
+.loom-face[data-live][data-state="complete"] .loom-face__field { animation-name: face-breathe; animation-duration: 5.4s; }
+
+/* Something's wrong: breathing, and a small shiver now and then. */
+.loom-face[data-live][data-state="error"] .loom-face__field { animation-name: face-breathe, face-shake; animation-duration: 4.4s, 5.5s; }
+.loom-face[data-live][data-state="error"] .loom-face__eyes { animation-name: face-blink; animation-duration: 6s; }
+
+@keyframes face-breathe {
+  0%, 100% { scale: 1 1; }
+  50% { scale: calc(1 + .012 * var(--amp)) calc(1 + .03 * var(--amp)); }
+}
+@keyframes face-blink {
+  0%, 93%, 100% { scale: 1 1; }
+  95.5% { scale: 1 .12; }
+}
+@keyframes face-look {
+  0%, 38%, 86%, 100% { translate: 0 0; }
+  44%, 58% { translate: calc(3px * var(--amp)) calc(-1px * var(--amp)); }
+  64%, 80% { translate: calc(-3px * var(--amp)) 0; }
+}
+@keyframes face-sway {
+  0%, 100% { rotate: calc(-2deg * var(--amp)); }
+  50% { rotate: calc(2deg * var(--amp)); }
+}
+@keyframes face-ponder {
+  0%, 100% { translate: 0 0; }
+  35%, 65% { translate: calc(2px * var(--amp)) calc(-2px * var(--amp)); }
+}
+@keyframes face-bob {
+  0%, 100% { translate: 0 0; scale: 1 1; }
+  35% { translate: 0 calc(-3px * var(--amp)); scale: calc(1 - .01 * var(--amp)) calc(1 + .02 * var(--amp)); }
+  70% { translate: 0 0; scale: calc(1 + .012 * var(--amp)) calc(1 - .012 * var(--amp)); }
+}
+@keyframes face-scan {
+  0% { translate: calc(-3px * var(--amp)) 0; }
+  68%, 78% { translate: calc(3px * var(--amp)) 0; }
+  92%, 100% { translate: calc(-3px * var(--amp)) 0; }
+}
+@keyframes face-hop {
+  0%, 80%, 90%, 100% { translate: 0 0; }
+  85% { translate: 0 calc(-5px * var(--amp)); }
+  94% { translate: 0 calc(-1.5px * var(--amp)); }
+}
+@keyframes face-shake {
+  0%, 88%, 98%, 100% { translate: 0 0; }
+  90% { translate: calc(-2px * var(--amp)) 0; }
+  92% { translate: calc(2px * var(--amp)) 0; }
+  94% { translate: calc(-1.5px * var(--amp)) 0; }
+  96% { translate: calc(1px * var(--amp)) 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loom-face .loom-face__field, .loom-face .loom-face__eyes { animation: none !important; }
+}
+
+/* The rim (face.tsx): a soft glow in the mark's colour around the lit edge. The same in every state: glow never says
+   anything (the expression says the state). None when more contrast is asked for, or where the look says none
+   (looks.css --glow-faces: Daylight, and every look under more contrast). */
+.loom-face--rim { --glow-face: drop-shadow(0 0 5px color-mix(in srgb, var(--mk) 55%, transparent)); filter: var(--glow-faces, var(--glow-face)); }
+.loom-face--rim[data-tier="dock"] { --glow-face: drop-shadow(0 0 3px color-mix(in srgb, var(--mk) 55%, transparent)); }
+@media (prefers-contrast: more) { .loom-face--rim, .loom-face--rim[data-tier="dock"] { --glow-face: none; } }

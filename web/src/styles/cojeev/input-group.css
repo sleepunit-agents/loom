@@ -1,0 +1,113 @@
+@layer cojeev-states {
+[data-slot="input-group"] {
+  transition:
+    background var(--t-micro),
+    box-shadow var(--t-micro);
+}
+[data-slot="input-group"]:focus-within {
+  background: var(--v-pink-soft);
+  box-shadow: inset 0 0 0 2px var(--v-brand);
+}
+[data-slot="input-group"] > .v-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--v-text-2);
+  flex: none;
+}
+[data-slot="input-group"] .v-badge {
+  height: 26px;
+  background: var(--v-canvas);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+  color: var(--v-text);
+  flex: none;
+}
+[data-slot="input-group"] .v-badge.-ink {
+  background: var(--v-ink);
+  color: var(--v-on-ink);
+  box-shadow: none;
+}
+[data-slot="input-group"] .v-badge.-dashed {
+  background: transparent;
+}
+[data-slot="input-group"] .v-btn {
+  height: 40px;
+  padding: 0 var(--s-4);
+  flex: none;
+}
+[data-slot="input-group"] .v-ibtn[data-slot] {
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+[data-slot="input-group"] .v-sep.-v[data-slot] {
+  height: 24px;
+  margin: 0 2px;
+  background: var(--v-edge);
+  opacity: 0.5;
+}
+[data-slot="input-search"] .v-input {
+  height: 36px;
+  font-size: var(--fs-control);
+  min-width: 0;
+  border-color: var(--v-border);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+  background: var(--v-canvas);
+}
+[data-slot="input-search"] .v-input:focus-within {
+  box-shadow: inset 0 0 0 2px var(--v-brand);
+  background: var(--v-canvas);
+}
+[data-slot="input-search"] .v-search__disk {
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+[data-slot="input-search-scope"] .v-badge {
+  height: 24px;
+  font-size: var(--fs-caps);
+  padding: 0 var(--s-2);
+}
+[data-slot="input-search"] [data-slot="input-search-scope"] .v-badge.-dashed {
+  height: 26px;
+  background: transparent;
+  border-color: var(--v-border);
+  color: var(--v-text-2);
+}
+:root[data-mode="dark"] [data-slot="input-group"] {
+  background: var(--v-beige);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+}
+:root[data-mode="dark"] [data-slot="input-group"]:focus-within {
+  background: color-mix(in oklab, var(--v-pink) 14%, var(--v-canvas));
+  box-shadow: inset 0 0 0 2px var(--v-pink);
+}
+:root[data-mode="dark"] [data-slot="input-group"] .v-badge {
+  background: var(--v-beige-2);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+}
+
+[data-slot="input-search"] { flex: 1; min-width: 0; }
+[data-slot="input-search-scope"] { font-size: var(--fs-small); color: var(--v-text); min-width: 0; flex-wrap: wrap; }
+[data-slot="input-search"] .v-input input { flex: 1 1 60px; min-width: 0; }
+@media (max-width: 640px) { [data-slot="input-search"] [data-slot="input-search-scope"] { display: none; } }
+[data-slot="input-group"] { min-width:0; min-height:var(--ctl-lg); height:auto; padding-block:2px; }
+[data-slot="input-group"] [data-slot="input-group-input"] { min-height:40px; width:0; flex:1 1 80px; }
+[data-slot="input-group-addon"] { min-width:0; max-width:45%; white-space:normal; overflow-wrap:anywhere; }
+[data-slot="input-group-text"] { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+[data-slot="input-group"]:has(textarea) { align-items:flex-end; flex-wrap:wrap; border-radius:var(--r-card); padding:var(--s-3); }
+[data-slot="input-group"] [data-slot="input-group-textarea"] { min-width:0; width:100%; min-height:96px; max-height:320px; flex:1 0 100%; padding:var(--s-2); background:transparent; box-shadow:none; border-radius:var(--r-sm); }
+[data-slot="input-group"]:has(textarea) > [data-slot="input-group-button"] { margin-inline-start:auto; }
+[data-slot="input-group"] [data-slot="input-group-textarea"]:focus { box-shadow:none; }
+@media (max-width: 640px) {
+  [data-slot="input-group"] { flex-wrap:wrap; }
+  [data-slot="input-group"] [data-slot="input-group-input"] { flex-basis:100px; }
+}
+
+[data-slot="input-search-disk"] .v-icon { width: 20px; height: 20px; stroke-width: 2; }
+
+[data-slot="input-group"] [data-slot="input-group-button"].v-btn { min-height:44px; height:44px; }
+[data-slot="input-group"]:has(textarea) { border-radius:min(var(--v-control-radius,20px),20px); }
+[data-slot="input-group"] [data-slot="input-group-textarea"] { resize:vertical; }
+[data-slot="input-group"] > [data-slot="textarea-scroll-area"] { flex:1 0 100%; }
+
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
@@ -90,7 +90,7 @@ export function ChartTooltip({
   return (
     <AnimatePresence initial={!quiet}>
       {active && (
-        <motion.div
+        <m.div
           key="tooltip"
           ref={ref}
           id={id}
@@ -182,7 +182,7 @@ export function ChartTooltip({
               </span>
             )}
           </Card>
-        </motion.div>
+        </m.div>
       )}
     </AnimatePresence>
   );

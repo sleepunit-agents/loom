@@ -1,0 +1,63 @@
+/* A big screen (desk.tsx, App.tsx): the tiled desktop's frame, in every look (each its own colours: looks/looks.css);
+   Home's agents are desk-agents.css. Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk,
+   which App.tsx sets at 1024 px and wider, in a household.
+
+   The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
+   scrolling page. The agents' rail, when it has more than fits, scrolls inside itself. */
+:root[data-look] .loom-desk{--desk-gutter:24px;--desk-dock:104px;--desk-cut:14px}
+:root[data-look] .loom-desk .loom-page-clip{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+/* the bars span the screen, not a phone's column */
+:root[data-look] .loom-desk .loom-top>div{max-width:none;padding-inline:var(--desk-gutter)}
+:root[data-look] .loom-desk .loom-top{flex:none}
+:root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
+  padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
+
+/* ---- the dock, at the bottom centre: its rule spans the keys and a little more, not the screen ---- */
+:root[data-look] .loom-desk .loom-dock-bar::before{display:none}
+:root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap{position:relative}
+:root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap::before{content:"";position:absolute;left:-40px;right:-40px;top:22px;height:1px;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 12%,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 88%,transparent);pointer-events:none}
+
+/* ---- the boot (desk.tsx DeskBoot): once a session, never under reduced motion, any key or tap skips it. It takes the
+   taps while it stands (so one that skips it presses nothing under it), none while it leaves. ---- */
+.loom-boot{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--v-canvas);color:var(--v-text);
+  transition:opacity .25s ease-out}
+.loom-boot[data-leaving]{opacity:0;pointer-events:none}
+.loom-boot::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.35;
+  background:repeating-linear-gradient(180deg,transparent 0 2px,color-mix(in srgb,#000 55%,transparent) 2px 3px)}
+.loom-boot__panel{width:min(560px,calc(100vw - 48px));font-family:var(--loom-font-data);font-size:13px;line-height:1.7}
+.loom-boot__brand{font-family:var(--font-display);font-weight:700;font-size:40px;letter-spacing:.12em;line-height:1}
+.loom-boot__brand i{font-style:normal;color:var(--v-pink);text-shadow:var(--glow-line,0 0 18px) var(--v-pink)}
+.loom-boot__brand sup{font-size:14px;letter-spacing:0;vertical-align:top;margin-left:2px;color:var(--v-text-2)}
+.loom-boot__lic{margin:8px 0 22px;color:var(--v-text-2);letter-spacing:.04em}
+.loom-boot__log{display:grid;gap:2px;padding-top:14px;border-top:1px solid color-mix(in srgb,var(--v-pink) 40%,var(--v-border))}
+.loom-boot__log li{display:flex;align-items:baseline;gap:8px;color:var(--v-text-2)}
+.loom-boot__log li::before{content:"›";color:var(--v-blue)}
+.loom-boot__k{flex:none;white-space:nowrap}
+.loom-boot__dots{flex:1;min-width:16px;border-bottom:1px dotted var(--v-border);transform:translateY(-4px)}
+.loom-boot__v{flex:none;color:var(--v-text);white-space:nowrap}
+.loom-boot__v[data-tone="ok"]{color:var(--loom-ok)} .loom-boot__v[data-tone="warn"]{color:var(--loom-warn)}
+.loom-boot__skip{margin-top:22px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+/* its lines come up one by one; only with motion allowed (it never runs otherwise, but the rule says so itself) */
+@media (prefers-reduced-motion:no-preference){
+  .loom-boot__brand{animation:loom-boot-flick .5s steps(1) both}
+  .loom-boot__lic{animation:loom-boot-line .01s steps(1) .25s both}
+  .loom-boot__log li{animation:loom-boot-line .01s steps(1) var(--at,0s) both}
+  .loom-boot__skip{animation:loom-boot-line .01s steps(1) .5s both}
+}
+@keyframes loom-boot-line{from{visibility:hidden}to{visibility:visible}}
+@keyframes loom-boot-flick{0%{opacity:0}30%{opacity:.7}45%{opacity:.15}60%,100%{opacity:1}}
+/* ---- the dock hidden (tiles.tsx; docs/specs/agent-desk.md, "Hiding"): minimized to a strip at the bottom's middle, or
+   auto-hiding (it comes up over the desktop from the bottom edge, never moving it); the desktop takes its room back. ---- */
+:root[data-desk-dock="strip"] .loom-desk,:root[data-desk-dock="auto"] .loom-desk{--desk-dock:22px}
+:root[data-desk-dock="strip"] .loom-desk .loom-dock-bar{display:none}
+:root[data-desk-dock="auto"] .loom-desk .loom-dock-bar{transform:translateY(calc(100% + 30px));transition:transform .22s ease-out}
+:root[data-desk-dock="auto"][data-desk-dock-peek] .loom-desk .loom-dock-bar{transform:none}
+:root[data-look] .loom-dstrip{position:fixed;left:50%;bottom:4px;width:min(420px,60vw);height:10px;transform:translateX(-50%);z-index:31;cursor:pointer;
+  background:color-mix(in srgb,var(--v-paper) 90%,transparent);box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-dstrip::after{content:"";position:absolute;left:50%;top:3px;width:60px;height:3px;margin-left:-30px;border-radius:2px;background:var(--v-edge)}
+:root[data-look] .loom-dstrip .loom-glow{right:-14px;top:1px}
+:root[data-look] .loom-dedge{position:fixed;left:0;right:0;bottom:0;height:10px;z-index:31}
+:root[data-look] .loom-dedge::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:color-mix(in srgb,var(--v-pink) 30%,transparent)}
+:root[data-look] .loom-dedge .loom-glow{left:50%;bottom:3px}
+@media (pointer:coarse){:root[data-look] .loom-dedge{height:20px}}

@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import {motion,useTransform,type MotionValue} from "motion/react";
+import {m,useTransform,type MotionValue} from "motion/react";
 import {cva,type VariantProps} from "class-variance-authority";
 import {cn} from "@/lib/utils";
 import {assignMotionRef} from "@/lib/cojeev-motion/refs";
@@ -15,7 +15,7 @@ function Segment({index,count,width,height,position,energy}:{index:number;count:
  const background=useTransform([width,height],([w,h])=>organicBandPath(Math.max(0,Number(w)/count-3),Number(h)));
  const fill=useTransform([width,height,position,energy],([w,h,p,e])=>organicBandPath(Math.max(0,Number(w)/count-3),Number(h),Math.max(0,Math.min(1,Number(p)*count-index)),Number(e)));
  const x=useTransform(width,w=>w/count*index);
- return <motion.g style={{x}}><motion.path d={background} className="v-progress__track"/><motion.path d={fill} className="v-progress__fill"/></motion.g>;
+ return <m.g style={{x}}><m.path d={background} className="v-progress__track"/><m.path d={fill} className="v-progress__fill"/></m.g>;
 }
 function ProgressPaint({position,energy,appearance,segments}:{position:MotionValue<number>;energy:MotionValue<number>;appearance:ProgressAppearance;segments:number}){
  const ref=React.useRef<SVGSVGElement|null>(null),{width,height}=usePaintSize(ref);
@@ -24,8 +24,8 @@ function ProgressPaint({position,energy,appearance,segments}:{position:MotionVal
  const fill=useTransform([width,height,position,energy],([w,h,p,e])=>appearance==="line"?organicLinePath(Number(w),Number(h),Number(p),Number(e)):organicBandPath(Number(w),Number(h),Number(p),Number(e)));
  const arc=useTransform([position,energy],([p,e])=>organicOrbitPath(Number(p),Number(e)));
  const opacity=useTransform(position,p=>p<=0?0:1);
- if(appearance==="orbit")return <svg className="v-progress__paint" viewBox="0 0 100 100" aria-hidden="true"><path className="v-progress__track" d={organicOrbitPath(1)}/><motion.path className="v-progress__fill" d={arc} style={{opacity}}/></svg>;
- return <motion.svg ref={ref} className="v-progress__paint" viewBox={box} preserveAspectRatio="none" aria-hidden="true">{appearance==="segmented"?Array.from({length:segments},(_,index)=><Segment key={index} {...{index,count:segments,width,height,position,energy}}/>):<><motion.path className="v-progress__track" d={track}/><motion.path className="v-progress__fill" d={fill} style={{opacity}}/></>}</motion.svg>;
+ if(appearance==="orbit")return <svg className="v-progress__paint" viewBox="0 0 100 100" aria-hidden="true"><path className="v-progress__track" d={organicOrbitPath(1)}/><m.path className="v-progress__fill" d={arc} style={{opacity}}/></svg>;
+ return <m.svg ref={ref} className="v-progress__paint" viewBox={box} preserveAspectRatio="none" aria-hidden="true">{appearance==="segmented"?Array.from({length:segments},(_,index)=><Segment key={index} {...{index,count:segments,width,height,position,energy}}/>):<><m.path className="v-progress__track" d={track}/><m.path className="v-progress__fill" d={fill} style={{opacity}}/></>}</m.svg>;
 }
 export function Progress({ref,className,variant,size,value,max=100,appearance="organic",segments=12,children,style,...props}:ProgressProps){
  const total=Number.isFinite(max)&&max>0?max:100,supplied=value??props["aria-valuenow"],current=typeof supplied==="number"&&Number.isFinite(supplied)?Math.max(0,Math.min(supplied,total)):undefined;

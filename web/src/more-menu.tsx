@@ -8,8 +8,10 @@ import { AgentAvatar } from './blocks';
 type Tab = { label: string; href: string; current: boolean; count?: number };
 type Agent = { id: string; label: string; bg: string; fg: string; href: string; asks?: number };
 
-export default function MoreMenu({ pages, agents, here, icon, go }: {
+export default function MoreMenu({ pages, agents, here, icon, go, chat }: {
   pages: Tab[]; agents: Agent[]; here?: string; icon: (label: string) => string; go: (href: string) => void;
+  /** Chat about this page (about.ts), where the page is an item to chat about. */
+  chat?: () => void;
 }) {
   // As 000h's directory: each group one item, its heading (with how many), then its links, each with an adornment.
   const link = (href: string, label: string, adornment: unknown, opts: { current?: boolean; count?: number } = {}) => (
@@ -28,6 +30,14 @@ export default function MoreMenu({ pages, agents, here, icon, go }: {
   return (
     <NavigationMenu appearance="directory" aria-label="More pages">
       <NavigationMenuList>
+        {chat && (
+          <NavigationMenuItem value="this">
+            {head('This page', 1, 'action')}
+            <NavigationMenuLink href="#chat-about" adornment={{ icon: 'message-circle' } as never} adornmentId="chat-about" onClick={(e) => { e.preventDefault(); chat(); }}>
+              <span className="min-w-0 flex-1 truncate">Chat about this</span>
+            </NavigationMenuLink>
+          </NavigationMenuItem>
+        )}
         {pages.length > 0 && (
           <NavigationMenuItem value="pages">
             {head(here ? `${here}'s pages` : 'Pages', pages.length)}

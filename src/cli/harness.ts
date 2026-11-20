@@ -41,10 +41,6 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 2;
   }
 
-  const env = resolveEnv(global, io.env);
-  try { assertStackVersionCompatible(env.contextDir); }
-  catch (err) { io.stderr(`${(err as Error).message}\n`); return 1; }
-
   let parsed;
   try {
     parsed = parseArgs({
@@ -61,6 +57,11 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 2;
   }
   if (parsed.values.help) { io.stdout(USAGE); return 0; }
+
+  // After the flags (t-1950): checking the stack's version stamps a fresh context dir, so --help came first.
+  const env = resolveEnv(global, io.env);
+  try { assertStackVersionCompatible(env.contextDir); }
+  catch (err) { io.stderr(`${(err as Error).message}\n`); return 1; }
 
   const name = parsed.positionals[0] ?? env.client;
   if (!name) {

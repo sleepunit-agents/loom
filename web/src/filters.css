@@ -1,0 +1,15 @@
+/* A filters block (filters.tsx): a sort as one switch whose choices share the width, and rows of chips that stay one
+   line each, sliding sideways in their own row when they don't fit (Jonathan's Tasks mock, t-1925: "nothing wrapping"). */
+.loom-filters .loom-switch { display: flex; flex-wrap: nowrap; width: 100%; }
+/* a word or two each (2 to 4 of them): they share the width and are never cut */
+.loom-filters .loom-switch > * { flex: 1 1 auto; padding-inline: var(--s-2); white-space: nowrap; }
+.loom-filters .loom-chip-row {
+  display: flex; flex-wrap: nowrap; gap: var(--s-2); min-width: 0; max-width: 100%;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin;
+  /* room for a focus ring inside the scroller; the right edge fades, so a row that runs on says so (a row that fits
+     ends before the fade) */
+  padding: 5px 20px 5px 5px; margin: -5px; scroll-padding-inline: 5px 20px;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.loom-filters .loom-chip-row > * { flex: none; white-space: nowrap; padding-inline: var(--s-3); }

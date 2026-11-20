@@ -103,6 +103,14 @@ describe('resolveIdentityName', () => {
     expect(resolveIdentityName(join(dir, 'art'))).toBe('mark');
   });
 
+  it('explicit metadata wins over the directory name and global identity', () => {
+    process.env.LOOM_IDENTITY = 'service';
+    expect(resolveIdentityName(join(dir, 'relocated'), { agent: 'mark' })).toBe('mark');
+    expect(resolveIdentityName(join(dir, 'art'), null)).toBe('art');
+    expect(resolveIdentityName(join(dir, 'art'), {})).toBe('art');
+    expect(process.env.LOOM_IDENTITY).toBe('service');
+  });
+
   it('derives the identity from the context dir basename', () => {
     delete process.env.LOOM_IDENTITY;
     const artDir = join(dir, 'art');

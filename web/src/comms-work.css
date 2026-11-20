@@ -1,0 +1,27 @@
+/* Work in this thread (docs/specs/comms.md, "The panel"). In a desktop thread's band it's a framed panel, always open,
+   under who's in the conversation; on a phone it's the folded "Work (N)" strip. Status is in words; the tone adds colour. */
+.comms-work { --tone: var(--v-text-2); border: 1px solid var(--comms-line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 8px 12px 0; }
+.comms-work__head { display: none; margin: 0; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
+.comms-work__toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0; border: 0; background: none; color: var(--v-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.comms-work__rows { display: none; min-width: 0; }
+.comms-work[data-open] .comms-work__rows { display: block; }
+.comms-work__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: min(30dvh, 300px); overflow-y: auto; }
+.comms-work__row > a, .comms-work__row > span { display: flex; flex-direction: column; gap: 3px; padding: 5px 6px; border-radius: 6px; color: inherit; text-decoration: none; min-width: 0; }
+.comms-work__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.comms-work__row > a:hover, .comms-work__row > a:focus-visible { background: color-mix(in srgb, var(--v-text) 8%, transparent); }
+.comms-work__badge { font-size: 10px; letter-spacing: .04em; padding: 1px 5px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent); color: var(--tone); white-space: nowrap; }
+.comms-work__badge[data-tone="bad"], .comms-work__row[data-tone="bad"] { --tone: var(--v-pink); }
+.comms-work__badge[data-tone="warn"], .comms-work__row[data-tone="warn"] { --tone: var(--v-yellow); }
+.comms-work__badge[data-tone="ok"], .comms-work__row[data-tone="ok"] { --tone: var(--v-text-3); }
+.comms-work__title { font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
+.comms-work__meta { font-size: 10.5px; color: var(--v-text-3); overflow-wrap: anywhere; }
+.comms-work__row[data-made] .comms-work__meta { color: var(--v-text-2); }
+.comms-work__empty, .comms-work__failed { margin: 4px 0; font-size: 12.5px; color: var(--v-text-2); }
+.comms-work__failed { color: var(--v-text-3); }
+/* A desktop thread's band: a panel, always open (its title, no fold), under who's in the conversation; the band's side
+   scrolls, not the list. */
+.comms-band__side .comms-work { margin: 0; }
+.comms-band__side .comms-work__head { display: block; }
+.comms-band__side .comms-work__toggle { display: none; }
+.comms-band__side .comms-work__rows { display: block; }
+.comms-band__side .comms-work__list { max-height: none; overflow: visible; }

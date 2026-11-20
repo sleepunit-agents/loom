@@ -1,0 +1,138 @@
+import { Component, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
+import { DeskRouter, currentPath, type AppRegistration, type Tile } from './router';
+import { ContextMenu, type MenuAt } from '../tiling/menu';
+import { layout, railWidth, type Rect } from '../tiling/layout';
+import { Loading, Error, Button, Empty } from '../kit';
+import './shell.css';
+import Preferences from './preferences';
+import { Dock } from '../components/ui/dock';
+import { AppIcon } from '../app-icon';
+import { tintOf } from '../tint';
+import Launcher from './launcher';
+import { useHiding } from './hiding';
+import { useCompanion } from './companion';
+import { RailContext } from '../desk-rail';
+export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
+/** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
+class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed:false };
+  static getDerivedStateFromError() { return { failed:true }; }
+  render() { return this.state.failed ? <Error text="This app could not open. Close it and try again." /> : this.props.children; }
+}
+function Screen({ app, tile, router, active, visible }: { app: RegisteredApp; tile: Tile; router: DeskRouter; active: boolean; visible:boolean }) {
+  const View = app.Screen;
+  return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} visible={visible} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
+}
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Signals?: ComponentType<{ go(path:string):void; onAttention:(value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
+export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
+  const [router] = useState(() => new DeskRouter(apps, window));
+  const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
+  // Pick a shell once. Resizing relays layout room, never replaces its navigation owner.
+  const [phone] = useState(() => innerWidth < 1024);
+  const ground = useRef<HTMLDivElement>(null);
+  const [area,setArea] = useState<Rect>({x:0,y:0,w:innerWidth-48,h:innerHeight-130});
+  const [width,setWidth] = useState(innerWidth);
+  const [notice,setNotice] = useState('');
+  const [menu,setMenu] = useState<MenuAt>();
+  const hiding = useHiding(!!menu,setNotice);
+  const [attention,setAttention] = useState(false);
+  const railAs = hiding.modes.rail==='always'&&!railWidth(width)?'strip':hiding.modes.rail;
+  const drag = useRef<string | undefined>(undefined);
+  const [launcher,setLauncher] = useState(false);
+  useEffect(() => {
+    const element = ground.current!;
+    const observer = new ResizeObserver(() => { const r = element.getBoundingClientRect(); setWidth(innerWidth); setArea({x:0,y:0,w:r.width,h:r.height}); });
+    observer.observe(element); return () => { observer.disconnect(); };
+  },[]);
+  useEffect(() => () => router.close(),[router]);
+  const visible = route.tiles.filter(t => !t.minimized);
+  // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
+  const { Home, Rail, Bar, Signals } = surfaces;
+  const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railAs==='always');
+  const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
+  const boxes = layout(router.asTiles(),workArea,width).apps;
+  const open = (id: string) => {
+    const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width);
+    setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
+    if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
+  };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable=true]');
+      if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.code==='Space'){e.preventDefault();setLauncher(v=>!v);return;}
+      if (!typing && e.key === 'Escape') setLauncher(false);
+      if(typing||document.querySelector('[role=dialog],[role=menu]')||!e.altKey) return;
+      if(!e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();router.home();return;}
+      const tile=visible.find(t=>t.id===route.focused);if(!tile)return;
+      const key=e.key.toLowerCase();let acted=true;
+      if(!e.shiftKey&&key==='h') router.home();
+      else if(!e.shiftKey&&key==='arrowleft'&&tile.at>0) router.travel(tile.id,-1);
+      else if(!e.shiftKey&&key==='arrowright'&&tile.at<tile.trail.length-1) router.travel(tile.id,1);
+      else if(e.shiftKey&&key==='enter') router.big(tile.id);
+      else if(e.shiftKey&&key==='m') router.remove(tile.id,true);
+      else if(e.shiftKey&&key==='w') router.remove(tile.id);
+      else if(e.shiftKey&&(e.code==='Comma'||e.code==='Period')){const n=visible.findIndex(t=>t.id===tile.id);const other=visible[n+(e.code==='Comma'?-1:1)];if(other)router.swap(tile.id,other.id);}
+      else if(e.shiftKey&&key.startsWith('arrow')) {
+        const here=boxes[tile.id];const cx=here.x+here.w/2,cy=here.y+here.h/2;
+        const candidates=visible.filter(t=>t.id!==tile.id).filter(t=>{const r=boxes[t.id];return key==='arrowleft'?r.x+r.w<=here.x:key==='arrowright'?r.x>=here.x+here.w:key==='arrowup'?r.y+r.h<=here.y:r.y>=here.y+here.h;});
+        candidates.sort((a,b)=>{const dist=(id:string)=>{const r=boxes[id];return (r.x+r.w/2-cx)**2+(r.y+r.h/2-cy)**2;};return dist(a.id)-dist(b.id);});
+        if(candidates[0]){router.focus(candidates[0].id);document.querySelector<HTMLElement>(`[data-tile="${candidates[0].id}"]`)?.focus();}
+      } else acted=false;
+      if(acted)e.preventDefault();
+    };
+    window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
+  },[visible,route.focused,router]);
+  const focused = visible.find(t => t.id === route.focused) ?? visible[0];
+  return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
+    {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
+      if(path === '/') {router.home();return;}
+      const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
+      if(app){open(app.id);router.go(app.id,path);}
+    }} actions={<Preferences />} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
+    <div ref={ground} className="next-ground">
+      {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
+      {!phone && Rail && visible.length>0 && <>
+        {visible.length>0&&railAs!=='always'&&<button type="button" data-hide-part="rail" className="next-rail-edge" data-mode={railAs} data-attention={attention||undefined} aria-label="Show agents rail" aria-expanded={hiding.peek.rail}
+          onClick={()=>hiding.show('rail',true)} onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('rail',true);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}><span aria-hidden="true">‹</span></button>}
+        <aside aria-label="Your agents" tabIndex={-1} data-hide-part="rail" className="next-rail" data-mode={railAs} data-peek={hiding.peek.rail||undefined} inert={railAs!=='always'&&!hiding.peek.rail} style={{width:railWidth(width)||296}}
+          onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerLeave={e=>{if(railAs==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('rail',false);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}>
+          <Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
+        </aside>
+      </>}
+      {route.tiles.map(tile => {
+        const shown=!tile.minimized&&(!phone||tile.id===focused?.id);
+        const app = apps.find(a => a.id === tile.id)!;
+        const box = boxes[tile.id];
+        return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
+          style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={() => { if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
+          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button,summary'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+            <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon label={app.title} name={app.icon} size="sm" /></button>
+            <Button variant="ghost" size="sm" aria-label={`Back in ${app.title}`} disabled={!tile.at} onClick={() => router.travel(tile.id,-1)}>←</Button>
+            <Button variant="ghost" size="sm" aria-label={`Forward in ${app.title}`} disabled={tile.at===tile.trail.length-1} onClick={() => router.travel(tile.id,1)}>→</Button>
+            <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
+            <details><summary aria-label={`${app.title} history`}>Trail</summary><ol>{tile.trail.map((path,i) => <li key={i}><Button variant="ghost" size="sm" aria-current={i===tile.at?'page':undefined} onClick={() => router.travel(tile.id,i-tile.at)}>{path.slice(app.path.length)||app.title}</Button></li>)}</ol></details>
+            <span className="next-spacer" />
+            {!phone && <Button variant="ghost" size="sm" aria-label={`Make ${app.title} big`} onClick={() => router.big(tile.id)}>↗</Button>}
+            <Button variant="ghost" size="sm" aria-label={`Minimize ${app.title}`} onClick={() => router.remove(tile.id,true)}>−</Button>
+            <Button variant="ghost" size="sm" aria-label={`Close ${app.title}`} onClick={() => router.remove(tile.id)}>×</Button>
+          </header>
+          <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
+        </section>;
+      })}
+    </div>
+    {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
+    <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
+    {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}
+      onClick={()=>hiding.show('dock',true)} onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('dock',true);}} onContextMenu={e=>setMenu(hiding.menu('dock',e))}><span aria-hidden="true">⌃</span></button>}
+    <div className="next-dock-bar loom-dock-bar" data-hide-part="dock" data-peek={hiding.peek.dock||undefined} inert={!phone&&hiding.modes.dock!=='always'&&!hiding.peek.dock}
+      onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerLeave={e=>{if(hiding.modes.dock==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('dock',false);}}
+      onContextMenu={e=>{if(!phone&&(!(e.target as Element).closest('button')||(e.target as Element).closest('button[aria-label="Home"],button[aria-label="All apps"]')))setMenu(hiding.menu('dock',e));}}><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
+      {value:'home',label:'Home',tint:'pink',icon:<AppIcon label="Home" name="home" />,onSelect:()=>router.home()},
+      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<AppIcon label={app.title} name={app.icon} />,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>route.focused===app.id?router.remove(app.id,true):open(app.id)})),
+      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<AppIcon label="Places" name="grid-2x2" />,onSelect:()=>setLauncher(true)},
+    ]} /></div>
+    {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
+    <p className="next-notice" role="status" aria-live="polite">{notice}</p>
+  </div></RailContext.Provider>;
+}

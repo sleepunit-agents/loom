@@ -93,9 +93,9 @@ shared, and what's one agent's. Owners follow them.
   member. An owner token with no member belongs to the first household owner,
   which is today's case.
 - **One WebAuthn user per member.** A passkey's `user.id` is derived from the
-  member, not the household. Existing passkeys map to the first household
-  owner through the token digest they were made with (`docs/specs/passkeys.md`),
-  so nobody re-registers.
+  member, not the household. A passkey signs in as an owner token of its own
+  that names its member (`docs/specs/passkeys.md`, t-1969); one made before
+  that moved onto one, for its old token's member, if that token was live.
 - **Sessions carry their member.** A sign-in link is made for a member and
   opens that member's session.
 
@@ -185,8 +185,8 @@ Each step ships on its own and leaves everything working.
 - Every new record of a decision names its member. No record names a member
   who didn't make it.
 - Removing or narrowing the last household owner is refused.
-- Passkeys registered before `members` still sign in, as the first household
-  owner.
+- Passkeys registered before `members` still sign in, as the member their
+  token names (the first household owner, for one that names none).
 - An agent owner's request for a household thing is a `permission` ask on the
   household owners' Inbox, never a grant.
 - Read state and pushes: one member opening an item doesn't mark it read for

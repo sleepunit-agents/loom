@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loom, how it works</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<header class="top"><div class="top__in">
+  <a class="brand" href="index.html"><b>LO<i>O</i>M</b><span>how it works</span></a>
+  <nav class="path" aria-label="Guided path">
+    <ol class="path__dots"><li><a href="index.html" title="Start here" aria-current="page"><span class="sr">Start here</span></a></li><li><a href="conversations.html" title="1. Conversations"><span class="sr">1. Conversations</span></a></li><li><a href="desk.html" title="2. The desk"><span class="sr">2. The desk</span></a></li><li><a href="tasks.html" title="3. Tasks"><span class="sr">3. Tasks</span></a></li><li><a href="approvals.html" title="4. Approvals"><span class="sr">4. Approvals</span></a></li><li><a href="tempo.html" title="5. Tempo"><span class="sr">5. Tempo</span></a></li><li><a href="changes.html" title="6. Changes"><span class="sr">6. Changes</span></a></li><li><a href="inbox.html" title="7. Inbox"><span class="sr">7. Inbox</span></a></li><li><a href="memory.html" title="8. Memory"><span class="sr">8. Memory</span></a></li><li><a href="machines.html" title="9. Machines and jobs"><span class="sr">9. Machines and jobs</span></a></li><li><a href="models.html" title="10. Models and accounts"><span class="sr">10. Models and accounts</span></a></li><li><a href="bridges.html" title="11. Discord and Slack"><span class="sr">11. Discord and Slack</span></a></li><li><a href="secrets.html" title="12. Secrets"><span class="sr">12. Secrets</span></a></li><li><a href="people.html" title="13. People and projects"><span class="sr">13. People and projects</span></a></li><li><a href="signing-in.html" title="14. Signing in"><span class="sr">14. Signing in</span></a></li><li><a href="outside.html" title="15. Outside programs"><span class="sr">15. Outside programs</span></a></li><li><a href="data.html" title="16. How a tile gets its data"><span class="sr">16. How a tile gets its data</span></a></li><li><a href="measuring.html" title="17. Measuring"><span class="sr">17. Measuring</span></a></li><li><a href="decided.html" title="18. What we decided"><span class="sr">18. What we decided</span></a></li></ol>
+    <span class="path__where"><b>Start here</b></span>
+    <span class="path__go"><a class="next" href="conversations.html" rel="next"><span class="pl">Conversations</span> ›</a></span>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+</div></header>
+<main class="wrap">
+
+<section class="hero">
+  <div class="hero__text">
+    <p class="eyebrow">Loom · how it works</p>
+    <h1>Everything is a <em>conversation</em>.</h1>
+    <p class="lead"><b>Loom is a program one household runs for itself.</b> A few people and a few AI agents share a desk in the browser: small app windows side by side, the agents at the edge, a ticker along the top.</p>
+    <p class="lead">Whatever an agent does, it does in a conversation. You chat with it in loom. Someone talks to it on Discord or Slack. A trigger starts it. One agent hands work to another. Each of these is the same thing to loom, so conversations sit at the centre and every other part touches them.</p>
+    <p class="lead"><b>Chat is how you control loom. Screens are for seeing.</b> Every app also appears inline in a conversation.</p>
+    <div class="cta"><a class="btn" href="conversations.html">Start with Conversations <span aria-hidden="true">›</span></a><span class="cap">18 pages on the path.</span></div>
+  </div>
+  <figure class="hero__fig">
+    <div class="desk" aria-hidden="true">
+      <div class="desk__bar"><b>LO<i>O</i>M</b><span class="desk__tick">2 agents · <u>Art · Comparing pond pumps</u> · Mark · Nothing right now · Tasks · 2 in progress · 4 ready · Tempo · 3 due · Changes · 2 open</span></div>
+      <div class="desk__main">
+        <div class="tile t-pink a"><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span><b>Comms</b><span class="tile__acts"><i></i><i></i><i></i></span></div><div class="tile__body"><div class="mini">
+      <div class="msg msg--me t-pink"><div class="msg__b">Can you find a pump that fits the old hose?</div></div>
+      <div class="msg msg--card"><div class="msg__b">Looked up three pumps · done</div></div>
+      <div class="msg"><div class="msg__b">Three fit. The middle one is in stock at $164. I filed <span class="chip">t-2190</span> to order it.</div></div>
+      <div class="msg msg--ask"><div class="msg__b"><b>Spend up to $180 on the pump I picked?</b><span class="yn"><span class="mbtn mbtn--on t-cyan">Allow</span><span class="mbtn">Deny</span></span></div></div>
+      <div class="cm__compose" style="margin:2px 0 0"><span>Message Art</span><span class="mbtn mbtn--on">Send</span></div>
+    </div></div></div>
+        <div class="tile t-violet b"><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24"><path d="M3 7l2 2 4-4M3 17l2 2 4-4M13 7h8M13 17h8"/></svg></span><b>Tasks</b><span class="tile__acts"><i></i><i></i><i></i></span></div><div class="tile__body"><div class="mini">
+      <div class="row"><b>Pick a replacement pond pump</b><em>t-2188 · P1 · open</em></div>
+      <div class="row"><b>Order the pump</b><em>t-2190 · P1 · open</em></div>
+      <div class="row"><b>Book the electrician</b><em>t-2175 · P2 · open</em></div>
+    </div></div></div>
+        <div class="tile t-cyan c"><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/></svg></span><b>Inbox</b><span class="tile__acts"><i></i><i></i><i></i></span></div><div class="tile__body"><div class="mini">
+      <div class="askc"><b>Spend up to $180 on the pump Art picked?</b><small>from a task · t-2190</small><span class="yn"><span class="mbtn mbtn--on">Yes</span><span class="mbtn">No</span></span></div>
+    </div></div></div>
+        <div class="desk__rail">
+          <div class="agent"><svg class="face a" viewBox="0 0 40 40"><path class="body" d="M20 3c9 0 16 6 16 16s-6 18-16 18S4 30 4 19 11 3 20 3z"/><circle class="eye" cx="14.5" cy="18" r="2.4"/><circle class="eye" cx="25.5" cy="18" r="2.4"/><path class="mouth" d="M16 26q4 3 8 0"/></svg><div><b>Art</b><i>working</i><span>Comparing pond pumps</span></div></div>
+          <div class="agent"><svg class="face b" viewBox="0 0 40 40"><path class="body" d="M20 3c5 6 14 12 14 21a14 14 0 0 1-28 0C6 15 15 9 20 3z"/><ellipse class="eye" cx="15" cy="22" rx="2.2" ry="2.8"/><ellipse class="eye" cx="25" cy="22" rx="2.2" ry="2.8"/><path class="mouth" d="M17 30h6"/></svg><div><b>Mark</b><i class="idle">idle</i><span>Nothing right now</span></div></div>
+        </div>
+      </div>
+      <div class="desk__dock"><span class="t-violet">Tasks</span><span class="t-cyan">Inbox</span><span class="t-pink">Comms</span><span class="t-pink">Approvals</span><span class="t-violet">Tempo</span><span class="t-pink">Changes</span></div>
+    </div>
+    <figcaption class="cap">The desk, drawn small with example content: app tiles side by side, the agents on the right, the ticker in the top bar.</figcaption>
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="map-h">
+  <div class="band__head"><span class="tag">The map</span><h2 id="map-h">How the parts connect</h2>
+    <p>A conversation starts in one of five places and reaches the parts on the right. The number on each part is its page on the path.</p></div>
+  <div class="map">
+    <div class="map__col map__in">
+      <h3>Where a conversation happens</h3>
+      <ul>
+        <li class="node t-pink"><span class="key t-pink" aria-hidden="true">1</span><div class="node__body"><b>A thread in loom</b><span>You and an agent, chatting in Comms.</span></div><i class="wire"></i></li>
+        <li class="node t-amber"><span class="key t-amber" aria-hidden="true">11</span><div class="node__body"><b>Discord</b><span>Someone talks to the agent in a channel or a direct message.</span></div><i class="wire"></i></li>
+        <li class="node t-amber"><span class="key t-amber" aria-hidden="true">11</span><div class="node__body"><b>Slack</b><span>The same, in a Slack workspace.</span></div><i class="wire"></i></li>
+        <li class="node t-violet"><span class="key t-violet" aria-hidden="true">5</span><div class="node__body"><b>A trigger</b><span>A time, or something changing, drops an item in the agent's inbox.</span></div><i class="wire"></i></li>
+        <li class="node t-cyan"><span class="key t-cyan" aria-hidden="true">9</span><div class="node__body"><b>A subagent</b><span>One agent hands a piece of work to another.</span></div><i class="wire"></i></li>
+      </ul>
+    </div>
+    <div class="core">
+      <span class="core__tag">The centre · page 1</span>
+      <h3><a href="conversations.html" style="text-decoration-color:var(--core-pink);text-underline-offset:6px;text-decoration-thickness:2px">A conversation</a></h3>
+      <p>One agent talking in one place. Loom keeps one record for each, whatever the place.</p>
+      <ol class="stages">
+        <li><i>IN</i><div><b>One inbox</b><span>Everything sent to anyone, person or agent, lands in one inbox that knows where each item came from.</span></div></li>
+        <li><i>WORK</i><div><b>Turns</b><span>Each thing said or done, in order.</span></div></li>
+        <li><i>OUT</i><div><b>A digest</b><span>The write-up at the end: what happened, what was decided, what it needs from a person.</span></div></li>
+      </ol>
+    </div>
+    <div class="map__col map__out">
+      <h3>What it reaches</h3>
+      <ul>
+        <li class="node t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">7</span><div class="node__body"><b><a href="inbox.html">Inbox</a></b><span>A question for a person lands here and waits for an answer.</span></div></li>
+        <li class="node t-violet"><i class="wire"></i><span class="key t-violet" aria-hidden="true">3</span><div class="node__body"><b><a href="tasks.html">Tasks</a></b><span>Work filed from a conversation remembers where it came from.</span></div></li>
+        <li class="node t-pink"><i class="wire"></i><span class="key t-pink" aria-hidden="true">4</span><div class="node__body"><b><a href="approvals.html">Approvals</a></b><span>An agent asks permission to do one specific thing.</span></div></li>
+        <li class="node t-pink"><i class="wire"></i><span class="key t-pink" aria-hidden="true">6</span><div class="node__body"><b><a href="changes.html">Changes</a></b><span>Pull requests a thread mentions show up as cards.</span></div></li>
+        <li class="node t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">8</span><div class="node__body"><b><a href="memory.html">Memory</a></b><span>What the agent remembers afterwards. The one thing loom treats as precious.</span></div></li>
+        <li class="node t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">9</span><div class="node__body"><b><a href="machines.html">Machines and jobs</a></b><span>One job at a time does the work, on a machine with a worker.</span></div></li>
+      </ul>
+    </div>
+    <div class="map__base">
+      <h3>Around and under every part</h3>
+      <ul>
+        <li class="node"><span class="key t-pink" aria-hidden="true">2</span><div class="node__body"><b><a href="desk.html">The desk</a></b><span>Where you see all of it: tiles, the agent rail, the ticker.</span></div></li>
+        <li class="node"><span class="key t-amber" aria-hidden="true">13</span><div class="node__body"><b><a href="people.html">People and projects</a></b><span>Project, agent and member labels on each record decide who sees it.</span></div></li>
+        <li class="node"><span class="key t-violet" aria-hidden="true">14</span><div class="node__body"><b><a href="signing-in.html">Signing in</a></b><span>A person, an agent or a machine proves who it is at the door.</span></div></li>
+        <li class="node"><span class="key t-amber" aria-hidden="true">15</span><div class="node__body"><b><a href="outside.html">Outside programs</a></b><span>One API with a token, for anything outside loom.</span></div></li>
+        <li class="node"><span class="key t-amber" aria-hidden="true">12</span><div class="node__body"><b><a href="secrets.html">Secrets</a></b><span>Credentials an agent may be handed, and a record of each use.</span></div></li>
+        <li class="node"><span class="key t-cyan" aria-hidden="true">10</span><div class="node__body"><b><a href="models.html">Models and accounts</a></b><span>Which model a body runs on, and the account it draws from.</span></div></li>
+        <li class="node"><span class="key t-cyan" aria-hidden="true">16</span><div class="node__body"><b><a href="data.html">How a tile gets its data</a></b><span>One live connection feeds every tile on the desk.</span></div></li>
+        <li class="node"><span class="key t-violet" aria-hidden="true">17</span><div class="node__body"><b><a href="measuring.html">Measuring</a></b><span>How long things take, counted when you turn it on.</span></div></li>
+        <li class="node"><span class="key t-pink" aria-hidden="true">18</span><div class="node__body"><b><a href="decided.html">What we decided</a></b><span>Every decision, with the page where it shows up.</span></div></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="split">
+  <section class="band" aria-labelledby="rules-h">
+    <div class="band__head" style="grid-template-columns:1fr"><span class="tag">Ground rules</span><h2 id="rules-h">Eight rules hold everywhere</h2></div>
+    <ol class="rules">
+      <li class="t-pink"><span class="key" aria-hidden="true">1</span><b>Chat controls, screens show</b><span>You control loom by talking to your agents. Screens are for seeing. A settings change or a dangerous action asked for in chat gets an approval card inline, with before and after. Ordinary work needs no card.</span></li>
+      <li class="t-cyan"><span class="key" aria-hidden="true">2</span><b>Installed means trusted</b><span>Loom's own parts never ask each other for permission. Loom checks permission only for callers from outside.</span></li>
+      <li class="t-violet"><span class="key" aria-hidden="true">3</span><b>A small team that trusts each other</b><span>The project is the unit of sharing. No fine-grained permissions. Household owners see everything.</span></li>
+      <li class="t-amber"><span class="key" aria-hidden="true">4</span><b>Real columns</b><span>Every fact is a named column, defined once with Drizzle. The database does the work. SQLite by default; the database is a configuration choice.</span></li>
+      <li class="t-pink"><span class="key" aria-hidden="true">5</span><b>One query endpoint</b><span>A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.</span></li>
+      <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable.</span></li>
+      <li class="t-violet"><span class="key" aria-hidden="true">7</span><b>One program, one data folder</b><span>Quick for someone else to install. One API for the command line, the web app and agents. A restart is an acceptable deploy.</span></li>
+      <li class="t-amber"><span class="key" aria-hidden="true">8</span><b>Parts can be replaced</b><span>Each part is a module with a typed interface, so the task store or a bridge can be swapped for another.</span></li>
+    </ol>
+  </section>
+  <section class="band" aria-labelledby="path-h">
+    <div class="band__head" style="grid-template-columns:1fr"><span class="tag">The guided path</span><h2 id="path-h">Read them in this order</h2></div>
+    <ol class="steps"><li><span class="n">01</span><span><a class="ttl" href="conversations.html">Conversations</a><span class="start">Start here</span></span><span class="one">Every exchange with an agent, wherever it happens. The hub.</span></li><li><span class="n">02</span><span><a class="ttl" href="desk.html">The desk</a></span><span class="one">The tiled desktop: tiles, the launcher, the agent rail, the ticker, Home, the looks.</span></li><li><span class="n">03</span><span><a class="ttl" href="tasks.html">Tasks</a></span><span class="one">The household&#x27;s work queue.</span></li><li><span class="n">04</span><span><a class="ttl" href="approvals.html">Approvals</a></span><span class="one">Permission from a person for an agent to do one specific thing.</span></li><li><span class="n">05</span><span><a class="ttl" href="tempo.html">Tempo</a></span><span class="one">Triggers: what starts work without anyone asking.</span></li><li><span class="n">06</span><span><a class="ttl" href="changes.html">Changes</a></span><span class="one">Pull requests the household cares about.</span></li><li><span class="n">07</span><span><a class="ttl" href="inbox.html">Inbox</a></span><span class="one">One inbox for everything sent to anyone, person or agent.</span></li><li><span class="n">08</span><span><a class="ttl" href="memory.html">Memory</a></span><span class="one">What an agent remembers and knows. The one thing loom treats as precious.</span></li><li><span class="n">09</span><span><a class="ttl" href="machines.html">Machines and jobs</a></span><span class="one">Where agents run and what they are running.</span></li><li><span class="n">10</span><span><a class="ttl" href="models.html">Models and accounts</a></span><span class="one">Which model a body runs on, and the accounts it draws from.</span></li><li><span class="n">11</span><span><a class="ttl" href="bridges.html">Discord and Slack</a></span><span class="one">How agents talk to people in other apps.</span></li><li><span class="n">12</span><span><a class="ttl" href="secrets.html">Secrets</a></span><span class="one">Credentials agents need, and who may use each one.</span></li><li><span class="n">13</span><span><a class="ttl" href="people.html">People and projects</a></span><span class="one">Who is in the household, which agents they own, which projects they share.</span></li><li><span class="n">14</span><span><a class="ttl" href="signing-in.html">Signing in</a></span><span class="one">How a person, an agent or a machine proves who it is.</span></li><li><span class="n">15</span><span><a class="ttl" href="outside.html">Outside programs</a></span><span class="one">The one door: the API with a token.</span></li><li><span class="n">16</span><span><a class="ttl" href="data.html">How a tile gets its data</a></span><span class="one">One live connection. A tile says what it wants and then gets only changes.</span></li><li><span class="n">17</span><span><a class="ttl" href="measuring.html">Measuring</a></span><span class="one">How long things take, counted when you turn it on, and readable by agents.</span></li><li><span class="n">18</span><span><a class="ttl" href="decided.html">What we decided</a></span><span class="one">Every decision in plain words, with the page where it shows up.</span></li></ol>
+  </section>
+</div>
+
+</main>
+</body>
+</html>

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
+import { m, useMotionValue, useSpring, useTransform } from "motion/react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import * as Primitive from "@radix-ui/react-scroll-area";
@@ -56,7 +56,7 @@ function useScrollFeedback(host:React.RefObject<HTMLDivElement|null>,mountedElem
   return {contour,gripOffset,active,dragging,hover,press,point};
 }
 function ScrollThumbPaint({feedback,orientation="vertical"}:{feedback:ReturnType<typeof useScrollFeedback>;orientation?:"vertical"|"horizontal"}) {
-  return <><svg className="v-scroll__contour" viewBox={orientation==="vertical"?"0 0 20 100":"0 0 100 20"} preserveAspectRatio="none" aria-hidden="true" focusable="false"><motion.path d={feedback.contour} transform={orientation==="horizontal"?"matrix(0 1 1 0 0 0)":undefined}/></svg><motion.span className="v-scroll__grip" aria-hidden="true" style={orientation==="vertical"?{y:feedback.gripOffset}:{x:feedback.gripOffset}}><i/><i/><i/></motion.span></>;
+  return <><svg className="v-scroll__contour" viewBox={orientation==="vertical"?"0 0 20 100":"0 0 100 20"} preserveAspectRatio="none" aria-hidden="true" focusable="false"><m.path d={feedback.contour} transform={orientation==="horizontal"?"matrix(0 1 1 0 0 0)":undefined}/></svg><m.span className="v-scroll__grip" aria-hidden="true" style={orientation==="vertical"?{y:feedback.gripOffset}:{x:feedback.gripOffset}}><i/><i/><i/></m.span></>;
 }
 
 /** Radix positions its thumb from a `requestAnimationFrame` loop it invokes immediately.

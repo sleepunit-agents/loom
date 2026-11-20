@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { animate, frameSteps, motionValue, type AnimationPlaybackControls, type Transition } from "motion";
+import { animateSingleValue, frameSteps, motionValue, type AnimationPlaybackControls, type Transition } from "motion";
 import { getMotionTime, isMotionClockFrozen, registerMotionClock } from "@/lib/cojeev-motion/clock";
 import { getSettingsSnapshot, getServerSettingsSnapshot, subscribeSettings, type SettingsSnapshot } from "@/lib/cojeev-motion/settings";
 import { useReducedMotion } from "@/lib/cojeev-motion/use-reduced-motion";
@@ -83,7 +83,8 @@ export function createMotionLane(initial: number, render: (value: number) => voi
       stop();
       if (transition.duration === 0) { jump(target); complete?.(); return; }
       const owner = generation;
-      const controls = animate(value, target, {
+      // A scalar needs no DOM/sequence timeline on the shell’s first page.
+      const controls = animateSingleValue(value, target, {
         ...transition,
         autoplay: !isMotionClockFrozen(),
         onComplete: () => { if (generation === owner) complete?.(); },

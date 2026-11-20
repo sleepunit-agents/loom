@@ -55,7 +55,7 @@ Retained from registry/cojeev/lib/icon-data.ts:
 
 // Geometry from the authored icon sprite. No browser sprite injection is required.
 /*
-Additional geometry from installed lucide-react 0.577.0.
+Additional geometry from lucide-react 0.577.0 (vendored here; the package is no longer installed).
 ISC License
 
 Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026.
@@ -100,7 +100,7 @@ SOFTWARE.
 ----------------------------------------------------------------------------
 Retained from registry/cojeev/lib/lucide-icon-data.ts:
 
-// Generated from lucide-react 0.577.0; run scripts/sync-lucide-icons.mjs --check to verify.
+// Generated from lucide-react 0.577.0 (vendored; the package is no longer installed).
 /*
 ISC License
 

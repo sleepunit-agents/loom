@@ -224,6 +224,13 @@
     transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   transform: scale(0.65);
 }
+.v-dock [data-part="lane"][data-open="true"] [data-part="active-indicator"] {
+  background: var(--v-text);
+}
+.v-dock [data-part="lane"][data-divider="true"] { position: relative; margin-inline-start: 14px; }
+.v-dock [data-part="lane"][data-divider="true"]::before {
+  content: ""; position: absolute; inset-inline-start: -11px; inset-block: 22% 30%; width: 1px; background: var(--v-border);
+}
 .v-dock [data-part="lane"][data-active="true"] [data-part="active-indicator"] {
   background: var(--v-accent-ink);
   transform: scale(1);

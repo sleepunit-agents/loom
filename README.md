@@ -16,6 +16,10 @@ which model or client it runs in.
 
 > When the harness changes, the agent persists.
 
+**The web rebuild goal:** [`docs/how-it-works/`](docs/how-it-works/README.md) describes
+the finished program, page by page, as approved by Jonathan. It replaces the
+interim rebuild specs and per-piece parity inventories.
+
 **See it whole:** [`docs/architecture.md`](docs/architecture.md) maps every
 moving part (entry points, tool wings, backends, stores) and how they
 touch, as diagrams GitHub renders in place.
@@ -36,8 +40,24 @@ an agent's persistent state:
 
 - **`identity`** — loads the terminal creed — the free-form markdown document
   that defines who the agent is (values, voice, purpose) — along with
-  preferences, self-model (running self-knowledge), and a client-specific
-  adapter on session start. Call this first.
+  preferences, owners, Top of Mind, and requested project/room/mode context.
+  Call this first. A short **Pieces** index points to on-demand sections:
+  `identity({piece: "self-model"})`, `"harness"` (including the client adapter),
+  `"last-24h"`, or `"model"`. Any standard section (including core names such as
+  `"creed"`) can be selected. Pass `client` or
+  `model` when loading their manifests; their environment defaults still apply.
+  `identity({pieces: ["self-model", "harness"]})` loads only those sections;
+  `piece` and `pieces` combine when both are given. `piece: "all"` returns the
+  full output, including the legacy memory-index appendix. `loom wake` keeps
+  that full output for shell fallbacks. Missing sections are omitted, including
+  missing creed/model/harness files; no placeholder or onboarding error is emitted.
+  Identity text is never summarized or truncated; the 24,000-byte core budget
+  test guards the measured Art baseline, not arbitrary agent-authored files.
+  The shared contract in [`src/identity/sections.ts`](src/identity/sections.ts)
+  defines each section’s name, purpose, writer, boot policy, load trigger and
+  advisory UTF-8 byte budget. Every agent uses this table; the core/index/selection
+  are derived from it. Requested room/project/mode blocks and recorder warnings
+  remain supplements. Section budgets never truncate text.
 - **`dossier`** — loads Art's operating brief for a **worker body** — a body
   that executes tasks on Art's behalf but is NOT Art. Returns preferences and
   self-model reframed in the third person, plus an explicit push-back mandate:
@@ -49,8 +69,9 @@ an agent's persistent state:
 - **`episodes`** — the episode tape: the short-term, cross-body tier. Every
   body leaves a `category: episode` note (where it was / what was said or
   decided / what shipped / what's open; 48h TTL by default) and every body
-  gets the last 24h of them at boot as a plain time-ordered tape, injected
-  right after preferences. Never salience-ranked — it's what just *happened*,
+  can load the last 24h as a plain time-ordered tape with
+  `identity({piece: "last-24h"})`. The full output (`piece: "all"` or `loom wake`)
+  includes it right after preferences. Never salience-ranked — it's what just *happened*,
   not what's important. `loom memory tape [--hours N]` is the CLI view.
 - **`find_similar`** — surface memories semantically near an existing entry or
   free-form text; used for deduplication and memory consolidation.
@@ -58,10 +79,12 @@ an agent's persistent state:
   pairs, category breakdown.
 - **`memory_recompute_salience`** — refresh stored salience from timestamps
   (the consolidation lane's step after the audit); derived and idempotent.
-- **`relay`** (a household served over HTTP) — ask another agent something:
-  it wakes a body of theirs in their house, and the answer comes back as a
-  wake of yours. Runs the clock piece's `wake relay` as the calling agent;
-  only between agents `household.json`'s `relay` list pairs.
+- **Tools a piece offers** (a household served over HTTP): an installed piece's
+  `mcp_tools` ([docs/extensions.md](docs/extensions.md), "Offers") are added to
+  an agent's session, called as that agent. The runtime's **`relay`** (ask
+  another agent something; its body gets it on the `relay` venue, and the
+  answer comes back the same way) is one: with no runtime there's no relay
+  tool. Who may relay to whom is the runtime's permissions.
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.
@@ -98,6 +121,16 @@ an agent's persistent state:
   write its own manifest, keyed to its MCP `clientInfo.name`. A harness can only
   describe itself, never another — the target is the connected peer, not a
   caller-supplied name.
+- **`harness_patch`** — edit one small piece of the connected harness's own
+  manifest by exact find/replace, applied against the server's own on-disk
+  copy. Unlike `harness_describe`, the caller never has to hold the full
+  current body — which matters once a manifest has grown past the point
+  where `identity()`'s combined payload truncates it (the manifest is
+  read back via `identity({piece: "harness"})`; older clients bundled it with
+  persona, preferences and self-model into one payload capped by the transport; a
+  `harness_describe` call built from a truncated read would silently drop
+  everything past the cut on the next overwrite). `find` must match the
+  current body exactly once.
 - **`knowledge_write`** — upsert an entity page by slug into the knowledge
   store (a separate `knowledge.db`). On an existing slug the body replaces by
   default (`mode: "append"` adds instead), title/domain follow the write, and
@@ -123,6 +156,24 @@ an agent's persistent state:
   `loom note attach`, stored once by their bytes beside `notes.db`.
 - **`note_read`** — a note's text, lifespan, expiry and files.
 - **`note_list`** — the notes under a prefix, newest first (no text).
+- **`conversation_digest`** — a body run's digest of its conversation (what was
+  asked, decided and done; `needs_owner` puts it in the owner's Inbox), for the
+  conversation and run given to `identity`. A conversation is core's record of who,
+  where and when, in any venue, and never holds text (docs/specs/conversations.md).
+- **`conversations`** — the agent's conversations, newest first, filtered by person,
+  project, venue or `since`.
+- **`conversation`** — one conversation: its record, digests, findings and render
+  (the venue's own, else core's generic one).
+- **`conversation_findings`** — graders' findings on the agent's own turns.
+- **`comms_title`** — name a Comms thread (a conversation in loom's own app), at
+  most 60 characters, for the conversation given to `identity`; never over the
+  owner's own name for it (docs/specs/comms.md).
+- **`comms_thread`** — read, read only, a Comms thread of the agent's own: its
+  messages as the owner sees them (words for the household's `comms_days`, 14 at most), its replies, tool cards and
+  error cards. This body's own thread, or one named by id; never another agent's.
+- **`describe_self`** — write the agent's own description on its loom profile (its
+  window's header), one or two plain sentences, only when the household's owner has
+  asked for it from the agent's window (Regenerate); never its creed or its memories.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
@@ -167,7 +218,9 @@ an agent's persistent state:
 - **Person cards** — `person_write`, `person_verify`, `person_archive`,
   `person_restore`, `person`, `person_list`, `person_history`,
   `person_revision_restore`, `person_evidence` (the tagged memories a card
-  condenses, as `loom person evidence` gives them). A card is the condensed current state of one human
+  condenses, as `loom person evidence` gives them), `person_merge` (two cards
+  that turn out to be one person become one: from is left as a redirect to into,
+  and everything tagged from is re-tagged). A card is the condensed current state of one human
   the agent works with (where they are in each system, with a freshness marker;
   how to work with them; what they were said to be allowed to do, each with a
   source). One value per field, overwritten; the past lives in revisions. Cards
@@ -176,6 +229,21 @@ an agent's persistent state:
   `# In the room` block with the cards of the people a turn is addressed by.
   CLI: `loom person show <slug>` / `loom person list`. Design:
   `docs/specs/person-cards.md`.
+
+- **Project cards** — `project_write`, `project_verify`, `project_archive`,
+  `project_restore`, `project_history`, `project_revision_restore`, `project`,
+  `project_list`, `project_hub`, `project_orphans`. A project card is the
+  condensed current state of an ongoing body of work (what it is, its goal,
+  where it stands, with freshness markers) plus `links`, the selectors its hub
+  reads with: aliases (other memory tags that mean this project), note
+  prefixes, an epic, repos, venues. The hub is computed at read, never stored:
+  memories tagged with any of the project's names, notes under its prefixes,
+  and person cards with a `where` field for it. A project's names (slug and
+  aliases) are unique across live projects, and recall scoped to any of them
+  sees memories tagged with any of them; `forget` and `memory_list` stay exact.
+  `identity({project})` adds a `# This project` block with the card.
+  `project_orphans` lists memory tags no project answers to. CLI:
+  `loom project show|list|hub|orphans`. Design: `docs/specs/projects.md`.
 
 Everything lives on disk as plain markdown plus a single SQLite file.
 No daemon, no external service, no GPU.
@@ -695,6 +763,10 @@ loom token create --agent art --label "Art · house on wunder"   # printed once
 loom token create --owner --label "Jonathan · page"
 loom token list
 loom token revoke "Art · house on wunder"
+loom token link --agent --label "screenshots t-1871"   # an agent's one-time page sign-in, its session named
+loom sessions list                  # every browser signed in to the page, by ref
+loom sessions revoke 3f9a0c1d2e4b5a69   # sign that one browser out; every other stays
+loom sessions revoke --label "screenshots t-1871"   # an agent ends its own sessions when done
 ```
 
 Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:
@@ -738,6 +810,34 @@ part in `pieces-pending/`.
 result with the live household: identities, memory counts, every card,
 knowledge, tokens. Nothing live is touched.
 
+### The nightly backup
+
+```bash
+loom backup set --target git:https://github.com/you/household-backup.git --recipient age1… \
+  --at 02:55 --tz America/Chicago --keep 7 [--require box --require secrets]
+loom backup status            # the last good one, its drill, what's wrong now
+loom backup run               # one now
+```
+
+**`loom backup`** does the bundle every night by itself
+(docs/specs/keeping-watch.md): it exports the household, encrypted to your keys
+and to the machine's own drill key (`$LOOM_HOME/backup/drill.key`, made there,
+never in a bundle), restores it into a throwaway home and compares it with the
+live one, and only then writes it to the target:
+
+- `git:<url>`: a repo loom owns. The branch is always one commit holding the
+  newest `--keep` nights and each month's first, force-pushed with a lease. A
+  bundle over 90 MB goes in parts. It pushes with this user's own git
+  credentials; loom stores none, and refuses a URL that carries one.
+- `path:<dir>`: a directory (a USB stick, a NAS), the same bundles as files.
+
+A target holding anything loom didn't write (no `.loom-backup`) is refused. The
+default agent's Setup shows the last run; a failed or missed one (none good in
+26 hours) is an alert in the household owner's Inbox, and the daemon's
+`LOOM_ALERT_COMMAND` (a JSON argv in its environment, never a household
+setting) hears it as `loom-backup --severity bad --summary …`. A household
+restored from a bundle waits for `loom backup set` before it pushes anywhere.
+
 A restore trusts what's in the bundle. age encrypts, but it doesn't prove who
 made the file, so only restore bundles you made. Needs the `age` and `tar`
 programs.
@@ -765,6 +865,14 @@ for, the harness block becomes a self-describe onboarding prompt (call
 `harness_describe` with a manifest covering tool surface, sandbox,
 delegation, scheduling, session search, memory layers, gotchas) instead
 of a bare "(manifest missing)" stub.
+
+**Or patch it in place.** Once a manifest exists, `harness_patch` edits
+one piece of it by exact find/replace against the server's own on-disk
+copy — no need to read the full current body back through `identity()`'s
+combined payload first (which truncates past a size cap, so a
+read-truncated-then-overwrite via `harness_describe` risks silently
+losing whatever was past the cut). `find` must match the current body
+exactly once; zero or multiple matches is refused.
 
 **Resolution is data-driven.** Mapping a connecting `clientInfo.name` to
 a manifest is done from the files on disk, not a hardcoded code table. A
@@ -803,6 +911,7 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_STALL_MS` | `500` | `loom serve --http` logs any event-loop stall this long: the requests in flight, the background jobs that held it, GC time. `0` turns it off |
 | `LOOM_URL` | *(unset)* | Run the CLI's store verbs against this loom-http (its MCP URL) instead of a local stack |
 | `LOOM_TOKEN_FILE` | *(unset)* | File holding the bearer token for `LOOM_URL` (never passed in argv) |
 | `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |
@@ -946,3 +1055,5 @@ terms of the GNU Affero General Public License (version 3 or any later
 version). If you run a modified loom and let others interact with it
 over a network, you must offer them the corresponding source. Bundle
 loom into a larger product freely; fork it and go proprietary, no.
+For disposable development data, `loom fixture <dir>` creates an empty-home
+fixture and refuses to overwrite an existing home.

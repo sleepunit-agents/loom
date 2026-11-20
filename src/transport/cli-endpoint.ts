@@ -8,7 +8,8 @@
  * same bearer gate and payload cap as /mcp, and grants nothing /mcp doesn't:
  *
  *   - only REMOTE_VERBS (the store verbs, all of which have MCP tools),
- *     minus the memory subcommands that have none, and the note subcommands that name a file
+ *     minus the memory subcommands that have none, the note subcommands that name a file,
+ *     and `person ensure` (the owner's, not an agent's)
  *   - never --context-dir or --url: the stack is the server's, full stop
  *   - a fixed env: the server's HOME and stack, plus the caller's
  *     LOOM_CLIENT / LOOM_MODEL hints and nothing else
@@ -17,7 +18,7 @@
 import { Readable } from 'node:stream';
 import { runCliLocal } from '../cli/index.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from '../cli/args.js';
-import { LOCAL_MEMORY_SUBCOMMANDS, LOCAL_NOTE_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
+import { LOCAL_MEMORY_SUBCOMMANDS, LOCAL_NOTE_SUBCOMMANDS, LOCAL_PERSON_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
 import type { IOStreams } from '../cli/io.js';
 
 const MAX_ARGV = 256;
@@ -72,6 +73,15 @@ export function parseCliRequest(body: unknown): CliRequest | string {
       return `refused: note ${sub} names a file on the machine it runs on, so it runs only on loom's own`;
     }
   }
+  if (verb === 'person') {
+    const after = [...args.slice(0, verbIdx), ...args.slice(verbIdx + 1)];
+    const sub = extractGlobalFlags(after).rest[0];
+    if (sub !== undefined && LOCAL_PERSON_SUBCOMMANDS.has(sub)) {
+      return sub === 'merge'
+        ? 'refused: person merge is the owner\'s (POST /api/loom/people/merge, or on loom\'s machine); an agent merges cards with person_merge'
+        : `refused: person ${sub} is the owner's (POST /api/loom/people/ensure, or on loom's machine); an agent writes cards with person_write`;
+    }
+  }
   return { argv: args, stdin: stdin as string | undefined, env: hints };
 }
 
@@ -99,8 +109,11 @@ export async function runCliRequest(contextDir: string, request: CliRequest): Pr
   return { exitCode, stdout, stderr };
 }
 
-export async function handleCliBody(contextDir: string, body: unknown): Promise<CliOutcome> {
+export async function handleCliBody(contextDir: string, body: unknown, held?: string | null): Promise<CliOutcome> {
   const request = parseCliRequest(body);
   if (typeof request === 'string') return { ok: false, error: request };
-  return { ok: true, response: await runCliRequest(contextDir, request) };
+  // A house's call reads only the conversation it holds (t-2118): the tape, identity and a hub (episodes.ts heldFromEnv).
+  // Set here from the caller's token, never from the request (its env hints are only LOOM_CLIENT and LOOM_MODEL).
+  const env = held === undefined ? request.env : { ...request.env, LOOM_HOUSE_HELD: held ?? '-' };
+  return { ok: true, response: await runCliRequest(contextDir, { ...request, env }) };
 }

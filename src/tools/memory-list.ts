@@ -5,6 +5,7 @@
  * this doesn't require a search query — useful for auditing, browsing,
  * and memory maintenance.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { ListInput, MemoryEntry } from '../backends/types.js';
 
@@ -24,8 +25,9 @@ export function formatEntries(entries: MemoryEntry[]): string {
 export async function memoryList(
   contextDir: string,
   input: ListInput,
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const entries = await backend.list(input);
   return formatEntries(entries);
 }

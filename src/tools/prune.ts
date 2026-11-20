@@ -3,6 +3,7 @@
  *
  * Delegates to the configured memory backend for TTL-based cleanup.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import type { PruneResult } from '../backends/types.js';
 
@@ -11,8 +12,9 @@ import type { PruneResult } from '../backends/types.js';
 export async function prune(
   contextDir: string,
   options?: { dryRun?: boolean; staleDays?: number },
+  selection?: MemorySelection,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
   const result = await backend.prune(options);
 
   const lines: string[] = [];

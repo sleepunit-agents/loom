@@ -12,11 +12,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listPieces } from '../cli/pieces.js';
 import {
-  PieceError, installPiece, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
-  removePiece, rollbackPiece, setSettings, type PieceRecord,
+  PieceError, describeSource, installPiece, isLocal, versionKey, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
+  removePiece, renamedAdvice, rollbackPiece, setSettings, type PieceRecord,
 } from '../cli/pieces-managed.js';
 import { unitName } from '../cli/pieces-services.js';
-import type { ActResult, Ask, Block, Page } from './vocab.js';
+import type { ActResult, Ask, Block, Page, PanelRow } from './vocab.js';
 import { uiTimeZone, when } from './core.js';
 
 interface Job {
@@ -79,33 +79,36 @@ const fieldOf = (setting: string) => `s_${setting.toLowerCase()}`.slice(0, 40);
 function managedBlocks(env: NodeJS.ProcessEnv, r: PieceRecord, update?: string): Block[] {
   const missing = missingSettings(env, r);
   const values = readSettings(env, r.name);
-  const buttons: { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields: Record<string, string> }[] = [];
-  if (update) buttons.push({ action: 'piece-update', label: `Update to ${update.slice(0, 12)}`, tone: 'primary', fields: { name: r.name } });
-  if (r.previous) buttons.push({ action: 'piece-rollback', label: `Roll back to ${r.previous.version || r.previous.commit.slice(0, 12)}`, fields: { name: r.name } });
-  buttons.push({ action: 'piece-remove', label: `Remove ${r.name}`, tone: 'danger', confirm: 'Its program and service go. Its settings and data stay, for a reinstall.', fields: { name: r.name } });
-  const blocks: Block[] = [
-    { type: 'kv', items: [
-      { label: 'version', value: r.version || '—' },
-      { label: 'source', value: `${r.source.repo} @ ${r.source.commit.slice(0, 12)}` },
-      { label: 'installed', value: when(r.installed, uiTimeZone()) },
-      ...(r.loom.services.length ? [{ label: 'services', value: r.loom.services.map((s) => unitName(r.name, s.name)).join(', ') }] : []),
-    ] },
+  // A piece's own panel (Jonathan, 2026-11-03: "app panels, not web forms"): what it is now, in rows; its settings in a
+  // sheet; updating, rolling back and removing as a tap each. Its commit and services are details, quiet in a row.
+  const rows: PanelRow[] = [
+    { label: 'Version', value: r.version || 'No version', detail: describeSource(r.source).replace('@', ' @ ') },
+    { label: 'Installed', value: when(r.installed, uiTimeZone()) },
+    ...(r.loom.services.length ? [{ label: 'Runs in the background', value: r.loom.services.map((x) => unitName(r.name, x.name)).join(', ') }] : []),
   ];
-  if (missing.length) blocks.unshift({ type: 'callout', tone: 'warn', title: 'Needs setup', text: `Set ${missing.join(', ')} below.` });
   if (r.loom.settings.length) {
-    blocks.push({
-      type: 'form', action: 'piece-set', title: 'Settings', submit: 'Save settings', hidden: { name: r.name },
-      note: 'Given to this piece alone, when loom runs it. Leave one empty to use its default (or the value loom-http already has).',
-      fields: r.loom.settings.map((s) => ({
-        name: fieldOf(s.name), label: `${s.label} (${s.name})`, kind: s.kind === 'choice' ? 'choice' as const : 'text' as const,
-        ...(s.hint || s.default ? { hint: [s.hint, s.default ? `default: ${s.default}` : ''].filter(Boolean).join(' · ') } : {}),
-        ...(values[s.name] ? { value: values[s.name] } : {}),
-        ...(s.options ? { options: s.options } : {}),
-      })),
+    rows.push({
+      label: 'Settings', tone: missing.length ? 'warn' : undefined,
+      value: missing.length ? `Needs ${missing.join(', ')}` : `${r.loom.settings.length} set`,
+      edit: {
+        action: 'piece-set', title: 'Settings', submit: 'Save settings', hidden: { name: r.name },
+        note: 'Given to this piece alone, when loom runs it. Leave one empty to use its default (or the value loom-http already has).',
+        fields: r.loom.settings.map((x) => ({
+          name: fieldOf(x.name), label: x.label, kind: x.kind === 'choice' ? 'choice' as const : 'text' as const,
+          hint: [x.hint, x.default ? `Default: ${x.default}` : '', x.name].filter(Boolean).join(' · '),
+          ...(values[x.name] ? { value: values[x.name] } : {}),
+          ...(x.options ? { options: x.options } : {}),
+        })),
+      },
     });
   }
-  blocks.push({ type: 'buttons', items: buttons });
-  return blocks;
+  if (update) rows.push({ label: 'Update', value: `A newer version is in loom's catalog (${update.slice(0, 7)})`, act: { action: 'piece-update', label: 'Update', tone: 'primary', fields: { name: r.name } } });
+  // A local piece can't know it has an update until its directory is read again.
+  else if (isLocal(r.source)) rows.push({ label: 'Update', value: 'From its directory, as it is now', act: { action: 'piece-update', label: 'Update', fields: { name: r.name } } });
+  if (r.previous) rows.push({ label: 'Roll back', value: `To ${r.previous.version || r.previous.commit.slice(0, 7)}`, act: { action: 'piece-rollback', label: 'Roll back', fields: { name: r.name } } });
+  rows.push({ label: 'Remove', value: 'Its program and service go; its settings and data stay, for a reinstall.',
+    act: { action: 'piece-remove', label: 'Remove', tone: 'danger', confirm: 'Its program and service go. Its settings and data stay, for a reinstall.', fields: { name: r.name } } });
+  return [{ type: 'panel', rows }];
 }
 
 export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string> = {}): Page {
@@ -115,25 +118,37 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
   const installed = listPieces(env).filter((p) => p.name !== 'loom');
   const jobs = readJobs(env);
 
-  const installedBlocks: Block[] = installed.length ? installed.flatMap((p): Block[] => {
+  // Installed, as an app store's Updates: a row a piece saying how it is, its panel a tap away.
+  const pieceRows: PanelRow[] = [];
+  let updates = 0, needs = 0;
+  for (const p of installed) {
     const owner = [...managed.values()].find((x) => x.bins.includes(`loom-${p.name}`));
     // A bin that's part of another managed piece is shown with it, not on its own.
-    if (owner && owner.name !== p.name && bin && p.path.startsWith(bin + '/')) return [];
+    if (owner && owner.name !== p.name && bin && p.path.startsWith(bin + '/')) continue;
     const r = managed.get(p.name);
-    if (r && bin && p.path.startsWith(bin + '/')) {
-      const c = catalog.find((x) => x.name === r.name && x.repo === r.source.repo);
-      const update = c && c.commit !== r.source.commit ? c.commit : undefined;
-      const missing = missingSettings(env, r);
-      const also = r.bins.filter((b) => b.startsWith('loom-') && b !== `loom-${r.name}`).map((b) => b.slice('loom-'.length));
-      return [{ type: 'details', summary: r.loom.label ?? c?.label ?? r.name,
-        meta: [r.version, also.length ? `also ${also.join(', ')}` : '', update ? 'update available' : '', missing.length ? 'needs setup' : ''].filter(Boolean).join(' · '),
-        blocks: managedBlocks(env, r, update) }];
-    }
-    return [];
-  }) : [{ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' }];
+    if (!(r && bin && p.path.startsWith(bin + '/'))) continue;
+    const src = r.source;
+    const c = isLocal(src) ? undefined : catalog.find((x) => x.name === r.name && x.repo === src.repo);
+    const update = c && !isLocal(src) && c.commit !== src.commit ? c.commit : undefined;
+    const missing = missingSettings(env, r);
+    if (update) updates++;
+    if (missing.length) needs++;
+    const label = r.loom.label ?? c?.label ?? r.name.charAt(0).toUpperCase() + r.name.slice(1);
+    pieceRows.push({
+      label, tone: missing.length ? 'warn' : update ? 'muted' : 'ok',
+      value: missing.length ? 'Needs setup' : update ? 'Update available' : 'Up to date',
+      detail: [r.version ? `Version ${r.version}` : '', isLocal(src) ? 'From a folder on this machine' : '', c?.description ?? ''].filter(Boolean).join(' · ') || undefined,
+      sheet: { title: label, blocks: [...(c?.description ? [{ type: 'text' as const, text: c.description }] : []), ...managedBlocks(env, r, update)] },
+    });
+  }
+  const installedBlocks: Block[] = pieceRows.length ? [
+    { type: 'health', tone: needs ? 'warn' : updates ? 'muted' : 'ok', text: needs ? `${needs} need${needs === 1 ? 's' : ''} setup` : updates ? `${updates} update${updates === 1 ? '' : 's'} available` : 'All up to date',
+      detail: `${pieceRows.length} piece${pieceRows.length === 1 ? '' : 's'} installed` },
+    { type: 'panel', rows: pieceRows.slice(0, 200) },
+  ] : [{ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' }];
   // Pieces on PATH that loom didn't install: one quiet list, the path a tap away in its meta.
   const byHand = installed.filter((p) => !(bin && p.path.startsWith(bin + '/')));
-  const shown = installedBlocks.filter((b) => b.type === 'details').length;
+  const shown = pieceRows.length;
 
   const available = catalog.filter((c) => !managed.has(c.name) && !installed.some((p) => p.name === c.name));
   if (!installedBlocks.length) installedBlocks.push({ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' });
@@ -153,7 +168,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
     : [{ type: 'text', text: 'Everything in loom\'s catalog is installed.', tone: 'muted' }] });
   // Pieces on PATH that loom didn't install: loom runs them, but doesn't update or remove them.
   if (byHand.length) {
-    sections.push({ id: 'by-hand', title: `Managed by hand · ${byHand.length}`, side: true, blocks: [
+    sections.push({ id: 'by-hand', title: `Managed by hand · ${byHand.length}`, place: 'side' as const, blocks: [
       { type: 'list', items: byHand.map((p) => ({ text: p.name, meta: env.HOME && p.path.startsWith(`${env.HOME}/`) ? `~${p.path.slice(env.HOME.length)}` : p.path })) },
       { type: 'text', text: 'On PATH, not installed by loom: it runs them, but updating and removing them is yours.', tone: 'muted' },
     ] });
@@ -184,7 +199,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
       );
     }
   }
-  sections.push({ id: 'github', title: 'From GitHub', side: true, blocks: github });
+  sections.push({ id: 'github', title: 'From GitHub', place: 'side' as const, blocks: github });
   // While an install runs, the page reloads itself to show it finish.
   return { title: 'Pieces', intro: 'What loom runs beside itself: install, update, roll back and remove them here.', sections,
     ...(jobs[0]?.state === 'running' ? { refresh: 3 } : {}) };
@@ -228,7 +243,17 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
       }
       case 'piece-update': {
         const r = managedPieces(env).find((x) => x.name === name);
-        const c = readCatalog().find((x) => x.name === name && x.repo === r?.source.repo);
+        if (r && isLocal(r.source)) {
+          const path = r.source.path;
+          return startJob(env, `Update ${r.loom.label ?? r.name} from ${path}`, async () => {
+            const u = await installPiece(env, { path }, r.name);
+            return u.unchanged ? `nothing in ${path} changed` : `now ${u.record.version} (${describeSource(u.record.source)})`;
+          });
+        }
+        const renamed = r ? renamedAdvice(r) : undefined;
+        if (renamed) return { ok: false, message: renamed, page: 'loom:pieces' };
+        const repo = r && !isLocal(r.source) ? r.source.repo : undefined;
+        const c = readCatalog().find((x) => x.name === name && x.repo === repo);
         if (!r || !c) return { ok: false, message: `${name} has no update in loom's catalog.`, page: 'loom:pieces' };
         return startJob(env, `Update ${r.loom.label ?? r.name}`, async () => {
           const u = await installPiece(env, { repo: c.repo, commit: c.commit }, r.name);
@@ -237,7 +262,7 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
       }
       case 'piece-rollback': {
         const r = rollbackPiece(env, name);
-        return { ok: true, message: `${r.loom.label ?? r.name} is back on ${r.version || r.source.commit.slice(0, 12)}.`, page: 'loom:pieces' };
+        return { ok: true, message: `${r.loom.label ?? r.name} is back on ${r.version || versionKey(r.source).slice(0, 12)}.`, page: 'loom:pieces' };
       }
       case 'piece-remove': {
         removePiece(env, name);

@@ -1,7 +1,7 @@
 "use client";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import * as React from "react";
-import { AnimatePresence, motion, useIsPresent } from "motion/react";
+import { AnimatePresence, m, useIsPresent } from "motion/react";
 import {
   Card,
   CardHeader,
@@ -25,6 +25,7 @@ import { useChoreography } from "@/lib/cojeev-motion/choreography";
 import {
   chartColor,
   chartColors,
+  distinctColors,
   clamp,
   finiteValue,
   type ChartPoint,
@@ -488,6 +489,10 @@ export type ChartFrameProps = {
   appearance?: "analysis" | "brief" | "ledger";
   /** An explicit source measure; it does not change when a legend series is hidden. */
   summary?: { label: string; value: React.ReactNode; detail?: string };
+  /** loom: the plot's height in CSS px (300 by default). */
+  plotHeight?: number;
+  /** loom: false drops the Show data button (the table stays, visually hidden, for a screen reader). */
+  tableToggle?: boolean;
   children: (plot: ChartPlotState) => React.ReactNode;
 };
 export type ChartPlotState = {
@@ -504,10 +509,10 @@ export type ChartPlotState = {
   inspect: (index: number) => void;
 };
 
-function ChartPlotSvg(props: React.ComponentProps<typeof motion.svg>) {
+function ChartPlotSvg(props: React.ComponentProps<typeof m.svg>) {
   const present = useIsPresent();
   return (
-    <motion.svg
+    <m.svg
       {...props}
       tabIndex={present ? props.tabIndex : -1}
       aria-hidden={present ? props["aria-hidden"] : true}
@@ -534,6 +539,8 @@ export function ChartFrame({
   emptyMessage = "No observations to plot.",
   appearance,
   summary,
+  plotHeight,
+  tableToggle = true,
   children,
 }: ChartFrameProps) {
   const { quiet, transition } = useChoreography();
@@ -558,10 +565,8 @@ export function ChartFrame({
     value: data.length,
     detail: "Includes rows with missing values.",
   };
-  const resolved = series.map((item, index) => ({
-    ...item,
-    color: item.color ?? chartColors[index % chartColors.length],
-  }));
+  // loom: no two series share a colour (chart-geometry distinctColors).
+  const resolved = distinctColors(series);
   const legend =
     legendMode === "points"
       ? data.map((point, index) => ({
@@ -582,7 +587,8 @@ export function ChartFrame({
           .map((point, index) => ({ ...point, color: legend[index].color }))
           .filter((_, index) => !hidden.includes(`point-${index}`))
       : data;
-  const height = 300;
+  // loom: shorter where asked (a chart in a page's side column).
+  const height = plotHeight ?? 300;
   const left = interaction === "y" ? Math.min(100, width * 0.27) : 42,
     right = width - 18,
     top = 24,
@@ -670,7 +676,7 @@ export function ChartFrame({
       aria-describedby={description ? `${id}-description` : undefined}
     >
       <AnimatePresence initial={!quiet}>
-        <motion.div
+        <m.div
           key="chart"
           initial={quiet ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -820,7 +826,7 @@ export function ChartFrame({
                       })}
                     </ChartPlotSvg>
                   ) : (
-                    <motion.div
+                    <m.div
                       key="empty"
                       className="v-chart-empty"
                       initial={{ opacity: 0 }}
@@ -832,7 +838,7 @@ export function ChartFrame({
                       {hidden.length
                         ? "Choose a legend item to show its data."
                         : emptyMessage}
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
                 <span
@@ -856,7 +862,7 @@ export function ChartFrame({
             </CardContent>
             <CardFooter className="v-chart-frame__footer">
               <span>Hover to explore · Arrow keys to inspect</span>
-              {showTable && appearance !== "ledger" && (
+              {showTable && tableToggle && appearance !== "ledger" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -886,7 +892,7 @@ export function ChartFrame({
               </div>
             )}
           </Card>
-        </motion.div>
+        </m.div>
       </AnimatePresence>
     </ChartContainer>
   );

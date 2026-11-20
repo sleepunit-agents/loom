@@ -1,0 +1,6 @@
+/* A pixel icon (pixel-icons.tsx): 32 px at 1x, whole pixels, never smoothed. Which filter (its ramp) is pixel-icons.tsx's,
+   made from the same list of tints as the filters themselves. */
+/* the dock's icon slot is 58% of its key (30 px of 52): a pixel icon's is its own 32 px, so no pixel is resampled */
+.v-dock [data-part="icon"]:has(>.loom-pix){inline-size:32px;block-size:32px}
+.v-dock [data-part="icon"] .loom-pix{inline-size:32px;block-size:32px;max-inline-size:none;max-block-size:none}
+.loom-pix{display:block;flex:none;width:32px;height:32px;image-rendering:crisp-edges;image-rendering:pixelated;-webkit-user-drag:none;user-select:none;pointer-events:none}

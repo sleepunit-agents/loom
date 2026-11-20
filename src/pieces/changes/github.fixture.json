@@ -1,0 +1,979 @@
+{
+ "data": {
+  "repository": {
+   "open": {
+    "nodes": [
+     {
+      "number": 1,
+      "title": "Passing, approved",
+      "url": "https://github.com/acme/app/pull/1",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-1-thing",
+      "headRefOid": "0000000000000000000000000000000000000001",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-1).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "APPROVED",
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": [
+        {
+         "state": "APPROVED",
+         "author": {
+          "login": "sam",
+          "name": "Sam Lee"
+         }
+        }
+       ]
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 2,
+      "title": "Failing",
+      "url": "https://github.com/acme/app/pull/2",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-2-thing",
+      "headRefOid": "0000000000000000000000000000000000000002",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-2).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "FAILURE",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "FAILURE"
+             },
+             {
+              "__typename": "CheckRun",
+              "name": "lint",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 3,
+      "title": "Running",
+      "url": "https://github.com/acme/app/pull/3",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-3-thing",
+      "headRefOid": "0000000000000000000000000000000000000003",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-3).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "PENDING",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "IN_PROGRESS",
+              "conclusion": null
+             },
+             {
+              "__typename": "StatusContext",
+              "context": "ci/legacy",
+              "state": "PENDING"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 4,
+      "title": "No checks",
+      "url": "https://github.com/acme/app/pull/4",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-4-thing",
+      "headRefOid": "0000000000000000000000000000000000000004",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-4).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": null
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 5,
+      "title": "Mixed failed and running",
+      "url": "https://github.com/acme/app/pull/5",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-5-thing",
+      "headRefOid": "0000000000000000000000000000000000000005",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-5).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "FAILURE",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "TIMED_OUT"
+             },
+             {
+              "__typename": "CheckRun",
+              "name": "e2e",
+              "status": "QUEUED",
+              "conclusion": null
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 6,
+      "title": "Changes requested",
+      "url": "https://github.com/acme/app/pull/6",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-6-thing",
+      "headRefOid": "0000000000000000000000000000000000000006",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-6).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "CHANGES_REQUESTED",
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": [
+        {
+         "state": "CHANGES_REQUESTED",
+         "author": {
+          "login": "sam",
+          "name": "Sam Lee"
+         }
+        }
+       ]
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 7,
+      "title": "Needs review",
+      "url": "https://github.com/acme/app/pull/7",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-7-thing",
+      "headRefOid": "0000000000000000000000000000000000000007",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-7).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "reviewRequests": {
+       "nodes": [
+        {
+         "requestedReviewer": {
+          "login": "sam",
+          "name": "Sam Lee"
+         }
+        },
+        {
+         "requestedReviewer": {
+          "slug": "core",
+          "name": "Core"
+         }
+        }
+       ]
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 8,
+      "title": "Conflicting",
+      "url": "https://github.com/acme/app/pull/8",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-8-thing",
+      "headRefOid": "0000000000000000000000000000000000000008",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-8).",
+      "mergeable": "CONFLICTING",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 9,
+      "title": "Unknown mergeability",
+      "url": "https://github.com/acme/app/pull/9",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-9-thing",
+      "headRefOid": "0000000000000000000000000000000000000009",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-9).",
+      "mergeable": "UNKNOWN",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 10,
+      "title": "A draft",
+      "url": "https://github.com/acme/app/pull/10",
+      "state": "OPEN",
+      "isDraft": true,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-10-thing",
+      "headRefOid": "000000000000000000000000000000000000000a",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-10).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 11,
+      "title": "Someone else's",
+      "url": "https://github.com/acme/app/pull/11",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "gabe",
+       "name": "Gabe Ruiz"
+      },
+      "headRefName": "gabe/fix",
+      "headRefOid": "000000000000000000000000000000000000000b",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-11).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 12,
+      "title": "Someone else on an ada/ branch",
+      "url": "https://github.com/acme/app/pull/12",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "mallory"
+      },
+      "headRefName": "ada/sneaky",
+      "headRefOid": "000000000000000000000000000000000000000c",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-12).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 13,
+      "title": "The owner's own",
+      "url": "https://github.com/acme/app/pull/13",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "octo-owner",
+       "name": "Olive Owner"
+      },
+      "headRefName": "olive-fix",
+      "headRefOid": "000000000000000000000000000000000000000d",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-13).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 14,
+      "title": "An agent's under the owner's login",
+      "url": "https://github.com/acme/app/pull/14",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "author": {
+       "login": "octo-owner",
+       "name": "Olive Owner"
+      },
+      "headRefName": "ada/t1781-thing",
+      "headRefOid": "000000000000000000000000000000000000000e",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-14).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "done": {
+    "nodes": [
+     {
+      "number": 20,
+      "title": "Merged yesterday",
+      "url": "https://github.com/acme/app/pull/20",
+      "state": "MERGED",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": "2026-11-04T12:00:00Z",
+      "mergedAt": "2026-11-04T12:00:00Z",
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-20-thing",
+      "headRefOid": "0000000000000000000000000000000000000014",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-20).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "number": 21,
+      "title": "Closed long ago",
+      "url": "https://github.com/acme/app/pull/21",
+      "state": "CLOSED",
+      "isDraft": false,
+      "createdAt": "2026-11-04T10:00:00Z",
+      "updatedAt": "2026-11-05T10:00:00Z",
+      "closedAt": "2026-09-01T12:00:00Z",
+      "mergedAt": null,
+      "author": {
+       "login": "ada-bot"
+      },
+      "headRefName": "ada/t-21-thing",
+      "headRefOid": "0000000000000000000000000000000000000015",
+      "baseRefName": "main",
+      "bodyText": "Fixes the thing (t-21).",
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "reviewRequests": {
+       "nodes": []
+      },
+      "latestReviews": {
+       "nodes": []
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "participants": {
+       "nodes": [
+        {
+         "login": "ada-bot",
+         "name": null
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "nodes": [
+             {
+              "__typename": "CheckRun",
+              "name": "build",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ }
+}

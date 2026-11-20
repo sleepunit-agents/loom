@@ -10,6 +10,7 @@
  * superseded chain is allowed), but old_slug must not already be archived —
  * if it is, the call returns without error but reports archived=false.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeSupersededToolInput {
@@ -21,12 +22,13 @@ export interface KnowledgeSupersededToolInput {
 export async function knowledgeSupersede(
   contextDir: string,
   input: KnowledgeSupersededToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   if (input.old_slug === input.new_slug) {
     return 'Error: old_slug and new_slug must be different.';
   }
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.supersedePage({
       old_slug: input.old_slug,

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SqliteVecBackend, bufToF32 } from './sqlite-vec.js';
+import { heatOf, recomputeSalience } from './salience.js';
 import type { EmbeddingProvider } from './types.js';
 
 /**
@@ -66,6 +67,57 @@ describe('SqliteVecBackend', () => {
   afterEach(() => {
     backend.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('keeps metadata, observation, archive and restore cold; real edits and repeated remember reheat', async () => {
+    const input = { category: 'feedback' as const, title: 'Anchor policy', content: 'alpha lesson' };
+    const { ref } = await backend.remember(input);
+    const db = backend.getDatabase();
+    const old = '2020-01-01T00:00:00.000Z';
+    const row = () => db.prepare('SELECT * FROM memories WHERE ref = ?').get(ref) as { created: string; updated: string; authored_at: string; category: string; salience: number };
+    expect(row().authored_at).toBe(row().created);
+    db.prepare('UPDATE memories SET created = ?, authored_at = ?, updated = ? WHERE ref = ?').run(old, old, old, ref);
+    const cold = heatOf(row(), Date.now());
+    await backend.update({ ref, metadata: { provenance: 'backfill' } });
+    expect(row().updated).not.toBe(old);
+    expect(row().authored_at).toBe(old);
+    expect(heatOf(row(), Date.now())).toBeCloseTo(cold, 8);
+    await backend.update({ ref, content: input.content, observation: 'confirm' });
+    expect(row().authored_at).toBe(old);
+    await backend.archive({ ref });
+    await backend.restore({ ref });
+    expect(row().authored_at).toBe(old);
+    expect(heatOf(row(), Date.now())).toBeCloseTo(cold, 8);
+    recomputeSalience(db, Date.now());
+    expect(row().salience).toBeCloseTo(cold, 8);
+    await backend.update({ ref, content: 'beta revised lesson' });
+    expect(row().authored_at).not.toBe(old);
+    expect(heatOf(row(), Date.now())).toBeGreaterThan(0.99);
+    db.prepare('UPDATE memories SET authored_at = ? WHERE ref = ?').run(old, ref);
+    await backend.remember({ ...input, content: 'beta revised lesson' });
+    expect(row().authored_at).not.toBe(old);
+    expect(heatOf(row(), Date.now())).toBeGreaterThan(0.99);
+  });
+
+  it('reheats changed revision restores and appended merges, but not history-only merges', async () => {
+    const { ref } = await backend.remember({ category: 'project', title: 'Merge anchor', content: 'alpha' });
+    const db = backend.getDatabase();
+    const old = '2020-01-01T00:00:00.000Z';
+    const anchor = () => (db.prepare('SELECT authored_at FROM memories WHERE ref = ?').get(ref) as { authored_at: string }).authored_at;
+    const age = () => db.prepare('UPDATE memories SET authored_at = ? WHERE ref = ?').run(old, ref);
+    const { snapshotId } = await backend.update({ ref, content: 'beta' });
+    age();
+    await backend.restoreRevision({ ref, revision_id: snapshotId! });
+    expect(anchor()).not.toBe(old);
+    age();
+    await backend.restoreRevision({ ref, revision_id: snapshotId! });
+    expect(anchor()).toBe(old); // same body, audit only
+    const source = await backend.remember({ category: 'project', title: 'Source one', content: 'gamma' });
+    await backend.mergeMemories({ target_ref: ref, source_refs: [source.ref] });
+    expect(anchor()).toBe(old);
+    const appended = await backend.remember({ category: 'project', title: 'Source two', content: 'gamma appended' });
+    await backend.mergeMemories({ target_ref: ref, source_refs: [appended.ref], append_loser_bodies: true });
+    expect(anchor()).not.toBe(old);
   });
 
   it('remembers and recalls a memory', async () => {

@@ -1,3 +1,4 @@
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgePurgeToolInput {
@@ -8,6 +9,7 @@ export interface KnowledgePurgeToolInput {
 export async function knowledgePurge(
   contextDir: string,
   input: KnowledgePurgeToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
   if (!input.confirm) {
     return 'Error: confirm must be explicitly true to execute a hard delete.';
@@ -16,7 +18,7 @@ export async function knowledgePurge(
     return 'Error: slugs must not be empty.';
   }
 
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.purgePages({ slugs: input.slugs, confirm: true });
     return `Purged ${result.purged} page(s): ${result.slugs.map((s) => `\`${s}\``).join(', ')}.`;

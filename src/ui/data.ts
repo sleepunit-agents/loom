@@ -3,12 +3,24 @@
  * explained, one memory by ref, the memories about a person. Plain SQL over
  * memories.db opened read-only, like the digest; nothing here writes.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
+import { plainEpisode, type ConversationFacts } from './episode-title.js';
 import { DEFAULT_HALF_LIFE_DAYS, HALF_LIVES, decayedRecallHeat, heatOf, pickForDigest, temperature, tierOf, type Tier } from '../backends/salience.js';
 
 const EPISODE = 'episode';
+
+/** The agent's name: IDENTITY.md's first heading, else the context dir's name. */
+export function agentName(contextDir: string): string {
+  try {
+    const line = readFileSync(join(contextDir, 'IDENTITY.md'), 'utf-8').split('\n').find((l) => /^#\s+\S/.test(l));
+    if (line) return line.replace(/^#\s+/, '').trim();
+  } catch { /* no identity file */ }
+  return contextDir.split('/').filter(Boolean).pop() ?? 'loom';
+}
+const agentLabelOf = agentName;
 
 export interface MemoryView {
   ref: string;
@@ -42,13 +54,13 @@ export interface MemoryView {
 
 interface Row {
   ref: string; title: string; category: string; project: string | null; content: string;
-  sourcing: string | null; scope: string | null; created: string; updated: string | null;
+  sourcing: string | null; scope: string | null; created: string; updated: string | null; authored_at: string | null;
   last_accessed: string | null; expires_at: string | null; times_seen: number | null;
   metadata: string | null; salience: number | null;
   recall_heat: number | null; recall_heat_at: string | null;
 }
 
-const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
+const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, authored_at, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
 
 function open(contextDir: string): BetterSqlite3.Database | null {
   const path = resolveSqliteDbPath(contextDir);
@@ -81,6 +93,8 @@ export function whereLabel(where: string): string {
   const [surface, ...rest] = where.split(':');
   const name = SURFACES[surface] ?? (surface ? surface[0].toUpperCase() + surface.slice(1) : where);
   if (surface === 'wake') return name;
+  // Comms: a thread's place is its id, never shown.
+  if (surface === 'loom') return 'Comms';
   if (rest[0] === 'dm' && rest[1]) return `${name} DM · ${rest.slice(1).join(':').split('-').map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')}`;
   return rest.length ? `${name} ${rest.join(':')}` : name;
 }
@@ -101,7 +115,7 @@ function personOf(metadata: string | null): string | null {
 
 function view(r: Row, nowMs: number, inDigest = false): MemoryView {
   const heat = heatOf(r, nowMs);
-  const writtenHeat = temperature(r.updated ?? r.created, r.category, nowMs);
+  const writtenHeat = temperature(r.authored_at ?? r.created, r.category, nowMs);
   const recallHeat = decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs);
   return {
     ref: r.ref, title: r.title, category: r.category, project: r.project, content: r.content,
@@ -183,26 +197,53 @@ export function memoriesAbout(contextDir: string, slug: string, opts: { since?: 
   }
 }
 
-export interface TapeEntry { ref: string; title: string; created: string; where: string }
+export interface TapeEntry { ref: string; title: string; created: string; where: string;
+  /** The conversation it belongs to, when it names one (a body the runtime started in one). */
+  conversation?: string;
+  /** Its body, when asked for (tapeRows' `withContent`). */
+  content?: string;
+  /** Its metadata, parsed. */
+  meta?: Record<string, unknown> }
 
-/** Episodes in the last `hours`, newest first, with where each body was. */
-export function tapeRows(contextDir: string, hours: number, nowMs = Date.now()): TapeEntry[] {
+/** The conversations table's row an episode names, from the same store (memories.db holds both). */
+function conversationLookup(db: BetterSqlite3.Database): (id: string) => ConversationFacts | undefined {
+  let q: BetterSqlite3.Statement | null | undefined;
+  return (id) => {
+    if (q === undefined) {
+      try { q = db.prepare('SELECT venue, place, label FROM conversations WHERE id = ?'); } catch { q = null; }
+    }
+    return (q?.get(id) as ConversationFacts | undefined) ?? undefined;
+  };
+}
+
+/**
+ * Episodes in the last `hours`, newest first, with where each body was. A title that is a body's prompt (a runtime
+ * spawn's preamble, kept by a harness's fallback episode) is never returned: the conversation's label stands in for it
+ * (episode-title.ts), and its where is the conversation's venue.
+ */
+export function tapeRows(contextDir: string, hours: number, nowMs = Date.now(), opts: { until?: number; withContent?: boolean } = {}): TapeEntry[] {
   const db = open(contextDir);
   if (!db) return [];
   try {
     const since = new Date(nowMs - hours * 3_600_000).toISOString();
+    const until = opts.until ? new Date(opts.until).toISOString() : null;
     const rows = db.prepare(
-      `SELECT ref, title, created, project, metadata FROM memories
-       WHERE category = ? AND archived = 0 AND created >= ? AND (expires_at IS NULL OR expires_at > ?)
+      `SELECT ref, title, created, project, metadata, substr(content, 1, ?) AS content FROM memories
+       WHERE category = ? AND archived = 0 AND created >= ? AND (? IS NULL OR created < ?) AND (expires_at IS NULL OR expires_at > ?)
        ORDER BY created DESC`,
-    ).all(EPISODE, since, new Date(nowMs).toISOString()) as Array<{ ref: string; title: string; created: string; project: string | null; metadata: string | null }>;
+    ).all(opts.withContent ? 20_000 : 600, EPISODE, since, until, until, new Date(nowMs).toISOString()) as Array<{ ref: string; title: string; created: string; project: string | null; metadata: string | null; content: string | null }>;
+    const conv = conversationLookup(db);
+    const label = agentLabelOf(contextDir);
     return rows.map((r) => {
       let where = r.project?.trim() || '?';
+      let meta: Record<string, unknown> = {};
       try {
-        const m = JSON.parse(r.metadata || '{}') as Record<string, unknown>;
-        if (typeof m.where === 'string' && m.where.trim()) where = m.where.trim();
+        meta = JSON.parse(r.metadata || '{}') as Record<string, unknown>;
+        if (typeof meta.where === 'string' && meta.where.trim()) where = meta.where.trim();
       } catch { /* keep the fallback */ }
-      return { ref: r.ref, title: r.title, created: r.created, where };
+      const p = plainEpisode({ title: r.title, content: r.content, where, meta }, label, conv);
+      return { ref: r.ref, title: p.title, created: r.created, where: p.where, ...(p.conversation ? { conversation: p.conversation } : {}),
+        ...(opts.withContent ? { content: r.content ?? '', meta } : {}) };
     });
   } finally {
     db.close();

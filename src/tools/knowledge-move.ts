@@ -9,6 +9,7 @@
  * Slug changes write a supersessions pointer (old→new) unless leave_pointer=false.
  * Slug collisions are rejected — use knowledge_merge instead.
  */
+import type { KnowledgeSelection } from '../config.js';
 import { createKnowledgeBackend } from '../backends/index.js';
 
 export interface KnowledgeMoveToolInput {
@@ -29,8 +30,9 @@ export interface KnowledgeMoveToolInput {
 export async function knowledgeMove(
   contextDir: string,
   input: KnowledgeMoveToolInput,
+  selection?: KnowledgeSelection,
 ): Promise<string> {
-  const backend = createKnowledgeBackend(contextDir);
+  const backend = createKnowledgeBackend(contextDir, selection);
   try {
     const result = await backend.movePage(input);
 

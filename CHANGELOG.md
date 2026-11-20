@@ -12,7 +12,791 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- CI: test shards 1 and 2 run on loom's own runners and 3 and 4 on GitHub's when the runner switch is on; CodeQL runs nightly and on request instead of on every pull request and push.
+
+- Docs: the how-it-works site is published to GitHub Pages from `docs/how-it-works/site` on every merge to main.
+
+- Docs: `docs/how-it-works/` is the approved description of the finished product and the goal of the web rebuild; `docs/specs/web-foundation.md` is superseded where it differs.
+
+- Comms preview resolves private conversation references to current thread cards for their original member, with live state and fixed reader links.
+
+- Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
+- Clock owners can recover plain disabled imported schedules through a fresh complete prompt and timing submission; archived authority and uncertain occurrences stay inert.
+
+- Clock offers owners a blank, confirmed recovery form for eligible disabled imported schedules, with live availability and fresh work only.
+
+- Reconcile Clock documentation with merged prompt/file execution, provenance, control and recovery work; retain explicit gaps before cutover.
+
+- Clock owner vouch records fresh owner authorship so eligible imported prompts can reach the native worker after current authority checks.
+
+- Clock native workers can opt into a bounded idle wait and resume later prompts in the same worker lifetime after fresh owning checks.
+- Clock native resume chains retain their first admission deadline across joined turns; neither server nor worker renews retained history on resume.
+- Next Comms: Tasks and Changes resolve reverse From links through Comms for the original viewer, with private labels hidden from other owners and on disconnect.
+
+- Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.
+- Next Inbox delivers public Clock answers to the original active body, retaining verbatim member words and staging holds.
+- Inbox explains supported conversation delivery, refused drafts and acknowledgements without claiming that a saved answer was read.
+- Next Inbox can continue confirmed terminal public Clock work in a fresh owned job, preserving the original question and claim while staging the new body and answer words.
+- Next Runtime records word-free incoming public Clock metadata atomically when its body accepts scheduled input or an Inbox answer, retaining the saved sender and project across retries.
+
+- Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
+- Next Comms backfills retained message references once on startup, with ownership and retention fences and safe retry after interruption.
+- Next Comms renders authorized task/GitHub chips with live cards, keyboard controls and fixed owning reader navigation.
+- Next Comms adds a window-only live backend for authorized task and GitHub chip cards; browser chips and other reference kinds remain unfinished.
+- Next Comms lists authorized cited tasks and changes alongside made-here work, with safe GitHub destinations and unlinked note paths.
+- Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
+
+- Next Inbox retains fixed, member-private action receipts for the remaining registered app mutations; credential and private Comms actions remain excluded.
+- File Approvals reported merge/host steps as scoped Inbox FYIs with stable event identities and an owning Reported steps view.
+
+- Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
+
+- Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
+- Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
+
+- Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
+- Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
+- Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
+- Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+- Add explicit continuity database snapshots with captured-notes attachment pairing for the future household bundle; encrypted full restore and execution remain pending.
+
+- Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
+- Add a filtered next-database image exporter with an independent SQLite reconstruction drill; complete encrypted household backups and execution remain pending.
+
+- Let a current private body ask an encrypted Comms question through its original member binding, with authority rechecked after encryption and a wordless acknowledgement.
+- Add pure worker-checkout preparation for scheduled file inputs, using bounded descriptor-pinned reads; executable Clock file delivery stays held pending owning runner integration.
+- Refuse public Clock runner start input after withdrawal or a change to its original destination or claim during preparation.
+- Add a dedicated one-turn native Clock worker for stored prompts, with exact-source admission, bounded remote revocation and one durable attempt per source; standalone files remain held.
+- Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
+
+- Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
+- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
+
+- Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
+- Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.
+- Archive orphan Comms delivery bindings without inventing an owner, and report their skipped conversation ids through offline Runtime imports.
+- Next-mode routine notifications now use current member-scoped Inbox and Comms candidates, durable dedupe, staging and bounded daemon-owned delivery.
+
+- Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
+- New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
+- Resolve original private loom parent metadata for Comms through the joined Runtime job and exact owning thread.
+
+- Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
+
+
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search. Keep passkeys and sign-out in Your account, removing the provisional corner toolbar that overlapped apps.
+- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
+- Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
+
+- Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.
+- Suppress agent-authored file self-rearms only with fresh Runtime control, exact original steering and matching scope/service; omit private suppression receipts from exports.
+- File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.
+
+- Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
+- Resolve unique member-private Comms ownership as metadata and refuse ambiguous or deleted Runtime routes.
+
+- Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
+- Runtime: expose authenticated private conversation description, title and activity controls through the next API; keep imported and policy-held execution fenced.
+
+- Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
+
+- Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
+
+- Add member-private Inbox read facts without answering asks or copying draft words.
+- Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
+- Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
+- Inbox: reply privately to conversation asks through encrypted Comms, keep private drafts in the window only, and link sealed questions and reply receipts to their owning thread.
+- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
+
+- Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
+- File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
+- Clear private Comms working state from committed terminal Runtime jobs and recover missed completion notifications at startup.
+
+- Put the visible Comms thread’s agent above Needs you in the new rail, with selected priority and a short move.
+
+- Give the new desk device-local rail and dock hide modes, overlay edge reveals and agent keyboard shortcuts.
+
+- Fold overflowing agent-rail cards into compact lines, retaining the agent with current work or a question and retrying full cards when room returns.
+
+- Show live new-side piece counts and a Boxes enrollment glyph in the desk bar, with unavailable sources and unknown health stated explicitly.
+
+- Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
+- Clock schedules retain original steering across replacement and run-now; private schedule receipts keep their window check after removal.
+- Capture original household lane steering through edits, reassignment and occurrences, keeping historical unknowns and internal evidence out of lane lists.
+- Add a pinned metadata-only holder handoff channel with fresh destination checks, buffer erasure and drained shutdown; runner ticket admission and production activation remain separate.
+- Add a trusted Runtime destination metadata binding for future Secrets tickets, with fresh job, runner, box and claim checks.
+- Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
+- Add worker-local Claude turns with exact tool denies and original-binding native history isolation; daemon policy execution remains held.
+
+- Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
+- Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
+- Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.
+
+- Add an unregistered exact-place-permit Discord history transport with bounded oldest-first reads; Runtime authorization, sender policy and the public read command remain pending.
+- Bridges migration skips underscore annotation keys in every legacy source map before validation/assembly and reports safe file/field diagnostics; household rehearsal includes real note shapes.
+- Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
+- Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
+- Import local bridge setup from household snapshots without inventing off-machine connections or Slack credentials; retain incomplete Slack and unprojectable audiences as private evidence.
+
+- Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.
+- Prepare required Runtime policy files on Linux workers with descriptor-pinned reads and resolved-content history keys; configured-policy execution remains held.
+
+- Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
+- Preserve deleted private Comms bindings only in the Runtime import archive, report their skipped ids, and validate spawned thread ownership.
+
+- Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
+- Bind Secrets house request and status to current central body credentials and exact Runtime job/service scope.
+- Compose explicit authenticated Secrets mutations, retained retry keys and automatic recovery in next startup, with per-write staging holds.
+- Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
+- Persist Runtime owner gates and policy with revision-bound edits and exact archived proposal adoption, refusing unreconciled source restrictions.
+
+- Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
+
+- Prepare Runtime body policy rules for trusted external delivery, with complete guest rosters, standing restrictions and effective session keys.
+
+- Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
+
 ### Added
+
+- Show live Inbox read indicators and retain member-scoped device reply drafts through navigation, reload and failed sends.
+- File owner-assigned Tasks in the shared Inbox with their original project/agent audience and source-owned decisions.
+
+- Clock links local-work requests to private chat; its browser proof now files through a real Runtime-bound body before owner review and scheduling.
+
+- Clock’s owning local-request reader now reviews explicit timing and schedules saved private words with one-time or existing every-time authority; Runtime delivery remains held.
+
+- Add an authenticated owner-window recovery operation for saved private Clock local requests, retaining their exact scope and durable retry acknowledgement. App scheduling controls and Runtime delivery remain unfinished.
+- Next Runtime retries definitively unstarted nonconversation manual/spawn jobs at most three times, retaining original intent, deadlines and current-policy checks across restarts.
+
+- Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+- Exclude source-owned Runtime repository mirrors under a named cache rule while retaining durable delivery and house working data.
+
+### Fixed
+
+- Stream offline migration files and Runtime archives in bounded chunks, including independent physical-byte verification of files larger than 600 MiB.
+
+- Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
+- Next Clock files local approval requests and recovers their exact saved words through authenticated Runtime body proof; `wake --approval` no longer requires retyping private words.
+
+### Added
+
+- Compose next Bridges from the explicit secret holder with scoped HTTP inspection/sends, policy-checked People labels and a durable engine that never receives raw credentials.
+- Load the daemon Secrets retry key from an explicit private file and pin its identity before async value operations are registered; changed keys and unbound old journals fail closed.
+- Next bridge credential lifetimes now follow asynchronous public holder generation, retiring both transports on rotation or holder failure without reading credential values.
+- Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
+
+- Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
+### Added
+
+- Add durable admission and retry reconciliation for explicitly composed async Secrets writes; normal Settings value edits remain disabled pending daemon key and reconciliation composition.
+
+- Apply next-mode Runtime owner reset and silent-work write-off cards against durable original snapshots, with atomic body/session fencing and central credential revocation.
+
+- Add a window-only encrypted Comms typed reply seam with atomic opaque Attention acknowledgement and first-answer retry fencing.
+- Fit the Comms composer to its actual next-mode tile and fold Work when the reader is narrow. Exercise ordinary, filed and attached Comms delivery through real next-mode page sessions, Runner claims and bound-body replies in the two-window browser proof.
+- Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
+- Reduce first-page JavaScript while keeping app screens loaded on demand.
+
+- Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
+
+- Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
+- Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
+- Next mode retires per-agent piece/path grant approvals in favour of record scope and withdraws pending legacy grant imports.
+
+- Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
+- Show each Comms thread’s agent letter beside its title in the list.
+
+- Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
+- Show Comms thread activity times in CT and live working state in the thread list.
+- Resolve next-mode Approvals callers from central authenticated body proof and current private Runtime/Comms membership, preserving service-house identity.
+
+- Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
+- Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
+- Reconcile authoritative runner-fenced start failures into generation-matched private Comms notices, enabling member retry without automatically repeating an uncertain execution.
+
+- Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
+
+- Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
+- Connect next-mode private Comms messages to runtime jobs and authenticated body reads, replies and status, keeping private words out of runner inputs and retry receipts.
+
+- Comms now shows work made in the thread, with live task/change statuses and links to their apps.
+
+- Review local machine requests in Clock with the existing exact-word approval controls; private decisions use the owning signed-in window and start no work.
+
+- Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
+
+- Next desk: show loom's server minute/timezone and live connection/working-agent status glyphs on desktop; retain compact phone chrome.
+
+- Restore the new desk's compact phone bar and centered ticker using live owned-agent status and Needs you counts.
+
+- Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
+
+- Import registered agents’ pixel sheets with the household, serve them from the new database with current agent visibility, and honor Pixel faces on Home and the rail.
+
+- Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
+
+- Give next Home and rail cards their agents’ database-backed colours and drawn faces, with expressions for reported work and asks.
+
+- Keep a neighboring next-mode app's narrow reader from taking focus away from the chosen tile.
+
+- Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
+- Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
+- Clock local requests from an authenticated owner conversation retain member-private approval, wake and standing scope; signed windows alone read the words, and exports omit private copies.
+- Next runtime accepts stable body-start intents and connects Clock dispatch to runner-confirmed starts, preserving staging holds and uncertain outcomes.
+
+- Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.
+- Add next-mode Household Setup for owner-managed members, agent ownership, project access, existing agent registration and GitHub attribution.
+
+- Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
+- Apply member appearance choices live in the next shell, with controls for look, reduced motion, contrast and zoom.
+
+- Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
+- Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
+- Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
+- Add authenticated, value-free committed holder receipt lookup for uncertain write recovery; durable registry admission and metadata reconciliation remain required before enabling Settings values.
+- Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
+
+- Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
+- Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
+- Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
+- Add `loom-secrets-client`, a remote names/startup/request-state and stdin-only value command client with stable write retries and legacy metadata output fixtures.
+- Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
+- Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
+- Add next-mode member-private Appearance and Accessibility preference operations and Live records, preserving imported choices across owner changes.
+
+- Reject asynchronous secret-holder mutation and handoff acknowledgements before reporting saved values or confirmed use.
+
+- Preserve imported Comms attachment matching with a keyed fingerprint, omitting legacy raw pointers from thread metadata.
+- Connect next-mode Secrets requests to managed household Attention asks, including restart and atomic owner answers.
+
+- Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
+- Keep bounded runtime job diagnostics outside live metadata, with scoped result reads and atomic completion.
+
+- Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
+
+- Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
+- Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
+- Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
+- Let the owner review and count eligible unknown imported wakes as their work in the Clock app, retaining saved words, due times and current authority checks.
+- Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
+- Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
+- Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Clock: schedule exact filed local work through trusted standing authority, with a single outstanding target, durable atomic receipt and private binding checked against live authority before dispatch; public/runtime host composition remains unfinished.
+- Clock: add a trusted owning standing-local approval use/check seam with exact receipt, full-digest, principal, service and project checks; Clock scheduling and fire-time composition remain pending.
+- Clock: recover exact filed local words and notes through a trusted one-shot scheduling role, with current receipt checks and atomic capacity-before-spend scheduling; public runtime/client wiring remains uncomposed.
+- Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
+- Preserve project scope on explicit Clock owner-vouch cards, reject mixed scopes and recheck the card scope before applying owner Allow.
+- Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
+- Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
+- Add owner vouch adoption for explicitly unknown plain imported Clock wakes, with atomic next-mode approval application.
+- Add opt-in fixed 24-hour Clock safety wakes under explicitly configured agent authority, retaining restart deadlines and staging holds.
+- Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
+- Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
+- Add owner-controlled runtime house grant configuration with preserved secret scopes and repository-secret build provenance.
+
+- Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
+- Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
+
+- Include Comms in offline migration plans, imports and independent private-content verification.
+- Migration snapshots collect registered importer data and keys only, skip legacy aliases and live/program entries safely, explain refusals, and support a no-write `--dry-run` inventory.
+- Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
+- Add read-only `migrate verify` that independently compares imported IDs, counts, metadata and content against the snapshot and full plan on every invocation.
+- Add offline `migrate plan` and resumable `migrate all` with snapshot-bound receipts and stopped-home destination checks.
+- Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
+
+- Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+- Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
+
+- Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
+
+- Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
+- Add person-link creation, editing and confirmed removal to the next-mode Bridges preview with shared pending and stale-draft guards.
+- Add owner-only terminal Bridges send dismissal through the registry and typed CLI, without replaying held or uncertain replies.
+- Add connection creation, editing and confirmed removal to the Bridges preview, with secret-name references and shared pending setup guards.
+- Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
+- Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
+- Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
+- Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
+- Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
+- Resolve Attention digest filing through visible private Comms thread metadata without reading message words.
+- Attention wait checks recognize matching owner-attributed task answers through the Tasks role, preserving caller visibility and keeping reply words out of Attention.
+- Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
+
+- Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
+
+- Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
+- Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
+
+- Add private, checksummed migration snapshots using SQLite online backups for rehearsal and the final move.
+
+- Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
+
+- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
+- Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
+- Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
+
+- Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+- Attention next-mode digests now resolve project aliases and venue filing through visible Projects cards for the conversation’s agent.
+
+- Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Name owned Home cards from live shared-directory People entries and open their exact contact pages.
+- Attention: public yes/no asks also accept a words answer in Inbox and Home; unsent drafts guard other answers, and private reply words are refused before central storage.
+- Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
+
+- Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
+
+- Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
+- Add next-mode Knowledge on live records: topics, page reader and durable check actions, with source socket lifecycle owned by the daemon.
+
+- Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
+- Add the opt-in `loom-wake-client` API command for the new clock, with daemon-side command metadata, legacy scheduling text and bounded idempotent retries.
+- Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
+
+- Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
+- Next mode signs in through database sessions, one-time links and passkeys, with bearer authentication for agents, runners and services.
+
+- On the new clock side, count lane run-now against the one-off budget and wait for model quota reset without consuming job retries.
+- Avoid redundant file-lane self-rearms within six hours of an authorized owner schedule on the new clock side.
+- Preserve clock parked-work continuation instructions and readable answer notes; distinguish an unanswered wait from an expired Allow.
+- Stop retrying a clock continuation after a definite non-quota runtime failure, retaining quota deferrals and uncertain dispatch holds.
+
+- Keep long approval details and exact targets within the phone reader, with wrapping answer buttons.
+
+- Register Approvals in `serve --next` so its app uses the new database and live feed without a fixture installer; runtime and clock action roles remain a separate integration.
+
+- Add `loom migrate household --home <new-home> --from <old-home>`: a verified offline import of household, sign-in and piece settings into the new database, preserving credentials and leaving the old home untouched.
+- Add `loom serve --next --staging`: the separate new shell, registered app tiles and phone pane, one address router, and individually released outside work. Existing serve behavior is unchanged.
+
+- Keep agent-created unscoped foundation tasks in their own queue; let the offline tasks importer assign projectless tasks with `--agent`.
+
+- Next-mode local operators can create audited, single-use sign-in links without a bearer token; first start prints an owner link once.
+
+- Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.
+
+- Add an in-repo tasks piece, opt-in `loom-taskstore` API client, and offline verified tasks importer; existing taskstore and Tasks screens stay on their current path until cutover.
+
+- Add the first web foundation slice: an app database, operation registry, central permission rule, live feed and
+  in-process fixture harness beside the present page. Caller-owned operation ids replay stored results for 30 days;
+  a failed live read closes its subscriber. No existing app data or screens move in this slice.
+
+- A request that meets another process's lock waits for it without freezing the server (t-2130, t-2141): Comms posts
+  and pages, live updates, turns, audit entries, deliveries, piece stores, household changes and sign-ins wait in a
+  line, asynchronously, until the database (a held write lock, or a WAL recovery) or the lock file is free, then run.
+  /login answers in about 100 ms meanwhile, where it waited 2 to 20 s behind the lock. Nothing fails sooner than
+  before: a wait past its budget (5 s; 8 s for a Comms post, inside the runtime's 15 s; 2.5 s for a turn, inside its 5 s) goes on to the old synchronous wait, and only a lock still held
+  after that is a 503 with retry-after. Replaces the fail-fast change (#776, #783) that refused Comms posts on deploy.
+  `scripts/lock-smoke.ts` posts 50 Comms messages under a concurrent writer on a scratch copy of a household.
+
+- Ask a piece's own service for its manifest over a local socket when it has one (`<piece home>/run/ui.sock`, this
+  user's alone), instead of starting `ui --json`: the runtime's delivery service answers from memory in under a
+  millisecond, where each run was a node start that re-read its state (t-2114). No socket, another version's or a
+  failing one: `ui --json` as before.
+- Pull a piece's shared records less often while they don't move: the Tasks and Changes pieces have no change log, so
+  every pull is a full snapshot (a process per 500 records), and an open Tasks page made one per piece every 15 s
+  (t-2110). A piece whose pulls find nothing is pulled at 15, 30, then every 60 s; its word that it wrote, or an action
+  on it, pulls it at once and puts it back on 15 s. A burst of its writes is one snapshot per 3 s, not per 1.5 s, and an
+  action's pull isn't followed by a second one for its own nudge.
+- Run each piece's manifest once for every window that sees the same answer, and less often while it doesn't
+  move: the runtime's ran once per open agent window on every round and every word (t-2110). A manifest that runs
+  past a page's 3 s wait shows its last good answer instead of dropping off the page, and its late answer is kept
+  (t-2064).
+- Keep runtime job threads in Comms' Background work until their owner writes in them,
+  exclude them from personal unread counts and notifications, and attribute agent job briefs correctly.
+
+
+### Fixed
+
+- **A device's notifications stopped without anyone turning them off** (t-1978). A subscription was kept under the
+  session it was turned on in, and dropped when that session went. Agents' screenshot sign-ins filled the 50-session cap
+  every two or three days, each evicting the oldest session, so a person's phone lost its notifications within days
+  while it still said On. A subscription is now its person's and the device's: housekeeping (the cap, a session past
+  its time, signing out and in again on the device, a plain token revoke) keeps it, and the app sends it again on each
+  load. It goes when turned off there, removed on Profile, that device signed out on purpose (Profile's Sign out on its
+  row, `loom sessions revoke`), its token revoked as compromised (`loom token revoke --with-devices`, or
+  `--with-passkeys`), gone at the push service (404/410), or its person leaves the household. An agent's session can't
+  turn notifications on. A push no longer carries the ask's words or a thread's title: only what it is, who it's from,
+  and where a tap opens. Profile lists the devices that get notifications, each with **Send a test notification**.
+  Agent owners can turn notifications on (`/push/*` was refused for them).
+- **Agents' screenshot sign-ins pushed people's own sessions out** (t-1936). `loom token link --agent --label <text>`
+  marks the session it opens as an agent's (a headless browser's counts too): listed as `(agent)`, ended six hours
+  after it signed in, and first to go at the cap, after sessions already ended. `loom sessions revoke --label <text>`
+  ends an agent's own sessions when it's done.
+
+### Added
+
+- Home shows current visible Runtime jobs from their live records, including concurrent work, actual states and boxes, with unavailable states that clear stale titles.
+- Home and Inbox automatically reconcile visible approval/task waits as the signed-in member on arrival and every minute, keeping their counts current without a service grant.
+
+
+- **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
+  other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner
+  token naming its member, labeled `Passkey: <name> · <person> · …`, and says what it was made from. `loom token revoke
+  <label> --with-passkeys` (Setup: "Revoke a token with its passkeys") takes the passkeys made from it too; plain revoke
+  keeps them. Profile's "Remove a passkey with the ones added from it" does the same for a passkey. A passkey is added
+  only within 10 minutes of signing in. Passkeys made before move onto their own token when loom-http starts if their
+  token is live; one whose token was revoked stays stopped and is replaced by adding a new one. Agent owners can add
+  passkeys (`/passkeys/options` was refused for them).
+
+- **Needs you is the Inbox shrunk** (t-1925). On the desktop, Needs you's **Expand** grows it into the Inbox's tile on
+  its Needs you folder, as an agent's card grows into its window (the same code: `tiling/widgets.ts` `pairOf`); an ask in
+  it opens in the Inbox with that ask picked. While an Inbox tile is open, Needs you stands aside and the other widgets
+  fill its room; the Inbox's **Shrink to widget** folds it back. Reduced motion: instant. Phones are unchanged.
+
+- **A Comms thread says when an agent couldn't start, even after "queued"** (t-1946). The runtime can now tell core
+  `status: start-retry` (with its attempt and next try) or `start-failed` on the adapter route, for a start that failed
+  after it had already answered `queued`. The thread keeps one line per message, updated as attempts go by ("couldn't
+  start (2 tries so far); retrying. Next try at 14:32."), the busy line no longer follows, and a late or repeated
+  notice never brings a settled line back.
+- **Sign one browser out alone** (t-1871). Profile's **Signed in** lists each browser session you may see (a household
+  owner, all of them; an agent owner, their own): what it is (from its User-Agent), its sign-in link's label, how and
+  when it signed in, when it was last used, and its token. **Sign out** on a row ends that session and its
+  notifications only; other sessions of the same "page sign-in links" token stay. On loom's machine, `loom sessions
+  list` and `loom sessions revoke <ref>`; `loom token link --label` names the session a link opens.
+- **Asks answered only while open, everywhere** (t-1925). The asks inside a Comms thread and the desktop's Needs you
+  now use the Inbox's rule (`web/src/ask-open.ts`): no buttons until loom confirms the ask is open now, checked again
+  right before a send, and none when loom can't be reached or the copy came from this device's cache.
+- **Comms' band** (Jonathan, 2026-11-07; `docs/specs/comms.md`, "Desktop"). A desktop thread has a band of fixed
+  height over the chat: the comm screen at its own 2× size on the left, who's in the conversation and the thread's
+  work on the right, scrolling inside the band. The chat takes the rest. The list sits beside the thread only where
+  Comms is 1100 px or wider; narrower, it's the drawer from the thread's header. The comm screen never stretches.
+- **An agent's window** (t-1925 D; `docs/specs/desk-tiling.md`, "An agent's window"). An agent's pages wear one header:
+  its face in a Neon frame (no 000h shapes, no clock element), its name with a working pill, and a plain description
+  of what it does (household.json `about`, never its creed) that a household owner edits in place or asks the agent to
+  rewrite (the new `describe_self` MCP tool, refused unless asked). Its sections are a sidebar inside its window (an
+  icon rail when narrow), so the desktop's dock no longer swaps; its window's corner wears its letter. Its desk card
+  and its window are one app: Expand grows the card into the window, Shrink to widget folds it back. Phones keep the
+  dock's swap, with the new header.
+- **The Inbox is a mail client** (t-1925; `docs/specs/ui-app.md`, "Master/detail"). Folders (Needs you, Questions,
+  Approvals, Alerts, Memory reviews, Done, and who it's from), the list, and the open ask beside it whole: why, if yes /
+  if no, its buttons, a reply, where it lives and its trail. Answering moves it to Done and opens the next. In a narrow
+  tile or on a phone the folders are chips and the ask slides over the list. Its buttons are live only once loom says
+  the ask is still open (`GET /inbox/open`), and loom is asked again before any is sent. Old `?f=` folder addresses land
+  on the new folders. The master/detail layout (`web/src/split.tsx`) is generic.
+- **Comms polish** (t-1918, t-1925 C; `docs/specs/comms.md`). A thread's address has no colon (`/comms/<id>`), so a
+  reload works; old `comms/th:…` links redirect. The comm screen's channel line says what the agent is doing
+  (THINKING, WORKING, TALKING, WAITING ON YOU, DONE, NO CARRIER, plus ON CODEX), and the separate thinking blob is
+  gone. A body that couldn't start says "couldn't start; retrying" with What happened, not "busy". The thread follows
+  the bottom only while you're there; scrolled up, a New messages pill counts what's new, and a working line shows the
+  step the agent is on. The Enter hint is faint and only on focus; in a narrow tile the threads are a drawer; the list
+  wears the agents' letters.
+- **The launcher** (t-1925 G; `docs/specs/desk-tiling.md`, "The launcher"). On a desktop the dock's last key, All apps, or
+  Ctrl+Shift+Space opens every app in one grid, grouped as Work, People & agents, Library, System, Look & feel and
+  Pieces, each tile with its live state. Search is focused at once and filters as you type; Enter opens the first match
+  as a tile, Esc closes, the arrow keys move. It replaces Setup's dock key and the account key on the desktop; Setup and
+  More are no longer tiles there (an old link opens the launcher), and Appearance, Accessibility, Members and Pieces each
+  open in a tile of their own. Phones keep More and Places.
+- **Tiling is the only desktop** (t-1884; `docs/specs/desk-tiling.md`, "A fresh desktop", "One window at a time"). At
+  1024 px and wider, apps share the screen as tiles for everyone: Appearance's Desktop choice and the old single window
+  are gone. A device with no saved layout starts with Needs you, each agent's card, Vitals, Backup and the ticker
+  (`web/src/tiling/widgets.ts` `SEED`). One window at a time is now an Accessibility choice inside tiling, off unless
+  turned on: one app tile at most, and opening another sends the one there to the dock, said in a toast. Whoever had
+  One window at a time saved under Appearance has it on; the old `tiling` field is still taken, so an older app gets
+  no error.
+  A tile now does what the old window did: its page wears its app's colour, its pages reach Find's Recent, the bar's ⓘ
+  is its page's, and the dock lights its key. Comms in a tile under 760 px keeps its comm screen to a strip's height,
+  so the messages always have room.
+- **Desk tiling: widgets are tiles** (t-1884, phase 4 of `docs/specs/desk-tiling.md`). With Tiling chosen
+  (Appearance → Desktop), Home's widgets (Needs you, each agent's card, Vitals, Backup, the ticker) are the desktop
+  with no app open, and move to the right edge beside the apps: in columns, a rail, or a strip of keys. Chat on an
+  agent's card opens its latest Comms thread beside them; an agent's tile pins its card; the dock's + key and Find add
+  widgets; × removes one. The set rides in the address (`w=`). A wide tile has Recent here.
+- **Comms: asks inline** (t-1876). A thread shows its agent's pending approvals that were asked from it (the approvals
+  piece's `--conversation`, kept beside the agent loom authenticated), with the ask, why, If you allow, If you deny
+  and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.
+  An ask naming a thread but from another agent never shows there.
+
+- **Pixel icons** (t-1880). A household can install its own pixel icon set (`loom household icons install <dir>`, kept
+  at `icons/<set>/`, served only to someone signed in), and a member can wear it with Appearance's "Pixel icons" (off
+  unless turned on; not offered without a set). Each icon keeps its light and shade, recoloured to its key's ramp in
+  each look, normal and lit, stronger with Higher contrast, by an SVG filter the page builds once from the look's own
+  colours. The dock, the launcher's tiles, an app's tile in its header and in Find, and a window's title strip wear
+  them; a 16 px row keeps its line icon, as does an app the set has none for.
+- **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
+  thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
+  thread"), never the reply's words. A tap opens the thread.
+
+- **Comms, the app** (t-1876). A Comms key in the dock (for a member who owns an agent, with their unread threads),
+  the thread list leading to a thread on a phone and the two side by side on a desktop, and each thread's comm screen:
+  the agent's pixel portrait at 2x in a Neon OS frame (`NAME · CH nn · LINK OK`, a signal meter, a YOU panel on a
+  desktop), its face following the thread (thinking, working, talking, done, waiting, error), a burst of static
+  when a reply lands, and talking as a bounded run of 1-4 beats with a breath between. Pixel faces gain `talking`,
+  which a manifest without it plays as `done`, then `working`. Activity cards fold to one line per run.
+- **Comms: `comms_title`, and threads in their project's hub** (t-1876). A body names its Comms thread with
+  `comms_title` (60 characters, one line, never over the owner's own name for it), and a thread's title is its
+  conversation's label. A thread filed under a project is its digests' project when they name none, ahead of
+  `links.venues`, and the hub's `conversations` section lists it from its first message.
+- **Comms, core: talk with your own agents in loom, in threads** (t-1876, docs/specs/comms.md). A new core venue,
+  `loom`, which core adapts itself (`adapter: "core"` in `GET /api/loom/venues`). Its threads live in
+  `household.db`, and their words in `comms.db`, each age-encrypted to `comms.key`, kept `comms_days` (household.json,
+  1-14, default 14) and never in a bundle. The page's `/comms` routes reach only a member's own threads with agents
+  they own: anyone else, and a thread that never existed, gets the same 403. There's a live stream per thread
+  (`/comms/<thread>/events`, `{seq}` only), and the runtime's `POST /api/loom/comms/adapter` and `/comms/activity`.
+  The app comes in a later change.
+
+- **One structure, three looks: Neon Noir, Low Light, Daylight** (t-1875).
+  000h is no longer a look of its own: Neon Noir's structure (the phone bar
+  and system bar, the dock's keys, cut-corner cards, the desktop at 1024 px
+  and wider, Find as a command bar, the sheet's title bar, the power-on) is
+  every look's, and a look is only tokens (colours, a few corners, glow,
+  type) in `web/src/looks/looks.css`, part of the app's own stylesheet. Low
+  Light is dark and calm (000h's soft dark colours, no glow but a face's,
+  Figtree titles); Daylight is light (ink on warm paper, the tints deepened).
+  A saved `look: '000h'` is worn as Daylight if its light or dark was light,
+  else as Low Light; it stays on disk as it was until the person chooses, and
+  an app from before may still save it. Appearance's Light/Dark/Auto row is
+  gone. Every look meets the contrast floors with and without Higher
+  contrast; no exception is named any more.
+- **Pixel faces wherever an agent's face shows.** Under 36 px (Inbox rows, the
+  desktop's widgets, a window's title, the side panel), an agent with a sprite
+  sheet now wears a still pixel avatar: a crop of its rest frame, 24 sheet
+  pixels square over the top of what's drawn (or the manifest's own
+  `"avatar": {"x", "y", "w", "h"}`), at a whole-pixel scale, never smoothed,
+  never moving. Agents without a sheet, and everyone with Pixel faces off, keep
+  the drawn face; letter badges stay.
+- **Neon on a big screen boots** (t-1868). With the app's arrival, once a
+  session and never under reduced motion, a desktop shows a second or two of
+  LOOM//OS™ coming up, licensed to the household owner by name, with chatter
+  that is what loom has (the link, the agents and how each is, the pieces,
+  what needs you) and the one joke: "validating LOOM//OS™ license …
+  compliant". Any key or tap skips it; it never takes focus, and a screen
+  reader doesn't hear it.
+- **Neon on a big screen: apps open in a window** (t-1868). Every page but
+  Home opens in one big framed window over the ground: a title strip in the
+  app's colour with its key, its name and where it is, cut corners, a ruled
+  edge, and Close. Close or Esc goes back to the desktop (not while a sheet,
+  a dialog or a field has Esc), the window grows out of its dock key and
+  shrinks back into it (View Transitions; never under reduced motion), focus
+  lands on the window's title and goes back to the key it came from. The page
+  inside reads at up to 72rem and scrolls inside the window; sheets and
+  dialogs stay above it. From 1600 px, where you've been lately beside it.
+- **Neon on a big screen: Home is a desktop** (t-1868). Under Neon at 1024 px
+  and wider, Home is widgets on the ground instead of a scrolling page: what
+  needs you (the first four, each answered where it stands: Yes and No for a
+  yes/no ask, Allow and Deny under the approval's own words, else its own
+  buttons; one asked in words opens its sheet), a card per agent with its face
+  big and the one thing it's on, box vitals (the Boxes place's count and open
+  alerts, and any place in trouble, from the shell every page has) and the
+  nightly backup. One screen's height: a column with more than fits scrolls
+  inside itself. The dock moves to the bottom centre (the phone's keys, the
+  rail gone), and every other page scrolls in the space between the bars and
+  the dock. Home's answer carries the first few waiting items whole
+  (`stack`). Its own chunk, fetched only
+  at that width under Neon. Phones, 000h and screens under 1024 px are
+  unchanged.
+- **A phone's Home with many agents is a row each** (t-1869). Up to four
+  agents keep their big cards. Past four, a phone's Home lists them one row
+  each (face, name, how it is in words, its last line), something wrong
+  first, each a tap to that agent's page. Wider screens keep their cards.
+- **Neon on a desktop wears the phone's bar** (t-1865). Wider than a phone,
+  Neon's top is the phone's bar (the page's name and its ⓘ, the ticker,
+  LOOM//OS and the count) in place of the old status line and big header,
+  under a thin system bar where a phone's own would be: loom's clock (loom's
+  time, from its answers' Date, in loom's time zone) on the left, and on the
+  right a signal (live or offline), the agents at work, the boxes (how many,
+  dimmed while one has an alert) and the nightly backup (its last good one, or
+  what's wrong: a household owner's only), each with its words on hover and as
+  its accessible name. Both span the page's column. The shell now carries
+  loom's time zone, each piece's open alerts, which agents a piece reports at
+  work, and the backup's state. A name with its ⓘ is no longer cut short on a phone
+  ("Boxes", not "Bo…"). 000h is unchanged.
+- **A long panel pages like a list.** A piece's panel of more than 15 rows
+  shows 15 at a time, with numbered pages and its action under them. The
+  Secrets page's 61-row store had been one 6,500 px wall; it's now 2,500 px
+  and the sections under it can be reached.
+- **An Accessibility app, beside Appearance** (t-1867). Its own tile in More
+  and in Find, its own page and intro. **Allow zoom** moves there from
+  Appearance (a choice already made carries over). **Reduce motion** (Follow
+  the phone, On, Off) is one switch for everything that moves: On crossfades
+  pages, stills the ticker, skips the opening animation, holds faces on their
+  rest frame, fades the dock swap and drops the follow-the-finger swipes, even
+  where the phone allows motion; Off runs them all, even where the phone asks
+  for less. **Higher contrast** (Follow the phone, On, Off) raises Neon's and
+  000h's light and dark tokens to 7:1 for text and 4.5:1 for the quieter texts
+  and control edges, unfades hint text, thickens focus rings, puts solid
+  ground behind words that sat on see-through surfaces, and turns Neon's glows
+  off. Both are the person's, kept by loom on every device, and worn before
+  the first paint. Under the hood every `prefers-reduced-motion` and
+  `prefers-contrast: more` query, 000h's own included, is rewritten at build
+  onto `<html data-motion>` and `<html data-contrast>`, and scripts ask
+  `web/src/access.ts`.
+- **Neon on a phone: a page's info is behind its name** (t-1863). The line
+  under the phone bar is gone; when a page has a line or an intro, its name
+  in the bar wears a small ⓘ and opens a sheet with both (with a haptic tick).
+  A page without either has a plain name. 000h and wide screens are as they
+  were.
+- **loom on a phone holds still like an app** (t-1862). No pinch or
+  double-tap zoom, no zoom-in when a field takes focus (every field is 16 px
+  or more on a touch screen), no long-press menu or link preview on the bars,
+  the dock, buttons, links and images, no selecting the app's own chrome (a
+  message's or a note's words still select), no grey flash on a tap, and no
+  rubber band or pull to refresh past the page's ends. Appearance gains
+  **Allow zoom** (off by default) for anyone who needs to zoom to read. The
+  browser's bar wears the look as it's worn (000h's light or dark as chosen),
+  and the installed app holds portrait.
+- **A phone's gestures, page moves and haptics** (t-1855). Swipe sideways to
+  move between Home, Inbox, Places and More in the dock's order; swipe up from
+  the dock for Find. A page change slides by the dock's order (a push into a
+  page, a pop back out), with the bar and the dock left still, and a swipe
+  drives the same move under the finger; reduced motion crossfades. The dock's
+  keys slide down and up when they swap for an agent's own. Appearance gains
+  **Haptics** (on by default): a tick on Android, and on iOS a real tap on a
+  dock key or an ask's Yes and No.
+- **Neon on a phone: one bar under the phone's own** (t-1849). At a phone's
+  width the page's name sits small under the phone's clock, LOOM//OS and the
+  needs-you count under its status icons, and between them a ticker (live, the
+  agents and what each is up to, each place's tile). The ticker moves only when
+  its words don't fit, at 24 px/s, stops while touched or hidden, and stands
+  still under reduced motion; the count never moves. The big header stays on
+  wider screens and in 000h.
+- **Neon's dock, as the mockup**: no tray, a thin magenta rule over the row,
+  dark keys with a neon edge and the current one lit, no names under them (a
+  key's name shows on hover, keyboard focus, or held a moment).
+- **A pixel face's own `scale` and `offset`** in its manifest (worn under
+  Neon), so a face that reads bigger than the others is tuned without a
+  deploy; Neon's agent card
+  keeps a minimum gap between the face and its words.
+
+- **Pixel faces.** An agent can have a pixel face (Jonathan's PixelLab
+  portraits for Art): a manifest and its sprite sheets kept with the
+  household's marks (`faces/<agent>/`, set with `loom household sprite`),
+  drawn at whole pixels (1x, 2x on a card) in its own lazily loaded chunk.
+  Each state plays as a beat, then rests, with a random gap per face; several
+  weighted animations per state and facing (one picked per beat, a rare one
+  never twice running); a glance to the south-east or south-west now and then
+  while resting, waiting on you always facing you. Nothing moves off screen,
+  in a hidden tab or under reduced motion. Appearance's "Pixel faces" (on by
+  default where a face exists) is the person's, on every device. An agent
+  without one keeps its drawn face.
+- **Neon Noir's status bar, sheets, Find, power-on and sound.** Under Neon a
+  status bar heads every page: LOOM//OS, live or offline (in words), how many
+  agents and how many things need you, and loom's clock. The Inbox's sheet
+  gets a title bar (what it is, who asks, its task) and a lit top edge, and
+  Find is a command bar with a prompt and the current row's cyan edge. Under
+  Neon the once-a-session arrival becomes a power-on (a line opens into the
+  screen and the page flickers on, about a second, cut short by any tap or
+  key, never under reduced motion); 000h's arrival is as it was. Appearance has Sound, off unless the person turns it on:
+  a WebAudio chime (0.5 KB, loaded only when on) when loom opens and when
+  something they did lands (once per outcome); no opening chime when the
+  opening animation is skipped, and a browser that won't play sound before a
+  tap stays quiet.
+- **Neon Noir's faces, type, corners and glow.** An agent's face keeps its
+  body and its expression and becomes dark glass rim-lit in its mark's neon
+  (six marks re-pointed per look, `--mark-*`), with a soft glow that is the same
+  in every state: the expression says the state. Titles are Oxanium, reading
+  is Figtree, and numbers, ids and times are IBM Plex Mono (self-hosted Latin
+  subsets, fetched only when Neon is worn). The app's hard-coded tile corners
+  are tokens, Neon's radii step down, an agent's card has a 45° cut corner lit
+  in its colour, and the dock, the launcher and an app's tile are dark keys
+  with a neon edge (the current one lit solid). The depth background's lines
+  glow. Glow sits on edges and what's current only, never on a state or a
+  status, and goes under `prefers-contrast: more` (checked in a test).
+- **Neon Noir, the page's new look, and the default.** Appearance has a
+  Look: Neon Noir (dark only: a night-city control room, light from edges and
+  states) or 000h (light or dark, as before). Neon is what a person who hasn't
+  chosen sees, so everyone's page changes on update; 000h is one tap away and
+  draws exactly as it did (until the same week's one structure, above). Its stylesheet is its own file, put on before first
+  paint by a 0.5 KB script in the page's head (loom's CSP allows no inline
+  script), so a page never flashes the other look. A person's Appearance (the
+  look, light or dark, the background) is theirs on every device: kept by loom
+  per member like the Inbox's read state (`ui-sessions.json`, a preference,
+  never what they browsed), saved from any device (`POST /appearance/prefs`),
+  and carried on every page's chrome; a device keeps a copy only for its first
+  paint. Every look's colours are measured in a test (text 4.5:1 on every
+  surface, control edges 3:1, ink on the tints 4.5:1; one exception is named
+  there: 000h's count badge, 3.91:1, left as it was so 000h doesn't change), and the page's last hard-coded colours
+  (status dots, warning rings, counts, the unread dot, how far the dark dims the
+  ground) are tokens a look re-points.
+- **The nightly backup is loom's own.** `loom backup set --target git:<url>|path:<dir>
+  --recipient age1…` (docs/specs/keeping-watch.md): each night at `--at`, one of
+  the listeners exports the household, drills a restore of it with the
+  machine's own drill key, and writes it to the target (a git repo as one
+  force-pushed commit, or a directory). The default agent's Setup has a Backup
+  row; a failed or missed run is an Inbox alert for household owners, and
+  `LOOM_ALERT_COMMAND` hears it. `loom backup run`, `status`, `off`.
+
+- **Two cards that turn out to be one person become one.** `person_merge`
+  (an agent of the household that holds both), `loom person merge <from>
+  <into> [--dry-run]` (the owner) and `POST /api/loom/people/merge` (a
+  household owner, the runtime) fold `from` into `into`: `where` is the union
+  of both cards' values, `how` and `may` the union with `into` winning, `into`'s
+  name and summary kept with a "Merged <from> (<name>) <date>" line, in the
+  directory and every agent's copy. Every memory, proposal, conversation and
+  turn tagged `from` is re-tagged, and `how.via`/`how.loop_in` relinked. `from`
+  is left an archived redirect (`person_merges`): reading it answers `into`'s
+  card with a note, and a later write, verify, ensure or reach lands on `into`.
+  A dry run says what would change; the answer's `not_done` says to rename the
+  slug in every agent's gates.
+
+- **A person is one card, however they were added.** `POST
+  /api/loom/people/ensure` and `loom person ensure` make sure someone has a
+  person card: with none, a minimal one (the name, `<role>. From <source>.`,
+  the `where` values); with one, only the `where` values it lacks, as `reach`
+  adds an id. Name, summary, how and may are never changed, and a value
+  already on another card is refused (409). A household owner, the runtime,
+  and a piece's process in an owner's action (the grant loom minted for it,
+  checked as `loom store` checks it) may call it; agents keep `person_write`,
+  and `person ensure` never runs over `POST /cli`. `--dry-run` writes nothing.
+
+- **Old piece names.** `box` is now `runtime`: the catalog lists loom-box's
+  repo as `runtime` (37cc43d), and core's alias table (`PIECE_ALIASES`)
+  maps `box` to `runtime` for `/api/box/…`, `/p/box/…` (a 308), `piece:box/…`
+  credentials, a house's `loom box …` and the starters, while no `box` piece
+  is installed. `loom pieces update box` says how to switch instead of
+  failing.
+
+- **Turn keys.** `POST /api/loom/conversations/turn` takes an optional `key`
+  (the runtime's `<source>:<id>`, runtime role only): a repeat within 24
+  hours answers the first `{conversation, seq}` and writes nothing, and the
+  same key on a different turn is a 409. Kept in `household.db` (`turn_keys`).
+
+- **Delivery, core's half.** `POST /api/loom/deliver`: the one core route every
+  piece token reaches (and the runtime's token). Core checks the body and who
+  may deliver what (the venue is the caller's, the agent the household's and
+  granted, a person only from a venue adapter, an agent only from the
+  runtime), each refused with a 403 that writes nothing; then forwards it to
+  the one piece offering the new `delivery` offer key (a runtime-role piece
+  only, one per household) under 120 s and 64 KB, and passes its answer
+  back (a runtime's own `{status: 5xx, error}` passes through). Idempotent on
+  (calling piece, id) for 24 hours, kept in `household.db`; a failed forward
+  isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
+  `send` argv. Offer lookups by name use own keys only. A piece delivers on
+  core's `wake` only if it declares `"wake": {}` in its venues. Replays are
+  keyed on (calling piece, id) with a hash of the body (a changed body is a
+  409), and one piece gets at most 2 running and 4 waiting forwards and
+  10,000 kept answers a day (t-1744).
+- **The audit log and review's records** (docs/specs/conversations.md, slices 2-3).
+  `$LOOM_HOME/audit.db` holds raw turn text, age-encrypted to a review key made
+  at first use (`review.key`/`review.pub`, 0600), written by the turn's writer
+  (`POST /api/loom/audit`) and deleted on `audit/done` or 7 days after its
+  turn (an hourly sweep, also at start). A review token takes entries
+  (`audit/take`), redacted (people P…, agents A…, models M…, harnesses H…),
+  posts `scores` by ref and at most one `findings` line per conversation per
+  UTC day. Core aggregates `scorecards` (graded, plus the metadata measures),
+  which the runtime reads with `GET /api/loom/scorecards`. household.json gains
+  `families` (model → family). Bundles and exports never carry the audit log
+  or its key.
+
+- **Offers.** A managed piece's `loom` block may declare what it offers through
+  core: `sections` (a project section feed), `venues`, `mcp_tools` and
+  `grants`. Each is checked at install (a bad one rejects the whole block; a
+  venue or tool name another piece has, or a second grants authority, is
+  refused), kept in piece.json, listed by `src/offers-registry.ts`, and run
+  through the manifest's runner: 3 s, process group killed, 6 at once, the
+  answer checked against a schema (t-1738).
+
+- **Local pieces.** `loom pieces install --from path:/abs/dir` manages a piece
+  that will never be public (an agent's homelab wrappers) like any other: a
+  snapshot of the directory (`npm pack`), versioned by its sha256, so
+  `update` notices a change and `rollback` and `remove` work. `loom pieces`
+  lists it as `managed <version> (local)` (t-1728).
+- **`harness_patch`: a safe small edit to a harness manifest.** A harness
+  manifest is normally read back through `identity()`, which bundles it into
+  a combined payload capped by the transport — past that cap a read silently
+  truncates mid-sentence, so a `harness_describe` overwrite built from that
+  truncated read risks dropping everything past the cut. `harness_patch`
+  applies an exact find/replace against the server's own on-disk copy
+  instead, so the caller only ever has to hold the text of the edit itself,
+  never the full manifest (t-1674).
 
 - **A door for strangers, where a piece opens one.** A tokenless call reaches a
   managed piece's API only on a path its `loom` block lists in `strangers`, as
@@ -56,6 +840,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   remotely" (t-1544). `recall-stats` stays local.
 
 ### Changed
+
+- **A Comms thread opens without an age process per message** (t-1926). Reading a thread decrypts its words in
+  loom's own process with the age library (`age-encryption`, BSD-3-Clause), not one `age` process per message, so
+  GET /comms/<thread> for 40 messages drops from over a second to well under 300 ms. The `age` program stays the
+  fallback for a message the library can't read, and is logged without its words. Nothing decrypted is cached.
+  `scripts/nav-bench.ts --server-only` times it, and fails at a median of 300 ms or more (`docs/specs/comms.md`,
+  "The rules for the kept words").
+
+- **Desktop right-click** (t-1925 E; `docs/specs/desk-tiling.md`, "Context menus"). Adding a widget moves from the
+  dock's + key (gone) to a right-click on the desktop, or the Menu key or Shift+F10. Short menus on a tile's strip
+  (Minimize, Make it the big one, Pin its card on an agent's, Close), an agent's card (Chat, Open, Unpin), a dock key (Open, Minimize, Close) and
+  an Inbox row (Open, Mark done). Keyboard-operable, Esc and Tab close, focus never trapped.
+
+- **Desktop tiles: strip, room, loader, moves** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
+  app's name twice ("COMMS › COMMS" is "COMMS", the way up to the app's start). The only app tile on the desktop, with no
+  side of its own, has no Recent here: its page takes the room. One loader replaces every spinner: four neon segments
+  lit in turn, 16, 24 or 40 px, never sized by the text around it. Opening, closing, minimizing, making a tile the
+  big one and bringing it back from the dock each have their own short effect (a CRT's power-on and -off, a scanline
+  wipe, a glitch); reduced motion has none.
+
+- **The desktop's bar is one line** (t-1925 A; `docs/specs/desk-tiling.md`, "The bar"). At 1024 px and wider: loom's
+  clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the ticker scrolling between, 34
+  px tall, where there were two bars. The ticker widget is gone (the bar has the same feed): a layout or an address
+  that has it loads without it, and the device's copy is written again without it. The desktop draws no headline
+  ("Everyone's fine"): just widgets and tiles. Phones and screens under 1024 px keep their bars.
+
+- **Desktop Home: the three columns line up, and no Moving strip** (t-1884). How everyone is ("Everyone's fine")
+  reads across the top, above all three columns, so Needs you, the first agent card and Vitals share a top edge; it
+  used to sit in the middle column and push the agents down. The Moving strip under the agent cards is gone: each
+  card already says what its agent is on.
 
 - **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line
   header that says it carries none of the person's authority.
@@ -131,6 +945,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The desktop's boot tests failed whenever the machine was busy** (t-1949): 732 ms against a 600 ms limit on CI, 3491
+  against 3200 locally, and with the merge queue each failure ejected a PR. They now hold the page's own clock
+  (Playwright's) and move it on by hand, so they check what the boot does, and in what order, with no time limits left:
+  it stands until 2.2 s on its clock, leaves then, is gone after its 0.25 s fade, and a key or tap ends it with no time
+  passing at all. A fresh session is now cleared from a page that isn't the app, so an arrival still running can't mark
+  it again. `expect.poll` waits up to 10 s (vitest's default gave up after 1 s, a limit no test meant to set).
+- **`loom token link --help` minted a live sign-in link** (t-1950). `token`, `sessions` and `household` found
+  their flags by looking for the ones they knew, so `--help` was ignored and `link` went ahead and printed a working
+  link. They, and `backup`, `export`, `restore`, `store` and `pieces`, now parse every flag first (`src/cli/args.ts`,
+  `parseVerb`): `-h`/`--help` prints usage and exits 0, and a flag the verb doesn't know is refused with 2, before
+  anything is minted, revoked, written or installed. `harness init` checks `--help` before stamping a fresh context
+  dir, and `knowledge`/`memory` honour `--help` anywhere after the verb. `src/cli/help-no-side-effects.test.ts` runs
+  every verb that changes something with `--help` and with an unknown flag, and checks the household's files are
+  unchanged.
+- **A window's page ran over its frame** (t-1925; Jonathan, 2026-11-06). A tile's ring was a shadow under its page, and
+  the page reached the tile's edge, so a page with a background (Activity's feed) covered the bottom edge, and every
+  page sat a pixel over the sides. The ring is drawn over the page and its sheets now (the cut corner's diagonal too),
+  and the page sits inside it; `src/ui/desk-window-overflow.integration.test.ts` holds every app to it.
+- **The desktop's bar** (Jonathan, 2026-11-06): a quiet dot between the clock and the page's name, and between LOOM//OS
+  and the status glyphs; the ticker's words stand in the middle of the room between them when they fit.
+- **A reply's signal on the comm screen played for less than its 250 ms** (t-1925). The 250 ms counted from when the
+  static was asked for, not from when it showed, so a busy render ate into it: 190-240 ms on a loaded machine, as
+  little as 33 ms on CI, where the Comms test failed on main and on loom#589. They count from the screen now.
+  Two backup tick tests no longer fail when run in a ten-minute window each day (02:45-02:55 or 20:45-20:55 in
+  Chicago): they pin when the backup was set instead of taking it from the wall clock.
+- **A restore could write into the live machine's piece stores** (t-1846). The backup drill (loom#488) restored
+  into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
+  it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it
+  restores to, with that piece's settings from the restored household or its defaults, never the caller's
+  environment, and refuses a piece whose setting names a path outside that home (its part waits in
+  `pieces-pending/`, its services don't start). `loom restore --allow-outside`, for the owner's own restore onto a
+  new machine, lets one name a path that isn't there yet; one that is, a live store, is refused even then. A piece found on PATH keeps its part pending too.
+  And a restore starts services only into this machine's own household: a piece's units are named for it in the
+  caller's systemd dir, so a restore into a throwaway `--to` would have repointed the live household's units.
 - **Adding an agent kept only `agents`, `default` and `owner`** in
   household.json, dropping `marks` and anything else. It now keeps them.
 - **An agent's Setup per its board.** Health first (Memory, Last active, Tokens
@@ -416,6 +1264,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rollback or new settings, and removed with the piece. `keepChildren: true`
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
+
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
+
+- Add the owner-only `household.setMemberProjects` operation to replace one member's project assignments atomically and refresh open windows.
+
+- Add owner-only next-mode registration of existing agent contexts with atomic retries and live household updates.
+
+- Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
+
+- Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
+
+- Add owner-only next-mode `household.show` and generated `loom-household show` JSON summary.
+
+### Settings
+
+- Add the new Settings app for secrets, pending requests, grants and household piece configuration links.
+
+- New-side household token/session administration and generated `loom-token`/`loom-sessions` clients: safe lists, one-time minting, scoped session revocation and atomic passkey/device compromise cascades.
+- Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
+
+- Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
+
+- Record token and session last use on the new side, including activity in open windows.
+
+- Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
+
+- Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
+
+- Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
+
+- Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
+
+- Add Account and Setup device sign-in links that inherit the source browser’s original sign-in time.
+
+- Let the next-side service worker show content-free push notifications and open their signed-in destinations.
+
+- Add next-mode member-private notification device operations with cookie-bound registration and persistent removal; Account controls and delivery remain pending.
+
+
+- Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
+
+- Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
+
+- Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
+
+- Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
+
+- Require durable, wordless attempt receipts for the external Claude worker; preserve uncertain actions across restarts and add read-only receipt inspection.
 
 ## [0.16.1] - 2026-10-25
 

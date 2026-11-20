@@ -1,0 +1,47 @@
+/* An agent's window (agent-window.tsx): its sections down the side, its header, its page. --c is its mark colour. */
+.loom-agentwin{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0}
+.loom-agentwin[data-rail]{grid-template-columns:168px minmax(0,1fr);gap:18px}
+.loom-agentwin[data-rail][data-narrow]{grid-template-columns:48px minmax(0,1fr);gap:12px}
+.loom-agentwin__nav{position:sticky;top:0;align-self:start;display:grid;gap:2px;padding:4px 0;border-right:1px solid var(--v-border);padding-right:10px}
+.loom-agentwin__nav a{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 10px;border-radius:8px;color:var(--v-text-2);text-decoration:none;font-size:14px}
+.loom-agentwin__nav a:is(:hover,:focus-visible){background:color-mix(in srgb,var(--c) 8%,transparent);color:var(--v-text)}
+.loom-agentwin__nav a[aria-current="page"]{background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--v-text);box-shadow:inset 2px 0 0 var(--c)}
+.loom-agentwin[data-narrow] .loom-agentwin__nav{padding-right:6px}
+.loom-agentwin[data-narrow] .loom-agentwin__nav a{justify-content:center;padding:0;width:38px}
+.loom-agentwin[data-narrow] .loom-agentwin__navlabel{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.loom-agentwin__main{display:grid;gap:16px;min-width:0;align-content:start}
+.loom-agentwin__body{min-width:0}
+
+.loom-aghead{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:20px;align-items:start;padding:4px 0 16px;border-bottom:1px solid var(--v-border)}
+.loom-agentwin[data-narrow] .loom-aghead{grid-template-columns:auto minmax(0,1fr);gap:14px}
+.loom-agentwin[data-narrow] .loom-aghead__acts{grid-column:1/-1;flex-direction:row;justify-content:flex-start}
+.loom-aghead__face{flex:none}
+.loom-aghead__who{display:grid;gap:8px;min-width:0}
+.loom-aghead__name{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:600 26px/1.15 var(--font-display);letter-spacing:.01em}
+.loom-agentwin[data-narrow] .loom-aghead__name{font-size:20px}
+.loom-agentwin__pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font:500 11px var(--loom-font-data,ui-monospace,monospace);letter-spacing:.04em;
+  color:var(--loom-live);background:color-mix(in srgb,var(--loom-live) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--loom-live) 50%,transparent)}
+.loom-agentwin__pill[data-tone="warn"]{color:var(--loom-warn);background:color-mix(in srgb,var(--loom-warn) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--loom-warn) 50%,transparent)}
+.loom-agentwin__pill i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:loom-pill-beat 1.6s ease-in-out infinite}
+@keyframes loom-pill-beat{50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.loom-agentwin__pill i{animation:none}}
+.loom-aghead__desc{display:grid;gap:6px;max-width:68ch}
+.loom-aghead__desc p{margin:0;line-height:1.5;color:var(--v-text-2)}
+.loom-aghead__none{font-style:italic}
+.loom-aghead__descacts{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:13px}
+.loom-linkbtn{color:var(--v-blue);text-decoration:underline;text-underline-offset:3px;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent)}
+.loom-linkbtn:disabled{opacity:.5}
+.loom-aghead__asked{color:var(--v-text-3)}
+.loom-aghead__facts{margin:0;font-size:12px;color:var(--v-text-3)}
+.loom-aghead__perms{margin:0;font-size:12px}
+.loom-aghead__perms a{color:var(--v-text-2);text-decoration:underline;text-underline-offset:2px}
+.loom-aghead__perms a:hover{color:var(--v-text)}
+.loom-aghead__on{margin:0;font-size:13px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.loom-aghead__on>a{color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
+.loom-aghead__acts{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.loom-aghead__edit{display:grid;gap:8px;max-width:68ch}
+.loom-aghead__edit textarea{width:100%;min-height:76px;padding:10px 12px;border-radius:9px;background:var(--v-canvas);color:var(--v-text);font:inherit;font-size:14px;line-height:1.45;
+  box-shadow:inset 0 0 0 1px var(--v-edge);resize:vertical}
+.loom-aghead__edit textarea:focus{outline:none;box-shadow:inset 0 0 0 1px var(--v-blue)}
+.loom-aghead__editbar{display:flex;align-items:center;gap:8px}
+.loom-aghead__count{margin-left:auto;font-size:11px;color:var(--v-text-3)}

@@ -1,0 +1,197 @@
+/**
+ * An agent's pixel face (Jonathan, 2026-11-04: the PixelLab sheets he made for Art): a sprite sheet per facing, kept
+ * with the household's marks (faces/<agent>/), set with `loom household sprite`, carried on the agent's mark (face.sprite)
+ * and served only to someone signed in who sees that agent. In a browser, an agent with a sheet wears it at whole pixels
+ * (2x on its card) unless the person turned "Pixel faces" off; an agent without one keeps its drawn face.
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { chromium, type Browser } from 'playwright-core';
+import type { Look } from '../../web/src/look';
+import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
+import { agentDir, checkSpriteManifest, createToken, HouseholdError, loadHousehold, manifestFromPixelLab, setSprite, spriteOf, type Household } from '../household.js';
+import { runHousehold } from '../cli/household.js';
+import { pick, variantsFor } from '../../web/src/pixel-face';
+import { sheet } from './pixel-sheet.fixture.js';
+
+const root = new URL('../../', import.meta.url).pathname;
+const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
+const built = existsSync(`${root}dist/web/index.html`);
+
+describe('an agent\'s pixel face', () => {
+  let h: Household;
+  let handle: HttpServeHandle;
+  let base: string;
+  let token: string;
+  let samToken: string;
+  let browser: Browser | undefined;
+  const saved = process.env.LOOM_HOME;
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-pixel-'));
+    for (const a of ['art', 'mark']) { mkdirSync(join(home, 'agents', a), { recursive: true }); writeFileSync(join(home, 'agents', a, 'IDENTITY.md'), a === 'art' ? '# Art E Fish\n' : '# Visual Mark\n'); }
+    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['art'] }] }));
+    process.env.LOOM_HOME = home;
+    h = loadHousehold(home)!;
+    token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    samToken = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
+    handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
+    base = `http://127.0.0.1:${handle.port}`;
+    if (built && chrome) browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
+  }, 60_000);
+  afterAll(async () => {
+    await browser?.close();
+    await handle.close();
+    if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved;
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  const signIn = async () => ((await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: `token=${encodeURIComponent(token)}`, redirect: 'manual' })).headers.get('set-cookie') ?? '').split(';')[0];
+
+  it('a manifest seeded from PixelLab: each state in each facing, one animation, weight 1; waiting south only', () => {
+    const m = manifestFromPixelLab(JSON.parse(sheet().json.toString()));
+    expect(m.cell).toEqual([56, 84]);
+    expect(m.states.idle).toEqual({ south: [{ row: 7, frames: 17, weight: 1 }], 'south-east': [{ row: 8, frames: 17, weight: 1 }], 'south-west': [{ row: 9, frames: 17, weight: 1 }] });
+    expect(m.states.working?.south).toEqual([{ row: 4, frames: 17, weight: 1 }]);
+    expect(m.states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
+    // A named animation that isn't a state is left out unless placed: Art's neck crack, a rare idle.
+    expect(Object.values(m.states).flatMap((f) => Object.values(f!).flat()).some((v) => v!.row >= 19)).toBe(false);
+    const art = manifestFromPixelLab(JSON.parse(sheet().json.toString()), { weights: { idle: 85 }, variants: { 'Crack Neck': { state: 'idle', weight: 15, rare: true } } });
+    expect(art.states.idle).toEqual({
+      south: [{ row: 7, frames: 17, weight: 85 }, { row: 19, frames: 17, weight: 15, rare: true }],
+      'south-east': [{ row: 8, frames: 17, weight: 85 }, { row: 20, frames: 17, weight: 15, rare: true }],
+      'south-west': [{ row: 9, frames: 17, weight: 85 }, { row: 21, frames: 17, weight: 15, rare: true }],
+    });
+    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] }, waiting: { 'south-east': [{ row: 17, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
+    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { east: [{ row: 7, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
+    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ sheet: '../x.png', row: 0, frames: 2, weight: 1 }] } } })).toThrow(HouseholdError);
+    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 0, frames: 2, weight: 1, rare: 'yes' }] } } })).toThrow(HouseholdError);
+  });
+
+  it('a face\'s own scale and offset are kept (t-1849: Mark\'s reads bigger than Art\'s), checked, and left out when they change nothing', () => {
+    const idle = { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } };
+    expect(checkSpriteManifest({ cell: [96, 80], states: idle, scale: 0.85, offset: [0, 3] })).toMatchObject({ scale: 0.85, offset: [0, 3] });
+    const plain = checkSpriteManifest({ cell: [96, 80], states: idle, scale: 1, offset: [0, 0] });
+    expect('scale' in plain || 'offset' in plain).toBe(false);
+    for (const bad of [{ scale: 0.2 }, { scale: 1.3 }, { scale: '0.9' }, { offset: [0] }, { offset: [0, 40] }, { offset: [0.5, 0] }])
+      expect(() => checkSpriteManifest({ cell: [96, 80], states: idle, ...bad })).toThrow(HouseholdError);
+  });
+
+  it('picks an animation by weight at each beat, never the same rare one twice in a row; a facing with none uses south', () => {
+    const usual = { row: 7, frames: 17, weight: 85 }, rare = { sheet: 'idle-rare.png', row: 0, frames: 12, weight: 15, rare: true };
+    const m = { cell: [56, 84] as [number, number], states: { idle: { south: [usual, rare], 'south-east': [{ row: 8, frames: 17, weight: 1 }] }, error: { south: [{ row: 1, frames: 17, weight: 1 }], 'south-east': [{ row: 2, frames: 17, weight: 1 }] }, waiting: { south: [{ row: 16, frames: 17, weight: 1 }] } } };
+    expect(pick([usual, rare], undefined, 0.5)).toBe(usual);
+    expect(pick([usual, rare], undefined, 0.9)).toBe(rare);
+    expect(pick([usual, rare], rare, 0.99)).toBe(usual);   // after a rare one, never a rare one
+    expect(pick([usual, rare], usual, 0.9)).toBe(rare);    // the usual one may be followed by a rare one
+    expect(pick([usual, rare], usual, 0.5)).toBe(usual);   // and by itself
+    let prev: typeof usual | undefined, twice = 0;
+    for (let i = 0; i < 2000; i++) { const v = pick([usual, rare], prev); if (v === rare && prev === rare) twice++; prev = v; }
+    expect(twice).toBe(0);
+    let rares = 0;
+    for (let i = 0; i < 2000; i++) if (pick([usual, rare], undefined) === rare) rares++;
+    expect(rares / 2000).toBeGreaterThan(0.1); expect(rares / 2000).toBeLessThan(0.2);
+    expect(variantsFor(m, 'idle', 'south-east')).toEqual({ list: m.states.idle['south-east'], flip: false });
+    expect(variantsFor(m, 'error', 'south-west')).toEqual({ list: m.states.error['south-east'], flip: true });
+    expect(variantsFor(m, 'idle', 'south-west')).toEqual({ list: m.states.idle['south-east'], flip: true });
+    expect(variantsFor(m, 'thinking', 'south-east')).toEqual({ list: m.states.idle.south, flip: false });
+    expect(variantsFor(m, 'needs-input', 'south-east')).toEqual({ list: m.states.waiting.south, flip: false });
+    // With south-west rows anywhere in the face, a state without its own uses its south (no mirroring).
+    const withSW = { ...m, states: { ...m.states, thinking: { south: [{ row: 10, frames: 17, weight: 1 }], 'south-west': [{ row: 12, frames: 17, weight: 1 }] } } };
+    expect(variantsFor(withSW, 'error', 'south-west')).toEqual({ list: m.states.error.south, flip: false });
+  });
+
+  it('is set from the command line, checked first: a PNG and a sprite sheet\'s JSON, for an agent of the household', async () => {
+    const { png, json } = sheet();
+    const m = manifestFromPixelLab(JSON.parse(json.toString()));
+    expect(() => setSprite(h, 'art', m, { 'sheet.png': Buffer.from('GIF89a') })).toThrow(HouseholdError);
+    expect(() => setSprite(h, 'art', m, {})).toThrow(HouseholdError);   // names sheet.png, which isn't given or kept
+    expect(() => setSprite(h, 'nobody', m, { 'sheet.png': png })).toThrow(HouseholdError);
+    // A sheet without south: no face (idle facing south is the one every pixel face has).
+    expect(() => manifestFromPixelLab(JSON.parse(sheet(['south-east']).json.toString()))).toThrow(HouseholdError);
+    expect(spriteOf(h, 'art')).toBeUndefined();
+    const dir = mkdtempSync(join(tmpdir(), 'loom-pixel-src-'));
+    writeFileSync(join(dir, 'a.png'), png); writeFileSync(join(dir, 'a.json'), json);
+    const out: string[] = [];
+    const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } };
+    expect(await runHousehold(['sprite', 'art', join(dir, 'a.png'), join(dir, 'a.json'), '--weight', 'idle=85', '--variant', 'Crack Neck=idle:15:rare'], io as never)).toBe(0);
+    expect(spriteOf(h, 'art')).toMatchObject({ facings: ['south', 'south-east', 'south-west'] });
+    expect(JSON.parse(readFileSync(join(h.home, 'faces', 'art', 'manifest.json'), 'utf-8')).states.idle.south).toEqual([{ row: 7, frames: 17, weight: 85 }, { row: 19, frames: 17, weight: 15, rare: true }]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rides on the agent\'s mark, and is served only to someone signed in, for an agent that has one', async () => {
+    const cookie = await signIn();
+    const view = await (await fetch(`${base}/`, { headers: { cookie, accept: 'application/json' } })).json() as { chrome: { shell: { agents: Array<{ id: string; face: { sprite?: { facings: string[]; v: string; base: string } } }> } } };
+    const [art, mark] = ['art', 'mark'].map((id) => view.chrome.shell.agents.find((a) => a.id === id)!);
+    expect(art.face.sprite).toMatchObject({ facings: ['south', 'south-east', 'south-west'], base: '/faces/art/' });
+    expect(mark.face.sprite).toBeUndefined();
+    const png = await fetch(`${base}/faces/art/sheet.png?v=${art.face.sprite!.v}`, { headers: { cookie } });
+    expect((await fetch(`${base}/faces/art/other.png`, { headers: { cookie } })).status).toBe(404);   // not named by its manifest
+    expect([png.status, png.headers.get('content-type'), png.headers.get('cache-control')]).toEqual([200, 'image/png', 'private, max-age=31536000, immutable']);
+    expect((await (await fetch(`${base}/faces/art/manifest.json`, { headers: { cookie } })).json()).states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
+    expect((await fetch(`${base}/faces/mark/sheet.png`, { headers: { cookie } })).status).toBe(404);
+    expect((await fetch(`${base}/faces/art/sheet.png`, { redirect: 'manual' })).status).not.toBe(200);
+    // A member who owns only Art sees Art's face too.
+    const sam = ((await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(samToken)}`, redirect: 'manual' })).headers.get('set-cookie') ?? '').split(';')[0];
+    expect((await fetch(`${base}/faces/art/sheet.png`, { headers: { cookie: sam } })).status).toBe(200);
+  });
+
+  it.runIf(built && chrome)('in a browser: whole pixels, 2x on the card; the drawn face for an agent without one, and for everyone with Pixel faces off', async () => {
+    const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+    const page = await ctx.newPage();
+    await page.goto(`${base}/`);
+    const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
+    await face.waitFor({ timeout: 15_000 });
+    expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 192, 96]);
+    // It draws the sheet (the fixture's cyan square), not an empty square.
+    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-phome .loom-bigcard .loom-pixel-face canvas'); if (!c) return false;
+      const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });
+    expect(await page.locator('.loom-phome .loom-bigcard').count()).toBe(2);
+    // Mark's, drawn (its chunk may still be on its way: the card shows his initial until it lands)
+    await expect.poll(() => page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').count(), { timeout: 15_000 }).toBe(1);
+    await page.goto(`${base}/appearance`);
+    await page.getByRole('radio', { name: 'Off' }).first().click();
+    await page.goto(`${base}/`);
+    await page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
+    expect(await page.locator('.loom-pixel-face').count()).toBe(0);
+    await ctx.close();
+  }, 60_000);
+
+  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn, in every look', async () => {
+    const file = join(h.home, 'faces', 'art', 'manifest.json');
+    const was = readFileSync(file, 'utf-8');
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(was), scale: 0.75, offset: [0, 4] }));
+    try {
+      const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const page = await ctx.newPage();
+      // The person's choices, as loom keeps them (they win over this device's copy).
+      const choose = async (prefs: Record<string, unknown>) => {
+        await page.goto(`${base}/appearance`);
+        await page.locator('.loom-top h1').waitFor();
+        const csrf = await page.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
+        expect(await page.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
+      };
+      const sized = async (look: Look) => {
+        await choose({ look, pixel: true });
+        await page.goto(`${base}/`);
+        await page.waitForFunction((l) => document.documentElement.dataset.look === l, look);
+        const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
+        await face.waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(300);
+        return face.evaluate((c) => [c.getBoundingClientRect().width, getComputedStyle(c).translate]);
+      };
+      const neon = await sized('neon');
+      expect(neon[0]).toBe(144);   // 96 × 2 × 0.75
+      expect(neon[1]).toContain('6px');   // 4 sheet pixels × 1.5
+      for (const look of ['lowlight', 'daylight'] as const) expect(await sized(look), look).toEqual(neon);
+      await choose({ look: 'neon' });
+      await ctx.close();
+    } finally { writeFileSync(file, was); }
+  }, 60_000);
+});

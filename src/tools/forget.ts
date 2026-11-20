@@ -8,6 +8,7 @@
  * call is a free dry-run that previews what would be deleted. Single-target
  * deletions (ref, or category+title) never need confirmation.
  */
+import type { MemorySelection } from '../config.js';
 import { createBackend } from '../backends/index.js';
 import { globToMatcher } from '../backends/glob.js';
 import type { ForgetInput } from '../backends/types.js';
@@ -22,6 +23,7 @@ const PREVIEW_TITLE_CAP = 10;
 export async function forget(
   contextDir: string,
   input: ForgetToolInput,
+  selection?: MemorySelection,
 ): Promise<string> {
   const isSingle = input.ref || (input.category && input.title && !input.title_pattern);
   const isPatternBulk = !!input.title_pattern && (input.category || input.project);
@@ -35,7 +37,7 @@ export async function forget(
     return 'Nothing to forget. Provide a ref, category+title, or a scope (category/project) for bulk deletion.';
   }
 
-  const backend = createBackend(contextDir);
+  const backend = createBackend(contextDir, selection);
 
   // Scope deletion without confirm: free dry-run — preview, delete nothing.
   if (!isSingle && input.confirm !== true) {

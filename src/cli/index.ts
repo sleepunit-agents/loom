@@ -9,7 +9,7 @@ import type { IOStreams } from './io.js';
 import { realStreams } from './io.js';
 import { SUBCOMMANDS } from './subcommands.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from './args.js';
-import { REMOTE_VERBS, runRemote } from './remote.js';
+import { REMOTE_VERBS, runRemote, runRemotePiece } from './remote.js';
 import { findPiece, isPieceName, runPiece } from './pieces.js';
 
 const TOP_HELP = `Usage: loom <command> [options]
@@ -27,23 +27,30 @@ Commands:
   note write|read|list|attach|sweep
                      An agent's notes: held for a while (keep, while, short), swept unless cited
   person show|list   Read person cards (condensed current state per person)
+  project show|list|hub|orphans
+                     Read project cards and their hubs (everything filed under a project)
   update-identity    Edit preferences.md / self-model.md sections
   bootstrap          Initialize a fresh agent
   serve              Explicit MCP stdio startup (same as no args)
   inject             Write loom identity pointer into harness dotfiles
   harness init      Scaffold a harness manifest from template
   install           Write loom-setup skill into a harness's skills dir
+  changes           Read Changes or request a refresh through the daemon
+  fixture <dir>     Build a disposable foundation fixture home
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
   household         The household: agents and the default (docs/specs/household.md)
   token             Mint, list and revoke the household's tokens
+  sessions          The page's browser sessions: list them, sign one out alone
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
+  backup            The nightly backup: set it, run one, see how it's going
   store             A piece's own store in loom: get, list, put, del, history, revert
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
-(e.g. loom tasks list). Core commands always win. See docs/extensions.md.
+(e.g. loom tasks list). Core commands always win. Not installed here, with $LOOM_URL
+set: the loom there runs it (POST /api/<name>/run). See docs/extensions.md.
 
 Global flags:
   --context-dir <path>   Agent context dir (default: $LOOM_CONTEXT_DIR or ~/.config/loom/default)
@@ -52,7 +59,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person; other commands stay local.
+                         memory, knowledge, person, project; other commands stay local.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -69,20 +76,30 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   // A piece (docs/extensions.md): not a core command, and loom-<name> is on PATH.
   const pieceIdx = firstNonGlobalIndex(argv);
   const pieceName = argv[pieceIdx];
+  // Not installed here, with LOOM_URL set: the loom there runs it (POST /api/<piece>/run). Local always wins.
   if (isPieceName(pieceName)) {
     const path = findPiece(pieceName, io.env);
-    if (path) {
+    const remote = path ? undefined : io.env.LOOM_URL;
+    if (path || remote) {
       if (pieceIdx > 0) {
         io.stderr(`loom: global flags (${argv.slice(0, pieceIdx).join(' ')}) don't apply to pieces; put the piece's own flags after its name.\n`);
         return 2;
       }
-      return runPiece(path, argv.slice(pieceIdx + 1), io);
+      if (path) return runPiece(path, argv.slice(pieceIdx + 1), io);
+      return runRemotePiece(pieceName, argv.slice(pieceIdx + 1), remote!, io);
     }
   }
 
   const resolved = await resolveSubcommand(argv, io);
   if (typeof resolved === 'number') return resolved;
   const { sub, rest } = resolved;
+
+  // New-data-path client: never discover an old piece executable or /run adapter.
+  // Keep this outside dispatch: runCliLocal must never forward an HTTP request.
+  if (sub === 'changes') {
+    const { runChangesClient } = await import('./changes-client.js');
+    return runChangesClient(rest, io);
+  }
 
   // Remote mode: the store verbs go to loom-http when a URL is set.
   const url = extractGlobalFlags(rest).flags.url;
@@ -146,6 +163,16 @@ async function resolveSubcommand(
 
 async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<number> {
   switch (sub) {
+    case 'changes':
+      io.stderr('loom changes is a daemon client; use /api/changes operations directly.\n');
+      return 2;
+    case 'fixture': {
+      if (rest.length !== 1 || rest[0].startsWith('-')) { io.stderr('Usage: loom fixture <empty-dir>\n'); return 2; }
+      const { fixture } = await import('../fixture.js');
+      try { fixture(rest[0]); io.stdout(`Fixture home: ${rest[0]}\n`); return 0; }
+      catch (e) { io.stderr(`${(e as Error).message}\n`); return 1; }
+    }
+
     case 'wake': {
       const { run } = await import('./wake.js');
       return run(rest, io);
@@ -168,6 +195,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     }
     case 'person': {
       const { run } = await import('./person.js');
+      return run(rest, io);
+    }
+    case 'project': {
+      const { run } = await import('./project.js');
       return run(rest, io);
     }
     case 'forget': {
@@ -223,8 +254,16 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
       return runHousehold(rest, io);
     }
     case 'token': {
+      if (rest[0] === 'link' && rest.includes('--next')) {
+        const { runSigninLink } = await import('../core/signin/client.js');
+        return runSigninLink(rest.slice(1), io);
+      }
       const { runToken } = await import('./household.js');
       return runToken(rest, io);
+    }
+    case 'sessions': {
+      const { runSessions } = await import('./household.js');
+      return runSessions(rest, io);
     }
     case 'export': {
       const { runExport } = await import('./bundle.js');
@@ -233,6 +272,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'restore': {
       const { runRestore } = await import('./bundle.js');
       return runRestore(rest, io);
+    }
+    case 'backup': {
+      const { runBackupCli } = await import('./backup.js');
+      return runBackupCli(rest, io);
     }
     case 'store': {
       const { runStore } = await import('./store.js');

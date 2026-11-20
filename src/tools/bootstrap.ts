@@ -32,7 +32,7 @@ export interface BootstrapParams {
 
 // ─── Identity file templates ──────────────────────────────────────────────────
 
-function buildPreferencesMd(name: string, preferences?: string, user?: string): string {
+export function buildPreferencesMd(name: string, preferences?: string, user?: string): string {
   const who = user?.trim();
   const body = preferences?.trim()
     ? preferences.trim()
@@ -59,7 +59,7 @@ ${seeded}
 `;
 }
 
-function buildSelfModelMd(): string {
+export function buildSelfModelMd(): string {
   return `# Self-Model
 
 ## Strengths

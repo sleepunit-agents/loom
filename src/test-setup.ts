@@ -7,7 +7,20 @@
  * (opt-in, LOOM_TEST_REAL_EMBEDDINGS=1); tests here only need stable
  * vectors for sqlite-vec storage/recall plumbing.
  */
+import { Server } from 'node:http';
 import { vi } from 'vitest';
+
+// A test's server never closes an idle keep-alive socket; its client does. Playwright's request client (a context's
+// `request`, `route.fetch`) keeps the socket of a request, the sign-in at the top of a test say, and sends a later one
+// on it; Node's server closes a socket idle 5 s (keepAliveTimeout), so a request sent as it closes reads ECONNRESET
+// (a browser resends a request on a reused socket that reset; Playwright doesn't). On a loaded runner the client hears
+// of the close late, and the window is wide: route.fetch and request.get failed this way in loom's merge queue
+// (2026-11-07). 0 turns the timer off; server.close() still drops idle sockets, and a context's close drops its own.
+const listen = Server.prototype.listen;
+Server.prototype.listen = function (this: Server, ...args: unknown[]) {
+  this.keepAliveTimeout = 0;
+  return (listen as (...a: unknown[]) => Server).apply(this, args);
+} as typeof listen;
 
 const DIMENSIONS = 384;
 

@@ -1,0 +1,111 @@
+import {pinPublicClaim} from './public-continuation.js';
+import { bodyPolicyExecutionHeld } from './policy-store.js';
+import { finishStartAttempt } from './start-retries.js';
+import { hearJob } from './heartbeat.js';
+import { provenanceStore } from './provenance-store.js';
+import { assignedRunner } from './control.js';
+import { executionAssertion, assertUnboundExecution } from './unbound-execution.js';
+/** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
+import { z } from 'zod';
+import { operation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { canHost } from './boxes.js';
+import { jobRecord, type RuntimeRecords } from './records.js';
+import { runtimeStore } from './store.js';
+import type { RuntimeCredentials } from './credentials.js';
+import { buildTag, configuredHouse, sameHouse } from './builds.js';
+import { jobResults, resultFields } from './results.js';
+const input = z.object({ job: z.string().min(1).max(200) }).strict();
+const output = z.object({ job: z.string(), state: jobRecord.shape.state });
+export function installRunnerJobs(db: Db, operations: Operations, sharing: () => Sharing, credentials?: RuntimeCredentials) {
+  const store = runtimeStore(db), results = jobResults(db);
+  const assigned=(viewer:Viewer,id:string)=>assignedRunner(store,viewer,id,sharing());
+  function save(ctx: { now: number; changed(type: string, id: string): void }, id: string, state: RuntimeRecords['job']['state']) {
+    const { changedAt: _, ...job } = store.read('job', id)!;
+    if (store.put('job', { ...job, state }, ctx.now)) ctx.changed('runtime.job', id);
+    return { job: id, state };
+  }
+  operations.register(operation({
+    name:'runtime.jobControl',doors:['http','direct'],input:input.extend({execution:executionAssertion.optional()}).strict(),output:z.object({stop:z.boolean(),history:z.enum(['retain','discard','unknown'])}),
+    may:(viewer,{job})=>assigned(viewer,job),
+    run(_ctx,{job:id,execution}){
+      assertUnboundExecution(db,sharing(),id,execution);
+      const job=store.read('job',id)!;
+      if(job.writtenOff||job.principalReset)return {stop:true,history:'discard' as const};
+      if(job.conversation&&store.read('binding',job.conversation)?.venue.startsWith('bridge:')&&bodyPolicyExecutionHeld(db,job.agent))return {stop:true,history:'discard' as const};
+      if(job.imported)return {stop:true,history:job.imported.history};
+      if(job.state==='uncertain'||job.state==='lost')return {stop:false,history:'unknown' as const};
+      return {stop:['done','failed','stopped'].includes(job.state),history:'retain' as const};
+    },
+  }));
+  operations.register(operation({
+    name: 'runtime.claimJob', write: true, input, output,
+    may: (viewer, { job }) => assigned(viewer, job),
+    run(ctx, { job: id }) {
+      const job = store.read('job', id)!, box = store.read('box', job.box)!;
+      if (!canHost(box, job.agent, sharing())) throw new OperationError('denied', 'Box may not host this agent');
+      if (job.state !== 'queued') throw new OperationError('conflict', 'Job is not queued');
+      const made = configuredHouse(store.read('settings', job.agent));
+      if (!made) throw new OperationError('conflict', 'Agent has no house configuration');
+      if (job.startRequest?.house && !sameHouse(job.startRequest.house,made)) throw new OperationError('conflict','Retry house configuration changed; reconcile this job');
+      const { changedAt: _, build: _build, buildAt: _buildAt, ...before } = job;
+      const after={ ...before, state: 'starting' as const, made, claimedAt: ctx.now };
+      pinPublicClaim(ctx,job,after);
+      if (store.put('job', after, ctx.now)) ctx.changed('runtime.job', id);
+      return { job: id, state: 'starting' as const };
+    },
+  }));
+  operations.register(operation({
+    name: 'runtime.finishJob', write: true,
+    input: input.extend({ execution:executionAssertion.optional(), state: z.enum(['done', 'failed']), startFailure: z.literal('not-started').optional(), ...resultFields }).strict(), output,
+    may: (viewer, { job }) => assigned(viewer, job),
+    run(ctx, { job: id, execution, state, startFailure, exit, log }) {
+      assertUnboundExecution(db,sharing(),id,execution);
+      const { changedAt: _, ...job } = store.read('job', id)!;
+      if (!['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      if (startFailure && (state !== 'failed' || job.state !== 'starting')) throw new OperationError('conflict', 'Final start failure requires an unconfirmed failed claim');
+      if (!credentials) throw new OperationError('unavailable', 'Central credential revocation is not installed');
+      const result = credentials.revokeJob(db, { job: id, now: ctx.now });
+      if ((result as unknown) instanceof Promise) {
+        // Reject async roles without leaving a later rejection unhandled.
+        (result as unknown as Promise<unknown>).catch(() => {});
+        throw new Error('Credential revocation must be synchronous');
+      }
+      results.put(id, { exit, log });
+      ctx.changed('core.access', 'credentials');
+      if (store.put('job', { ...job, state, endedAt: ctx.now, ...(startFailure ? { startFailed: true as const } : {}) }, ctx.now)) ctx.changed('runtime.job', id);
+      finishStartAttempt(ctx,id,!!startFailure);
+      return { job: id, state };
+    },
+  }));
+  operations.register(operation({
+    name: 'runtime.reportJob', write: true,
+    input: input.extend({ execution:executionAssertion.optional(), state: z.enum(['running', 'waiting']), build: z.string().max(120).optional(), ...resultFields }).strict(), output,
+    may: (viewer, { job }) => assigned(viewer, job),
+    run(ctx, { job: id, execution, state, build, exit, log }) {
+      assertUnboundExecution(db,sharing(),id,execution);
+      const before = store.read('job', id)!;
+      if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      hearJob(db,id,ctx.now);
+      if (before.conversation) {
+        const rows = db.prepare('SELECT id FROM runtime_deliveries WHERE job=?').all(id) as {id:string}[];
+        const bridgeRows=db.prepare("SELECT id FROM runtime_bridge_turns WHERE conversation=? AND direction='in'").all(before.conversation) as {id:string}[];
+        provenanceStore(db).consumed(before.conversation, [...rows.map(row=>row.id),...bridgeRows.map(row=>`bridge:${row.id}`)]);
+      }
+      // Result and metadata writes share the operation's transaction/receipt.
+      // Notify only the job id; log words are never in the live payload.
+      if (results.put(id, { exit, log })) ctx.changed('runtime.job', id);
+      if (build !== undefined) {
+        const tag = buildTag(build, before.agent);
+        if (state !== 'running' || !tag) throw new OperationError('invalid', 'Build must name this agent image in a running report');
+        if (!before.made || before.claimedAt === undefined) throw new OperationError('conflict', 'Job has no claimed house identity');
+        if (before.build && before.build !== tag) throw new OperationError('conflict', 'Job already reported another image');
+        const { changedAt: _, ...job } = before;
+        // Repeated reports and later progress must not make an old image newer.
+        // Historical images without a report time remain undated until rebuilt.
+        if (store.put('job', { ...job, state, build: tag, ...(!before.build ? { buildAt: ctx.now } : {}) }, ctx.now)) ctx.changed('runtime.job', id);
+        return { job: id, state };
+      }
+      return save(ctx, id, state);
+    },
+  }));
+}

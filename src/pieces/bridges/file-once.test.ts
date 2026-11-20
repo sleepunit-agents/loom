@@ -1,0 +1,149 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import { startLoom } from '../../foundation.js';
+import { FakeClock } from '../../core/index.js';
+import { fixture as seedHome } from '../../fixture.js';
+import { bridgeFileStore, BRIDGE_FILE_RETENTION, type BridgeFileSavePermit } from './file-store.js';
+import { bridgeFilesOnce } from './file-once.js';
+const closes:(()=>Promise<void>)[]=[],roots:string[]=[];
+afterEach(async()=>{for(const close of closes.splice(0))await close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+async function fixture(home=mkdtempSync(join(tmpdir(),'files-once-')),at=1000){
+ if(!roots.includes(home)){roots.push(home);seedHome(home);}
+ const clock=new FakeClock(at),app=await startLoom({home,next:true,staging:true,clock,port:0,stdout:()=>{}});
+ let closed=false;const close=async()=>{if(!closed){closed=true;await app.close();}};closes.push(close);
+ const facts={authenticated:true,setup:true,credential:true,delivered:true,policy:true};
+ // Explicit fake owning Runtime permit; no production issuer exists.
+ const permit:BridgeFileSavePermit={agent:'art',venue:'slack-art',workspace:'T1',channel:'D1',delivery:'one',deliveredAt:1000,
+ files:[{id:'FABC',name:'photo.jpg',size:4,url:'https://files.slack.com/x'}],current:()=>Object.values(facts).every(Boolean)};
+ const store=bridgeFileStore(app.db,()=>clock.now());
+ const fetched:Buffer[]=[];let calls=0;
+ const fetch=async(p:BridgeFileSavePermit)=>{calls++;return p.files.map(f=>{const bytes=Buffer.from('data');fetched.push(bytes);return {id:f.id,name:f.name,bytes};});};
+ const run=(p=permit,transport=fetch)=>bridgeFilesOnce(app.db,()=>clock.now(),p,transport);
+ const read=(p=permit,file='FABC')=>store.read({...p,file,job:'job',conversation:'conversation'});
+ return {app,home,clock,permit,store,run,read,facts,fetch,fetched,calls:()=>calls,close};
+}
+it('fetches once across concurrent deliveries, separate callers and restart, with private associations',async()=>{
+ const f=await fixture();const second={...f.permit,delivery:'two'};
+ await Promise.all([f.run(),f.run(),f.run(second)]);expect(f.calls()).toBe(1);
+ expect(f.read().bytes.toString()).toBe('data');expect(f.read(second).bytes.toString()).toBe('data');
+ expect(f.fetched.every(b=>b.equals(Buffer.alloc(4)))).toBe(true);
+ await f.close();const g=await fixture(f.home,2000);await g.run({...g.permit,delivery:'three'});
+ expect(g.calls()).toBe(0);expect(g.read({...g.permit,delivery:'three'}).bytes.toString()).toBe('data');
+});
+it('fetches only missing IDs and atomically associates the whole original batch',async()=>{
+ const f=await fixture();await f.run();const p={...f.permit,delivery:'two',files:[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]};
+ let selected:string[]=[];await f.run(p,async input=>{selected=input.files.map(x=>x.id);return f.fetch(input);});
+ expect(selected).toEqual(['FDEF']);expect(f.read(p,'FABC').bytes.toString()).toBe('data');expect(f.read(p,'FDEF').bytes.toString()).toBe('data');
+});
+for(const fact of ['authenticated','setup','credential','delivered','policy'] as const)it(`rechecks queued ${fact} authority even with cached bytes`,async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run({...f.permit,current:()=>true},async p=>{await gate;return f.fetch(p);});
+ const p={...f.permit,delivery:'two',current:()=>f.facts[fact]};const second=f.run(p);f.facts[fact]=false;
+ release();await first;await expect(second).rejects.toThrow('Bridge file unavailable');
+ expect(f.app.db.prepare('SELECT count(*) n FROM bridges_file_deliveries').get()).toEqual({n:1});
+});
+it('does not inherit a concurrent caller proof and recovers after a failed fetch',async()=>{
+ const f=await fixture();await expect(f.run(f.permit,async()=>{throw Error('private URL');})).rejects.toThrow(/^Bridge file unavailable$/);
+ await f.run();expect(f.calls()).toBe(1);
+ await expect(f.run({...f.permit,current:()=>false})).rejects.toThrow();expect(f.calls()).toBe(1);
+});
+it('refuses manifest changes, unsafe cache name changes and corrupt cached bytes before IO',async()=>{
+ const f=await fixture();await f.run();
+ await expect(f.run({...f.permit,files:[{...f.permit.files[0],url:'https://files.slack.com/changed'}]})).rejects.toThrow();
+ await expect(f.run({...f.permit,delivery:'two',files:[{...f.permit.files[0],name:'other'}]})).rejects.toThrow();
+ f.app.db.prepare('UPDATE bridges_files SET bytes=?').run(Buffer.from('evil'));
+ await expect(f.run({...f.permit,delivery:'two'})).rejects.toThrow();expect(f.calls()).toBe(1);
+});
+it('does not refresh original age or revive expired deliveries, but fetches a new delivery after expiry',async()=>{
+ const first=await fixture();await first.run();await first.close();const f=await fixture(first.home,1000+BRIDGE_FILE_RETENTION);
+ await expect(f.run()).rejects.toThrow();expect(f.calls()).toBe(0);
+ const p={...f.permit,delivery:'fresh',deliveredAt:f.clock.now()};await f.run(p);expect(f.calls()).toBe(1);expect(f.read(p).bytes.toString()).toBe('data');
+});
+it('erases fetched buffers and rolls back associations on post-fetch revocation',async()=>{
+ const f=await fixture();await expect(f.run(f.permit,async p=>{const batch=await f.fetch(p);f.facts.policy=false;return batch;})).rejects.toThrow();
+ expect(f.fetched[0]).toEqual(Buffer.alloc(4));expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:0});
+});
+it('uses the real bounded Slack fetch and does no second credential or HTTP read',async()=>{
+ const {slackFiles}=await import('./slack-files.js');const f=await fixture();let secrets=0,http=0;
+ const transport=(p:BridgeFileSavePermit)=>slackFiles({id:'slack-art',agent:'art',platform:'slack',workspace:'T1',bot:'U1',enabled:true,tokenSecret:'token'},p,
+ {withValue:async(_id,use)=>{secrets++;return use('fixture-token');}},()=>true,async()=>{http++;return new Response('data');}).fetch();
+ await f.run(f.permit,transport);await f.run({...f.permit,delivery:'two'},transport);
+ expect([secrets,http]).toEqual([1,1]);expect(f.read().bytes.toString()).toBe('data');
+});
+for(const field of ['agent','venue','workspace','channel','delivery','deliveredAt','files'] as const)it(`refuses queued mutation of captured ${field}`,async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ const p={...f.permit,delivery:'two'};const second=f.run(p);
+ if(field==='files')p.files=[{...p.files[0],id:'FDEF'}];else if(field==='deliveredAt')p.deliveredAt++;else p[field]='changed';
+ release();await first;await expect(second).rejects.toThrow();expect(f.calls()).toBe(1);
+});
+it('keeps scopes independent and rolls back a failed save before a successful retry',async()=>{
+ const f=await fixture();await Promise.all([f.run(),f.run({...f.permit,channel:'D2'})]);expect(f.calls()).toBe(2);
+ f.app.db.exec("CREATE TRIGGER fail_save BEFORE INSERT ON bridges_file_sources BEGIN SELECT RAISE(ABORT,'private words'); END");
+ const p={...f.permit,delivery:'two'};await expect(f.run(p)).rejects.toThrow(/^Bridge file unavailable$/);
+ expect(f.app.db.prepare('SELECT count(*) n FROM bridges_file_deliveries').get()).toEqual({n:2});
+ f.app.db.exec('DROP TRIGGER fail_save');await f.run(p);expect(f.calls()).toBe(2);expect(f.read(p).bytes.toString()).toBe('data');
+});
+it('rejects extra fetched results before committing any bytes',async()=>{
+ const f=await fixture();await expect(f.run(f.permit,async p=>[...await f.fetch(p),...await f.fetch(p)])).rejects.toThrow();
+ expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:0});expect(f.fetched.every(b=>b.equals(Buffer.alloc(4)))).toBe(true);
+});
+it('refuses cached bytes that expire while another missing file is being fetched',async()=>{
+ const first=await fixture();await first.run();await first.close();const f=await fixture(first.home,1000+BRIDGE_FILE_RETENTION-1);
+ const p={...f.permit,delivery:'two',deliveredAt:f.clock.now(),files:[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]};
+ await expect(f.run(p,async input=>{f.clock.advance(1);return f.fetch(input);})).rejects.toThrow();
+ expect(f.app.db.prepare("SELECT created FROM bridges_files WHERE file='FABC'").get()).toEqual({created:1000});
+ expect(f.app.db.prepare("SELECT count(*) n FROM bridges_file_deliveries WHERE delivery='two'").get()).toEqual({n:0});
+});
+
+it('refuses replacement of the queued Runtime revocation predicate',async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ const p={...f.permit,delivery:'two',current:()=>false};
+ // Admit it initially, then revoke the captured predicate and substitute one.
+ let allowed=true;p.current=()=>allowed;const second=f.run(p);allowed=false;p.current=()=>true;
+ release();await first;await expect(second).rejects.toThrow();
+ expect(f.app.db.prepare("SELECT count(*) n FROM bridges_file_deliveries WHERE delivery='two'").get()).toEqual({n:0});
+});
+for(const refuse of [false,true])it(`erases observed cached buffers on ${refuse?'refusal':'successful reuse'}`,async()=>{
+ const f=await fixture();await f.run();const owned:Buffer[]=[];
+ const prepare=f.app.db.prepare.bind(f.app.db);
+ const spy=vi.spyOn(f.app.db,'prepare').mockImplementation((sql:string)=>{
+  const statement=prepare(sql);
+  if(sql.startsWith('SELECT name,bytes,digest,created')){
+   const get=statement.get.bind(statement);vi.spyOn(statement,'get').mockImplementation((...args:unknown[])=>{
+    const row=get(...args) as {bytes:Buffer}|undefined;if(row)owned.push(row.bytes);return row;
+   });
+  }return statement;
+ });
+ try {
+  const p={...f.permit,delivery:'two',files:refuse?[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]:f.permit.files};
+  const result=f.run(p,async input=>{const batch=await f.fetch(input);f.facts.policy=false;return batch;});
+  if(refuse)await expect(result).rejects.toThrow();else await result;
+  expect(owned).toHaveLength(1);expect(owned[0]).toEqual(Buffer.alloc(4));
+ }finally{spy.mockRestore();}
+});
+it('finishes an independent scope while another scope is still fetching',async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ try{await f.run({...f.permit,channel:'D2'});expect(f.calls()).toBe(1);}finally{release();await first;}
+});
+
+it('preserves the original file age on successful later-delivery reuse',async()=>{
+ const first=await fixture();await first.run();await first.close();
+ const f=await fixture(first.home,2000);const p={...f.permit,delivery:'later',deliveredAt:2000};await f.run(p);
+ expect(f.calls()).toBe(0);expect(f.app.db.prepare('SELECT created FROM bridges_files').get()).toEqual({created:1000});
+ expect(f.read(p).bytes.toString()).toBe('data');await f.close();
+ const g=await fixture(f.home,1000+BRIDGE_FILE_RETENTION);expect(()=>g.read(p)).toThrow();
+});
+
+it('shares the fetch queue across independent connections to the same fixture database',async()=>{
+ const f=await fixture(),other=new Database(f.app.db.name);other.pragma('foreign_keys = ON');
+ try {
+  await Promise.all([f.run(),bridgeFilesOnce(other,()=>f.clock.now(),{...f.permit,delivery:'two'},f.fetch)]);
+  expect(f.calls()).toBe(1);expect(f.read({...f.permit,delivery:'two'}).bytes.toString()).toBe('data');
+ }finally{other.close();}
+});

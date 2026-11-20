@@ -1,27 +1,28 @@
-// Nothing on a page may take the app down: an icon 000h doesn't have becomes a plain one, and a part
+// Nothing on a page may take the app down: an icon nothing has becomes a plain one, and a part
 // that fails to draw says so (with a reload a tap away) instead of blanking everything.
 import { Alert, AlertActions, AlertBody, AlertDescription, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Component, type ReactNode } from 'react';
-import { Icon, iconNames } from '@/components/ui/icon';
+import { Icon } from '@/components/ui/icon';
+import { Spinner } from '@/components/ui/spinner';
 
-const KNOWN = new Set(iconNames);
-const FALLBACK = ['circle', 'dot', 'square'].find((n) => KNOWN.has(n)) ?? iconNames[0];
-
-/** A name 000h can draw: the one asked for, else a plain fallback. */
-export const iconFor = (name: string | undefined) => (name && KNOWN.has(name) ? name : FALLBACK);
+/** A name to draw: the one asked for, or "circle" when there's none. Icon itself draws a plain one for a name nothing
+ * has (icon.tsx fallbackGeometry), once the Lucide pack is here to say so: its 1,700 names aren't on the first page. */
+export const iconFor = (name: string | undefined) => name || 'circle';
 
 type Tone = 'info' | 'ok' | 'warn' | 'danger';
 const TONE_ICON: Record<Tone, string> = { info: 'info', ok: 'circle-check', warn: 'triangle-alert', danger: 'circle-alert' };
 
 /** 000h's Alert as it's meant to be put together: its icon blob first (the first of its two columns is the blob's;
  * without one the words land in that 40px column, a letter or two a line), then the words, then any buttons. */
-export function Callout({ tone = 'info', icon, title, children, actions, className, role }: {
+export function Callout({ tone = 'info', icon, title, children, actions, className, role, busy }: {
   tone?: Tone; icon?: string; title?: ReactNode; children?: ReactNode; actions?: ReactNode; className?: string; role?: string;
+  /** Something is under way: a spinner in the icon's place, and a status a screen reader announces. */
+  busy?: boolean;
 }) {
   return (
-    <Alert variant={tone} className={className} role={role}>
-      <AlertIcon><Icon name={iconFor(icon ?? TONE_ICON[tone]) as never} /></AlertIcon>
+    <Alert variant={tone} className={className} role={role ?? (busy ? 'status' : undefined)} aria-busy={busy || undefined}>
+      <AlertIcon>{busy ? <Spinner size="md" /> : <Icon name={iconFor(icon ?? TONE_ICON[tone]) as never} />}</AlertIcon>
       <AlertBody>{title && <AlertTitle>{title}</AlertTitle>}{children && <AlertDescription>{children}</AlertDescription>}
         {actions && <AlertActions>{actions}</AlertActions>}</AlertBody>
     </Alert>
@@ -35,8 +36,9 @@ export class Boundary extends Component<{ children: ReactNode; where: string }, 
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <Callout tone="danger" title="This page couldn't be drawn in the app." actions={<Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button>}>
-        {this.state.error}
+      // What broke is the app's to know (the console has it), not the reader's: plain words and a way out.
+      <Callout tone="warn" title="Part of this page couldn’t be shown" actions={<Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button>}>
+        Reloading usually fixes it.
       </Callout>
     );
   }

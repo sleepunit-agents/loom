@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { animate, useMotionValue, type MotionValue } from "motion/react";
+import { animateSingleValue, useMotionValue, type MotionValue } from "motion/react";
 import { motionTokens, trackMotion, useChoreography } from "@/lib/cojeev-motion/choreography";
 /** Animate a value change, then settle its contour. There is no idle oscillator. */
 export function useOrganicValue(value: number, quiet = false) {
@@ -16,10 +16,10 @@ export function useOrganicValue(value: number, quiet = false) {
       energy.jump(0);
       return;
     }
-    const move = animate(position, value, transition),
+    const move = animateSingleValue(position, value, transition),
       releaseMove = trackMotion(move);
     if (delta) energy.set(Math.max(-1, Math.min(1, delta * 5)));
-    const settle = animate(energy, 0, {
+    const settle = animateSingleValue(energy, 0, {
         ...motionTokens.spring.responsive,
         restDelta: 0.005,
         restSpeed: 0.05,
