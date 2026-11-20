@@ -36,7 +36,7 @@ import { holdAlone, type Alone, type HoldAlone } from './worker-alone.js';
 import { keyPart } from './worker-mounts.js';
 import { containerExit } from './job-exit.js';
 import { HOUSE_ENV, HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseOverlap, houseSessions } from './house-layout.js';
-import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
+import { bodyMounts, BODY_PROGRAM, HOUSE_CLI_FILE, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
  * nothing is discovered. */
@@ -172,9 +172,13 @@ export const UPKEEP_FAILED = 'Worker could not look at its house images: old one
  * load in every container, so the worker is not started on one. */
 function programInside(program: string): boolean {
   try {
-    const body = join(program, 'dist', 'body.js');
-    // Itself, and not a link to one outside: only this directory is in a container.
-    if (!lstatSync(body).isFile() || realpathSync(body) !== body) return false;
+    for (const entry of ['body.js','index.js']) {
+      const file = join(program,'dist',entry);
+      if (!lstatSync(file).isFile() || realpathSync(file) !== file) return false;
+    }
+    const launcher = join(program, HOUSE_CLI_FILE);
+    const info = lstatSync(launcher);
+    if (!info.isFile() || realpathSync(launcher) !== launcher || (info.mode & 0o111) !== 0o111) return false;
     const manifest: unknown = JSON.parse(readFileSync(join(program, 'package.json'), 'utf8'));
     const needed: unknown = manifest && typeof manifest === 'object' && 'dependencies' in manifest ? manifest.dependencies : {};
     if (!needed || typeof needed !== 'object' || Array.isArray(needed)) return false;

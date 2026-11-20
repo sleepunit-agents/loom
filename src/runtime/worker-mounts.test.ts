@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
+import { bodyCommandEnvironment, bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
 import { UnservedJobError } from './worker.js';
 import { WORKER_STOP, WorkerStop, workerStopLine } from './worker-stop.js';
 import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './house-layout.js';
@@ -243,7 +243,7 @@ it('gives every body the worker\'s own directory, read-only, at one place no mou
   const mounts = bodyMounts({ program: programDirectory, accountLogins: logins, mounts: { art: fixed }, socket });
   const program = { source: programDirectory, target: BODY_PROGRAM_TARGET, readOnly: true };
   expect(BODY_PROGRAM_TARGET).toBe('/opt/loom'); expect(BODY_PROGRAM).toBe('/opt/loom/dist/body.js');
-  expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, { source: a, target: home, readOnly: false }]);
+  expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, {source:join(programDirectory,'assets/house-bin/loom'),target:'/usr/local/bin/loom',readOnly:true}, { source: a, target: home, readOnly: false }]);
   // It need not belong to the worker's user: a system-wide install is root's.
   expect(stopped({ program: programDirectory }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
   const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
@@ -348,4 +348,14 @@ it('refuses an engine socket for own, owner, held, guest and older assignments',
     { ...room, word: 'owners' as const, people: [{ kind: 'outside' as const, person: 'guest', tier: 3 as const }] },
     { ...room, word: 'own' as const, people: [{ kind: 'unknown' as const, person: null, tier: null }] }])
     expect(() => mounts({ ...job, run: { ...job.run, policy } })).toThrow('Nested containers unavailable');
+});
+
+it('puts the mounted Loom CLI first in a house and preserves a process body’s tool lookup', () => {
+ const image = {PATH:'/custom/bin:/usr/bin', LANG:'C', LOOM_BODY_OWN_HARNESS:'0'};
+ const launcher = BODY_PROGRAM_TARGET + '/assets/house-bin';
+ expect(bodyCommandEnvironment(BODY_PROGRAM,image)).toEqual({...image,PATH:launcher+':'+image.PATH});
+ expect(bodyCommandEnvironment(BODY_PROGRAM,{LOOM_BODY_OWN_HARNESS:'1'}).PATH).toBe(launcher);
+ expect(bodyCommandEnvironment(BODY_PROGRAM,{PATH:'/host/bin'})).toEqual({PATH:'/host/bin'});
+ expect(bodyCommandEnvironment('/srv/worker/dist/body.js',image)).toEqual(image);
+ expect(image.PATH).toBe('/custom/bin:/usr/bin');
 });

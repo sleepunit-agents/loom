@@ -1,0 +1,3 @@
+#!/bin/sh
+# This file and the compiled CLI travel together on the worker's read-only program mount.
+exec /usr/local/bin/node /opt/loom/dist/index.js "$@"
