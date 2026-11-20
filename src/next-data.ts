@@ -4,6 +4,7 @@ import { conversationTables, conversationVisibility, talkVisibility } from './co
 import { getTableColumns } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
+import { changeReviewFields } from './pieces/changes/review-query.js';
 import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
 import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
 import {GraphQLSchema,GraphQLObjectType,GraphQLBoolean} from 'graphql/index.js';
@@ -47,7 +48,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false, currentJobsRead = false;
-  const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
+  const ownFields = { ...changeReviewFields(db), ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
   }, () => { activityRead = true; schedule(); }) };

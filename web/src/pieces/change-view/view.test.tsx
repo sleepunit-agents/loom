@@ -103,3 +103,19 @@ it('orders by who is waiting, filters projects and puts finished work last', () 
   expect(rows(s, 'project:loom', '').map(c => c.id)).toEqual(['ci']);
   expect(rows({ ...s, status: 'denied' }, 'all', '')).toEqual([]);
 });
+
+it('distinguishes the current review from an older verdict and hides stale findings', async () => {
+  const reviewHistory = { change: change.id, status: 'live' as const, rounds: [
+    { job: 'j2', headCommit: change.headCommit, tier: 'high' as const, round: 2, verdict: null, findings: null },
+    { job: 'j1', headCommit: 'b'.repeat(40), tier: 'high' as const, round: 1, verdict: 'CLEAR' as const, findings: 'Checked the prior revision' },
+  ] };
+  await act(async () => { tree = create(h(Changes, { snapshot: { ...snapshot, reviewHistory } })); });
+  await select();
+  const text = () => JSON.stringify(tree.toJSON());
+  for (const phrase of ['Round 2 · high · Pending', 'Current commit', 'Round 1 · high · Clear', 'Earlier commit', 'Checked the prior revision']) {
+    expect(text()).toContain(phrase);
+  }
+  await act(async () => { tree.update(h(Changes, { snapshot: { ...snapshot, reviewHistory: { ...reviewHistory, status: 'offline' } } })); });
+  expect(text()).toContain('Review history unavailable');
+  expect(text()).not.toContain('Checked the prior revision');
+});

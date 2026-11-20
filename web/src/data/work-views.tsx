@@ -11,6 +11,7 @@ import { refreshChanges } from './work-refresh';
 import { alwaysInput, alwaysLabel, sendWorkAlways, type WorkAlwaysInput, type RulePerson, type MergeRequest } from './work-always';
 import { sendWorkAnswer } from './work-answer';
 import { readProposal, type ProposalNow } from './work-proposal';
+import type { ReviewRound } from '../pieces/change-view/model';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
@@ -154,6 +155,11 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     }
   };
   const current=snapshot.changes.find(row=>row.id===selected);
+  const review = useDataQuery<{changeReviewHistory: ReviewRound[]}>(
+    'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { job headCommit tier round verdict findings } }',
+    {change: current?.id ?? ''}, {pause: !current || snapshot.status !== 'live'});
+  const reviewHistory = current && { change: current.id, status: review.status,
+    rounds: review.status === 'live' ? review.data?.changeReviewHistory ?? [] : [] };
   const standing=alwaysInput(current?findRequest(current.id,current.headCommit):undefined,snapshot.status==='live'?snapshot.changes:[],access.members);
   const defaultActions: ChangeActions | undefined = owner && requests.status === 'live' ? {
     ...(standing?{always:{change:standing.change,head:standing.head,project:standing.project,label:alwaysLabel(standing),run:async(id:string,head:string)=>{if(id!==standing.change||head!==standing.head)throw Error('Change moved');await sendWorkAlways(standing);}}}:{}),
@@ -164,7 +170,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
       await sendWorkAnswer({piece:'changes',id,head,approval:request.id,answer});
     },
   } : undefined;
-  return <Changes snapshot={snapshot} actions={actions ?? defaultActions} names={names}
+  return <Changes snapshot={{ ...snapshot, reviewHistory }} actions={actions ?? defaultActions} names={names}
     navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
     openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;

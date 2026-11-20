@@ -41,6 +41,13 @@ async function fixture() {
       authorLogin: 'art', project, agent: project === 'pond' ? 'art' : null, branch: 'work', headCommit: 'a'.repeat(40), baseBranch: 'next',
       checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci', openedAt: at, updatedAt: at }).run();
   }
+  for (const member of ['sam', 'lee']) {
+    const job = 'review-' + member;
+    db.insert(s.jobs).values({ id: job, agent: 'art', member, title: 'Cold review', state: 'done', brief: '', model: 'fixture',
+      startedByKind: 'agent', startedBy: 'art', houseRepository: 'acme/app', houseFile: '', houseBranch: 'work', queuedAt: at }).run();
+    db.insert(s.changeReviewRounds).values({ job, change: changeId, headCommit: 'a'.repeat(40), tier: 'high', round: 1,
+      requestedAt: at, completedAt: at, verdict: 'CLEAR', findings: 'Findings for ' + member }).run();
+  }
   db.insert(s.changeChecks).values({ change: changeId, name: 'Typecheck', state: 'running' }).run();
   db.insert(s.changePeople).values({ change: changeId, login: 'Reviewer', role: 'reviewer' }).run();
   for (const [id, name, ownerKind, owner, project] of [
@@ -102,6 +109,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => page.getByRole('region', { name: 'Checks', exact: true }).textContent()).toContain('RunningTypecheck');
       await expect.poll(() => page.getByText('Track the shared change', { exact: false }).count()).toBe(1);
       expect(await page.getByText('Private linked task', { exact: true }).count()).toBe(0);
+      await expect.poll(() => page.getByText('Findings for sam', { exact: true }).count()).toBe(1);
+      expect(await page.getByText('Findings for lee', { exact: true }).count()).toBe(0);
     }
     await b.reload();
     await expect.poll(() => b.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
@@ -121,6 +130,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => row(page).count()).toBe(0);
       expect(await page.getByRole('heading', { name: title, exact: true }).count()).toBe(0);
       expect(await page.getByText('Updated linked task', { exact: false }).count()).toBe(0);
+      expect(await page.getByText('Findings for sam', { exact: true }).count()).toBe(0);
     }
     // Ending a session also clears retained content and denies reconnection.
     app.data.writes.run(() => app.db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run());

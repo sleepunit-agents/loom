@@ -1,6 +1,6 @@
-import { and, desc, eq, getTableColumns } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { changes, changeReviewRounds as rounds } from '../core/data/schema.js';
+import { changes, jobs, changeReviewRounds as rounds } from '../core/data/schema.js';
 
 type Review = typeof rounds.$inferSelect;
 type Assignment = Pick<Review, 'job' | 'change' | 'headCommit' | 'tier' | 'round'>;
@@ -38,9 +38,10 @@ export function changeReviewStore(db: DataDatabase, now = () => new Date().toISO
         .where(match).returning().get();
     }, { behavior: 'immediate' });
   }
-  function history(change: string) {
+  function history(change: string, visibility?: { change: SQL; job: SQL }) {
     return db.select({ ...getTableColumns(rounds), currentHead: changes.headCommit }).from(rounds)
-      .innerJoin(changes, eq(rounds.change, changes.id)).where(eq(rounds.change, change))
+      .innerJoin(changes, eq(rounds.change, changes.id)).innerJoin(jobs, eq(rounds.job, jobs.id))
+      .where(and(eq(rounds.change, change), visibility?.change, visibility?.job))
       .orderBy(desc(rounds.requestedAt), desc(rounds.job)).all()
       .map(({ currentHead, ...row }) => ({ ...row, current: row.headCommit === currentHead }));
   }

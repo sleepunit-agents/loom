@@ -9,7 +9,8 @@ import { WebSocket } from 'ws';
 import { GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, tokens, sessions, projects, projectRepositories } from './core/data/schema.js';
+import { members, tokens, sessions, projects, projectRepositories, agents, jobs, projectMembers } from './core/data/schema.js';
+import { changeReviewStore } from './apps/change-reviews.js';
 import { sharedRoot } from './shared-root.js';
 import type { PullRequestReader } from './apps/changes.js';
 import type { Change } from './pieces/changes/model.js';
@@ -172,4 +173,34 @@ it('exposes Refresh capability only for a configured root and current owner thro
     expect(await (await query()).json()).toEqual({data:{workAnswerOwner:false,workChangesRefresh:false}});
     if(!configured)expect((await f.root.http.request('http://loom/api/changes/refresh',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({input:{}})})).status).toBe(404);
   }
+});
+
+it('requires access to the change and the job for each review returned by the HTTP door', async () => {
+  const f = fixture(async () => []);
+  const at = f.row.created;
+  f.db.insert(members).values({ id: 'pat', role: 'member', joinedAt: at }).run();
+  f.db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  f.root.services.changes.put(f.row);
+  const store = changeReviewStore(f.db, () => at);
+  for (const member of ['pat', 'sam']) {
+    const job = 'review-' + member;
+    f.db.insert(jobs).values({ id: job, member, agent: 'art', title: 'Review', state: 'queued',
+      brief: '', model: 'reviewer', startedByKind: 'agent', startedBy: 'art', houseRepository: 'house/pond',
+      houseFile: '', houseBranch: 'next', queuedAt: at }).run();
+    const identity = { job, change: f.row.id, headCommit: f.row.head.id };
+    store.assign({ ...identity, tier: 'high', round: 1 });
+    store.finish({ ...identity, verdict: 'CLEAR', findings: 'Review for ' + member });
+  }
+  const read = async () => {
+    const response = await f.root.http.request('http://loom/graphql', { method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
+      body: JSON.stringify({ query: 'query($change:String!) { changeReviewHistory(change:$change) { job findings } }', variables: { change: f.row.id } }) });
+    return response.json();
+  };
+  const visible = { data: { changeReviewHistory: [{ job: 'review-sam', findings: 'Review for sam' }] } };
+  expect(await read()).toEqual(visible);
+  f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run();
+  expect(await read()).toEqual({ data: { changeReviewHistory: [] } });
+  f.db.insert(projectMembers).values({ member: 'sam', project: 'pond' }).run();
+  expect(await read()).toEqual(visible);
 });

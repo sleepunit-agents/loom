@@ -54,6 +54,7 @@ function Details({ change: c, snapshot, actions, openTask, name }: { change: Cha
   const linked = snapshot.tasks.filter(t => tasks.has(t.id));
   // Failing ones first, then the ones still running: the only checks the program keeps by name.
   const checks = snapshot.checks.filter(k => k.change === c.id).sort((a, b) => a.state.localeCompare(b.state)), people = snapshot.people.filter(p => p.change === c.id);
+  const history = snapshot.reviewHistory?.change === c.id ? snapshot.reviewHistory : undefined;
   return <Reader aria-label="Change">
     <Meta>{c.id}{c.project && ` · ${c.project}`}</Meta>
     <Title>{c.title}</Title>
@@ -64,6 +65,14 @@ function Details({ change: c, snapshot, actions, openTask, name }: { change: Cha
       {checks.length > 0 && <Facts>{checks.map(k => <Fact key={k.name} label={checkWord[k.state] ?? k.state}>{k.name}</Fact>)}</Facts>}
     </Section>
     <Section label="Review"><Body>{reviewWord[c.review] ?? c.review}</Body></Section>
+    {history && (history.status !== 'live' || history.rounds.length > 0) && <Section label="Cold reviews">
+      {history.status !== 'live' ? <Body quiet>{history.status === 'loading' ? 'Loading review history…' : 'Review history unavailable.'}</Body>
+        : history.rounds.map(review => <div key={review.job}>
+          <Body>{`Round ${review.round} · ${review.tier} · ${review.verdict === null ? 'Pending' : review.verdict === 'NONE' ? 'No verdict' : review.verdict === 'CLEAR' ? 'Clear' : 'Blocking'}`}</Body>
+          <Meta>{review.headCommit === c.headCommit ? 'Current commit' : 'Earlier commit'} <ShortIdentifier value={review.headCommit} /></Meta>
+          {review.findings && <div className="whitespace-pre-wrap"><Clamp long={isLong(review.findings)}><Body>{review.findings}</Body></Clamp></div>}
+        </div>)}
+    </Section>}
     {people.length > 0 && <Section label="People on it"><Facts>{people.map(p => <Fact key={`${p.login}:${p.role}`} label={roleWord[p.role] ?? p.role}>{p.login}</Fact>)}</Facts></Section>}
     <MergeAnswer key={`${c.id}@${c.headCommit}`} change={c} actions={actions} name={name} />
     {linked.length > 0 && <Section label="Tasks"><div role="group" aria-label="Linked tasks" className="grid gap-1">{linked.map(t =>

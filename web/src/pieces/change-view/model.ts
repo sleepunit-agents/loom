@@ -8,7 +8,16 @@ export interface Change {
   mergeable: 'yes' | 'no' | 'unknown'; waitingOn: 'you' | 'agent' | 'ci' | 'reviewer' | 'author' | 'done';
   openedAt: string; updatedAt: string; closedAt: string | null;
 }
+export interface ReviewRound {
+  job: string;
+  headCommit: string;
+  tier: 'medium' | 'high';
+  round: number;
+  verdict: 'CLEAR' | 'BLOCKING' | 'NONE' | null;
+  findings: string | null;
+}
 export interface ChangeSnapshot {
+  reviewHistory?: { change: string; status: 'loading' | 'live' | 'offline' | 'denied'; rounds: readonly ReviewRound[] };
   status: 'loading' | 'live' | 'offline' | 'denied';
   changes: readonly Change[];
   checks: readonly { change: string; name: string; state: 'failing' | 'running' }[];
