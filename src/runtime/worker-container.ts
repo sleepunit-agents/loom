@@ -382,7 +382,11 @@ export function containerWorkerExecutor(config: {
      * that has waited the build limit fails with BuildTimeError; whatever else goes wrong fails it as a
      * failed build, in one sentence, because git's and the engine's own words may name the repository. */
     build(job, signal, repositoryInput) {
-      serves(job);
+      const reviewCommit = job.coldReview?.headCommit;
+      if (job.coldReview) {
+        if (!reviewCommit || job.house.file !== '' || job.program || repositoryInput)
+          throw new UnservedJobError('Cold reviews require a pinned, copy-only house without an agent credential');
+      } else serves(job);
       const house = structuredClone(job.house);
       return (async () => {
         const limit = new AbortController(); let ranOut = false, shared: ReturnType<typeof built> | undefined, held: string | undefined;
@@ -395,7 +399,11 @@ export function containerWorkerExecutor(config: {
         try {
           if (limit.signal.aborted) throw new Error('Worker build cancelled');
           await alone();
-          const commit = await Promise.race([source.fetch(house, repositoryInput, limit.signal), ended]);
+          const fetching = reviewCommit
+            ? source.fetch(house, undefined, limit.signal, reviewCommit)
+            : source.fetch(house, repositoryInput, limit.signal);
+          const commit = await Promise.race([fetching, ended]);
+          if (reviewCommit && commit !== reviewCommit) throw new Error('Review source differs from its pin');
           if (job.program && commit !== job.program.commit) throw new Error('Program commit does not match its pin');
           // Built on the core house of the week this job came in: a job under way when a week turns keeps the
           // image it has, and the next job's house is built on the new core.
@@ -427,6 +435,7 @@ export function containerWorkerExecutor(config: {
       let mounts: EngineMount[], bindings: ReturnType<typeof portBindings>, name: string;
       try {
         if (signal.aborted) throw new Error('Container cancelled');
+        if (assignment.coldReview) throw new UnservedJobError('A cold review needs an isolated reviewer');
         serves(assignment);
         if (!houseImageName(image)) throw new Error('Invalid container image');
         // Told to the body as it is: only an address the worker fetches, which holds no credential.
