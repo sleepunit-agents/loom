@@ -7,7 +7,13 @@ All require a currently authenticated body and select the file declared
 for that body's agent. Inputs cannot select another agent or a path.
 
 Remember accepts a category, title and content, with optional project, TTL
-and JSON metadata. Recall accepts a meaning query, optional category/project
+and JSON metadata. A writer can also supply sourcing and provenance. Use
+`human` for a statement the writer can attribute directly to a person and
+record its origin in provenance. In the boot digest, a live memory with that
+source stays at least Hot (0.6). Earlier records keep their recorded source.
+For feedback memories, recent confirming evidence slows cooling and contrary
+evidence speeds it up. As the evidence ages, cooling returns toward the
+ordinary feedback rate. Recall accepts a meaning query, optional category/project
 and a bounded result limit. Its ranked matches add recall heat.
 
 Archive, restore and forget accept one opaque scoped ID from the current

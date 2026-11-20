@@ -130,6 +130,9 @@ export function bumpedRecallHeat(value: number | null | undefined, atIso: string
 }
 
 export interface HeatInput {
+  sourcing?: string | null;
+  confidence?: number | null;
+  observed_at?: string | null;
   category: string;
   created: string;
   updated: string | null;
@@ -146,15 +149,24 @@ export interface HeatInput {
  * turning up once at the bottom of someone's results.
  */
 export function heatOf(r: HeatInput, nowMs: number): number {
-  const written = temperature(r.authored_at ?? r.created, r.category, nowMs);
-  return Math.max(written, decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs));
+  const authored = r.authored_at ?? r.created;
+  const written = temperature(authored, r.category, nowMs);
+  let authoredHeat = written;
+  if (r.category === 'feedback' && typeof r.confidence === 'number' && Number.isFinite(r.confidence)) {
+    // Scale the authored half-life relative to neutral. A fresh write still
+    // starts at one, and an observation only changes its evidence weight.
+    const confidence = decayedConfidence(clampConfidence(r.confidence), r.observed_at ?? r.created, r.category, nowMs);
+    authoredHeat = written ** (FEEDBACK_CONFIDENCE_DEFAULT / confidence);
+  }
+  const floor = r.sourcing === 'human' && Date.parse(authored) <= nowMs && Number.isFinite(nowMs) ? 0.6 : 0;
+  return Math.max(floor, authoredHeat, decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs));
 }
 
 /** Legacy stores read missing heat columns as null; no writes on digest reads. */
 export function heatColumns(db: Database): string {
-  const have = hasColumn(db, 'memories', 'recall_heat');
-  const authored = hasColumn(db, 'memories', 'authored_at') ? 'authored_at' : 'NULL AS authored_at';
-  return `created, updated, ${authored}, ${have ? 'recall_heat, recall_heat_at' : 'NULL AS recall_heat, NULL AS recall_heat_at'}`;
+  const columns = new Set((db.pragma('table_info(memories)') as {name: string}[]).map(row => row.name));
+  const optional = ['authored_at', 'recall_heat', 'recall_heat_at', 'sourcing', 'confidence', 'observed_at'];
+  return ['created', 'updated', ...optional.map(name => columns.has(name) ? name : `NULL AS ${name}`)].join(', ');
 }
 
 /** Count the current temperature of each durable memory without reading its words or warming it. */
@@ -292,14 +304,11 @@ function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<Diges
   const expiry=excludeExpired&&hasColumn(db,'memories','expires_at')?' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))':'';
   const rows = db
     .prepare(
-      `SELECT title, category, content, salience AS stored, sourcing, ${heatColumns(db)} FROM memories WHERE archived = 0 AND category != ?${expiry}`,
+      `SELECT title, category, content, salience AS stored, ${heatColumns(db)} FROM memories WHERE archived = 0 AND category != ?${expiry}`,
     )
     .all(EPISODE_CATEGORY,...(expiry?[new Date(nowMs).toISOString()]:[])) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
   return rows
-    .map(({ created, updated, authored_at, recall_heat, recall_heat_at, ...r }) => ({
-      ...r,
-      salience: heatOf({ category: r.category, created, updated, authored_at, recall_heat, recall_heat_at }, nowMs),
-    }))
+    .map(row => ({ ...row, salience: heatOf(row, nowMs) }))
     .sort(compareDigestRows);
 }
 
