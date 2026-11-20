@@ -11,7 +11,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
 import { Dispatcher } from './runtime/dispatcher.js';
-import { harnessCannotRun } from './runtime/body-harnesses.js';
+import { harnessCannotRun, harnesses } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
 import { WORKER_EXIT_BY } from './runtime/job-exit.js';
@@ -30,7 +30,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   jobEnded(id: string): void;
   applyProgram(job: Job, result: ProgramResult, changed: (table: string, id: string) => void): void;
 }) {
-  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun, options.workRoles);
+  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun, options.workRoles, new Set(Object.keys(harnesses)));
   const stopped=new WeakSet<object>();
   /** The jobs a poll ended as ones no harness can hold, by the poll's input: told of once the write is committed. */
   const unplaced=new WeakMap<object,string[]>();

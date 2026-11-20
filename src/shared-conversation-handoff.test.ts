@@ -5,6 +5,8 @@ import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
+import {harnesses} from './runtime/body-harnesses.js';
+import {roleRevision,eligibleModels} from './runtime/work-roles.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
@@ -261,11 +263,18 @@ it('keeps a handed-off direct message direct, so its words reach no wider audien
  const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });
 
-it.each(['success','failure','archive','transient','occupied','work-role'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
- const roleMode=mode==='work-role';
+it('keeps equivalent role selectors stable and supports registered native harnesses',()=>{
+ const role={agent:'art',id:'research',description:'Compare documents.',models:['b','a','a'],providers:['y','x']};
+ expect(roleRevision(role)).toBe(roleRevision({...role,models:['a','b'],providers:['x','y']}));
+ const native={model:'a',provider:'x',harness:'agy',series:'a'};
+ expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
+});
+
+it.each(['success','failure','archive','transient','occupied','work-role','role-changed'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+ const roleMode=mode==='work-role'||mode==='role-changed';
  const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
   {agent:'mark',id:'editing',description:'Check prose.',providers:['openai']}],modelRoles:()=>[
-  {model:'first',provider:'claude',harness:'claude',series:'first'},
+  {model:'first',provider:roleMode?'openai':'claude',harness:'claude',series:'first'},
   {model:'reviewer',provider:'openai',harness:roleMode?'claude':'codex',series:'reviewer'}]});
  const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
  await f.send('Please get a cold review','start-review');
@@ -295,7 +304,10 @@ it.each(['success','failure','archive','transient','occupied','work-role'] as co
  const response=await f.call('handoff',request,'launch');
  expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
  const child=(await response.json()).value.conversation;
- if(roleMode)expect((await (await f.call('handoff',request,'retry-role')).json()).value.conversation).toBe(child);
+ if(roleMode){
+  expect((await (await f.call('handoff',request,'retry-role')).json()).value.conversation).toBe(child);
+  expect((await f.call('handoff',{...request,role:'editing'},'reuse-id')).status).toBe(409);
+ }
  const status=(conversation:string,token=bodyCredentials.body)=>f.call('handoffStatus',{conversation},'status',token);
  if(mode==='success'){
   expect((await (await status(child)).json()).value).toEqual({jobState:null,resultDelivered:false});
@@ -312,6 +324,12 @@ it.each(['success','failure','archive','transient','occupied','work-role'] as co
  db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
  f.clock.advance(60_000);
  expect((await (await next('legacy',false)).json()).value).toBeNull();
+ if(mode==='role-changed'){
+  db.update(s.conversations).set({place:reviewPlace('job','review-one',{id:'research',revision:'0'.repeat(64)})}).where(eq(s.conversations.id,child)).run();
+  await next('changed-role',true);
+  expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()).toMatchObject({state:'failed'});
+  return;
+ }
  const poll=await next('poll',true);
  const assignment=(await poll.json()).value;
  expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:roleMode?'claude':'codex',model:'reviewer'});

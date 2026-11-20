@@ -30,7 +30,7 @@ export interface HandoffToSelf{
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  ownerWork?(work:{job:{id:string;agent:string;conversation:string|null}}):boolean;
  codexAvailable?(agent:string):boolean;
- workRoles?(agent:string):readonly {id:string;description:string;revision:string;available:boolean}[];
+ workRoles?(agent:string,id?:string):readonly {id:string;description:string;revision:string;available:boolean}[];
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
@@ -69,7 +69,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   },
  }));
  operations.register(operation({name:'conversation.handoffStatus',write:false,doors:['http'],
-  input:z.object({conversation:z.string().min(1).max(200)}).strict().describe('Check a Codex handoff using the child conversation returned by the original handoff.'),
+  input:z.object({conversation:z.string().min(1).max(200)}).strict().describe('Check a work role or Codex handoff using the child conversation returned by the original handoff.'),
   output:z.object({jobState:z.enum(jobs.state.enumValues).nullable(),resultDelivered:z.boolean()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx,input){
@@ -102,7 +102,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const work=input.to?current(context.viewer):undefined;
    const resolved=work&&self?self.target(work,input.to!):undefined;
    const agent=input.role?current(context.viewer)?.cv.agent:undefined;
-   const role=agent?self?.workRoles?.(agent).find(role=>role.id===input.role):undefined;
+   const role=agent?self?.workRoles?.(agent,input.role)[0]:undefined;
    const words=role?`Assigned work role: ${role.id}\n${role.description}\n\n${input.words}`:input.words;
    const sealed=await sealHandoff(service.key,resolved?`${resolved.told}\n\n${input.words}`:words,service.now(),commsKeepDays(db));
    return resolved?{sealed,resolved}:sealed;},
@@ -141,7 +141,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    // The composition's rule for a hand-off of any kind: one hop on anybody else's word.
    const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
    if(input.harness && !self?.codexAvailable?.(recipient))throw new OperationError('unavailable','No eligible Codex worker with a signed-in account and free capacity is available for this job.');
-   const role=input.role?self?.workRoles?.(recipient).find(role=>role.id===input.role):undefined;
+   const role=input.role?self?.workRoles?.(recipient,input.role)[0]:undefined;
    if(input.role && !role)throw new OperationError('invalid','Unknown work role for this agent');
    if(role && !role.available)throw new OperationError('unavailable','No eligible worker is available for this work role');
    const place=delegated?reviewPlace(job.id,input.clientId,role):job.id;

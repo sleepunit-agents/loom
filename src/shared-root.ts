@@ -341,7 +341,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:agent=>dispatcher.availableWorkRoles(agent)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });

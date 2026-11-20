@@ -14,9 +14,11 @@ export const workRoleCatalog = z.array(z.object({
 export type WorkRoleConfig = z.input<typeof workRoleCatalog>;
 export type WorkRole = z.infer<typeof workRoleCatalog>[number];
 export function roleRevision(role: WorkRole) {
-  return createHash('sha256').update(JSON.stringify(role)).digest('hex');
+  const selectors = (values: string[]) => [...new Set(values)].sort();
+  const {agent, id, description, models, providers} = role;
+  return createHash('sha256').update(JSON.stringify([agent, id, description, selectors(models), selectors(providers)])).digest('hex');
 }
-export function eligibleModels(role: WorkRole, catalog: readonly ModelRole[]) {
-  return catalog.filter(model => (model.harness === 'claude' || model.harness === 'codex') &&
+export function eligibleModels(role: WorkRole, catalog: readonly ModelRole[], native: ReadonlySet<string>) {
+  return catalog.filter(model => native.has(model.harness) &&
     (role.models.includes(model.model) || role.providers.includes(model.provider)));
 }

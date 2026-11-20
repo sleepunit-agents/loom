@@ -30,13 +30,13 @@ export class Dispatcher {
    * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
    * file imports may. */
   constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[],
-    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean, private readonly workRoles:readonly WorkRole[] = []) {
+    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean, private readonly workRoles:readonly WorkRole[] = [], private readonly nativeHarnesses:ReadonlySet<string> = new Set()) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
   }
-  availableWorkRoles(agent:string) {
-    return this.workRoles.filter(role=>role.agent===agent).map(role=>({
+  availableWorkRoles(agent:string,id?:string) {
+    return this.workRoles.filter(role=>role.agent===agent && (id===undefined || role.id===id)).map(role=>({
       id:role.id,description:role.description,revision:roleRevision(role),
-      available:this.canStartReview(agent,eligibleModels(role,this.roles())),
+      available:this.canStartReview(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
     }));
   }
   canStartReview(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
@@ -105,7 +105,7 @@ export class Dispatcher {
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
