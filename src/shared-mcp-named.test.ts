@@ -101,6 +101,15 @@ it('lists recent episodes',async()=>{
   expect((await art.call('remember',{category:'episode',title:'Fictional episode title',content:'What happened in the example shed.'})).error).toBe(false);
   const episodes=await art.call('episodes');
   expect(episodes.error,episodes.text).toBe(false);expect(episodes.text).toContain('Fictional episode title');
+  await art.call('remember',{category:'episode',title:'Another fictional episode',content:'A second full story.'});
+  const first=await art.call('episodes',{page:true,limit:1});
+  expect(first.error,first.text).toBe(false);
+  const page=JSON.parse(first.text);
+  expect(page.nextBefore).toEqual(expect.any(String));
+  const second=JSON.parse((await art.call('episodes',{before:page.nextBefore,limit:1})).text);
+  expect(second.nextBefore).toBeNull();
+  expect([page.entries[0].story,second.entries[0].story].sort()).toEqual(['A second full story.','What happened in the example shed.']);
+  expect((await art.call('episodes',{to:'2026-01-01',page:true})).error).toBe(true);
  }finally{await art.client.close();await p.close();}
 });
 

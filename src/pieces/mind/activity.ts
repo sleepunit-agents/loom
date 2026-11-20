@@ -116,6 +116,26 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   const sorted=[...new Map(entries.map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id));
   return {id:scope,to,days,...(days.at(-1)!>dayBefore(today,MAX_BACK)?{earlier:dayBefore(days.at(-1)!)}:{}),entries:sorted.slice(0,MAX_ENTRIES),conversations,episodes,truncated:truncated||sorted.length>MAX_ENTRIES,expires:Math.min(...deadlines)};
  }
+ function episodePage(agent:string,v:Viewer,first:number,before?:string|null){
+  if(!allowed(v,agent)||!options.agents.some(source=>source.agent===agent))return;
+  if(!Number.isInteger(first)||first<1||first>25||before!=null&&(!before.length||before.length>300))throw Error('Invalid episode page');
+  const db=sources.get(agent);
+  if(!db||!has(db))throw Error('Episode store unavailable');
+  const now=clock.now(),entries:ActivityOpen[]=[];
+  let last:string|undefined,expires:number|undefined;
+  const rows=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories
+   WHERE ${active} AND julianday(created)<=julianday(?) ${before==null?'':'AND ref < ?'} ORDER BY ref DESC`);
+  const args=[new Date(now).toISOString(),new Date(now+60000).toISOString()];
+  if(before!=null)args.push(before);
+  for(const raw of rows.iterate(...args)){
+   const row=raw as Episode,visible=episode(v,agent,row);
+   if(!visible)continue;
+   if(visible.expires!==undefined)expires=Math.min(expires??Infinity,visible.expires);
+   if(entries.length===first)return {entries,nextBefore:last,expires};
+   entries.push(visible);last=row.ref;
+  }
+  return {entries,nextBefore:null,expires};
+ }
  function read(id:string,v:Viewer):ActivityOpen|ActivityFailure|undefined{
   // kind~agent~key. The agent is any household agent id; one this viewer cannot see ends here either way.
   const m=/^([dce])~([^~]+)~(.{1,300})$/.exec(id);if(!m)return;
@@ -161,6 +181,6 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   }catch{/* A failed source remains an explicit reader error, not a timer failure. */}
   return next;
  }
- const reader={allowed:(v:Viewer)=>once(()=>agents(v).length>0),access:(v:Viewer)=>once(()=>access(v)),window:(scope:string,v:Viewer)=>once(()=>window(scope,v)),read:(id:string,v:Viewer)=>once(()=>read(id,v)),nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
+ const reader={episodePage:(agent:string,v:Viewer,first:number,before?:string|null)=>once(()=>episodePage(agent,v,first,before)),allowed:(v:Viewer)=>once(()=>agents(v).length>0),access:(v:Viewer)=>once(()=>access(v)),window:(scope:string,v:Viewer)=>once(()=>window(scope,v)),read:(id:string,v:Viewer)=>once(()=>read(id,v)),nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
  return reader;
 }

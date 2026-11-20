@@ -189,3 +189,18 @@ it('opens the entries of an agent whose id starts with a digit or is long, as th
   expect(reader.read(entry.id,owner)).toMatchObject({id:entry.id});
  }
 });
+
+it('pages visible episodes past old date windows without dropping ties or spending slots on hidden rows',async()=>{
+ const store=source(),app=await fixture(store.path);
+ for(const ref of ['a','b','c'])store.add(ref,{created:'2025-01-01T00:00:00Z'});
+ store.add('cc',{metadata:JSON.stringify({where:'loom',conversation:'cv-111111111111'})});
+ store.add('d',{archived:1});store.add('e',{expires_at:'2025-01-01'});
+ const first=app.reader.episodePage('art',owner,2);
+ expect(first?.entries.map(row=>row.title)).toEqual(['c','b']);
+ expect(first?.nextBefore).toBe('b');
+ const last=app.reader.episodePage('art',owner,2,first?.nextBefore);
+ expect(last?.entries.map(row=>row.title)).toEqual(['a']);
+ expect(last?.entries[0].story).toContain('complete story');
+ expect(last?.nextBefore).toBeNull();
+ expect(app.reader.episodePage('art',{kind:'member',id:'outsider'},2)).toBeUndefined();
+});
