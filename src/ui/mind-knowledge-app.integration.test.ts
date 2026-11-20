@@ -20,7 +20,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   // This fixture owns new files; the server never upgrades existing sources.
-  const prepared=new Database(join(home,'commons/knowledge.db'));try{migrateMindReceipts(prepared);}finally{prepared.close();}
+  const prepared=new Database(join(home,'commons/knowledge.db'));try{
+    migrateMindReceipts(prepared);
+    prepared.prepare(`INSERT INTO page_annotations(page_id,kind,actor,words,evidence,created)
+      SELECT id,'dispute','fixture reviewer','Check the voice count','Instrument manual','2026-11-11T12:00:00Z'
+      FROM pages WHERE slug='six-voices'`).run();
+  }finally{prepared.close();}
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
   const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -61,6 +66,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>b.locator('article strong').textContent()).toBe('six voices');
     await expect.poll(()=>b.locator('article a').filter({hasText:'https://example.com/voices'}).getAttribute('href')).toBe('https://example.com/voices');
     expect(await b.getByRole('region',{name:'Sources'}).locator('dd').textContent()).toContain('Six voices');
+    const annotations=b.getByRole('region',{name:'Recent annotations'});
+    await expect.poll(()=>annotations.innerText()).toContain('dispute · fixture reviewer');
+    expect(await annotations.innerText()).toContain('Check the voice count');
+    expect(await annotations.innerText()).toContain('Evidence: Instrument manual');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     await b.reload({waitUntil:'domcontentloaded'});await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
