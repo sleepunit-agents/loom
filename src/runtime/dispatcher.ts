@@ -1,12 +1,13 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import { jobMatchesConversation, reviewThread, reviewRequest } from '../core/conversations/review-place.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
 import { describePlace, jobRoom, othersMail } from '../shared-place-mail.js';
-import { loomToolsOnly } from '../policy.js';
+import { loomToolsOnly, mayRunPrivateWork } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -75,6 +76,7 @@ export class Dispatcher {
       const at = this.now(), roles = this.roles();
       const queued = this.db.select({ job: jobs, round: { change: changeReviewRounds.change, headCommit: changeReviewRounds.headCommit }, source: { repository: changes.repository, branch: changes.branch } }).from(jobs)
         .leftJoin(changeReviewRounds, eq(jobs.id, changeReviewRounds.job)).leftJoin(changes, eq(changeReviewRounds.change, changes.id)).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
+      let sharing: ReturnType<typeof sharedSharing> | undefined;
       for (const { job, round, source } of queued) {
         if (round && (!source || !this.coldReviewBoxes.has(box) || job.startedByKind === 'program')) continue;
         if (job.retryAt && job.retryAt > at) continue;
@@ -106,6 +108,10 @@ export class Dispatcher {
         }
         if(review && !reviewThread(this.db,cv!)){
           if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
+          continue;
+        }
+        if (cv && review && (!jobMatchesConversation(job,cv) || !mayRunPrivateWork({member: cv.member ?? undefined, agent: cv.agent, project: cv.project ?? undefined}, sharing ??= sharedSharing(this.db)))) {
+          if (this.jobs.unplaceable(job.id, 'The assignment for the private handoff ended.')) ended?.push(job.id);
           continue;
         }
         const policy = jobRoom(this.db, job);
