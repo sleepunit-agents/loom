@@ -208,7 +208,7 @@ file the note is in.
 
 | Store | Tables | Made by |
 |---|---|---|
-| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/sqlite-knowledge.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
+| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_supersessions` (attributed replacements within a page), `page_annotations` (disputes and evidence), `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/sqlite-knowledge.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
 | `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
 
 A new person is two cards, the directory's and the adding agent's, written by
