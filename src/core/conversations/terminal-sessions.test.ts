@@ -50,7 +50,17 @@ it('records a private session, deduplicates observed turns, and replaces cumulat
     await send(turn);
     await send(usage);
     expect(db.select().from(jobs).all().map(j=>j.state)).toEqual(['lost','done']);
-    expect(await send({...event,action:'heartbeat'})).toEqual(first);
+    let quiet = 0;
+    const heartbeat = await service.prepare(scope, {...event, action:'heartbeat'});
+    expect(heartbeat(() => { quiet++; })).toEqual(first);
+    expect(quiet).toBe(0); // Returning to running changes what readers see.
+    now = '2026-11-18T00:16:01.000Z';
+    heartbeat(() => { quiet++; });
+    expect(quiet).toBe(1);
+    expect(db.select().from(jobs).where(eq(jobs.id,first.job)).get()?.heardAt).toBe(now);
+    now = '2026-11-18T00:31:01.000Z'; // Already hidden by the time cutoff, even before the expiry sweep.
+    heartbeat(() => { quiet++; });
+    expect(quiet).toBe(1);
     await send({...event,action:'end'});
     await expect(send({...event,action:'heartbeat'})).rejects.toThrow('ended');
     await send({...usage,revision:3,report:{source:'transcript',tokensIn:79}});

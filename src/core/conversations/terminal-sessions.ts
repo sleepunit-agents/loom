@@ -46,7 +46,7 @@ export class TerminalSessions {
   async prepare(scope: TerminalScope, event: TerminalEvent) {
     if (scope.machine !== event.machine) throw new OperationError('denied','Terminal machine differs from its credential');
     const words = event.action === 'turn' ? await this.key.seal(event.words) : null;
-    return () => this.db.transaction(() => {
+    return (stampOnly?: () => void) => this.db.transaction(() => {
       const at = this.now();
       let session = this.db.select().from(terminalSessions).where(and(eq(terminalSessions.machine,scope.machine),
         eq(terminalSessions.agent,scope.agent),eq(terminalSessions.member,scope.member),eq(terminalSessions.harness,event.harness),
@@ -91,6 +91,10 @@ export class TerminalSessions {
       if (event.action === 'turn' && !this.messages.recordObserved(thread.id,event.role,event.eventId,words!,parent.id))
         return result;
       this.db.update(jobs).set({state:'running',endedAt:null,heardAt:at}).where(eq(jobs.id,parent.id)).run();
+      if (event.action === 'heartbeat' && parent.state === 'running' && !parent.endedAt && parent.heardAt) {
+        const elapsed = Date.parse(at) - Date.parse(parent.heardAt);
+        if (elapsed >= 0 && elapsed < terminalSilenceMs) stampOnly?.();
+      }
       return result;
     });
   }

@@ -22,10 +22,15 @@ export function registerTerminalSession(operations: Operations, db: DataDatabase
     },
     run(ctx, input, prepared) {
       const current = scope(ctx.viewer);
-      const { identity, commit } = prepared as { identity: Scope; commit: () => {conversation:string;thread:string;job:string} };
+      const { identity, commit } = prepared as { identity: Scope; commit: Awaited<ReturnType<TerminalSessions['prepare']>> };
       if (!current || current.machine !== input.machine || current.member !== identity.member || current.agent !== identity.agent)
         throw new OperationError('denied', 'Machine terminal changed');
-      const result = commit();
+      let stampOnly = false;
+      const result = commit(() => { stampOnly = true; });
+      if (stampOnly) {
+        ctx.stampOnly?.();
+        return result;
+      }
       ctx.changed('conversations', result.conversation);
       ctx.changed('threads', result.thread);
       ctx.changed('job', result.job);
