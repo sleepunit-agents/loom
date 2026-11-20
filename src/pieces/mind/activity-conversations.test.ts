@@ -111,3 +111,22 @@ it('shows what a run needs of the viewer by the Inbox rule: not once the record 
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).not.toHaveProperty('needs');
  expect(f.reader.list(teammate,f.query).rows[0]).not.toHaveProperty('needs');
 });
+
+it('reads only the requested agent and visible episode links in one statement at two and ten conversations',()=>{
+ const f=fixture(),ids:string[]=[];
+ const hidden=f.service.open({agent:'fiction',venue:'loom',place:'private',label:'Private',member:'owner'});
+ for(let i=0;i<10;i++){
+  const cv=f.service.open({agent:'fiction',venue:'loom',place:'room-'+i,label:'Room '+i,project:'pond'});
+  f.service.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:'fiction'});
+  ids.push(cv.id);
+  if(i!==1&&i!==9)continue;
+  f.statements.length=0;
+  const rows=f.reader.conversations!(teammate,'fiction',[...ids,hidden.id]);
+  expect(f.statements).toHaveLength(1);
+  expect(rows.map(row=>row.id).sort()).toEqual([...ids].sort());
+  expect(rows.every(row=>row.people.join(',')==='fiction')).toBe(true);
+ }
+ expect(f.reader.conversations!(teammate,'other',ids)).toEqual([]);
+ f.db.delete(projectMembers).run();
+ expect(f.reader.conversations!(teammate,'fiction',ids)).toEqual([]);
+});

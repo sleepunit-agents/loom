@@ -54,6 +54,10 @@ export function whereOfConversation(c: ConversationFacts): string {
   return `${c.venue}:${label}`;
 }
 
+export function episodeConversationId(title:string,content:string,meta?:Record<string,unknown>){
+  return typeof meta?.conversation === 'string' && METADATA_ID.test(meta.conversation) ? meta.conversation : NAMED.exec(content)?.[1] ?? NAMED.exec(title)?.[1];
+}
+
 /**
  * An episode's title and where, plain. `title` and `content` are the memory's; `where` is its metadata's; `conversation`
  * looks a conversation up by id in the agent's own store (undefined when it isn't there); `meta` is its metadata.
@@ -62,7 +66,7 @@ export function plainEpisode(e: { title: string; content?: string | null; where:
   agentLabel: string, conversation: (id: string) => ConversationFacts | undefined): PlainEpisode {
   const title = e.title ?? '';
   const content = e.content ?? '';
-  const named = typeof e.meta?.conversation === 'string' && METADATA_ID.test(e.meta.conversation) ? e.meta.conversation : NAMED.exec(content)?.[1] ?? NAMED.exec(title)?.[1];
+  const named = episodeConversationId(title,content,e.meta);
   // The body's copy first: a title is cut at 72 characters, the body's Ask line at 280.
   const prompt = PREAMBLE.test(title) || PROMPTISH.test(title);
   if (!prompt) return { title, where: e.where, ...(named ? { conversation: named } : {}), wasPrompt: false };
