@@ -14,7 +14,7 @@ import type { SignInReason } from './account-signin-reasons.js';
 import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
-import { coldReviewReport } from './cold-review-report.js';
+import { boundedReviewReport, coldReviewReport } from './cold-review-report.js';
 import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
@@ -250,7 +250,8 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
     finish: async (job, exitCode, logTail, exitBy, programResult, coldReview) => {
-      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview }, ack, undefined, id, remaining));
+      const review = coldReview && boundedReviewReport(coldReview);
+      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview: review }, ack, undefined, id, remaining));
     },
   };
 }
