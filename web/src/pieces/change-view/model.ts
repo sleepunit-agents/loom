@@ -9,6 +9,7 @@ export interface Change {
   openedAt: string; updatedAt: string; closedAt: string | null;
 }
 export interface ReviewRound {
+  change: string;
   job: string;
   headCommit: string;
   tier: 'medium' | 'high';
@@ -17,7 +18,7 @@ export interface ReviewRound {
   findings: string | null;
 }
 export interface ChangeSnapshot {
-  reviewHistory?: { change: string; status: 'loading' | 'live' | 'offline' | 'denied'; rounds: readonly ReviewRound[] };
+  reviewHistory?: { change: string; status: ChangeSnapshot['status']; rounds: readonly ReviewRound[] };
   status: 'loading' | 'live' | 'offline' | 'denied';
   changes: readonly Change[];
   checks: readonly { change: string; name: string; state: 'failing' | 'running' }[];

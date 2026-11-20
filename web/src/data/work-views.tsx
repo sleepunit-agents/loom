@@ -156,10 +156,10 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
   };
   const current=snapshot.changes.find(row=>row.id===selected);
   const review = useDataQuery<{changeReviewHistory: ReviewRound[]}>(
-    'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { job headCommit tier round verdict findings } }',
+    'query ChangeReviewHistory($change: String!) { changeReviewHistory(change: $change) { change job headCommit tier round verdict findings } }',
     {change: current?.id ?? ''}, {pause: !current || snapshot.status !== 'live'});
   const reviewHistory = current && { change: current.id, status: review.status,
-    rounds: review.status === 'live' ? review.data?.changeReviewHistory ?? [] : [] };
+    rounds: review.status === 'live' ? review.data?.changeReviewHistory?.filter(row => row.change === current.id) ?? [] : [] };
   const standing=alwaysInput(current?findRequest(current.id,current.headCommit):undefined,snapshot.status==='live'?snapshot.changes:[],access.members);
   const defaultActions: ChangeActions | undefined = owner && requests.status === 'live' ? {
     ...(standing?{always:{change:standing.change,head:standing.head,project:standing.project,label:alwaysLabel(standing),run:async(id:string,head:string)=>{if(id!==standing.change||head!==standing.head)throw Error('Change moved');await sendWorkAlways(standing);}}}:{}),

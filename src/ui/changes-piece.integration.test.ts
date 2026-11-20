@@ -112,6 +112,11 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => page.getByText('Findings for sam', { exact: true }).count()).toBe(1);
       expect(await page.getByText('Findings for lee', { exact: true }).count()).toBe(0);
     }
+    app.data.writes.run(() => app.db.update(s.jobs).set({ member: 'lee' }).where(eq(s.jobs.id, 'review-sam')).run());
+    for (const page of [a, b]) {
+      await expect.poll(() => page.getByText('Findings for sam', { exact: true }).count()).toBe(0);
+      expect(await page.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
+    }
     await b.reload();
     await expect.poll(() => b.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
     // Commit once; both retained browser subscriptions receive the same rows.

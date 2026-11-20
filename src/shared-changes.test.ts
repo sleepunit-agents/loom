@@ -182,12 +182,14 @@ it('requires access to the change and the job for each review returned by the HT
   f.db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
   f.root.services.changes.put(f.row);
   const store = changeReviewStore(f.db, () => at);
-  for (const member of ['pat', 'sam']) {
-    const job = 'review-' + member;
+  const second = { ...f.row, number: 2, id: 'github:house/pond#2' };
+  f.root.services.changes.put(second);
+  for (const [member, change] of [['pat', f.row.id], ['sam', f.row.id], ['sam', second.id]]) {
+    const job = 'review-' + member + '-' + change;
     f.db.insert(jobs).values({ id: job, member, agent: 'art', title: 'Review', state: 'queued',
       brief: '', model: 'reviewer', startedByKind: 'agent', startedBy: 'art', houseRepository: 'house/pond',
       houseFile: '', houseBranch: 'next', queuedAt: at }).run();
-    const identity = { job, change: f.row.id, headCommit: f.row.head.id };
+    const identity = { job, change, headCommit: f.row.head.id };
     store.assign({ ...identity, tier: 'high', round: 1 });
     store.finish({ ...identity, verdict: 'CLEAR', findings: 'Review for ' + member });
   }
@@ -197,7 +199,11 @@ it('requires access to the change and the job for each review returned by the HT
       body: JSON.stringify({ query: 'query($change:String!) { changeReviewHistory(change:$change) { job findings } }', variables: { change: f.row.id } }) });
     return response.json();
   };
-  const visible = { data: { changeReviewHistory: [{ job: 'review-sam', findings: 'Review for sam' }] } };
+  const schema = await f.root.http.request('http://loom/graphql', { method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
+    body: JSON.stringify({ query: '{ __schema { mutationType { name } } }' }) });
+  expect(await schema.json()).toEqual({ data: { __schema: { mutationType: null } } });
+  const visible = { data: { changeReviewHistory: [{ job: 'review-sam-' + f.row.id, findings: 'Review for sam' }] } };
   expect(await read()).toEqual(visible);
   f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run();
   expect(await read()).toEqual({ data: { changeReviewHistory: [] } });

@@ -9,7 +9,7 @@ import { sqlVisibility } from '../../policy-sql.js';
 export function changeReviewFields(db: DataDatabase): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const text = new GraphQLNonNull(GraphQLString);
   const item = new GraphQLObjectType({ name: 'ChangeReviewRound', fields: {
-    job: { type: text }, headCommit: { type: text }, tier: { type: text },
+    change: { type: text }, job: { type: text }, headCommit: { type: text }, tier: { type: text },
     round: { type: new GraphQLNonNull(GraphQLInt) }, requestedAt: { type: text },
     completedAt: { type: GraphQLString }, verdict: { type: GraphQLString }, findings: { type: GraphQLString },
   } });

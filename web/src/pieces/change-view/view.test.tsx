@@ -106,8 +106,8 @@ it('orders by who is waiting, filters projects and puts finished work last', () 
 
 it('distinguishes the current review from an older verdict and hides stale findings', async () => {
   const reviewHistory = { change: change.id, status: 'live' as const, rounds: [
-    { job: 'j2', headCommit: change.headCommit, tier: 'high' as const, round: 2, verdict: null, findings: null },
-    { job: 'j1', headCommit: 'b'.repeat(40), tier: 'high' as const, round: 1, verdict: 'CLEAR' as const, findings: 'Checked the prior revision' },
+    { change: change.id, job: 'j2', headCommit: change.headCommit, tier: 'high' as const, round: 2, verdict: null, findings: null },
+    { change: change.id, job: 'j1', headCommit: 'b'.repeat(40), tier: 'high' as const, round: 1, verdict: 'CLEAR' as const, findings: 'Checked the prior revision' },
   ] };
   await act(async () => { tree = create(h(Changes, { snapshot: { ...snapshot, reviewHistory } })); });
   await select();
