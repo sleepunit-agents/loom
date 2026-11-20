@@ -3,9 +3,18 @@ import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { tasks, taskComments, taskLinks, inbox } from '../core/data/schema.js';
+import { tasks, taskComments, taskLinks, inbox, importedTaskSequence } from '../core/data/schema.js';
 import { projectRefusal, projectRetired, taskShelved, type ProjectUse } from '../core/data/project-in-use.js';
 import { taskId } from '../slug.js';
+
+// Offline importers call this within the same transaction as the archived tasks.
+export function preserveImportedTaskSequence(db: DataDatabase, lastIssued: number) {
+  if (!Number.isSafeInteger(lastIssued) || lastIssued < 0) throw new Error('Invalid imported task sequence');
+  db.insert(importedTaskSequence).values({singleton: 1, lastIssued}).onConflictDoUpdate({
+    target: importedTaskSequence.singleton, set: {lastIssued},
+    setWhere: sql`${importedTaskSequence.lastIssued} < ${lastIssued}`,
+  }).run();
+}
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
 export type TaskActor = z.infer<typeof person>;
@@ -149,7 +158,10 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       return db.transaction(() => {
         requireUsable(value.project);
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
-        const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
+        const imported = db.select({lastIssued: importedTaskSequence.lastIssued}).from(importedTaskSequence);
+        const n = db.select({id: sql<number>`max(coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0), coalesce((${imported}), 0)) + 1`})
+          .from(tasks).get()!.id;
+        if (!Number.isSafeInteger(n)) throw new Error('Task ID space exhausted');
         const at = now(), id = taskId(n);
         if (value.spec && db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.specItem, value.spec.item), eq(tasks.criterion, value.spec.criterion))).get()) throw new Error('A task already implements that line of the spec');
         db.insert(tasks).values({ id, title: value.title, goal: value.goal, why: value.why, doneWhen: value.doneWhen,

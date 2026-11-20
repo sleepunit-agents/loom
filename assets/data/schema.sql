@@ -1360,6 +1360,13 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `imported_task_sequence` (
+	`singleton` integer PRIMARY KEY NOT NULL,
+	`last_issued` integer NOT NULL,
+	CONSTRAINT "imported_task_sequence_singleton" CHECK("imported_task_sequence"."singleton" = 1),
+	CONSTRAINT "imported_task_sequence_range" CHECK(typeof("imported_task_sequence"."last_issued") = 'integer' and "imported_task_sequence"."last_issued" between 0 and 9007199254740991)
+);
+
 CREATE TABLE `trigger_acceptances` (
 	`item` text PRIMARY KEY NOT NULL,
 	`job` text NOT NULL,
