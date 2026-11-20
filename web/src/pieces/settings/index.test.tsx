@@ -9,7 +9,7 @@ import SettingsApp from './index';
 const feed = vi.hoisted(() => ({ query: { status: 'loading' } as DataQuerySnapshot<SettingsData>, hook: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.hook(query); return feed.query; } }));
 vi.mock('../../data', () => ({ useRecords() { throw Error('Legacy records used'); }, call() { throw Error('Legacy command used'); } }));
-vi.mock('../../kit', () => ({
+vi.mock('../../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',
   Button: (p: any) => h('button', p), Input: (p: any) => h('input', p),
   Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
   List: (p: any) => h('div', {}, p.children), Row: (p: any) => h('button', { onClick: p.onClick }, p.title, p.meta, p.status),
