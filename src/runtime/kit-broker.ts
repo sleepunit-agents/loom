@@ -54,7 +54,7 @@ export function kitBroker(input:{repository:string;commit:string;image:string;de
     return [...entries].map(([name,{tool}])=>({name,description:tool.description,parameters:tool.parameters}));
   };
   return {
-    offeredKits:()=>[...new Set([...entries.values()].map(entry=>entry.kit))],
+    offeredTools:()=>[...entries.values()].map(entry=>({kit:entry.kit,tool:entry.tool.name})),
     list:(signal:AbortSignal)=>listed??=list(signal).catch(error=>{listed=undefined;throw error;}),
     async call(name:string,args:unknown,signal:AbortSignal){
       const entry=entries.get(name);

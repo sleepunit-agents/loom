@@ -7,10 +7,11 @@ export const kitTransport=z.enum(['ready','socket','catalog','capacity','image']
 export const kitAvailabilityReport=z.strictObject({
   pin:kitPin.optional(),
   transport:kitTransport,
-  offered:z.array(householdId).max(62),
+  offered:z.array(z.strictObject({kit:householdId,tool:kitTool.shape.name})).max(62),
 });
 export const kitUnavailable=z.strictObject({
   kit:householdId,
+  partial:z.literal(true).optional(),
   reason:z.enum(['empty','policy','house','credential','socket','catalog','capacity','image'] as const),
 });
 export type KitUnavailable=z.infer<typeof kitUnavailable>;

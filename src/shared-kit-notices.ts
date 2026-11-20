@@ -9,7 +9,7 @@ import {householdOwners} from './shared-sharing.js';
 export function recordKitAvailability(db:DataDatabase,now:()=>string,job:{agent:string;box:string|null},
   unavailable:KitUnavailable[],offered:readonly string[]) {
   const mail=new Conversations(db,now,lateMailWaits);
-  const prefix=(kit:string)=>`kit-unavailable:${job.agent}:${kit}:`;
+  const prefix=(kit:string)=>`kit-unavailable:${JSON.stringify([job.agent,job.box,kit])}:`;
   for(const kit of offered){
     const rows=db.selectDistinct({sourceId:inbox.sourceId}).from(inbox)
       .where(and(eq(inbox.source,'notice'),eq(inbox.state,'waiting'),sql`instr(${inbox.sourceId},${prefix(kit)})=1`)).all();
@@ -27,7 +27,7 @@ export function recordKitAvailability(db:DataDatabase,now:()=>string,job:{agent:
         .orderBy(desc(sql`rowid`)).get();
       if(last && last.state!=='resolved')continue;
       mail.send({toKind:'person',to,member:to,source:'notice',sourceId:key+randomUUID(),fromKind:'unknown',
-        words:`${agent}'s ${kit} kit could not be offered on the machine ${box || job.box}: ${why}. ${fix}`});
+        words:`${agent}'s ${kit} kit had unavailable tools on the machine ${box || job.box}: ${why}. ${fix}`});
     }
   }
 }

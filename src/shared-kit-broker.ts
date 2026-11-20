@@ -72,11 +72,18 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
       const unavailable:KitUnavailable[]=[],offered:string[]=[];
       for(const {kit,tools} of target.kits){
         const allowed=target.tools.filter(row=>row.kit===kit);
-        const matching=pin ? allowed.filter(({tool})=>matchesPin(tool,pin)) : [];
-        const reason=!tools.length?'empty':!allowed.length?'policy':!pin?'image':!matching.length?'house':
-          !matching.some(({tool})=>credentialReady(tool))?'credential':transport!=='ready'?transport:
-            !listed.includes(kit)?'catalog':undefined;
-        if(reason)unavailable.push({kit,reason});
+        const reasons=new Set<KitUnavailable['reason']>();
+        if(!tools.length)reasons.add('empty');
+        else if(!allowed.length)reasons.add('policy');
+        for(const {tool} of allowed){
+          if(!pin)reasons.add('image');
+          else if(!matchesPin(tool,pin))reasons.add('house');
+          else if(!credentialReady(tool))reasons.add('credential');
+          else if(transport!=='ready')reasons.add(transport);
+          else if(!listed.some(entry=>entry.kit===kit && entry.tool===tool.name))reasons.add('catalog');
+        }
+        const partial=transport==='ready' && listed.some(entry=>entry.kit===kit && allowed.some(row=>row.tool.name===entry.tool));
+        if(reasons.size)for(const reason of reasons)unavailable.push({kit,reason,...(partial && {partial:true as const})});
         else offered.push(kit);
       }
       options.write(()=>recordKitAvailability(db,options.now,target.job,unavailable,offered));

@@ -504,26 +504,30 @@ export function containerWorkerExecutor(config: {
           released = true;
           if (bootstrap) logs!.discard();
           const payload = bodyInput(assignment, image, bootstrap, true);
-          let kitUnavailable:KitUnavailable[]=[];
+          let kitUnavailable:KitUnavailable[]=[],kitReportFailed=false;
           if(dependencies.kitAccess&&payload.bootstrap){
             const post=kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id});
             const pin=houseId ? {repository:assignment.house.repository,commit:houseCommit(image),image:houseId} : undefined;
             reportKits=async(transport,signal)=>{
-              try{
-                const result=await post('availability',{pin,transport,offered:transport==='ready'?broker?.offeredKits()??[]:[]},signal);
-                return kitUnavailableList.parse((result as {unavailable:unknown}).unavailable);
-              }catch{
-                dependencies.say?.('Could not report kit availability for job '+assignment.id);
-                return [];
+              // The report is idempotent. A lost reply may follow a committed notice.
+              const report={pin,transport,offered:transport==='ready'?broker?.offeredTools()??[]:[]};
+              for(let attempt=0;attempt<2 && !signal.aborted;attempt++){
+                try{
+                  const result=await post('availability',report,signal);
+                  return kitUnavailableList.parse((result as {unavailable:unknown}).unavailable);
+                }catch{/* Retry the same availability observation; tool calls are never replayed here. */}
               }
+              dependencies.say?.('Could not report kit availability for job '+assignment.id);
+              throw Error('Kit availability report failed');
             };
             if(kit&&pin){
               broker=kitBroker({...pin,denials:deniedTools(assignment.run?.policy),post,
                 run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box,runtime:fixed.container.runtime})});
-            }else kitUnavailable=await reportKits(pin?'socket':'image',abort.signal);
+            }else try {kitUnavailable=await reportKits(pin?'socket':'image',abort.signal);}
+            catch {kitReportFailed=true;}
           }
           await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({...payload,...(broker?{kitSocket:true}:{}),
-            ...(kitUnavailable.length?{kitUnavailable}:{})}) + '\n',
+            ...(kitUnavailable.length?{kitUnavailable}:{}),...(kitReportFailed?{kitReportFailed:true}:{})}) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
         },
         stop,

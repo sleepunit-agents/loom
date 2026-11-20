@@ -41,7 +41,7 @@ import { BODY_START_BYTES } from './body-input-limit.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 /** What a body file is, for whoever writes one: the core house's own are held to it. */
 export const bodyFileSchema = config;
-const envelope = z.object({ kitSocket:z.literal(true).optional(), kitUnavailable:kitUnavailableList.optional(), job: workerAssignment, build: z.string().min(1),
+const envelope = z.object({ kitSocket:z.literal(true).optional(), kitUnavailable:kitUnavailableList.optional(), kitReportFailed:z.literal(true).optional(), job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();
 /** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
@@ -228,12 +228,17 @@ export async function bodyProgram(input: {
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
       const kitBrief=(items:KitUnavailable[])=>{
-        for(const {kit,reason} of items){
-          const line=`Kit ${kit} is unavailable because ${kitReasons[reason].why}.`;
+        for(const {kit,reason,partial} of items){
+          const subject=partial?`Some tools in kit ${kit} are unavailable`:`Kit ${kit} is unavailable`;
+          const line=`${subject} because ${kitReasons[reason].why}.`;
           context.push(line);continued.push(line);
         }
       };
       if(!lateStranger)kitBrief(parsed.kitUnavailable??[]);
+      if(!lateStranger && parsed.kitReportFailed){
+        const line='The worker could not load kit tools or report their availability for this job.';
+        context.push(line);continued.push(line);
+      }
       const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal,kitBrief).catch(error=>{
         const line=error instanceof KitCapacity?error.message:'The worker could not load kit tools for this job.';
         context.push(line);continued.push(line);

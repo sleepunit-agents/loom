@@ -87,7 +87,7 @@ it.each(['ungranted','matching','different house'])('keeps a held job fresh and 
       if(++launches===2)f.db.delete(s.projectOutsidePeople).run();
     }),{...input,job:'job',box:'box'})});
   const signal=new AbortController().signal,socket=await kitSocket(dir,()=>broker,signal,async(transport,signal)=>{
-    const reply=await post('availability',{pin,transport,offered:broker.offeredKits()},signal) as {unavailable:unknown};
+    const reply=await post('availability',{pin,transport,offered:broker.offeredTools()},signal) as {unavailable:unknown};
     return kitUnavailableList.parse(reply.unavailable);
   });clean.push(()=>socket.close());
   // The engine mounts the worker socket at this fixed path. The test process

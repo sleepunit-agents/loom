@@ -152,7 +152,7 @@ it('reports the mounted house mismatch once and closes it when a later job is of
   const notices=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all();
 
   const report=async(pin:typeof different,offered:string[]=[],transport='ready')=>
-    (await (await post('availability',{pin,transport,offered})).json()).unavailable;
+    (await (await post('availability',{pin,transport,offered:offered.map(kit=>({kit,tool:tool.name}))})).json()).unavailable;
   expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
   expect(notices()).toMatchObject([{to:'owner',state:'waiting',words:expect.stringContaining('different house')}]);
   changed.mockClear();
@@ -172,4 +172,21 @@ it('reports the mounted house mismatch once and closes it when a later job is of
   expect((await (await post('list',pin)).json()).tools).toEqual([]);
   expect(await report(pin)).toEqual([{kit:'weather',reason:'credential'}]);
   expect(source.read).not.toHaveBeenCalled();
+});
+
+it('reports a missing second tool and keeps a machine-specific notice open across another worker’s recovery',async()=>{
+  const {db,post,raw}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const changed={...tool,name:'other',commit:'a'.repeat(40)};
+  db.update(agentKits).set({tools:[tool,changed]}).run();
+  const body={pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]};
+  const report=async(runner=raw.runner)=>(await (await post('availability',body,runner)).json()).unavailable;
+  expect(await report()).toEqual([{kit:'weather',reason:'house',partial:true}]);
+  db.update(jobs).set({box:'elsewhere'}).run();
+  db.update(agentKits).set({tools:[tool]}).run();
+  expect(await report(raw.other)).toEqual([]);
+  expect(db.select().from(inbox).where(eq(inbox.source,'notice')).get()?.state).toBe('waiting');
+  db.update(jobs).set({box:'box'}).run();
+  expect(await report()).toEqual([]);
+  expect(db.select().from(inbox).where(eq(inbox.source,'notice')).get()?.state).toBe('resolved');
 });
