@@ -30,4 +30,4 @@ export function householdSettings(db: DataDatabase): Settings {
 
 /** The zone every time a person reads is shown in, and the one schedules are kept in. */
 export const householdTimezone = (db: DataDatabase): string =>
-  db.select({ zone: household.timezone }).from(household).get()?.zone ?? householdDefaults.timezone;
+  db.query.household.findFirst({ columns: { timezone: true } }).sync()?.timezone ?? householdDefaults.timezone;
