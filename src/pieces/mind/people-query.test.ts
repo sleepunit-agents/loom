@@ -1,4 +1,4 @@
-import { afterEach,expect,it } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { existsSync,mkdtempSync,rmSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,4 +160,47 @@ it('hides removed agents from the contacts list while preserving direct reads',a
  f.sharing.agents=[];
  expect(await f.query(query)).toEqual({data:{memoryPeople:[],memoryPerson:{id:'commons:fiction'}}});
  expect(await f.query('{ memoryPeople { id } }')).toEqual({data:{memoryPeople:[{id:'commons:fiction'}]}});
+});
+
+it('batches visible relationship cards, redirects, and the newest forty evidence items per person',()=>{
+ const h=home(),directory=store(join(h,'directory.db')),agent=store(join(h,'a.db'));
+ const at='2026-11-14T18:00:00Z',viewer:Viewer={kind:'member',id:'member'};
+ const sharing:Sharing={members:{member:{owner:false,agents:['fiction']}},projects:{}};
+ const reader=peopleReader({directory:directory.database.name,agents:[{agent:'fiction',memories:agent.database.name}],sharing:()=>sharing,now:()=>Date.parse(at)});
+ closes.push(()=>reader.close());
+ agent.database.exec('CREATE TABLE memories(created TEXT,category TEXT,title TEXT,content TEXT,metadata TEXT,archived INTEGER,expires_at TEXT)');
+ const insert=agent.database.prepare("INSERT INTO memories VALUES(?,'user',?,'Evidence',?,0,NULL)");
+ let small=0;
+ for(let i=0;i<10;i++){
+  const slug='friend-'+i;
+  agent.write({slug,name:'Friend '+i});
+  for(let j=0;j<43;j++)insert.run(new Date(Date.parse(at)-j*1000).toISOString(),String(j),JSON.stringify({person:slug}));
+  if(i!==1&&i!==9)continue;
+  const spy=vi.spyOn(Database.prototype,'prepare');
+  try{
+   const rows=reader.list(viewer);
+   expect(rows).toHaveLength(i+1);
+   if(i===1)small=spy.mock.calls.length;else expect(spy.mock.calls.length).toBe(small);
+   for(const row of rows){
+    expect(row.evidence).toHaveLength(40);
+    expect(row.newer).toBe(43);
+    expect(row).toEqual(reader.read(row.id,viewer));
+   }
+  }finally{spy.mockRestore();}
+ }
+ agent.database.exec("CREATE INDEX evidence_created ON memories(json_extract(metadata,'$.person'),created)");
+ for(let j=0;j<60;j++)insert.run(at,'Tied '+j,JSON.stringify({person:'friend-0'}));
+ expect(reader.list(viewer).find(row=>row.slug==='friend-0')).toEqual(reader.read('fiction:friend-0',viewer));
+ agent.write({slug:'42',name:'Forty two'});
+ insert.run(at,'Numeric link',JSON.stringify({person:42}));
+ expect(reader.list(viewer).find(row=>row.slug==='42')?.evidence).toEqual([]);
+ directory.database.prepare('INSERT INTO person_merges VALUES(?,?,?,?,?)').run('friend-0','friend-1',at,'fiction','{}');
+ const redirected=reader.list(viewer).find(r=>r.id==='fiction:friend-0');
+ expect(redirected).toEqual(reader.read('fiction:friend-0',viewer));
+ expect(redirected).toMatchObject({slug:'friend-1',mergedFrom:'friend-0'});
+ directory.write({slug:'friend-1',name:'Directory'});
+ directory.archive({slug:'friend-1',actor:'fiction',reason:'Retired'});
+ expect(reader.list(viewer).filter(r=>r.slug==='friend-1')).toEqual([]);
+ sharing.members.member.agents=[];
+ expect(reader.list(viewer)).toEqual([]);
 });
