@@ -57,3 +57,22 @@ it('requires a named agent and leaves a conflicting schedule untouched without r
     expect(reads).toBe(0);
   } finally { tempo.close(); client.close(); }
 });
+
+it('schedules the alternate only for independent checks and stops routing them when unconfigured', () => {
+  const client=new Database(':memory:'), db=createDataSchema(client), clock=new FakeClock(Date.parse('2026-11-14T13:16:59Z'));
+  db.insert(household).values({id:'house',name:'Example',timezone:'America/Chicago'}).run();
+  for(const id of ['first','second'])db.insert(agents).values({id,about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+  const tempo=createTempo(db,clock,{conversations:new Conversations(db,()=>new Date(clock.now()).toISOString()),admit:()=>false,operation(){throw Error('Unexpected operation');}});
+  const item=(id:string)=>[{id,words:id,openedAt:new Date(clock.now()).toISOString()}];
+  const reader={sweep:()=>({name:'Knowledge',open:(who:{id:string})=>item('page-for-'+who.id)})};
+  try{
+    tempo.sweep.register({name:'Tasks',open:()=>item('unrelated')});
+    const close=installMemoryTempo(db,tempo,reader,'first','second');
+    tempo.start();clock.advance(1000);
+    const words=()=>db.select().from(inbox).all().filter(row=>row.to==='second').map(row=>row.words);
+    expect(words()).toEqual([expect.stringContaining('page-for-second')]);
+    expect(words()[0]).not.toContain('unrelated');
+    close();installMemoryTempo(db,tempo,reader,'first');clock.advance(86_400_000);
+    expect(words()).toHaveLength(1);
+  }finally{tempo.close();client.close();}
+});

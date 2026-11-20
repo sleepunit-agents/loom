@@ -71,3 +71,21 @@ it('handles absent and older stores without creating anything, and rejects impli
   expect(knowledgeSweep(db, clock, 'checker').open(who)).toMatchObject([{ id: 'old', openedAt: '2020-01-31T00:00:00.000Z' }]);
   expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([{ name: 'pages' }]);
 });
+
+it('routes only due pages with three recent checks by their recorded author to the alternate', async () => {
+  const {store,db,reader,clock}=fixture();
+  const old=new Date(clock.now()-31*86_400_000).toISOString();
+  for(const slug of ['independent','mixed','few','unknown']){
+    await store.writePage({slug,title:slug,domain:'testing',body:'Fictional page',verified_at:old});
+    if(slug!=='unknown')db.prepare('UPDATE pages SET author=? WHERE slug=?').run('checker',slug);
+    for(const verifier of (slug==='few'?['checker','checker']:slug==='mixed'?['checker','other','checker']:['checker','checker','checker'])){
+      await store.verifyPages({slug,verifier,verified_at:old});
+    }
+  }
+  const part=knowledgeSweep(reader,clock,'checker','other');
+  expect(part.open(who)).toMatchObject([{id:'few'},{id:'mixed'},{id:'unknown'}]);
+  expect(part.open({kind:'agent',id:'other'})).toMatchObject([{id:'independent',words:expect.stringContaining('independent check')}]);
+  await store.verifyPages({slug:'independent',verifier:'other',verified_at:old});
+  expect(part.open({kind:'agent',id:'other'})).toEqual([]);
+  expect(part.open(who)).toHaveLength(4);
+});
