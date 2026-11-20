@@ -37,6 +37,19 @@ function receive(f:Awaited<ReturnType<typeof fixture>>,cv:string){
  });
  const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:row.id,conversation:cv,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init))});clean.push(()=>sdk.close());return{sdk,job:row.id,token};
 }
+it('limits handoff discovery to the private owner body and its currently assigned peers',async()=>{
+ const f=await fixture();
+ await f.send('Please delegate this work','owner-request');
+ const options=()=>f.call('handoffOptions',{},'read');
+ const value=async()=>{const response=await options();expect(response.status).toBe(200);return (await response.json()).value;};
+ expect(await value()).toEqual({agents:['mark'],codexAvailable:false});
+ f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();
+ expect(await value()).toEqual({agents:[],codexAvailable:false});
+ for(const token of [bodyCredentials.member,bodyCredentials.agent])expect((await f.call('handoffOptions',{},'ordinary',token)).status).toBe(403);
+ f.db.update(s.threads).set({archivedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.threads.id,f.thread.id)).run();
+ expect((await options()).status).toBe(403);
+});
+
 it('hands a real private brief through one inherited conversation, settled job and bound SDK, with no plaintext copy',async()=>{
  const f=await fixture(),created=await create(f);
  const cv=f.root.services.conversations.conversation(created.conversation);
@@ -264,6 +277,13 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
  db.insert(s.modelAccountBoxes).values({account:'paid',box:'box'}).run();
  const next=async(id:string,capable:boolean)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
  await next('advertise',true);
+ if(mode==='success'){
+  const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
+  clean.push(()=>tools.close());
+  const options=await tools.call('loom_command',{operation:'conversation.handoffOptions',input:{}});
+  expect(options.isError).not.toBe(true);
+  expect(JSON.parse(options.content[0].text).value).toMatchObject({codexAvailable:true});
+ }
  const response=await f.call('handoff',request,'launch');
  expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
  const child=(await response.json()).value.conversation;

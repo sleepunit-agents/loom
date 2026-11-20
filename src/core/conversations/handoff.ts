@@ -1,5 +1,5 @@
 import {reviewPlace} from './review-place.js';
-import {threads} from '../data/schema.js';
+import {memberAgents,threads} from '../data/schema.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
@@ -40,6 +40,31 @@ export interface HandoffToSelf{
 export function registerConversationHandoff(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,self?:HandoffToSelf){
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
+ type Work=NonNullable<ReturnType<typeof current>>;
+ const ownerThread=(work:Work)=>{
+  const person=self?.word(work);
+  if(!work.cv.member || work.cv.venue!=='loom' || person?.kind!=='member' || person.id!==work.cv.member || !self?.ownerWork?.(work))return false;
+  const thread=db.select({archivedAt:threads.archivedAt}).from(threads).where(eq(threads.conversation,work.cv.id)).get();
+  return !!thread && !thread.archivedAt;
+ };
+ const peerAllowed=(work:Work,agent:string)=>{
+  const cv=work.cv;
+  if(agent===cv.agent || !handoffTarget(db,agent))return false;
+  if(cv.member!==null && !privateAssignment({member:cv.member,agent,project:cv.project??undefined}))return false;
+  return cv.member!==null && cv.project===null || handoffPeersAssigned(db,cv.agent,agent,cv.project);
+ };
+ operations.register(operation({name:'conversation.handoffOptions',write:false,doors:['http'],
+  input:z.object({}).strict().describe('List peer agents assigned to this private conversation and whether a Codex worker can take a new brief now.'),
+  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean()}).strict(),
+  may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
+  run(ctx){
+   const work=requireCurrent(ctx.viewer);
+   if(!work.cv.member || !ownerThread(work))throw new OperationError('denied','Private owner conversation required');
+   const assigned=db.select({agent:memberAgents.agent}).from(memberAgents).where(eq(memberAgents.member,work.cv.member)).all();
+   const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
+   return {agents,codexAvailable:self?.codexAvailable?.(work.cv.agent)===true};
+  },
+ }));
  operations.register(operation({...common,name:'conversation.handoff',
   // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
   // another conversation (`to`), as mail there that starts its job like any message.
@@ -49,15 +74,9 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   may(viewer,input){
    const found=current(viewer);if(!found)return false;
    // To itself: the rule is the composition's and is asked in full when the note is prepared and written.
-   if(input.harness){
-    const person=self?.word(found);
-    const thread=db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get();
-    return self?.ownerWork?.(found)===true && found.cv.venue==='loom' && !!thread && !thread.archivedAt && !!found.cv.member && person?.kind==='member' && person.id===found.cv.member;
-   }
+   if(input.harness)return ownerThread(found);
    if(input.to)return !!self;
-   if(!input.agent||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;
-   if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
-   return found.cv.member!==null&&found.cv.project===null||handoffPeersAssigned(db,found.cv.agent,input.agent,found.cv.project);
+   return !!input.agent && peerAllowed(found,input.agent);
   },
   // A note to itself is sealed with what the receiving body is told about it: where it came from and by what chain.
   async prepare(input,context){

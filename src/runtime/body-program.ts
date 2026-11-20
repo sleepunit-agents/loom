@@ -213,7 +213,7 @@ export async function bodyProgram(input: {
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || policy?.word === 'others' || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
     if(job.venue==='loom' && policy?.word==='owners'){
-      const delegation='For a Codex subagent, call conversation.handoff with harness "codex", a unique clientId, label and self-contained words including the repository and commit. Loom returns the result to this thread.';
+      const delegation='Use conversation.handoffOptions to find assigned peers and current Codex availability. For a Codex subagent, call conversation.handoff with harness "codex", a unique clientId, label and self-contained words including the repository and commit. Loom returns the Codex result to this thread. For help inside this job, use native subagents when your harness provides them.';
       context.unshift(delegation);continued.unshift(delegation);
     }
     if(job.venue==='discord'&&job.venueDescription){
