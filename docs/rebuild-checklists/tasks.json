@@ -188,9 +188,9 @@
         "app": "Tasks",
         "contains": [
           "Measure the hose",
-          "Goal",
-          "Why",
-          "Owner: agent fern"
+          "GOAL\nThe example garden has working water.",
+          "WHY\nThe old pump stopped.",
+          "OWNER\nFern"
         ]
       }
     },

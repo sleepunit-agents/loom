@@ -60,7 +60,10 @@ export async function changeInline({page,tile,app,example,out}){
   const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/comms/send'&&r.method()==='POST',()=>send.press('Enter'));
   const body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Reference message refused');
   const title=app.services.changes.get(example.change).title;
-  const card=tile.getByRole('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
+  const work=tile.getByRole('region',{name:'Work in this conversation',exact:true});
+  const toggle=work.getByRole('button',{name:/^Work ·/,expanded:false});
+  if(await toggle.isVisible())await toggle.click();
+  const card=work.getByRole('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   await card.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
   if(await card.getByRole('button',{name:'Yes, merge it',exact:true}).count())throw Error('Inline PR reference offers a merge action');
   await card.getByRole('button',{name:'Open',exact:true}).click();
