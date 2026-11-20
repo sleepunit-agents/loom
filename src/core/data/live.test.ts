@@ -156,13 +156,13 @@ it('measures only initial snapshot work and does not measure its own notificatio
 });
 
 
-it('timing notifications wake selections without reviving a read invalidated by a private write',async()=>{
+it('stamp notifications wake selections without reviving a read invalidated by a private write',async()=>{
  const {live,watch}=setup(),context={};
  const stream=watch();await stream.next();
  live.captureRead(context);const version=live.readVersion(context);
- live.timingsChanged();expect(live.currentRead(version)).toBe(true);
+ live.metadataChanged();expect(live.currentRead(version)).toBe(true);
  live.changed();expect(live.currentRead(version)).toBe(false);
- live.timingsChanged();expect(live.currentRead(version)).toBe(false);
+ live.metadataChanged();expect(live.currentRead(version)).toBe(false);
  live.close();expect(live.currentRead(live.epoch())).toBe(false);
 });
 
@@ -173,9 +173,9 @@ it('still ends on a resolver error when no committed change invalidated that rea
   expect(await stream.next()).toEqual({done:true,value:undefined});
 });
 
-it.each(['timingsChanged','metadataChanged'] as const)('does not hide a resolver error during %s',async notification=>{
+it('does not hide a resolver error during a stamp notification',async()=>{
   const {live,stream,reject}=heldSelection();
-  const pending=stream.next();live[notification]();reject(new Error('Stable resolver failure'));
+  const pending=stream.next();live.metadataChanged();reject(new Error('Stable resolver failure'));
   await expect(pending).rejects.toThrow('Stable resolver failure');
   expect(await stream.next()).toEqual({done:true,value:undefined});
 });

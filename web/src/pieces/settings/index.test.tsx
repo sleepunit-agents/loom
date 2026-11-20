@@ -7,9 +7,11 @@ import type { SettingsData } from './data';
 import { settingsQuery } from './data';
 import SettingsApp from './index';
 const feed = vi.hoisted(() => ({ query: { status: 'loading' } as DataQuerySnapshot<SettingsData>, hook: vi.fn() }));
-vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.hook(query); return feed.query; } }));
+vi.mock('../attention/home-composer',()=>({HomeMessageComposer:(props:{suggestedText:string})=>h('textarea',{value:props.suggestedText,readOnly:true})}));
+const requestedInput=()=>JSON.parse(tree.root.findByType('textarea').props.value.split('\n').slice(1).join('\n'));
+vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.hook(query);return query.includes('homeComms')?{status:'live',data:{homeComms:{member:'jonathan',agents:['art']},householdSetup:{defaultAgent:'art'}}}:feed.query; } }));
 vi.mock('../../data', () => ({ useRecords() { throw Error('Legacy records used'); }, call() { throw Error('Legacy command used'); } }));
-vi.mock('../../kit', () => ({
+vi.mock('../../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',
   Button: (p: any) => h('button', p), Input: (p: any) => h('input', p),
   Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
   List: (p: any) => h('div', {}, p.children), Row: (p: any) => h('button', { onClick: p.onClick }, p.title, p.meta, p.status),
@@ -48,6 +50,13 @@ it('handles malformed selection ids and never requests a value field', async () 
   expect(text()).toContain('Choose an item'); expect(settingsQuery).not.toMatch(/\bvalue\b/);
 });
 
+it('opens an existing secret from the list while the add form is open',async()=>{
+ feed.query={status:'live',data:data()};
+ const go=await draw('/p/settings-preview/add');
+ const row=tree.root.findAllByType('button').find((button:any)=>button.children.includes('API'));
+ await act(async()=>row.props.onClick());
+ expect(go).toHaveBeenCalledWith('/p/settings-preview/item/secrets/API');
+});
 it('opens the actual add form and clears its controls immediately when the reader feed is lost', async () => {
  feed.query={status:'live',data:data()};await draw('/p/settings-preview/add');
  expect(text()).toContain('Add a secret');expect(tree.root.findAllByType('input').filter((input: any) => input.props.type === 'password')).toHaveLength(1);
@@ -56,9 +65,9 @@ it('opens the actual add form and clears its controls immediately when the reade
 });
 it('mounts the household default in the selected Piece settings reader', async () => {
  feed.query={status:'live',data:data()};await draw('/p/settings-preview/item/pieces/secret-default');
- expect(text()).toContain('Save household default');
+ expect(text()).toContain('Review household default');
  feed.query={status:'live',data:{...data(),secretsReader:null}};await draw('/p/settings-preview/item/pieces/secret-default');
- expect(text()).not.toContain('Save household default');
+ expect(text()).not.toContain('Review household default');
 });
 
 it('replaces controls on a direct live-reader change retaining the same selected secret', async () => {
@@ -86,9 +95,8 @@ it('the registered rule form neither reads nor sends its sibling unsent password
  const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{saved:true}}));vi.stubGlobal('fetch',request);
  vi.stubGlobal('FormData',class{get(name:string){return ({answer:'auto',minutes:'10',on_request:'art',at_start:'mark'} as Record<string,string>)[name]??null;}});
  await act(async()=>{tree=create(h(Suspense,{fallback:h('p',null,'Loading')},h(app.Screen as ComponentType<{path:string;go:(path:string)=>void}>,{path,go:vi.fn()})),{createNodeMock:(element:any)=>element.type==='input'&&element.props.type==='password'?field:null});});
- const rule=tree.root.findAllByType('form').find((form:any)=>form.findAllByType('button').some((button:any)=>button.children.includes('Save rule')));
+ const rule=tree.root.findAllByType('form').find((form:any)=>form.findAllByType('button').some((button:any)=>button.children.includes('Review rule')));
  await act(async()=>rule.props.onSubmit({preventDefault(){},currentTarget:{}}));
- expect(passwordRead).not.toHaveBeenCalled();expect(request).toHaveBeenCalledOnce();
- expect(request.mock.calls[0][0]).toBe('/api/secrets/command');
- expect(JSON.parse(String(request.mock.calls[0][1]?.body)).input).toEqual({action:'rule',secret:'API',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'},{agent:'mark',when:'at_start'}]});
+ expect(passwordRead).not.toHaveBeenCalled();expect(request).not.toHaveBeenCalled();
+ expect(requestedInput()).toEqual({secret:'API',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'},{agent:'mark',when:'at_start'}]});
 });

@@ -1,0 +1,136 @@
+/* The order of the cascade's layers, said before any of them is opened. A layer's place is fixed where it is first
+   named, and the build puts the kit's sheets ahead of the app's: without this line `components` came first and so
+   lowest, under the reset in `base`, and a bare select in a page kept no padding or corners (2026-11-19). */
+@layer properties, theme, base, components, utilities;
+/* What a control looks like inside an app's page (the shell's .next-page, the body of a tile).
+
+   The design is the "how it works" site's (docs/how-it-works/site/site.css: .mbtn, .mbtn--on, .field): small
+   outlined buttons, and at most one filled action a screen, in the app's tint. So in a page the plain <Button> is
+   the quiet outlined one, and the fill is asked for by name: variant="primary". Remove, delete, disconnect and
+   revoke are variant="danger-quiet". Sign-in, the launcher, the dock and the top bar are outside .next-page and keep
+   the library's faces.
+
+   These rules are unlayered on purpose: the library paints a button with utilities and with rules in the
+   cojeev-states layer, and an unlayered rule is the one thing that beats both without a specificity race. The
+   defaults for bare native controls further down sit in the components layer instead, so a utility class on one
+   still wins. Every colour is a token, so each look and both modes draw it in their own. */
+
+.next-page {
+  /* Heights: compact at a desk, a full touch target on the phone shell and under a coarse pointer. */
+  --kit-ctl: 28px;
+  --kit-field: 32px;
+  --kit-tint: var(--t, var(--v-pink));
+  --v-control-radius: var(--r-sm);
+}
+[data-shell="phone"] .next-page { --kit-ctl: 40px; --kit-field: 40px; }
+@media (pointer: coarse) { .next-page { --kit-ctl: 40px; --kit-field: 40px; } }
+
+/* ---- buttons ---- */
+.next-page .v-btn[data-slot="button"]:not(.-card):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *) {
+  height: auto; min-height: var(--kit-ctl); max-width: 100%; padding: 3px 10px; gap: 6px;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  font-size: var(--fs-small); line-height: 1.25; white-space: normal; overflow-wrap: anywhere; text-align: center;
+}
+/* The edge is a border here, so the outline variant's inset shadow goes; a focused button keeps the look's focus glow. */
+.next-page .v-btn[data-slot="button"]:not(.-card):not(:focus-visible):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *) { box-shadow: none; }
+
+/* Quiet: the default, and what variant="outline" already meant. */
+.next-page .v-btn[data-slot="button"]:not(.-card):not(.-accent):not(.-secondary):not(.-danger):not(.-ghost):not(.-primary):not(.-danger-quiet):not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *) {
+  background: transparent; color: var(--v-text); border-color: var(--v-edge);
+}
+.next-page .v-btn[data-slot="button"]:not(.-card):not(.-accent):not(.-secondary):not(.-danger):not(.-ghost):not(.-primary):not(.-danger-quiet):not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *):hover {
+  background: color-mix(in srgb, var(--v-text) 7%, transparent);
+}
+/* The one filled action, in the app's tint. */
+.next-page .v-btn[data-slot="button"].-primary:not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])) {
+  background: var(--kit-tint); border-color: var(--kit-tint); color: var(--v-on-accent);
+}
+.next-page .v-btn[data-slot="button"].-primary:not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])):hover {
+  background: color-mix(in oklab, var(--kit-tint) 86%, var(--v-canvas)); border-color: color-mix(in oklab, var(--kit-tint) 86%, var(--v-canvas));
+}
+/* Quiet danger: the danger ink and a danger edge, no fill. */
+.next-page .v-btn[data-slot="button"].-danger-quiet:not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])) {
+  background: transparent; color: var(--v-danger-ink); border-color: color-mix(in srgb, var(--v-danger) 60%, transparent);
+}
+.next-page .v-btn[data-slot="button"].-danger-quiet:not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])):hover {
+  background: color-mix(in srgb, var(--v-danger) 10%, transparent);
+}
+/* Unavailable: the same shape, drained. */
+.next-page .v-btn[data-slot="button"]:not(.-card):is(:disabled, [aria-disabled="true"]:not([aria-busy="true"])):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *) {
+  background: transparent; color: var(--v-disabled-ink); border-color: var(--v-disabled-edge);
+}
+/* A link-style action ("Open the task"): a button that reads as a link, still a full target on a phone. */
+.loom-kit-link {
+  display: inline-flex; align-items: center; gap: 4px; min-height: var(--kit-ctl, 28px); width: fit-content; max-width: 100%; padding: 0; border-radius: var(--r-xs);
+  font-size: var(--fs-small); color: var(--v-text); text-align: left; text-decoration: underline; text-decoration-color: var(--kit-tint, var(--v-edge)); text-underline-offset: 3px; overflow-wrap: anywhere;
+}
+.loom-kit-link:hover { color: var(--v-text-2); }
+.loom-kit-link:disabled { color: var(--v-disabled-ink); text-decoration-color: currentColor; cursor: not-allowed; }
+@media (prefers-contrast: more) {
+  .next-page .v-btn[data-slot="button"]:not(.-card):not(.-accent):not(.-secondary):not(.-danger):not(.-ghost):not(.-primary):not(.-danger-quiet):not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])):not(:where(.v-seg, [data-slot="input-group"], [role="dialog"], [role="alertdialog"]) *) { border-color: var(--v-text); }
+}
+
+/* ---- a row of buttons ---- */
+.loom-kit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+
+/* ---- a small menu (menu.tsx): More in a reader's actions, New over a list ---- */
+/* (Named for the kit: the old desk's own .loom-menu, in index.css, is a different thing with a plate and a shadow.) */
+.loom-kit-menu { position: relative; display: inline-flex; }
+.loom-kit-menu__box { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; display: grid; gap: 4px; width: max-content; min-width: 148px; max-width: min(260px, 80vw); padding: 6px;
+  border: 1px solid var(--v-edge); border-radius: var(--r-md); background: var(--v-paper); font-family: var(--font-sans); letter-spacing: 0; }
+.next-page .loom-kit-menu .loom-kit-menu__box > .v-btn[data-slot="button"]:not(.-card) { width: 100%; justify-content: flex-start; text-align: left; }
+
+/* ---- a form in a page (field.tsx): each field's words over its control, an optional quiet hint under it ---- */
+.loom-kit-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.loom-kit-field, .loom-kit-field > label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; }
+.loom-kit-field__label { font-size: var(--fs-small); color: var(--v-text-2); }
+.loom-kit-field__hint { font-size: var(--fs-small); color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-kit-field > label > :is(select, input, textarea) { width: 100%; }
+
+/* ---- the library's fields, at the page's scale ---- */
+.next-page input.v-input[data-slot="input"]:not(:where([data-slot="input-group"]) *) { height: var(--kit-field); padding: 0 10px; border-radius: var(--r-sm); font-size: var(--fs-control); }
+.next-page textarea.v-textarea:not(:where([data-slot="textarea-composer"]) *) { min-height: 72px; padding: 7px 10px; border-radius: var(--r-sm); font-size: var(--fs-control); line-height: 1.45; }
+/* (Under 16px a phone's browser zooms the page when a field takes focus.) */
+[data-shell="phone"] .next-page :is(input.v-input[data-slot="input"], textarea.v-textarea, .loom-kit-search input) { font-size: 16px; }
+
+/* ---- a compact search field: its words are the placeholder, its name is an aria-label ---- */
+.loom-kit-search { display: flex; align-items: center; gap: 6px; height: var(--kit-field, 32px); padding: 0 9px; border: 1px solid var(--v-border); border-radius: var(--r-sm); background: var(--input, transparent); color: var(--v-text-3); min-width: 0; }
+.loom-kit-search:focus-within { border-color: var(--kit-tint, var(--v-pink)); color: var(--v-text-2); }
+.loom-kit-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; outline: none; box-shadow: none; color: var(--v-text); font-size: var(--fs-small); }
+.loom-kit-search input::placeholder { color: var(--v-text-3); opacity: 1; }
+.loom-kit-search input:disabled { cursor: not-allowed; }
+.loom-kit-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* ---- bare native controls in a page: the reset leaves them with no edge at all (styles/cojeev/base.css) ---- */
+@layer components {
+  .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot]):not([multiple]):not([size])) {
+    appearance: none; height: var(--kit-field); max-width: 100%; padding: 0 28px 0 10px; border-radius: var(--r-sm);
+    background-color: var(--input, transparent); color: var(--v-text); box-shadow: inset 0 0 0 1px var(--v-edge); font-size: var(--fs-control);
+    /* The chevron is two gradients so it takes the text's colour in every look. */
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat;
+  }
+  .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot]))[multiple],
+  .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot]))[size] { padding: 4px; border-radius: var(--r-sm); background: var(--input, transparent); box-shadow: inset 0 0 0 1px var(--v-edge); font-size: var(--fs-control); }
+  .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot])) option { background: var(--v-paper); color: var(--v-text); }
+  .next-page :where(textarea:not([class^="v-"]):not([class*=" v-"]):not([data-slot])) {
+    display: block; width: 100%; min-height: 72px; padding: 7px 10px; border-radius: var(--r-sm); resize: vertical;
+    background: var(--input, transparent); color: var(--v-text); box-shadow: inset 0 0 0 1px var(--v-edge); font-size: var(--fs-control); line-height: 1.45;
+  }
+  .next-page :where(input:not([class]):not([data-slot]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"])) {
+    height: var(--kit-field); max-width: 100%; padding: 0 10px; border-radius: var(--r-sm);
+    background: var(--input, transparent); color: var(--v-text); box-shadow: inset 0 0 0 1px var(--v-edge); font-size: var(--fs-control);
+  }
+  .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot]), textarea:not([class^="v-"]):not([class*=" v-"]):not([data-slot]), input:not([class]):not([data-slot])):disabled { color: var(--v-disabled-ink); cursor: not-allowed; }
+  .next-page :where(input:is([type="checkbox"], [type="radio"]):not([class^="v-"]):not([class*=" v-"]):not([data-slot])) {
+    flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--kit-tint); vertical-align: -3px;
+  }
+  /* A label's words and its control never touch; a checkbox sits beside its words, a field wraps under them. */
+  .next-page :where(label:has(> select, > input, > textarea)) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+  .next-page :where(fieldset:not([class^="v-"]):not([class*=" v-"])) { min-width: 0; margin: 0; padding: 10px 0 0; border-top: 1px solid var(--v-border); }
+  .next-page :where(fieldset:not([class^="v-"]):not([class*=" v-"])) > legend {
+    padding: 0 10px 0 0; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3);
+  }
+  [data-shell="phone"] .next-page :where(select, textarea, input):not([class^="v-"]):not([class*=" v-"]):not([data-slot]) { font-size: 16px; }
+  [data-shell="phone"] .next-page :where(input:is([type="checkbox"], [type="radio"]):not([class^="v-"]):not([class*=" v-"]):not([data-slot])) { width: 20px; height: 20px; }
+}

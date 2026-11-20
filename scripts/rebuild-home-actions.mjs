@@ -6,10 +6,10 @@ export async function homeActions({page,tile,app,out}){
   const check=(yes,message)=>{if(!yes)throw Error(message);};
   const fern=tile.getByRole('region',{name:'Fern card',exact:true}),moss=tile.getByRole('region',{name:'Moss card',exact:true});
   await fern.getByText(/Three fit\. The quiet model/).waitFor();
-  await fern.getByRole('region',{name:'Fern conversations',exact:true}).getByRole('button',{name:/Repair the garden pump/}).first().waitFor();
-  for(const card of [fern,moss])check(await card.getByRole('textbox',{name:'Message',exact:true}).count()===1&&await card.getByRole('button',{name:'Send',exact:true}).count()===1,'An owned agent has no Home composer');
+  await fern.getByRole('navigation',{name:'Fern conversations',exact:true}).getByRole('link',{name:/Repair the garden pump/}).first().waitFor();
+  for(const [card,name] of [[fern,'Message Fern'],[moss,'Message Moss']])check(await card.getByRole('textbox',{name,exact:true}).count()===1&&await card.getByRole('button',{name:'Send',exact:true}).count()===1,'An owned agent has no Home composer');
   const words='Fictitious Home request: check the garden latch.';
-  await fern.getByRole('textbox',{name:'Message',exact:true}).fill(words);
+  await fern.getByRole('textbox',{name:'Message Fern',exact:true}).fill(words);
   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
   await fern.getByRole('button',{name:'Send',exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Home send was refused');
   const comms=page.getByRole('region',{name:'Comms tile',exact:true});await comms.getByText(words,{exact:true}).waitFor();

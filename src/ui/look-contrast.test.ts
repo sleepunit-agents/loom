@@ -9,7 +9,7 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { MARKS as HOUSEHOLD_MARKS } from '../household.js';
+import { MARKS as APP_MARKS } from '../../web/src/look';
 
 const root = new URL('../../web/src/', import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -83,7 +83,7 @@ const MORE_PAIRS: Array<[string, string, number]> = [
 ];
 
 const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
-const MARKS = HOUSEHOLD_MARKS.map((m) => m.name.toLowerCase());
+const MARKS = Object.values(APP_MARKS);
 
 describe('each look\'s contrast', () => {
   it('ships at least Neon Noir, Low Light and Daylight, each a token set and nothing else', () => {

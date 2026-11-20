@@ -124,7 +124,9 @@ it('rechecks receipt replay inside its transaction even if a synchronous hashing
 it('does not begin prepared IO when post-commit admission observers withdraw its grant',async()=>{
  const f=fixture();let prepares=0;
  f.grants.set(hash(raw.program),{records:[],operations:['fixture.io']});
- f.root.operations.register({name:'fixture.io',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,prepare:async()=>{prepares++;},run(){return{saved:true};}});
+ f.root.operations.register({name:'fixture.io',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,prepare:async()=>{prepares++;},run(){return{saved:true};},
+  // Observers hear of a commit that wrote something: the admission reserves its work with a row.
+  admit(){f.db.update(members).set({joinedAt:new Date().toISOString()}).where(eq(members.id,'sam')).run();},recover:()=>undefined});
  const stop=f.root.writes.observe(()=>f.grants.set(hash(raw.program),{records:[],operations:[]}));
  try{expect((await f.call('fixture.io',{},'io')).status).toBe(403);expect(prepares).toBe(0);}finally{stop();}
 });

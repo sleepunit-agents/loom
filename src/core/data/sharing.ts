@@ -35,17 +35,18 @@ export function readSharingPolicy(db: DataDatabase) {
   const ownership=db.query.memberAgents.findMany({columns:{member:true,agent:true}}).sync();
   const people=db.query.projectMembers.findMany({columns:{project:true,member:true}}).sync();
   const bodies=db.query.projectAgents.findMany({columns:{project:true,agent:true}}).sync();
-  const members=db.query.members.findMany({columns:{id:true,role:true}}).sync();
-  const projects=db.query.projects.findMany({columns:{id:true}}).sync();
+  const members=db.query.members.findMany({columns:{id:true,role:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
+  const projects=db.query.projects.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
+  const agents=db.query.agents.findMany({columns:{id:true},where:(f,{isNull})=>isNull(f.removedAt)}).sync();
   const group=<T>(rows:T[],key:(row:T)=>string,value:(row:T)=>string)=>{
     const result=new Map<string,string[]>();
     for(const row of rows){const id=key(row),items=result.get(id)??[];items.push(value(row));result.set(id,items);}
     return result;
   };
   const owned=group(ownership,r=>r.member,r=>r.agent),projectPeople=group(people,r=>r.project,r=>r.member),projectBodies=group(bodies,r=>r.project,r=>r.agent);
-  return {members:Object.fromEntries(members.map(row=>[row.id,{owner:row.role==='owner',agents:owned.get(row.id)??[]}])),
+  return {agents:agents.map(row=>row.id),members:Object.fromEntries(members.map(row=>[row.id,{owner:row.role==='owner',agents:owned.get(row.id)??[]}])),
     projects:Object.fromEntries(projects.map(row=>[row.id,{members:projectPeople.get(row.id)??[],agents:projectBodies.get(row.id)??[]}]))};
 }
 export function readConversationScope(db: DataDatabase,id:string){
-  return db.query.conversations.findFirst({columns:{agent:true,project:true,member:true},where:(f,{eq})=>eq(f.id,id)}).sync();
+  return db.query.conversations.findFirst({columns:{agent:true,project:true,member:true,direct:true},where:(f,{eq})=>eq(f.id,id)}).sync();
 }

@@ -14,7 +14,7 @@ export function wearPreferences(p: Prefs) {
   keep('loom-mode', document.documentElement.dataset.mode!);
   wearMotion(p.motion ?? 'follow'); keep('loom-motion', p.motion ?? 'follow');
   wearContrast(p.contrast ?? 'follow'); keep('loom-contrast', p.contrast ?? 'follow');
-  for (const [key, fallback] of Object.entries({ sound:false, pixel:true, icons:false, haptics:true, zoom:false, oneWindow:false })) {
+  for (const [key, fallback] of Object.entries({ sound:false, pixel:true, haptics:true, zoom:false, oneWindow:false })) {
     const on = p[key as keyof Prefs] ?? fallback;
     keep(`loom-${key === 'oneWindow' ? 'one-window' : key}`, on ? 'on' : 'off');
     document.documentElement.dataset[key] = on ? 'on' : 'off';

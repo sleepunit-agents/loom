@@ -11,8 +11,10 @@
  * transaction per mutation). This module is those rules once; people.ts and
  * projects.ts add their own shape, render and side tables.
  */
+import { DAY_MS } from '../core/day.js';
 import type { Database } from 'better-sqlite3';
 import { pathSegmentError } from '../path-safety.js';
+import { SLUG } from '../slug.js';
 import { retryWrite } from './retry.js';
 
 /** Borrow an already prepared source inside its caller-owned transaction.
@@ -39,14 +41,20 @@ export function fail(message: string): never {
 
 // ─── Validation primitives ───────────────────────────────────────────────────
 
-export const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+export const SLUG_RE = SLUG;
 export const FIELD_RE = /^[a-z0-9_]+$/;
 export const MAX_FIELD_NAME = 32;
 export const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 export const DEFAULT_STALE_DAYS = 14;
+/** How many displaced versions are kept of a card, a memory or a knowledge page; older ones are pruned. */
 export const MAX_REVISIONS = 10;
+/** Limits a person card and a project card share (the specs' Shape and Rendering sections). The door's
+ * forms take theirs from here too, so what a form accepts is what the store takes. */
+export const CARD_NAME_MAX = 80;
+export const CARD_SUMMARY_MAX = 1200;
+export const CARD_FIELDS_MAX = 12;
+export const CARD_RENDER_MAX = 2000;
 const SKEW_MS = 60_000;
-const DAY_MS = 86_400_000;
 
 /**
  * The harness's gating names. Fixed here, not configured: a card that carried
@@ -137,12 +145,18 @@ export interface EnvelopeBase {
 
 export type FieldState = { kind: 'ok' } | { kind: 'unverified' } | { kind: 'stale'; days: number };
 
-/** Stale when now − verified_at > stale_after_days × 86,400 s (strictly greater). */
+/** The last moment a checked field still counts as fresh: its own number of days after it was checked, or
+ * the default. It is stale strictly after this. Undefined for a field that was never checked. */
+export function freshUntil(env: EnvelopeBase): number | undefined {
+  return env.verified_at ? Date.parse(env.verified_at) + (env.stale_after_days ?? DEFAULT_STALE_DAYS) * DAY_MS : undefined;
+}
+
+/** Stale when now − verified_at > stale_after_days × 86,400 s (strictly greater). The rendered card and
+ * the door's People and Projects reads all ask here. */
 export function fieldState(env: EnvelopeBase, nowMs: number): FieldState {
-  if (!env.verified_at) return { kind: 'unverified' };
-  const age = nowMs - Date.parse(env.verified_at);
-  const limit = (env.stale_after_days ?? DEFAULT_STALE_DAYS) * DAY_MS;
-  if (age > limit) return { kind: 'stale', days: Math.floor(age / DAY_MS) };
+  const until = freshUntil(env);
+  if (until === undefined) return { kind: 'unverified' };
+  if (nowMs > until) return { kind: 'stale', days: Math.floor((nowMs - Date.parse(env.verified_at!)) / DAY_MS) };
   return { kind: 'ok' };
 }
 
@@ -291,17 +305,16 @@ const BASE_COLUMNS = ['slug', 'name', 'card_json', 'archived_at', 'archived_by',
  */
 export class CardTable<R extends CardRowBase> {
   private readonly columns: string[];
-  private changes: Set<string> | undefined;
+  /** True while one of this table's own mutations is running: a mutation inside it joins its transaction. */
+  private mutating = false;
   readonly selectRowSql: string;
 
   constructor(
     readonly db: Database,
     private readonly spec: { table: string; revisions: string; extraColumns?: readonly string[]; noun: CardNoun },
     private readonly actor: string | null,
-    private readonly committed?: (slug: string) => void,
     private readonly callerTransaction = false,
   ) {
-    if(callerTransaction&&committed)throw Error('Caller-owned cards must publish after their source commit');
     // The base columns' order is load-bearing: write-race tests hook the
     // row read by its `SELECT slug, name, card_json` prefix.
     this.columns = [...BASE_COLUMNS, ...(spec.extraColumns ?? [])];
@@ -350,27 +363,16 @@ export class CardTable<R extends CardRowBase> {
          ON CONFLICT(slug) DO UPDATE SET ${cols.filter((c) => c !== 'slug').map((c) => `${c} = excluded.${c}`).join(', ')}`,
       )
       .run(row);
-    this.changes?.add(row.slug);
   }
 
   /** One BEGIN IMMEDIATE transaction around `fn`, retried as a whole on SQLITE_BUSY. */
   mutate<T>(fn: () => T): T {
-    const parent = this.changes;
+    const outer = this.mutating;
     if(this.callerTransaction&&!this.db.inTransaction)throw Error('Card mutations require the caller source transaction');
-    if (this.db.inTransaction && !parent && !this.callerTransaction) throw new Error('Card mutations must own the outer transaction');
-    const changes = new Set<string>();
-    this.changes = changes;
-    try {
-      const result = retryWrite(() => {
-        changes.clear();
-        return this.db.transaction(fn).immediate();
-      });
-      if (parent) for (const slug of changes) parent.add(slug);
-      else if (!this.db.inTransaction) for (const slug of changes) {
-        try { this.committed?.(slug); } catch { /* notification never undoes a committed card */ }
-      }
-      return result;
-    } finally { this.changes = parent; }
+    if (this.db.inTransaction && !outer && !this.callerTransaction) throw new Error('Card mutations must own the outer transaction');
+    this.mutating = true;
+    try { return retryWrite(() => this.db.transaction(fn).immediate()); }
+    finally { this.mutating = outer; }
   }
 
   requireActive(slug: string, verb: string): R {

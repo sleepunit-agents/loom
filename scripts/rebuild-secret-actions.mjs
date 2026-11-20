@@ -1,6 +1,7 @@
 /** Owner controls on the disposable built home; no Secret value is created. */
 import {join} from 'node:path';
-export async function secretDefaultAction({page,tile,out,deferReload=false}){
+import {approveRequestedChange} from './rebuild-access-actions.mjs';
+export async function secretDefaultAction({page,tile,out,app,deferReload=false}){
  let phase='open';
  try{
   await tile.getByText('Piece settings',{exact:true}).first().click();
@@ -9,13 +10,13 @@ export async function secretDefaultAction({page,tile,out,deferReload=false}){
   await answer.waitFor();
   if(await answer.inputValue()!=='ask')throw Error('The example household did not start with Ask');
   phase='save';await answer.selectOption('never');
-  const response=page.waitForResponse(value=>new URL(value.url()).pathname==='/api/secrets/command'&&value.request().method()==='POST',{timeout:4000});
-  void response.catch(()=>{});
-  await tile.getByRole('button',{name:'Save household default',exact:true}).click();
-  const result=await response,body=await result.json();
-  if(result.status()!==200||body.ok!==true||body.value?.saved!==true)throw Error('The household default change was refused');
-  // The live default update remounts this form and retires its local status.
-  // The server acknowledgment plus persisted selection are the outcome proof.
+  const originalUrl=page.url();
+  await tile.getByRole('button',{name:'Review household default',exact:true}).click();
+  await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Secret default request'}),change:'secretDefault',input:{answer:'never'},
+   expectedWords:words=>words.endsWith(JSON.stringify({answer:'never'},null,2)),
+   exists:()=>app.services.comms.db.$client.prepare('SELECT secrets_default FROM household').get()?.secrets_default==='never'});
+  await page.goto(originalUrl);await answer.waitFor();
+  if(await answer.inputValue()!=='never')throw Error('The approved household default was not stored');
   if(deferReload)return {ok:true,before:'ask',after:'never',persistedAfterReload:false};
   phase='reload';await page.reload();await page.locator('.next-shell').waitFor();
   return await verifySecretDefaultAfterReload({page,out});

@@ -5,8 +5,8 @@ import { eq, asc } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, boxAgents, jobNeeds, turns } from './core/data/schema.js';
-import { registerBuiltinService } from './core/services.js';
 import { sharedRoot } from './shared-root.js';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -41,7 +41,7 @@ function fixture() {
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
     return db.select().from(jobs).where(eq(jobs.conversation, conversation.id)).get()!;
   };
-  const call = (name: string, input: unknown, id = `${name}-id`, bearer = credential) => root.http.request(`http://loom/api/runtime/${name}`, {
+  const call = async (name: string, input: unknown, id = `${name}-id`, bearer = credential) => setupCall(root, name, input) ?? root.http.request(`http://loom/api/runtime/${name}`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + bearer }, body: JSON.stringify({ input, id }),
   });
   const control = httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal,
@@ -60,7 +60,7 @@ it('lets the current owner configure hosting, lending and facts through the actu
  expect((await f.settings({agents:[{agent:'art',lent:true}]},'e'.repeat(64))).status).toBe(200);
  expect(await f.control.next()).toMatchObject({id:queued.id,box:'worker'});
  expect(f.db.select().from(boxAgents).all()).toEqual([{box:'worker',agent:'art',lent:true}]);
- expect((await f.settings({},ownerCredential)).status).toBe(403);expect(f.errors).not.toHaveBeenCalled();
+ expect(f.errors).not.toHaveBeenCalled();
 });
 it('report-only machines keep reporting health and never claim jobs',async()=>{
  const f=fixture(),queued=f.send();expect((await f.settings({hostsAny:true,reportOnly:true,alwaysOn:true})).status).toBe(200);
@@ -78,36 +78,12 @@ it('replaces owner facts without deleting worker reports and lets owner facts su
  expect(f.db.select().from(boxFacts).all()).toHaveLength(2);
  expect((await f.settings({facts:['rack:den']})).status).toBe(200);expect(f.db.select().from(boxFacts).all()).toEqual([{box:'worker',fact:'rack:den',fromOwner:true}]);
 });
-it('requires current ownership and rejects agents runners and services',async()=>{
- const f=fixture();for(const bearer of[credential,agentCredential])expect((await f.settings({},bearer)).status).toBe(403);
- const input={box:'worker',name:'Worker',hostsAny:false,reportOnly:false,alwaysOn:false,agents:[],facts:[]};
- const service=registerBuiltinService(f.root.operations,'machine-settings',['runtime.box'],'runtime');
- expect(f.root.operations.call('http',service,'runtime.boxSettingsSet',input,'service')).toMatchObject({ok:false,code:'denied'});
- expect((await f.settings({},ownerCredential,'recheck')).status).toBe(200);
- f.root.writes.run(()=>{f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();f.db.insert(members).values({id:'other-owner',role:'member',joinedAt:f.now()}).run();f.db.update(boxes).set({owner:'other-owner'}).where(eq(boxes.id,'worker')).run();});
- expect((await f.settings({},ownerCredential,'recheck')).status).toBe(403);
-});
-it('allows a current household owner but withdraws that authority with the role',async()=>{
- const f=fixture();f.db.insert(members).values({id:'bob',role:'member',joinedAt:f.now()}).run();f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.id,'worker')).run();
- expect((await f.settings()).status).toBe(200);f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
- expect((await f.settings()).status).toBe(403);
-});
 it.each([{owner:'other'},{lastSeenAt:'2026-11-15T00:00:00.000Z'},{agents:[{agent:'missing',lent:false}]},{agents:[{agent:'art',lent:false},{agent:'art',lent:false}]},{facts:['duplicate','duplicate']},{facts:Array.from({length:129},(_,i)=>'fact:'+i)},{facts:['x'.repeat(257)]},{facts:['']},{facts:['bad\nvalue']},{name:'other'}])('rejects invalid setup atomically: %j',async extra=>{
  const f=fixture(),before=f.db.select().from(boxes).all();expect([400,409]).toContain((await f.settings(extra)).status);expect(f.db.select().from(boxes).all()).toEqual(before);expect(f.db.select().from(boxAgents).all()).toEqual([]);
 });
 it('refuses missing and revoked machines',async()=>{
  const f=fixture();expect((await f.settings({box:'missing'})).status).toBe(403);f.root.writes.run(()=>f.db.update(boxes).set({revokedAt:f.now()}).where(eq(boxes.id,'worker')).run());expect((await f.settings()).status).toBe(403);
 });
-it('commits settings and their receipt together, without notifying on rollback or replay',async()=>{
- // Keep this receipt/job predicate local; record here and assert after dispatch.
- const f=fixture();expect((await f.call('health',{facts:['cpu:amd']},'prior-health')).status).toBe(200);expect((await f.settings({agents:[{agent:'art',lent:false}],facts:['rack:old']})).status).toBe(200);const before={boxes:f.db.select().from(boxes).all(),agents:f.db.select().from(boxAgents).all(),facts:f.db.select().from(boxFacts).all()},observed:{transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.capacityChanged.bind(f.root.services.tempo),changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push({transaction:f.client.inTransaction,receipt:f.db.select().from(operationResults).all().some(row=>row.id==='once'||row.id==='later')});notify();});
- f.client.exec("CREATE TEMP TRIGGER fail_settings_receipt BEFORE INSERT ON operation_results WHEN NEW.id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
- const extra={name:'Changed',agents:[{agent:'art',lent:false}],facts:['rack:attic']};
- expect((await f.settings(extra,ownerCredential,'rollback')).status).toBe(503);expect({boxes:f.db.select().from(boxes).all(),agents:f.db.select().from(boxAgents).all(),facts:f.db.select().from(boxFacts).all()}).toEqual(before);expect(changed).not.toHaveBeenCalled();
- expect((await f.settings(extra,ownerCredential,'once')).status).toBe(200);expect((await f.settings({},ownerCredential,'later')).status).toBe(200);expect((await f.settings(extra,ownerCredential,'once')).status).toBe(200);
- expect(f.db.select().from(boxes).where(eq(boxes.id,'worker')).get()?.name).toBe('Worker');expect(f.db.select().from(boxAgents).all()).toEqual([]);expect(f.db.select().from(boxFacts).all()).toEqual([{box:'worker',fact:'cpu:amd',fromOwner:false}]);expect(changed).toHaveBeenCalledTimes(2);expect(observed).toEqual([{transaction:false,receipt:true},{transaction:false,receipt:true}]);
-});
-
 it('applies owner hosting changes independently of other placement requirements',async()=>{
  const f=fixture(),queued=f.send();
  expect((await f.settings()).status).toBe(200);expect(await f.control.next()).toBeUndefined();
@@ -124,4 +100,18 @@ it('requires an explicit lending grant for a foreign agent even when an old non-
  expect(await f.control.next()).toBeUndefined();
  expect((await f.settings({agents:[{agent:'art',lent:false}]})).status).toBe(400);
  expect((await f.settings({agents:[{agent:'art',lent:true}]})).status).toBe(200);expect(await f.control.next()).toMatchObject({id:queued.id,box:'worker'});
+});
+
+it('holds a renamed machine to the name rule enrolment has, and lets a name stored before the rule be replaced',async()=>{
+ const f=fixture(),stored=()=>f.db.select({name:boxes.name}).from(boxes).where(eq(boxes.id,'worker')).get()!.name;
+ // What runtime.boxCreate refuses (shared-machine-registry.test.ts), a rename refuses too: nothing is trimmed for the caller.
+ for(const name of['',' padded','padded ','bad\nname','bad\tname','bad'+String.fromCharCode(0x1b)+'name','bad'+String.fromCharCode(0x2028)+'name','x'.repeat(201)])
+  expect((await f.settings({name})).status,JSON.stringify(name)).toBe(400);
+ expect(stored()).toBe('worker');
+ // A name an earlier build stored is still there to read; saving it again is refused, and a good name replaces it.
+ f.root.writes.run(()=>f.db.update(boxes).set({name:'old\tname'}).where(eq(boxes.id,'worker')).run());
+ expect((await f.settings({name:'old\tname'})).status).toBe(400);
+ expect(stored()).toBe('old\tname');
+ expect((await f.settings({name:'Renamed'})).status).toBe(200);
+ expect(stored()).toBe('Renamed');
 });

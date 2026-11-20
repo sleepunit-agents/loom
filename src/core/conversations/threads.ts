@@ -2,18 +2,20 @@ import { threadTitle } from './title.js';
 /** Private Comms thread metadata over the same conversation and message tables.
  * This trusted service takes already authenticated inputs from its caller. */
 import { randomUUID } from 'node:crypto';
-import { and, count, eq, max } from 'drizzle-orm';
+import { and, count, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, messages, threads } from '../data/schema.js';
-import { Conversations } from './index.js';
+import { unendedJobStates } from '../data/job-states.js';
+import { conversations, deletedThreads, jobs, messages, threads } from '../data/schema.js';
+import { Conversations, lateMailWaits, type LateJoins } from './index.js';
 
 type Thread = typeof threads.$inferSelect;
-export type ThreadInput = { id?: string; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
+export type ThreadInput = { id?: string; venue?: 'loom' | 'terminal'; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
 
 export class Threads {
   readonly conversations: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {
-    this.conversations = new Conversations(db, now);
+  /** `lateJoins` is the conversations service's (index.ts): closed unless the composition gives the rule. */
+  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), lateJoins: LateJoins = lateMailWaits) {
+    this.conversations = new Conversations(db, now, lateJoins);
   }
 
   thread(id: string): Thread {
@@ -29,11 +31,11 @@ export class Threads {
       const existing = this.db.select().from(threads).where(eq(threads.id, id)).get();
       if (existing) {
         const cv = this.conversations.conversation(existing.conversation);
-        if (cv.agent !== input.agent || cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Thread identity differs');
+        if (cv.venue !== (input.venue ?? 'loom') || cv.agent !== input.agent || cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Thread identity differs');
         return existing;
       }
       const title = this.title(input.title), at = this.now();
-      const cv = this.conversations.open({ agent: input.agent, member: input.member, project: input.project, venue: 'loom', place: id, label: title });
+      const cv = this.conversations.open({ agent: input.agent, member: input.member, project: input.project, venue: input.venue ?? 'loom', place: id, label: title }, at);
       if (cv.member !== input.member || cv.project !== (input.project ?? null)) throw new Error('Conversation is not this private thread');
       return this.db.insert(threads).values({ id, conversation: cv.id, title, titledBy: input.titledBy ?? 'member', pinned: false, openedAt: at, lastAt: at, readSeq: 0, working: false, stopRequested: false }).returning().get();
     });
@@ -50,7 +52,11 @@ export class Threads {
       const thread = this.thread(id);
       if (by === 'agent' && thread.titledBy === 'member') return thread;
       const title = this.title(value);
+      // The title is kept in three places: the thread, its conversation's label, and the title a job
+      // copied when it was queued. This is the one place a title changes, so all three change here.
+      // A finished job keeps the title it ran under.
       this.db.update(conversations).set({ label: title }).where(eq(conversations.id, thread.conversation)).run();
+      this.db.update(jobs).set({ title }).where(and(eq(jobs.conversation, thread.conversation), inArray(jobs.state, unendedJobStates))).run();
       return this.db.update(threads).set({ title, titledBy: by }).where(eq(threads.id, id)).returning().get()!;
     });
   }

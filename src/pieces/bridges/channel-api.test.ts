@@ -172,3 +172,46 @@ it.each([
   expect(await api.channel(f.id), phase).toBeUndefined();
   expect(f.request).toHaveBeenCalledTimes(1);
 });
+
+it('asks Discord about no channel whose id authentication would refuse', async () => {
+  const f = fixture('discord');
+  // A leading zero, and one past the largest id Discord can make: the same rule as discord-id.ts.
+  for (const id of ['0123', '18446744073709551616', '', '12a']) expect(await f.api.channel(id)).toBeUndefined();
+  expect(f.request).not.toHaveBeenCalled();
+  expect(await f.api.channel(f.id)).toEqual(f.raw);
+});
+
+it('reads who wrote the message a Discord thread was started from, and nothing when there is none', async () => {
+  const f = fixture();
+  f.request.mockImplementation(async () => Response.json({ id: '123', channel_id: '789', author: { id: '555', bot: true }, content: 'not kept' }));
+  expect(await f.api.starter('789', '123')).toBe('555');
+  expect(f.request.mock.calls[0][0]).toBe('https://discord.com/api/v10/channels/789/messages/123');
+  expect(f.request.mock.calls[0][1]).toMatchObject({ method: 'GET', redirect: 'error', headers: { Authorization: 'Bot synthetic-token' } });
+  // Another message, another channel, no author, or no such message: the thread hangs under nobody's.
+  for (const answer of [{ id: '124', channel_id: '789', author: { id: '555' } }, { id: '123', channel_id: '780', author: { id: '555' } }, { id: '123', channel_id: '789' }, { id: '123', channel_id: '789', author: { id: '../x' } }]) {
+    f.request.mockImplementationOnce(async () => Response.json(answer));
+    expect(await f.api.starter('789', '123')).toBeUndefined();
+  }
+  f.request.mockImplementationOnce(async () => Response.json({ message: 'Unknown Message', code: 10008 }, { status: 404 }));
+  expect(await f.api.starter('789', '123')).toBeUndefined();
+  const before = f.request.mock.calls.length;
+  expect(await f.api.starter('../789', '123')).toBeUndefined();
+  expect(await f.api.starter('789', '123/x')).toBeUndefined();
+  expect(f.request.mock.calls.length).toBe(before);
+  // Slack threads are told by the message itself.
+  const slack = fixture('slack');
+  expect(await slack.api.starter('CROOM', '123')).toBeUndefined();
+  expect(await slack.api.roles()).toBeUndefined();
+  expect(slack.request).not.toHaveBeenCalled();
+});
+it('reads the guild\'s roles as a list, and nothing else as one', async () => {
+  const f = fixture();
+  const roles = [{ id: '1', managed: true, tags: { bot_id: '2' } }];
+  f.request.mockImplementationOnce(async () => Response.json(roles));
+  expect(await f.api.roles()).toEqual(roles);
+  expect(f.request.mock.calls[0][0]).toBe('https://discord.com/api/v10/guilds/456/roles');
+  f.request.mockImplementationOnce(async () => Response.json({ message: 'Missing Access' }, { status: 403 }));
+  expect(await f.api.roles()).toBeUndefined();
+  f.request.mockImplementationOnce(async () => Response.json({ roles }));
+  expect(await f.api.roles()).toBeUndefined();
+});

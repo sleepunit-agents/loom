@@ -1,3 +1,4 @@
+import { displayName } from '../../kit/words';
 /** Fields selected from the approved shared model; no second persisted record. */
 export interface Change {
   id: string; repository: string; number: number; title: string; body: string; url: string;
@@ -18,7 +19,32 @@ export interface ChangeSnapshot {
   timezone: string;
 }
 const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
-export const summary = (c: Pick<Change, 'state' | 'checks' | 'review' | 'waitingOn' | 'draft'>) => `${c.state === 'open' ? `CI ${c.checks}, ${c.review.replaceAll('_', ' ')}, Waiting on ${c.waitingOn}` : c.state}${c.draft ? ' · Draft' : ''}`;
+/** Every stored state word in plain words, said in this one place (the server's own are in src/pieces/changes/model.ts). */
+export const checksWord: Record<Change['checks'], string> = { passing: 'Checks passing', failing: 'Checks failing', running: 'Checks running', none: 'No checks' };
+export const checkWord: Record<'failing' | 'running', string> = { failing: 'Failing', running: 'Running' };
+export const reviewWord: Record<Change['review'], string> = { approved: 'Approved', changes_requested: 'Changes requested', required: 'Review needed', not_required: 'No review needed' };
+export const stateWord: Record<Change['state'], string> = { open: 'Open', merged: 'Merged', closed: 'Closed' };
+export const mergeableWord: Record<Change['mergeable'], string> = { yes: 'Yes', no: 'No', unknown: 'Not known yet' };
+export const roleWord: Record<ChangeSnapshot['people'][number]['role'], string> = { author: 'Author', reviewer: 'Reviewed it', requested: 'Asked to review', assignee: 'Assigned', commenter: 'Commented' };
+type Stated = Pick<Change, 'state' | 'waitingOn'> & Partial<Pick<Change, 'agent' | 'draft'>>;
+/** Who it waits on, as one short state: the row's whole status. "you" is the person who answers the merge; "agent"
+ * the agent that will merge it, by name; "ci" the checks (or GitHub still working out whether it can merge);
+ * "reviewer" a review it needs; "author" whoever opened it (a draft, a conflict, failing checks, changes asked
+ * for); "done" merged or closed. */
+export function waitingWord(c: Stated, name: (id: string) => string = displayName): string {
+  if (c.state !== 'open') return stateWord[c.state];
+  const on: Record<Change['waitingOn'], string> = { you: 'Waiting on you', agent: c.agent ? `Waiting on ${name(c.agent)}` : 'Waiting on its agent', ci: 'Waiting on the checks',
+    reviewer: 'Waiting on a reviewer', author: 'Waiting on its author', done: 'Done' };
+  return on[c.waitingOn] ?? c.waitingOn;
+}
+/** A row's one short state. Where a change waits on its author for a reason the row can say, it says the reason. */
+export function rowWord(c: Stated & Partial<Pick<Change, 'checks' | 'review'>>, name?: (id: string) => string): string {
+  const why = c.state !== 'open' || c.waitingOn !== 'author' ? '' : c.draft ? 'Draft' : c.checks === 'failing' ? checksWord.failing : c.review === 'changes_requested' ? reviewWord.changes_requested : '';
+  return why || `${waitingWord(c, name)}${c.draft ? ' · Draft' : ''}`;
+}
+/** The whole of it on one quiet line: checks, review, who it waits on. */
+export const summary = (c: Stated & Pick<Change, 'checks' | 'review'>, name?: (id: string) => string) =>
+  `${c.state === 'open' ? `${checksWord[c.checks] ?? c.checks} · ${reviewWord[c.review] ?? c.review} · ${waitingWord(c, name)}` : stateWord[c.state]}${c.draft ? ' · Draft' : ''}`;
 export function rows(snapshot: ChangeSnapshot, folder: string, query: string) {
   if (snapshot.status !== 'live') return [];
   const words = query.trim().toLowerCase().split(/\s+/);

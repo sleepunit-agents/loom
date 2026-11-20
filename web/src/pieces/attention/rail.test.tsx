@@ -14,7 +14,7 @@ function homeFixture() {
  })}}};
 }
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskDoing')?{status:f.snapshots['generated.jobs'].status,data:{agentDoing:{more:(f.snapshots['generated.jobs'] as any).more??0,claimed:54,items:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent).map((row:any)=>({kind:'job',title:null,with:null,place:null,direct:null,ref:null,machine:null,href:null,since:row.queuedAt??'2026-11-14T01:00:00Z',state:'running',...row}))}}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['attention.ask','household.agentDisplay','person','thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
@@ -37,16 +37,18 @@ afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();})
 it('keeps only the owned roster in saved order, opens the first unread thread and reads full asks in Inbox',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
- expect(text()).toContain('Checking the backup');expect(text()).toContain('1 unread thread');
+ expect(text()).not.toContain('Checking the backup');expect(text()).toContain('1 unread thread');
+ // A card is the face, name and state, what the agent is doing and its unread count: the ask is said once, at the top.
+ expect(tree.root.findAllByProps({className:'desk-rail-ask'})).toHaveLength(0);expect(tree.root.findByProps({'aria-label':'Art rail card'}).findAllByType('button')).toHaveLength(2);
  await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
- await act(async()=>tree.root.findByProps({className:'desk-rail-ask'}).findByType('button').props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
- await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark'}]);expect(text()).not.toContain('Art conversation');expect(text()).not.toContain('Checking the backup');
+ await act(async()=>tree.root.findByProps({className:'desk-rail-needs'}).findAllByType('button')[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
+ await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark'}]);expect(text()).not.toContain('Art conversation');
 });
 it.each(['offline','denied','loading'] as const)('drops stale names, asks, work and private thread metadata on %s',async(status)=>{
  f.snapshots.person=live([{id:'commons:art',slug:'art',kind:'agent',name:'Directory name'}]);
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});expect(text()).toContain('Directory name');
  for(const type of ['person','attention.ask','attention.agent','thread'])await publish(type,status);
- for(const word of ['Directory name','Proceed with backup?','Checking the backup','Unread conversation','1 unread thread','All clear.'])expect(text()).not.toContain(word);
+ for(const word of ['Directory name','Proceed with backup?','Unread conversation','1 unread thread','All clear.'])expect(text()).not.toContain(word);
  expect(text()).toContain('Art rail card');expect(text()).toContain('Conversations unavailable');
  await publish('attention.ownedAgent',status);expect(text()).not.toContain('Art rail card');
 });
@@ -108,18 +110,30 @@ it('puts the selected owned Comms companion above Needs you and returns it to sa
  expect(text()).not.toContain('in Comms');expect(text()).not.toContain('Mark rail card');
 });
 
-it('lists each agent current jobs and drops stale jobs when disconnected',async()=>{
+it('lists what each agent is doing in compact pills that open what they name, says Working, and drops them when disconnected',async()=>{
+ f.snapshots['attention.agent']=live([{id:'s',agent:'art',state:'idle',work:'',changedAt:1}]);f.snapshots['attention.ask']=live([]);
  f.snapshots['generated.jobs']=live([
-  {id:'j:running',agent:'art',title:'Compare pumps',state:'running',box:'workbench',queuedAt:'2026-11-14T01:00:00Z'},
-  {id:'j:queued',agent:'art',title:'Order hose',state:'queued',box:'workbench',queuedAt:'2026-11-14T02:00:00Z'},
-  {id:'j:other',agent:'other',title:'Other agent job',state:'running',box:'workbench',queuedAt:'2026-11-14T03:00:00Z'},
+  {id:'j:talk',agent:'art',kind:'discord',place:'#pond',title:'Discord channel #pond',href:'/p/comms-preview/conversation/cv-pond',machine:'one'},
+  {id:'t-7',agent:'art',kind:'task',title:'Order hose',ref:'t-7',state:'in_progress',href:'/p/tasks-preview/task/t-7'},
+  {id:'j:private',agent:'art',kind:'private'},
+  {id:'j:other',agent:'other',kind:'job',title:'Other agent job'},
  ]);
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
- const jobs=()=>tree.root.findByProps({'aria-label':'Art current jobs'});
- expect(jobs().findAllByType('li').map((n:any)=>n.findByType('strong').children[0])).toEqual(['Compare pumps','Order hose']);
- expect(text()).not.toContain('Other agent job');
- await publish('generated.jobs','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
- await publish('generated.jobs','live',[]);expect(text()).toContain('No current jobs.');
+ const list=()=>tree.root.findByProps({'aria-label':'What Art is doing'});
+ const words=(node:any):string=>typeof node==='string'?node:(node.children??[]).map(words).join('');
+ expect(list().props['data-compact']).toBe(true);
+ expect(list().findAllByProps({className:'desk-doing-phrase'}).map(words)).toEqual(['Talking on Discord in #pond','Working on Order hose · t-7','In a private conversation']);
+ expect(list().findAllByProps({className:'desk-doing-meta'})).toHaveLength(0);
+ const links=list().findAllByType('a');expect(links).toHaveLength(2);expect(links[0].props.title).toContain('on one');
+ await act(async()=>links[0].props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/comms-preview/conversation/cv-pond');
+ const card=()=>tree.root.findByProps({'aria-label':'Art rail card'});
+ expect(words(card().findByProps({className:'desk-rail-state'}))).toBe('Working');expect(card().props['data-state']).toBe('working');
+ expect(text()).not.toContain('Other agent job');expect(text()).not.toContain('Current jobs');
+ // The rail says nothing of tasks an agent has only claimed.
+ expect(text()).not.toContain('in progress');expect(tree.root.findAllByProps({className:'desk-doing-claimed'})).toHaveLength(0);
+ await publish('generated.jobs','offline');expect(text()).not.toContain('Talking on Discord');expect(text()).toContain('Can’t tell what it is doing right now.');
+ expect(words(card().findByProps({className:'desk-rail-state'}))).toBe('Quiet');
+ await publish('generated.jobs','live',[]);expect(text()).toContain('Nothing right now.');expect(text()).not.toContain('No current jobs');
 });
 it('uses saved positions for rail cards and keyboard shortcuts after a live reorder',async()=>{
  const go=vi.fn();
@@ -155,9 +169,7 @@ it('shows the first waiting item and how many more, updates on answers, and clea
  ]);
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});
  const needs=()=>tree.root.findByProps({className:'desk-rail-needs'});
- const ask=()=>tree.root.findAllByProps({className:'desk-rail-ask'})[0];
  expect(words(needs())).toContain('2 more');
- expect(words(ask())).toContain('1 more');
  expect(text()).not.toContain('Already answered');
  await publish('attention.ask','live',[{...first,state:'answered'}]);
  expect(text()).not.toContain(' more');expect(text()).toContain('All clear.');

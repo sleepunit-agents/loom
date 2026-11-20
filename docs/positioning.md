@@ -1,5 +1,8 @@
 # loom positioning: identity-first vs. memory-first
 
+> **This describes the older program.** It compares loom 0.4, a stdio MCP server for one agent's identity and memory, with other memory systems. The program as it is now is described in
+> [`architecture.md`](architecture.md). This page is kept because published posts link to it.
+
 This document is a direct comparison of loom against the systems it most
 frequently gets conflated with. The goal is to be honest about what each
 system does well, where the overlap is real, and where it isn't.

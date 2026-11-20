@@ -7,7 +7,8 @@ import type { Database } from 'better-sqlite3';
 import type { KnowledgeVerifyInput, KnowledgeVerifyResult } from './types.js';
 import { retryWrite } from './retry.js';
 
-const MAX_PAGE_BODY_LENGTH = 64 * 1024;
+/** Hard size cap on a page's words, in characters, enforced wherever they are written. */
+export const MAX_PAGE_BODY_LENGTH = 64 * 1024;
 
 export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, now: number): KnowledgeVerifyResult {
   const timestamp = new Date(now).toISOString();
@@ -109,7 +110,7 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
  *   2. device-domain: domain starts with a known device-domain prefix → 'device' (7d)
  *   3. else → 'default' (30d)
  *
- * Callers may override with KnowledgePageInput.sla_class.
+ * Callers may override with NewKnowledgePage.sla_class.
  */
 const DEVICE_DOMAIN_PREFIXES: readonly string[] = ['music/gear', 'monitor/hardware'];
 const RE_SLA_VERSION = /v?\d+\.\d+/i;

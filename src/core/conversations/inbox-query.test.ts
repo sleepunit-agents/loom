@@ -5,7 +5,8 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, household, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
+import { actionResults, agents, bridgeConnections, bridgeIncoming, conversations, household, inbox, inboxReads, memberAgents, members, messages, secrets, threads } from '../data/schema.js';
+import { talkVisibility } from '../data/conversation-visibility.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
 const clients: Database.Database[] = [];
@@ -93,6 +94,12 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   ]).run();
   expect(f.service.results(alice).map(r => r.id)).toEqual(['r1']);
   expect(f.service.results({ kind: 'agent', id: 'art' })).toEqual([]);
+  // One rule (policy.ts, ownNotice) for this read and for marking a notice read: an agent working for alice is not alice,
+  // and a member who has been removed reads nothing.
+  expect(f.service.results({ kind: 'agent', id: 'art', workingFor: 'alice' })).toEqual([]);
+  f.db.update(members).set({ removedAt: '2026-11-14T18:02:00.000Z' }).where(eq(members.id, 'bob')).run();
+  expect(f.service.results({ kind: 'member', id: 'bob' })).toEqual([]);
+  f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'bob')).run();
   expect(() => f.service.results(alice, 51)).toThrow('Invalid action result limit');
   const encoded=await sealHandoff(f.key,'A brief','2026-11-14T18:00:00.000Z',14);
   const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: encoded });
@@ -410,17 +417,21 @@ it('projects independent private wording deadlines without decryption and keeps 
   expect(f.service.answerKeepUntil({ kind: 'member', id: 'bob' }, id)).toBeNull();
 });
 it('executes the shipped Inbox selection on actual shared rows, including server folders and pagination', async () => {
-  const { inboxSelection } = await import('../../../web/src/pieces/attention/inbox-query.js');
+  const { inboxSelection, inboxItemSelection } = await import('../../../web/src/pieces/attention/inbox-query.js');
   const f = await fixture();
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: inboxQueryFields(f.service) }) });
-  const selection = inboxSelection('needs', 'private pump', 0, f.ask.inboxItem!);
+  const selection = inboxSelection('needs', 'private pump', 0);
   const result = await graphql({ schema, source: selection.query, variableValues: selection.variables, contextValue: { viewer: alice } });
   expect(result.errors).toBeUndefined();
+  const detail = inboxItemSelection(f.ask.inboxItem!);
+  const opened = await graphql({ schema, source: detail.query, variableValues: detail.variables, contextValue: { viewer: alice } });
+  expect(opened.errors).toBeUndefined();
+  const picked = detail.decode(opened.data as Record<string, unknown>);
   const value = selection.decode(result.data as Record<string, unknown>);
   expect(value.items.map(row => row.id)).toEqual([f.ask.inboxItem]);
-  expect(value.item?.body?.words).toBe('Order the private pump?');
+  expect(picked?.body?.words).toBe('Order the private pump?');
   expect(value.folders).toEqual({ needs: 1, alerts: 0, answered: 0, fyi: 0, all: 1, agents: [{ id: 'art', count: 1 }] });
-  expect(value.item?.bodyKeepUntil).toBe('2026-11-28T18:00:00.000Z');
+  expect(picked?.bodyKeepUntil).toBe('2026-11-28T18:00:00.000Z');
   const errors = inboxSelection('errors', '', 0);
   const errorResult = await graphql({ schema, source: errors.query, variableValues: errors.variables, contextValue: { viewer: alice } });
   expect(errorResult.errors).toBeUndefined(); expect(errors.decode(errorResult.data as Record<string, unknown>).items).toEqual([]);
@@ -439,6 +450,12 @@ it('projects per-agent Needs counts separately from all states without opening w
   const read = () => graphql({ schema, source: '{ inboxFolders { needs agents { id count needs } } }', contextValue: { viewer: alice } });
   const result = await read(); expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({ inboxFolders: { needs: 2, agents: [{ id: 'art', count: 4, needs: 2 }] } });
+  f.db.insert(agents).values({ id: 'mark', about: '', markBg: '#000', markFg: '#fff',
+    faceShape: 'pebble', faceEyes: 'dot', removedAt: '2026-11-14T18:00:00.000Z' }).run();
+  const previous = cvs.send({ toKind: 'person', to: 'alice', member: 'alice', agent: 'mark',
+    source: 'notice', fromKind: 'agent', words: 'Question from Mark', answers: 'words' });
+  expect((await read()).data).toEqual({ inboxFolders: { needs: 3, agents: [{ id: 'art', count: 4, needs: 2 }] } });
+  expect(f.service.item(alice, previous.id)?.agent).toBe('mark');
   expect(f.opens()).toBe(0);
   f.revoke();
   expect((await read()).data).toEqual({ inboxFolders: { needs: 0, agents: [] } });
@@ -504,4 +521,27 @@ it('retries a private Inbox read when an overlapping read-marker write invalidat
     expect((await stream.next()).value).toMatchObject({revision:1,patches:[{path:[],value:{inboxItems:[{id:f.ask.inboxItem,read:true,body:{words:'Order the private pump?'}}]}}]});
     expect(f.opens()).toBe(2);
   } finally {await stream.return?.();live.close();}
+});
+it('gives a bridge direct message to the agent\'s owners and not to the agent\'s own token', async () => {
+  const f = await fixture(), at = '2026-11-14T18:00:00.000Z', cvs = f.comms.threads.conversations;
+  // The Inbox rule as production states it: an item in a conversation is read with that conversation.
+  const service = new InboxQueries(f.db, f.key, (viewer, row) => talkVisibility(viewer).inbox(row), () => at);
+  f.db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: at }).run(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const owner = { kind: 'member' as const, id: 'owner' };
+  f.db.insert(secrets).values({ name: 'TOKEN', description: '', changedAt: at, changedBy: 'alice' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'slack', agent: 'art', workspace: 'w', botUser: 'bot', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: at }).run();
+  const mail = (id: string, isDm: boolean) => {
+    const cv = cvs.open({ agent: 'art', venue: 'slack', place: id, label: id });
+    f.db.update(conversations).set({ direct: isDm }).where(eq(conversations.id, cv.id)).run();
+    f.db.insert(bridgeIncoming).values({ id, connection: 'c', channel: id, isDm, user: 'stranger', text: id, postedAt: at, receivedAt: at, state: 'delivered', conversation: cv.id }).run();
+    return cvs.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'slack', sourceId: id, fromKind: 'unknown', words: `${id} words`, refs: [id] });
+  };
+  const dm = mail('dm', true), room = mail('room', false), art = { kind: 'agent' as const, id: 'art' };
+  expect(await service.body(art, room.id)).toMatchObject({ words: 'room words' });
+  // The agent's token reads its rooms. A direct message is not on its list at all: a body gets one as its mail.
+  expect(service.item(art, dm.id)).toBeNull();
+  expect(await service.body(art, dm.id)).toBeNull();
+  expect(await service.body(alice, dm.id)).toMatchObject({ words: 'dm words' });
+  // The owner role alone does not own the agent.
+  expect(service.item(owner, dm.id)).toBeNull(); expect(service.item(owner, room.id)?.id).toBe(room.id);
 });

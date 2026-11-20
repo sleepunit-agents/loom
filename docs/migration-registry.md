@@ -1,5 +1,10 @@
 # Offline importer registration
 
+> **This describes commands that are no longer in the tree.** `loom migrate` and its importers were removed with
+> the older program (commit abbf6857, 2026-11-16) and are in the repository's history. They wrote into the earlier
+> composition's store, which `loom serve` does not read, so a move into the current household database needs new
+> importers. The page is kept as the record of what an older home holds and what a move must preserve.
+
 `src/cli/migration-registry.ts` is the extension point for `loom migrate all`.
 The registry, [plan preparation](migration-plan.md) and all/verify commands are
 available for offline rehearsal. Existing individual commands are unchanged. No daemon path loads it.

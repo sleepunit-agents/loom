@@ -6,7 +6,7 @@ function fixture(){
  const clock=new FakeClock(),buffers:Buffer[]=[];
  const source={generation:vi.fn(async()=>generation),read:vi.fn(async()=>{const bytes=Buffer.from('synthetic-token');buffers.push(bytes);return bytes;})};
  let alive=true;const invalidate=vi.fn(()=>{alive=false;});
- const use=sharedBridgeSecretUse({source,clock,generation,names:['TOKEN'],current:()=>alive,invalidate});
+ const use=sharedBridgeSecretUse({source,clock,generation:()=>generation,accept:()=>false,names:['TOKEN'],current:()=>alive,invalidate});
  return {clock,source,buffers,invalidate,use,retire:()=>{alive=false;}};
 }
 it('uses fresh authenticated bytes without any service grant and erases each owned buffer',async()=>{
@@ -52,11 +52,11 @@ it.each(['retire','close'] as const)('erases a late acquisition and never calls 
 });
 it.each(['source','callback','invalidate'] as const)('sanitizes %s errors and retires the lease even when its hook fails',async phase=>{
  const clock=new FakeClock(),source={generation:vi.fn(async()=>generation),read:vi.fn(async()=>Buffer.from('synthetic'))},invalidate=vi.fn(()=>{if(phase==='invalidate')throw Error('PRIVATE token');});
- const use=sharedBridgeSecretUse({source,clock,generation,names:['TOKEN'],current:()=>true,invalidate});if(phase==='source')source.read.mockRejectedValue(Error('PRIVATE source'));const callback=vi.fn(async()=>{throw Error('PRIVATE callback');});
+ const use=sharedBridgeSecretUse({source,clock,generation:()=>generation,accept:()=>false,names:['TOKEN'],current:()=>true,invalidate});if(phase==='source')source.read.mockRejectedValue(Error('PRIVATE source'));const callback=vi.fn(async()=>{throw Error('PRIVATE callback');});
  await expect(use.withValue('TOKEN',callback)).rejects.toThrow(/^Bridge credential unavailable$/);expect(invalidate).toHaveBeenCalledOnce();source.read.mockClear();await expect(use.withValue('TOKEN',async()=>{})).rejects.toThrow(/^Bridge credential unavailable$/);expect(source.read).not.toHaveBeenCalled();
 });
 it('rejects a replacement with an uncooperative invalidation hook and prevents all later callbacks',async()=>{
- const clock=new FakeClock(),source={generation:async()=>generation,read:vi.fn(async()=>Buffer.from('first'))},invalidate=vi.fn(()=>{throw Error('PRIVATE');}),use=sharedBridgeSecretUse({source,clock,generation,names:['TOKEN'],current:()=>true,invalidate});
+ const clock=new FakeClock(),source={generation:async()=>generation,read:vi.fn(async()=>Buffer.from('first'))},invalidate=vi.fn(()=>{throw Error('PRIVATE');}),use=sharedBridgeSecretUse({source,clock,generation:()=>generation,accept:()=>false,names:['TOKEN'],current:()=>true,invalidate});
  await use.withValue('TOKEN',async()=>{});source.read.mockResolvedValue(Buffer.from('replacement'));const callback=vi.fn(async()=>{});await expect(use.withValue('TOKEN',callback)).rejects.toThrow(/^Bridge credential unavailable$/);source.read.mockClear();await expect(use.withValue('TOKEN',callback)).rejects.toThrow();expect(source.read).not.toHaveBeenCalled();expect(callback).not.toHaveBeenCalled();
 });
 it('bounds generation acquisition and the final generation check independently',async()=>{
@@ -73,11 +73,23 @@ it('erases the acquired buffer when post-read generation verification stalls pas
 });
 it('isolates stable fingerprints by configured name and invalidates replacement of either name',async()=>{
  for(const changed of ['TOKEN','APP']){
-  const clock=new FakeClock();let replacement=false;const source={generation:async()=>generation,read:async(name:string)=>Buffer.from(replacement&&name===changed?'replacement':'synthetic:'+name)},use=sharedBridgeSecretUse({source,clock,generation,names:['TOKEN','APP'],current:()=>true,invalidate(){}});
+  const clock=new FakeClock();let replacement=false;const source={generation:async()=>generation,read:async(name:string)=>Buffer.from(replacement&&name===changed?'replacement':'synthetic:'+name)},use=sharedBridgeSecretUse({source,clock,generation:()=>generation,accept:()=>false,names:['TOKEN','APP'],current:()=>true,invalidate(){}});
   for(const name of ['TOKEN','APP','TOKEN','APP'])expect(await use.withValue(name,async token=>token)).toBe('synthetic:'+name);
   replacement=true;await expect(use.withValue(changed,async()=>{})).rejects.toThrow('unavailable');await expect(use.withValue(changed==='TOKEN'?'APP':'TOKEN',async()=>{})).rejects.toThrow('unavailable');
  }
 });
 it('close immediately erases bytes held by stalled post-read generation verification',async()=>{
  const f=fixture();let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.generation.mockResolvedValueOnce(generation).mockImplementationOnce(()=>{entered();return new Promise<string>(()=>{});});const pending=f.use.withValue('TOKEN',async()=>{}),refused=expect(pending).rejects.toThrow('unavailable');await started;expect(f.buffers[0].some(byte=>byte!==0)).toBe(true);f.use.close();expect(f.buffers[0].every(byte=>byte===0)).toBe(true);f.clock.advance(5000);await refused;
+});
+it('carries on under another holder generation when its own secrets are unchanged, and stops when it is not accepted',async()=>{
+ const clock=new FakeClock();let live='11111111-1111-4111-8111-111111111111',mine=live,accepts=true;
+ const source={generation:async()=>live,read:async()=>Buffer.from('same-bytes')},invalidate=vi.fn();
+ const use=sharedBridgeSecretUse({source,clock,generation:()=>mine,accept:next=>{if(!accepts)return false;mine=next;return true;},names:['TOKEN'],current:()=>true,invalidate});
+ expect(await use.withValue('TOKEN',async token=>token)).toBe('same-bytes');
+ // Some other secret is written: the holder moves on, this lifetime follows.
+ live='22222222-2222-4222-8222-222222222222';
+ expect(await use.withValue('TOKEN',async token=>token)).toBe('same-bytes');expect(mine).toBe(live);expect(invalidate).not.toHaveBeenCalled();
+ // One of its own secrets changed: it is not accepted and the lifetime ends.
+ live='33333333-3333-4333-8333-333333333333';accepts=false;
+ await expect(use.withValue('TOKEN',async token=>token)).rejects.toThrow('Bridge credential unavailable');expect(invalidate).toHaveBeenCalledOnce();
 });

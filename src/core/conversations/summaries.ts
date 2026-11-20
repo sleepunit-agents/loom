@@ -2,16 +2,17 @@ import { readAll } from '../data/execution.js';
 import { conversationVisibility } from '../data/conversation-visibility.js';
 import { readRecentConversations, readConversationAnswers, type ConversationAnswerSet } from '../data/conversation-summaries.js';
 import { selectedQueryFields } from '../data/queries.js';
-import { wordsDeadline } from './retention.js';
+import { wordsDeadline, wordsKept } from './retention.js';
 /** Small Home/People reads over the same conversations as Comms. Never uses
  * question answers as an agent's last reply or subscribes to whole threads. */
 import { and, desc, eq, getTableColumns } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, threads, messages, household } from '../data/schema.js';
+import { conversations, threads, messages } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 const projected = Symbol('Conversation answer projection');
 type Answer = { at: string; words: string } | null;
@@ -37,7 +38,7 @@ export class ConversationSummaries {
       else {
         const current = before.latest(row.id), days = before.days;
         const deadline = current?.keepUntil ? wordsDeadline(current, days) : NaN;
-        answer = current?.hasWords && Number.isInteger(days) && days >= 1 && days <= 14 && deadline > Date.parse(this.now()) ? { at: current.at, words: '' } : null;
+        answer = current?.hasWords && deadline > Date.parse(this.now()) ? { at: current.at, words: '' } : null;
         if (answer) deadlines.push(deadline);
       }
       return { ...row, [projected]: answer };
@@ -57,10 +58,8 @@ export class ConversationSummaries {
       .where(and(conversationVisibility(viewer).conversations!(getTableColumns(conversations)), eq(conversations.id, conversation), eq(messages.kind, 'reply'),
         eq(messages.sender, conversations.agent)))
       .orderBy(desc(messages.seq)).limit(1).get();
-    const keepDays = () => this.readSet?.days ?? this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-    const retained = (row: ReturnType<typeof latest>, days: number) => !!row?.words && !!row.keepUntil
-      && Number.isInteger(days) && days >= 1 && days <= 14
-      && Date.parse(row.keepUntil) > Date.parse(this.now()) && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
+    const keepDays = () => this.readSet?.days ?? commsKeepDays(this.db);
+    const retained = (row: ReturnType<typeof latest>, days: number) => !!row?.words && wordsKept(row, days, this.now());
     const row = latest(), days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);

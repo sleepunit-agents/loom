@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
-vi.mock('../../kit', () => Object.fromEntries(['Button', 'Error'].map(name => [name, (props: { children?: ReactNode }) => h(name, props, props.children)])));
+vi.mock('../../kit', () => Object.fromEntries(['LinkButton', 'NoteRow'].map(name => [name, (props: { children?: ReactNode; title?: ReactNode; status?: ReactNode; actions?: ReactNode }) => name === 'NoteRow' ? h(name, { status: props.status }, props.title, props.actions, props.children) : h(name, props, props.children)])));
 import { InboxActionNotices, type InboxResultsSnapshot } from './outcomes';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -29,10 +29,10 @@ it('serializes dismissals and keeps failed outcomes visible for retry until the 
   let reject!: (error: Error) => void;
   const dismiss = vi.fn(() => new Promise<void>((_resolve, no) => { reject = no; }));
   await act(async () => { tree = create(h(InboxActionNotices, { snapshot, errorsOnly: true, dismiss })); });
-  await act(async () => { const button = tree.root.findByType('Button'); button.props.onClick(); button.props.onClick(); });
+  await act(async () => { const button = tree.root.findByType('LinkButton'); expect(button.props.children).toBe('Dismiss'); button.props.onClick(); button.props.onClick(); });
   expect(dismiss).toHaveBeenCalledExactlyOnceWith('failed');
   await act(async () => { reject(new Error('private server detail')); });
-  expect(tree.root.findAllByType('Error')).toHaveLength(1);
+  expect(JSON.stringify(tree.toJSON())).toContain('Could not dismiss this notice. Try again.');
   expect(JSON.stringify(tree.toJSON())).not.toContain('private server detail');
   expect(JSON.stringify(tree.toJSON())).toContain('Answer: failed');
   await act(async () => { tree.update(h(InboxActionNotices, { snapshot: { ...snapshot, results: snapshot.results.map(row => ({ ...row, readAt: 'now' })) }, dismiss })); });

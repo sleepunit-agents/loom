@@ -56,7 +56,7 @@ it('builds fictitious data through services, then normal startup signs in and qu
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
   const clock=new FakeClock(Date.now());
-  let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:()=>{}});link=app.signinLink();
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const post=async(path:string,input:unknown)=>{const response=await fetch(app!.url+path,{method:'POST',redirect:'error',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify(input)});expect(response.status).toBe(200);return response.json();};
@@ -75,7 +75,8 @@ it('builds fictitious data through services, then normal startup signs in and qu
   }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({__typename:'RuntimeAccountDetail',id:manifest.account.id,label:'Example model subscription',usage:0.25,hasRoom:true,signedInOn:[{id:manifest.runtime.box,name:'Example workshop'}]})]);
   expect(result.data.currentJobs).toEqual(expect.arrayContaining([manifest.runtime.job]));
-  const models=await fetch(app.url+'/api/runtime/agentModelsSet',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'restarted-example-models',input:{agent:'moss',models:['example-model']}})});expect(models.status).toBe(200);
+  // Models are set by installed code or by a proposal; the restarted program still knows its configured roles.
+  app.writes.run(()=>app!.services.setup.models({agent:'moss',models:['example-model']}));
   const ordinary=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Example ordinary member',expiresAt:new Date(Date.now()+60_000).toISOString()})).value;
   try{
    const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+ordinary.token,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id} modelAccounts{__typename ...on RuntimeAccountDetail{id usage signedInOn{id}} ...on RuntimeAccountSummary{label level}}}'})});
@@ -113,7 +114,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
   const manifest=await exampleHome(home);prepareAcceptanceHome(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
-  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:()=>{}});link=app.signinLink();
   expect(holderValueAbsent(home,'no-such-fictitious-secret')).toBe(true);
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
@@ -130,7 +131,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
   const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
   const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
   expect(app.services.tasks.get(draft.id).status).toBe('open');
-  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow'}})});
+  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow',confirm:true}})});
   expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
   expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
   expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
@@ -139,17 +140,17 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
    const request=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${next.id}`,operation:'example.discardDraft',changeSummary:stale==='summary'?'Wrong before/after':`Draft ${next.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',what:'Discard guarded draft',why:'Exercise stale refusal.',ask:'Discard guarded draft?',ifYes:'Cancel.',ifNo:'Keep.'})).value;
    if(stale==='state')app.writes.run(()=>app!.services.tasks.close(next.id,'Already finished.'));
    const before=app.services.tasks.get(next.id),audit=app.services.approvals.record(request.id);
-   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
+   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow',confirm:true}})});
    expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
   }
  }finally{await app?.close();if(app)expect(()=>holderValueAbsent(home,'no-such-fictitious-secret')).toThrow('not active');rmSync(parent,{recursive:true,force:true});}
 });
 
-it.each(['runtime.boxSettingsSet','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{
+it.each(['runtime.accountSignedIn','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{
  const parent=mkdtempSync(join(tmpdir(),'loom-example-runtime-failed-')),home=join(parent,'home'),call=Operations.prototype.callAsync;
  vi.spyOn(Operations.prototype,'callAsync').mockImplementation(async function(this:Operations,...args:Parameters<Operations['callAsync']>){if(args[2]===operation)return{ok:false as const,code:'denied' as const,message:'Fictitious health refusal'};return call.apply(this,args);});
  try{
   await expect(exampleHome(home)).rejects.toThrow(operation==='runtime.health'?'Worker health failed':'Example Runtime setup failed at '+operation);
-  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual(operation==='runtime.boxSettingsSet'?[{label:'Example setup',revoked_at:expect.any(String)}]:[{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
+  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual(operation==='runtime.accountSignedIn'?[{label:'Example setup',revoked_at:expect.any(String)}]:[{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
  }finally{rmSync(parent,{recursive:true,force:true});}
 });

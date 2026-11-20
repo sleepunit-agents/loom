@@ -4,7 +4,7 @@ import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {walkthroughSteps} from '../../scripts/rebuild-walkthrough.mjs';
-const titles=['Tasks','Approvals','Project sharing','Changes','Inbox','Tempo','Home','Projects','Activity','Comms','Agents','People','Knowledge','Bridges','Settings','Household setup','Your account'];
+const titles=['Tasks','Approvals','Sharing','Changes','Inbox','Tempo','Home','Projects','Activity','Job usage','Comms','Agents','People','Knowledge','Bridges','Machines and jobs','Subscriptions','Settings','Household setup','Your account','Appearance'];
 describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  let steps:ReturnType<typeof walkthroughSteps>,out:string,ready=false,runtimeTitle:string;
  beforeAll(async()=>{
@@ -18,18 +18,18 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(report.inventory).toEqual(titles);runtimeTitle=report.example.runtime.job.title;expect(report.example.runtime.job.state).toBe('queued');
   expect(report.clock).toMatchObject({householdZone:'America/Chicago',browserZone:'Asia/Tokyo',title:expect.stringMatching(/, America\/Chicago time$/)});
  });
- it('measures encrypted private-word expiry on the program clock',{retry:0,timeout:20_000},async()=>{
+ it('measures encrypted private-word expiry on the program clock',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
   const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
  });
- it('compares actual Sharing SQL executions at two and ten projects',{retry:0,timeout:20_000},async()=>{
+ it('compares actual Sharing SQL executions at two and ten projects',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data-growth');
   const result=step.value.actions.dataSharingSQL;
   expect(result.samples,JSON.stringify(result)).toHaveLength(2);expect(result.samples.map(sample=>sample.projects)).toEqual([2,10]);
   expect(result.samples.every(sample=>sample.sqlExecutions>0)).toBe(true);
   expect(result.ok===false||result.inconclusive===true).toBe(true);
  });
- for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,timeout:20_000},async()=>{
+ for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
   expect(app.title).toBe(title);expect(app.opened||!!app.error).toBe(true);
   expect(app.text.trim().length).toBeGreaterThan(0);
@@ -38,7 +38,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Approvals')expect(step.value.report.actions?.approvalRulesAndExpiry,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Tasks')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
-  if(title==='Home'){expect(app.error).toBeUndefined();expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:'queued · Unassigned'});}
+  if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
@@ -50,34 +50,34 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Comms')for(const action of ['conversationTaskSource','conversationApprovalSource','conversationPrivatePair'])expect(step.value.report.actions[action],JSON.stringify(step.value.report.actions[action])).toMatchObject({ok:true});
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
   if(title==='Comms'){const result=step.value.report.actions?.conversationRecords;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
-  if(['Your account','Household setup','Project sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
+  if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
-  if(title==='Your account')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
+  if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
   if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
   if(title==='Tempo')expect(app.actions.resumed.facts).toMatchObject({sourceKind:'answer',watches:'approval:'+step.value.report.example.approval,lifespan:'once',enabled:false,stillOnceAfterLaterDeadline:true});
   if(title==='Tempo'){expect(app.error).toBeUndefined();expect(app.actions).toMatchObject({held:{ok:true},resumed:{ok:true},settled:{ok:true},cancelled:{ok:true}});for(const name of ['held','resumed','settled','cancelled'])expect(readFileSync(join(out,app.actions[name].screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));}
  });
- it('executes prepared changes through their private approval cards',{retry:0,timeout:20_000},async()=>{
+ it('executes prepared changes through their private approval cards',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('prepared-changes');
   expect(step.value.actions?.approvalPreparedChanges,JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
- it('follows conversation PR references to their linked task',{retry:0,timeout:20_000},async()=>{
+ it('follows conversation PR references to their linked task',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('change-references');
   expect(step.value.actions.changeInline,JSON.stringify(step.value.actions.changeInline)).toMatchObject({ok:true});
  });
- for(const answer of ['yes','no','words'])it(`records the Inbox ${answer} decision`,{retry:0,timeout:20_000},async()=>{
+ for(const answer of ['yes','no','words'])it(`records the Inbox ${answer} decision`,{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-decision');expect(step.value.answer).toBe(answer);
   const result=step.value.actions['inboxDecision'+answer[0].toUpperCase()+answer.slice(1)];expect(result,JSON.stringify(result)).toMatchObject({ok:true,answer});
  });
- it('retains all answered Inbox questions and read marks',{retry:0,timeout:20_000},async()=>{
+ it('retains all answered Inbox questions and read marks',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-history');
   for(const name of ['inboxDecisions','inboxHistory'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
- it('answers in Inbox and shows the answer in Comms',{retry:0,timeout:20_000},async()=>{
+ it('answers in Inbox and shows the answer in Comms',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
- it('measures desk launcher and tile controls',{retry:0,timeout:20_000},async()=>{
+ it('measures desk launcher and tile controls',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk');
   for(const name of ['deskLauncher','deskGeometry','deskLayout']){
 
@@ -86,11 +86,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    expect(readFileSync(join(out,result.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
   }
  });
- it('measures desk looks and persisted appearance',{retry:0,timeout:20_000},async()=>{
+ it('measures desk looks and persisted appearance',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('appearance');
   for(const name of ['deskLooks','deskAppearance'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
- it('measures the data door, fact queries and live changes',{retry:0,timeout:20_000},async()=>{
+ it('measures the data door, fact queries and live changes',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data');
   for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.dataTaskPatches).toMatchObject({ok:true,inconclusive:true,initialRevision:1,requests:1});
@@ -101,34 +101,34 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
 
 
  });
- it('bounds actual Home summary SQL as owned agents grow',{retry:0,timeout:20_000},async()=>{
+ it('bounds actual Home summary SQL as owned agents grow',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('home-read-growth');
   const result=step.value.actions.dataHomeGrowth;expect(result,JSON.stringify(result)).toMatchObject({ok:true});
   expect(result.samples.map(sample=>sample.agents)).toEqual([2,10]);expect(result.samples.every(sample=>sample.sqlExecutions>0)).toBe(true);
  });
- it('checks owner and member conversation privacy through normal browser sign-in',{retry:0,timeout:20_000},async()=>{
+ it('checks owner and member conversation privacy through normal browser sign-in',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('visibility');
   for(const name of ['conversationLabels','conversationVisibility','commsPrivacy','inboxVisibility','inboxRecipients'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,isolation:{http:'blocked',websocket:'blocked'},cleanup:{restored:true,contextClosed:true,credentialAbsent:true}});
  });
- it('follows an Inbox approval to its exact source and resolves the item',{retry:0,timeout:20_000},async()=>{
+ it('follows an Inbox approval to its exact source and resolves the item',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('approval-source');expect(step.value.actions.approvalInbox,JSON.stringify(step.value.actions.approvalInbox)).toMatchObject({ok:true});
  });
- it('follows an Inbox task to its source and records its completed outcome',{retry:0,timeout:20_000},async()=>{
+ it('follows an Inbox task to its source and records its completed outcome',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('task-source');
   const arrival=step.value.actions.inboxTaskArrival;expect(typeof arrival.ok,JSON.stringify(arrival)).toBe('boolean');
   if(arrival.ok===false)expect(arrival.error).toContain('did not offer a source link');
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
  });
- it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0,timeout:20_000},async()=>{
+ it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
  });
- it('records a private background question in Inbox and returns its answer to the body',{retry:0,timeout:20_000},async()=>{
+ it('records a private background question in Inbox and returns its answer to the body',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail-question');
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','privateConversationQuestion'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false,cleanup:{jobsStopped:true,credentialsRevoked:true}});
  });
- it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0,timeout:20_000},async()=>{
+ it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
   expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
   expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
@@ -141,11 +141,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    expect(report.fatal).toBeUndefined();
    expect(report.live.dataFrames).toBeGreaterThan(0);
    const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
-   expect(measured.pages).toHaveLength(19);
+   expect(measured.pages).toHaveLength(20);
    const tempo=measured.pages.find((page:{page:string})=>page.page==='tempo');
    const observed=tempo.promises.filter((entry:{probe?:{kind:string;action?:string}})=>entry.probe?.kind==='action'&&entry.probe.action?.startsWith('tempo'));expect(observed).toHaveLength(5);expect(observed.map((entry:{status:string})=>entry.status)).toEqual(['met','met','met','met','met']);
    for(const name of ['tempoHeld','tempoResumed','tempoSettled','tempoCancelled'])expect(report.actions[name]).toMatchObject({ok:true,screenshot:expect.any(String)});
-   for(const [name,count] of [['tasks',20],['approvals',20],['changes',17]] as const){
+   for(const [name,count] of [['tasks',20],['approvals',21],['changes',17]] as const){
     const measuredPage=measured.pages.find((page:{page:string})=>page.page===name);
     expect(measuredPage,`Missing ${name} report`).toBeDefined();
     expect(measuredPage.promises).toHaveLength(count);

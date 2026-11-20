@@ -7,7 +7,7 @@ const people=[{id:'pat',role:'owner'},{id:'sam',role:'member'}];
 const input:WorkAlwaysInput={approval:card.id,change:row.id,head:row.headCommit,project:'pond',person:''};
 it('derives only current pending exact-head/project/agent requests with concrete member roles and names personal grants',()=>{
  expect(alwaysInput(card,[row],people)).toEqual(input);expect(alwaysLabel(input)).toBe('Always for pond');
- expect(alwaysInput({...card,actingFor:'sam'},[row],people)).toEqual({...input,person:'sam'});expect(alwaysLabel({...input,person:'sam'})).toBe('Always for pond for sam');
+ expect(alwaysInput({...card,actingFor:'sam'},[row],people)).toEqual({...input,person:'sam'});expect(alwaysLabel({...input,person:'sam'})).toBe('Always for pond, Sam’s work only');
  for(const changed of [{...card,kind:'setting'},{...card,state:'allowed'},{...card,operation:'prepared'},{...card,operation:undefined},{...card,project:'other'},{...card,agent:'other'},...['unknown','?','missing','owner',''].map(actingFor=>({...card,actingFor}))])expect(alwaysInput(changed,[row],people)).toBeUndefined();
  for(const changed of [{...row,state:'closed' as const},{...row,headCommit:'b'.repeat(40)},{...row,project:'other'},{...row,agent:null}])expect(alwaysInput(card,[changed],people)).toBeUndefined();
  expect(alwaysInput(card,[],people)).toBeUndefined();expect(alwaysInput(card,[row],[])).toBeUndefined();expect(alwaysInput(card,[row],[{id:'pat',role:'unknown'}])).toBeUndefined();

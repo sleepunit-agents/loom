@@ -25,7 +25,7 @@ class Parser(HTMLParser):
   for i in range(len(self.stack)-1,0,-1):
    if self.stack[i].tag==tag: self.stack=self.stack[:i];break
  def handle_data(self,data): self.stack[-1].children.append(data)
-owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2254','measuring':'t-2234','decided':'t-2190','index':'t-2190'}
+owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2254','measuring':'t-2234','decided':'t-2190','tools':'t-2190','index':'t-2190'}
 # Narrow observable criteria supplement broad prose. Text presence proves only
 # these visible facts, never the whole behavioral promise it came from.
 ui={
@@ -37,16 +37,19 @@ ui={
  'changes':[('Changes','The PR detail shows checks, review, head commit and linked task.',['Checks','Review','Commit:','Compare garden pumps'])],
  'inbox':[('Inbox','The waiting question displays reason and yes/no outcomes.',['Spend up to 180','If yes','If no','The example pump is available.']),('Inbox','The question offers Yes, No, a written answer, done and dismiss.',['Yes','No','Record answer','Mark done','Dismiss'])],
  'memory':[('Knowledge','Knowledge offers search and freshness folders.',['Search knowledge','Recently verified','Due a check']),('Activity','Activity shows a day and the conversation turns.',['Shown day','Repair the garden pump'])],
- 'people':[('Project sharing','The owner can open project sharing without an unavailable screen.',[]),('Household setup','The owner can open household members and agents without an unavailable screen.',[])],
+ 'people':[('Sharing','The owner can open project sharing without an unavailable screen.',[]),('Household setup','The owner can open household members and agents without an unavailable screen.',[])],
  'signing-in':[('Your account','The signed-in member can see their account without an unavailable screen.',[])],
  'bridges':[('Bridges','The Bridges tile has connections, channel rules, person links and pending sends.',['Connections','Channel rules','Person links','Pending sends'])],
  'secrets':[('Settings','Secrets live in Settings with requests and grants.',['Secrets','Requests','Grants'])],
 }
 # These source promises already have behavior probes; regeneration must keep them.
-action_promises={('tasks','Lets a person or an agent claim work, comment on it and close it.'):'taskLifecycle'}
+action_promises={('tasks','Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.'):'taskLifecycle'}
 out=ROOT/'docs/rebuild-checklists'
 if not args.check: out.mkdir(exist_ok=True)
+# Pages put to the owner and not yet approved: on the site for reading, and no part of what the rebuild is measured against.
+proposed={'houses'}
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
+ if f.stem in proposed:continue
  p=Parser();p.feed(f.read_text());nodes=list(p.root.all());rows=[];seen=set()
  source_hash=hashlib.sha256(f.read_bytes()).hexdigest()
  previous_path=out/(f.stem+'.json')
@@ -102,7 +105,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='memory':add('Create a provisional Knowledge fact, manually mark it due, verify it with Still true, then retain its words and Fresh state after reload.','',{'kind':'action','app':'Knowledge'})
  if f.stem=='people':
   add('Adding a household member through the normal built program persists that member.','',{'kind':'action','app':'Household setup'})
-  add('Creating a project through the normal built program persists its member list.','',{'kind':'action','app':'Project sharing'})
+  add('Creating a project through the normal built program persists its member list.','',{'kind':'action','app':'Sharing'})
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='signing-in':add('Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.','',{'kind':'action','app':'Your account'})
  if f.stem=='conversations':
@@ -153,6 +156,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
+   # taskLifecycle claims, hands back, claims again, closes, reopens and closes again; taskStructure covers ready and blocked.
+   if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
+ if f.stem=='approvals':
+  for row in rows:
+   # approvalPreparedChanges denies one dangerous card with one answer and allows another, which takes the second yes.
+   if row['promise'].startswith('Revoking a token, revoking a machine and signing out a browser cannot be put back.'):row['probe']={'kind':'action','action':'approvalPreparedChanges'}
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}

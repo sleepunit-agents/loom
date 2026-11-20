@@ -36,15 +36,16 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, s
     for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
     await expect.poll(() => client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:1});
     // Recipient volume uses this already-open Inbox item, before answering it.
-    await a.getByRole('button',{name:'Dim',exact:true}).click();
+    const notify=a.getByRole('combobox',{name:'Notify',exact:true});
+    await notify.selectOption('dim');
     await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'dim'});
-    await expect.poll(()=>a.getByRole('button',{name:'Dim',exact:true}).isDisabled()).toBe(true);
-    await a.getByRole('button',{name:'Mute',exact:true}).click();
+    await expect.poll(()=>notify.inputValue()).toBe('dim');
+    await notify.selectOption('mute');
     await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'mute'});
-    await expect.poll(()=>a.getByRole('button',{name:'Mute',exact:true}).isDisabled()).toBe(true);
+    await expect.poll(()=>notify.inputValue()).toBe('mute');
     expect(client.prepare('SELECT quiet_until AS until FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({until:new Date(clock.now()+7*86400000).toISOString()});
-    expect(await a.getByText(/returns to full/).count()).toBe(1);
-    await a.getByRole('button',{name:'Full',exact:true}).click();
+    await expect.poll(()=>a.getByText(/back to normal/).count()).toBe(1);
+    await notify.selectOption('full');
     await expect.poll(()=>client.prepare('SELECT volume,quiet_until AS quietUntil FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'full',quietUntil:null});
     await a.getByRole('button',{name:'Yes',exact:true}).click();
     for (const page of [a,b]) {
@@ -66,4 +67,4 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, s
   } finally {
     if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); try{await browser?.close();}finally{await program.close();}
   }
-}, 60_000);
+});

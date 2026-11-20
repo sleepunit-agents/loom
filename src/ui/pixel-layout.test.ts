@@ -1,8 +1,8 @@
 /** Retained layout/player checks; shipped pixels are proved in the shared desk scenario. */
 import {it,expect} from 'vitest';
-import {manifestFromPixelLab,checkSpriteManifest,HouseholdError} from '../household.js';
+import {checkSpriteLayout} from '../desk-sprite-layout.js';
 import {pick,variantsFor} from '../../web/src/pixel-face';
-import {sheet} from './pixel-sheet.fixture.js';
+import {manifestFromPixelLab,sheet} from './pixel-sheet.fixture.js';
 it('a manifest seeded from PixelLab: each state in each facing, one animation, weight 1; waiting south only', () => {
     const m = manifestFromPixelLab(JSON.parse(sheet().json.toString()));
     expect(m.cell).toEqual([56, 84]);
@@ -17,19 +17,19 @@ it('a manifest seeded from PixelLab: each state in each facing, one animation, w
       'south-east': [{ row: 8, frames: 17, weight: 85 }, { row: 20, frames: 17, weight: 15, rare: true }],
       'south-west': [{ row: 9, frames: 17, weight: 85 }, { row: 21, frames: 17, weight: 15, rare: true }],
     });
-    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] }, waiting: { 'south-east': [{ row: 17, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
-    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { east: [{ row: 7, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
-    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ sheet: '../x.png', row: 0, frames: 2, weight: 1 }] } } })).toThrow(HouseholdError);
-    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 0, frames: 2, weight: 1, rare: 'yes' }] } } })).toThrow(HouseholdError);
+    expect(() => checkSpriteLayout({ cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] }, waiting: { 'south-east': [{ row: 17, frames: 17, weight: 1 }] } } })).toThrow();
+    expect(() => checkSpriteLayout({ cell: [56, 84], states: { idle: { east: [{ row: 7, frames: 17, weight: 1 }] } } })).toThrow();
+    expect(() => checkSpriteLayout({ cell: [56, 84], states: { idle: { south: [{ sheet: '../x.png', row: 0, frames: 2, weight: 1 }] } } })).toThrow();
+    expect(() => checkSpriteLayout({ cell: [56, 84], states: { idle: { south: [{ row: 0, frames: 2, weight: 1, rare: 'yes' }] } } })).toThrow();
   });
 
 it('a face\'s own scale and offset are kept (t-1849: Mark\'s reads bigger than Art\'s), checked, and left out when they change nothing', () => {
     const idle = { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } };
-    expect(checkSpriteManifest({ cell: [96, 80], states: idle, scale: 0.85, offset: [0, 3] })).toMatchObject({ scale: 0.85, offset: [0, 3] });
-    const plain = checkSpriteManifest({ cell: [96, 80], states: idle, scale: 1, offset: [0, 0] });
+    expect(checkSpriteLayout({ cell: [96, 80], states: idle, scale: 0.85, offset: [0, 3] })).toMatchObject({ scale: 0.85, offset: [0, 3] });
+    const plain = checkSpriteLayout({ cell: [96, 80], states: idle, scale: 1, offset: [0, 0] });
     expect('scale' in plain || 'offset' in plain).toBe(false);
     for (const bad of [{ scale: 0.2 }, { scale: 1.3 }, { scale: '0.9' }, { offset: [0] }, { offset: [0, 40] }, { offset: [0.5, 0] }])
-      expect(() => checkSpriteManifest({ cell: [96, 80], states: idle, ...bad })).toThrow(HouseholdError);
+      expect(() => checkSpriteLayout({ cell: [96, 80], states: idle, ...bad })).toThrow();
   });
 
 it('picks an animation by weight at each beat, never the same rare one twice in a row; a facing with none uses south', () => {

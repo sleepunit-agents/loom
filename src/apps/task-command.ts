@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { taskCreateSchema, taskEditSchema, taskAskSchema } from './tasks.js';
-import type { NewTask, TaskActor, TaskRow, TaskService } from './tasks.js';
+import { taskCreateSchema, taskEditSchema, taskAskSchema, taskLinkType } from './tasks.js';
+import type { NewTask, TaskActor, TaskLinkType, TaskRow, TaskService } from './tasks.js';
 
 /** Intent from the shared Tasks form. Identity is supplied separately by root. */
 export type TaskCommand =
@@ -8,13 +8,18 @@ export type TaskCommand =
   | { action: 'edit'; id: string; input: Parameters<TaskService['edit']>[1] }
   | { action: 'claim' | 'unclaim' | 'reopen'; id: string }
   | { action: 'close'; id: string; reason: string }
+  | { action: 'move'; id: string; before: string | null }
+  /** Tasks, and the project they go to, or null for none. */
+  | { action: 'moveToProject'; ids: string[]; project: string | null }
   | { action: 'comment'; id: string; text: string }
-  | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: 'blocks' | 'parent-child' }
+  | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: TaskLinkType }
   | { action: 'answer'; id: string; question: string; answer: 'yes' | 'no' | 'words'; text?: string }
   | { action: 'ask'; id: string; input: Parameters<TaskService['ask']>[1] };
 
 const id = z.string().trim().min(1);
-const relation = { id, dependsOn: id, type: z.enum(['blocks', 'parent-child']) };
+const relation = { id, dependsOn: id, type: taskLinkType };
+/** How many tasks one move may name. */
+export const TASK_MOVE_MAX = 500;
 /** Outside-door input validation; identity is never part of the command. */
 export const taskCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), input: taskCreateSchema }).strict(),
@@ -23,6 +28,8 @@ export const taskCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('unclaim'), id }).strict(),
   z.object({ action: z.literal('reopen'), id }).strict(),
   z.object({ action: z.literal('close'), id, reason: z.string().trim().min(1) }).strict(),
+  z.object({ action: z.literal('move'), id, before: id.nullable() }).strict(),
+  z.object({ action: z.literal('moveToProject'), ids: z.array(id).min(1).max(TASK_MOVE_MAX), project: id.nullable() }).strict(),
   z.object({ action: z.literal('comment'), id, text: z.string().trim().min(1) }).strict(),
   z.object({ action: z.literal('link'), ...relation }).strict(),
   z.object({ action: z.literal('unlink'), ...relation }).strict(),
@@ -35,14 +42,16 @@ export const taskCommandSchema = z.discriminatedUnion('action', [
  * its write/receipt transaction. Notify shared readers only after that commits.
  * No transport, retry, authorization decision or receipt is introduced here.
  */
-export function dispatchTaskCommand(service: TaskService, command: TaskCommand, actor: TaskActor): TaskRow | void {
+export function dispatchTaskCommand(service: TaskService, command: TaskCommand, actor: TaskActor): TaskRow | { moved: string[] } | void {
   switch (command.action) {
     case 'create': return service.create(command.input, actor);
-    case 'edit': return service.edit(command.id, command.input);
+    case 'edit': return service.edit(command.id, command.input, actor);
     case 'claim': return service.claim(command.id, actor);
     case 'unclaim': return service.unclaim(command.id);
     case 'reopen': return service.reopen(command.id);
     case 'close': return service.close(command.id, command.reason);
+    case 'move': return service.move(command.id, command.before);
+    case 'moveToProject': return { moved: service.moveToProject(command.ids, command.project, actor) };
     case 'comment': return service.comment(command.id, command.text, actor);
     case 'link': return service.link(command.id, command.dependsOn, command.type);
     case 'unlink': return service.unlink(command.id, command.dependsOn, command.type);

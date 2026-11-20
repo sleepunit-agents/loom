@@ -7,7 +7,7 @@ import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { referenceStatements } from './references.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
@@ -30,18 +30,18 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(79);
-    const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton')]));
-    // Runtime placement and per-provider windows fill in details the approved
-    // summary is silent on; preserve exact coverage for all approved columns.
-    expect(actual.model_account_windows).toEqual(['account', 'window', 'usage', 'usage_read_at', 'resets_at', 'duration_ms', 'reserve']);
-    delete actual.model_account_windows;
+    expect(Object.keys(expected)).toHaveLength(87);
+    const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name)
+      .filter(n => n !== 'singleton' || getTableName(table) === 'box_alert_settings');
+    const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), columnsOf(table)]));
+    // The schema keeps these three with its plumbing; the approved model describes each column by column.
+    const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
+    for (const table of described) actual[getTableName(table)] = columnsOf(table);
     // Take-time volume is internal delivery proof, not an additional approved-page field.
     actual.inbox = actual.inbox.filter(n => n !== 'taken_volume');
-    actual.jobs = actual.jobs.filter(n => !['account', 'harness'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
-    expect(Object.values(plumbing).map(getTableName).sort()).toEqual([...names,'program_tokens','program_record_grants','program_operation_grants'].sort());
+    expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());
     const { client } = fresh();
     for (const table of [...Object.values(tables), ...Object.values(plumbing)]) {
       const columns = client.prepare(`PRAGMA table_info("${getTableName(table)}")`).all() as { name: string }[];
@@ -53,7 +53,7 @@ describe('the approved data model', () => {
   it('keeps generated installation SQL exactly in step with the sole Drizzle definition', async () => {
     const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
     const checkedIn = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8');
-    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements()].join('\n') + '\n');
+    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements(), 'INSERT INTO box_alert_settings (singleton) VALUES (1);'].join('\n') + '\n');
   });
 
   it('refuses an existing database and leaves its records intact', () => {
@@ -232,8 +232,6 @@ describe('the approved data model', () => {
     const { db, at } = household();
     expect(() => db.insert(migrations).values({ number: 2, appliedAt: 'yesterday' }).run()).toThrow();
     expect(() => db.insert(operationResults).values({ caller: 'art', id: 'retry-1', operation: 'tasks.close', inputHash: 'fingerprint', result: Buffer.from('done'), expiresAt: '2026-11-14T00:00:00+01:00' }).run()).toThrow();
-    db.insert(tokens).values({ fingerprint: 'fp', label: 'browser', kind: 'owner', member: 'jonathan', createdAt: at }).run();
-    expect(() => db.insert(signinChallenges).values({ id: 'ch-1', token: 'fp', challenge: 'test', expiresAt: 'yesterday' }).run()).toThrow();
   });
 
   it('enforces household ranges, live token labels and secret rule choices', () => {

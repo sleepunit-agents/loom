@@ -1,12 +1,19 @@
 # Shared data schema
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
-schema is `src/core/data/schema.ts`: all 79 tables and 551 named columns in
-`model.py`, plus the eight internal bookkeeping tables listed there and three internal
-programme restriction/grant tables. The programme marker is independent of its
-record-type and operation rows, so clearing every grant cannot make a token
-ordinary. These additional tables contain no raw bearer credential. This module
-replaces per-part table definitions as each part is connected to it.
+schema is `src/core/data/schema.ts`: all 82 tables in `model.py` with their named
+columns, `model_account_windows`, the ten internal bookkeeping tables listed there,
+and the programme restriction and grant tables. Schema 15 added six tables for kit
+definitions, person and project grants, outside project membership and use history.
+Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
+grants and request history. Schema 20 adds a reading sequence and a silence marker to `boxes`, plus `box_readings` (the latest reading of each thing a machine's worker watches on it: the room under each watched disk path, the memory available, whether the container runtime answers; no history, with the last evaluated lines, occasion counters, report sequences, and accumulated unknown and absent observations) and `box_alert_settings` (the household's lines those readings are held to; a default row on installation or upgrade, editable by an owner). Schema 19 adds who made each terminal binding (`terminal_credentials.issued_by`); bindings from before have nobody recorded. Schema 18 adds `model_account_logins`: what loom last
+learned about each model account sign-in (account, machine, harness and place), never a
+credential. Total: 110 tables. The programme
+marker is independent of its record-type and operation rows, so clearing every grant
+cannot make a token ordinary. These additional tables contain no raw bearer
+credential. Every part of the program reads and writes this one schema; where each
+table sits by part, and which stores are outside it, is in
+[`architecture.md`](architecture.md).
 
 Import typed table exports such as `tasks`, `taskComments`, `timingDays` and
 `measuringSettings`. TypeScript fields use camelCase; SQL names match the site.
@@ -16,11 +23,90 @@ direction and `<table>By<Column>` in reverse, for example `projectRow` and
 `taskCommentsByTask` on tasks. These names disambiguate multiple links to one table.
 
 `createDataSchema(client)` is only for a completely empty database. It refuses
-any existing schema and never imports, drops, upgrades or replaces old tables.
-The real-data move is separate work. The generated DDL is packaged in
+any existing schema and never imports, drops or replaces old tables. First install
+(`src/shared-initialize.ts`) calls it once. The generated DDL is packaged in
 `assets/data/schema.sql`; regenerate it with `npm run schema:generate`. The test
 checks both against the approved source and against a real in-memory SQLite DB.
-Nothing calls this initializer on an installed home yet.
+
+## Changing the schema
+
+The `migrations` table holds the schema number. Number 1 is the first shape; each
+entry in `upgrades` (`src/core/data/database.ts`) is the next number. A fresh
+database is created whole and marked with every number.
+
+At every start `upgradeDataSchema` first recognises the database without writing to
+it. The database as it is must have exactly the shape the program at its number
+installed (columns, defaults, keys, foreign keys and their actions, CHECKs, and each
+index and trigger as written): the pinned installation SQL of that number in
+`src/core/data/shipped-shapes/`, which ships with the program for this. That
+comparison comes before any step, because a step that rebuilds or drops a table
+would erase a change made to it by hand and then pass. When steps are pending, the
+schema alone is then copied into memory, the steps are run there, and the result
+must be exactly a fresh database's shape. Only then are the steps run on the real
+file. A foreign, interim, hand-altered or newer database is refused untouched;
+moving older data in is the separate real-data move.
+
+To change the schema:
+
+1. Edit `src/core/data/schema.ts` and run `npm run schema:generate`.
+2. Add the step to `upgrades`. An index or trigger must be written exactly as the
+   generated SQL writes it, because those are compared as text.
+3. Copy the new `assets/data/schema.sql` to
+   `src/core/data/shipped-shapes/<new number>.sql`. Never edit an earlier one.
+
+A step may rebuild a table (create the new one, copy the rows, drop the old one,
+rename): SQLite cannot drop a column that carries a foreign key or change a CHECK
+in place. Step 6 does this to drop `conversations.job`, step 7 to take a state
+out of `jobs.state`, and step 9 to drop `bridge_files.incoming`. For that reason the steps run with foreign keys
+off, inside one transaction, and every reference in the database is checked
+(`PRAGMA foreign_key_check`) before the transaction commits; a step that would
+leave a row pointing at nothing changes nothing. The same check is made for the
+kind-and-id references (`polymorphicReferences`), which triggers enforce and
+`foreign_key_check` does not see. A rebuilt table loses its
+indexes and triggers with the old one, so the step recreates each, written as the
+generated SQL writes it.
+
+When no step is pending, which is every ordinary start, nothing is rehearsed: the
+file's own shape is compared with a fresh database's.
+
+`src/core/data/upgrade.test.ts` upgrades the installation SQL of every shipped number
+and compares each table with a fresh database in full. It fails if the newest pinned
+shape is not today's `schema.sql`, so a schema change with no step cannot pass. It
+also stops the steps at every number on the way and compares with that number's
+pinned shape, so a household that reached a number by upgrading is recognised there
+like one installed at it.
+
+Two things the comparison leaves out on purpose: the order of a table's columns and
+a constraint's name, because a column added by a step lands last and unnamed. So an
+upgraded database and a fresh one can hold the same table with its columns in a
+different order, and no statement may place a value by position
+(`src/stored-data.contract.test.ts` fails on an insert that does not name its columns).
+
+Step 10 is the plainest kind: it adds one empty column, `projects.retired_at`, and touches no row.
+Step 11 is the same kind: it adds one empty column, `bridge_channels.brief`, and two empty tables,
+`bridge_send_files` and `conversation_sessions`. Neither table is read by the query door.
+
+Step 12 adds `job_usage` and backfills each ended job with its model, harness and available claim-to-end time. Historical harness counters stay null. Open jobs receive their usage record when they end.
+
+Step 13 adds the terminal conversation venue and tables for machine-bound credential grants, observed sessions and their individual runs. Existing conversations retain their IDs and contents. Existing agent credentials receive no machine grant.
+
+Step 14 records worker capacity and job placement requirements, preferences and decisions. Existing workers begin with unknown capacity.
+
+Step 15 adds kit definitions, direct and project grants, outside project members and kit use records. Existing households begin with empty kit tables.
+
+Step 16 adds scheduled programs and their firing ledger. Existing time triggers retain their ordinary firing behavior. The upgrade copies job usage counters by column name.
+
+Step 17 adds the nullable explicit reader list on each machine and an empty diagnostic history table. Existing machines keep their hosting settings. No diagnostic answer text is stored in the household database.
+
+A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
+[`accepted-tradeoffs.md`](accepted-tradeoffs.md).
+
+A change to existing rows belongs in a step. The one exception is a change SQL cannot
+make because it needs something only the running program holds; that is done at start
+by the module that owns the rule, must change nothing the second time, says what it
+did in one line on the program's output, and is listed in
+[`accepted-tradeoffs.md`](accepted-tradeoffs.md) ("One rewrite of stored rows runs at
+start, outside the upgrade steps").
 
 ## Choices where the pages are silent
 
@@ -40,10 +126,12 @@ Nothing calls this initializer on an installed home yet.
   bytes; raw bridge events are opaque bytes with their own expiry column.
 - Internal bookkeeping uses named operation, identity, state and time columns.
   No secret value is stored in the schema or its write journal.
-- Measuring's local retention defaults to 90 days, bounded to 1–3650, matching
-  the existing Measuring module. Measuring is off by default.
-- Backups retain seven copies by default, at 03:00 UTC until the household sets
-  its timezone. Inbox settle time defaults to five seconds and dim to one day.
+- Measuring's local retention defaults to 90 days, bounded to 0–3650, matching
+  the Measuring module. Zero keeps no local history and is accepted only when
+  measurements are sent outside. Measuring is off by default.
+- Backups retain seven copies by default, at 03:00 in the household's timezone.
+  That is the server's own zone from the first write of the household's row, until
+  the household sets another; the column's `UTC` default is never what a row gets. Inbox settle time defaults to five seconds and dim to one day.
 - Immutable approval audit rows and thread deletion markers reject edits. Thread
   deletion writes its own marker; deleted identifiers cannot be inserted again.
 - Live token-label uniqueness includes expiry, evaluated using the connection
@@ -58,13 +146,13 @@ expansion of a densely connected schema consumes unbounded practical memory.
 In Vitest, import GraphQL from `graphql/index.js` so the generator and executor
 use the same module instance.
 
-The subsequent endpoint unit uses [Yoga](https://the-guild.dev/graphql/yoga-server/docs/features/subscriptions)
-with Hono's Fetch interface and `graphql-ws` for multiplexed subscriptions on
-one websocket. Yoga's default subscription transport is SSE, so websocket
-integration must be explicit. [urql Graphcache](https://urql.dev/docs/graphcache/)
-is the chosen normalising client cache. The endpoint unit owns caller visibility,
-subscription deltas, transport lifecycle, and removing replaced Tasks reads;
-this schema unit exposes no unauthenticated generated endpoint or mutations.
+The door serves it with [Yoga](https://the-guild.dev/graphql/yoga-server/docs/features/subscriptions)
+over Hono's Fetch interface, and `graphql-ws` for multiplexed subscriptions on
+one websocket. Yoga's default subscription transport is SSE, so the websocket
+is wired explicitly and SSE is refused. [urql Graphcache](https://urql.dev/docs/graphcache/)
+is the browser's normalising cache. The door owns caller visibility, subscription
+deltas and the transport's lifecycle; the schema itself exposes no unauthenticated
+endpoint and no mutations.
 
 ## Generated read module
 
@@ -91,11 +179,7 @@ an installed module's unrestricted policy. Construct a separate schema for each
 identity/policy, and do not retain authority across session expiry or revocation.
 The policy map is copied at construction, but its functions must evaluate any
 changing sharing facts in SQL. Default relation depth is 2; supported depths are
-0–3. No HTTP route or installed-store composition uses this module yet.
-
-Still to connect: central household/project/private visibility predicates,
-authenticated GraphQL transport, Tasks `commentCount`, delta subscriptions,
-normalized client cache, Tasks tile replacement and configurable database provider.
+0–3. `src/next-data.ts` builds the served schema from it.
 
 Pinned-library limits: drizzle-graphql 0.8.5 conflates differently aliased nested
 relation requests, so this module rejects nested relation aliases before SQL,
@@ -109,22 +193,23 @@ permissive rewrite at both root and connected tables.
 ## Authenticated HTTP door
 
 `dataHttp(db, authenticate?)` is the Hono `/graphql` route, mounted by
-`listenNext` on its existing connection. It uses pinned GraphQL Yoga 6.1.0
+`src/next-data.ts` on the program's one connection. It uses pinned GraphQL Yoga 6.1.0
 ([Fetch server documentation](https://the-guild.dev/graphql/yoga-server/docs)).
 It accepts POST JSON only, refuses cross-origin browser requests (using the configured
 public origin behind a same-host TLS proxy), disables CORS,
 GraphiQL and batching, and sends `Cache-Control: no-store`. The generated schema
-has no mutations or subscriptions yet; SSE negotiation is explicitly refused.
-Subscriptions will use graphql-ws on the one websocket as consumers move.
+has no mutations: every write is a registered operation. Subscriptions use graphql-ws
+on the one websocket (`src/core/data/socket.ts`); SSE negotiation is refused.
 
-The first outside projection exposes Tasks, comments, links, projects and agent
-metadata. No session, token, passkey, plumbing or other table is reachable,
-including through reverse relations. Both task-link ends must be visible even
+The served schema is the one `src/next-data.ts` builds for the caller. Called with
+no schema of its own (as its own tests do), the route serves a small default:
+Tasks, comments, links, projects and agent metadata. In either, no session, token,
+passkey or plumbing table is reachable, including through reverse relations. Both task-link ends must be visible even
 if the request selects only their IDs. Tasks retain project precedence; a
 project task cannot be read merely because the caller owns its agent or is its
 member owner. General agent metadata uses project-or-owned-agent visibility.
 Sharing predicates execute in SQL on every request, including nested relations.
-Runner and outside service projections currently return 403, rather than being
+A runner or an outside service gets 403 from this route, rather than being
 mistaken for trusted installed code.
 
 `dataAuthentication(db, now?)` resolves raw bearer tokens or the `loom_ui` cookie
@@ -137,12 +222,10 @@ buffered results. Trusted composition may supply another authentication resolver
 request input never supplies an identity or SQL policy. Installed services call
 the shared application services directly without credentials.
 
-This route does not initialise, import or migrate a database. The next root
-still has interim startup/installers; its fresh-schema startup and the separate
-real-data move must supply the approved shared database. No fallback reads of
-interim task/token/session tables are provided. The mounted-route test builds a
-fresh in-memory shared database, writes through `taskService`, and reads those
-same rows over actual HTTP; it does not touch a home or installed state.
+This route does not create or upgrade a database; startup does that before the
+door opens ("Changing the schema" above). The mounted-route test builds a fresh
+in-memory database, writes through `taskService`, and reads those same rows over
+actual HTTP; it does not touch a home or installed state.
 `tasks.commentCount` is a generated task output extension, also available on
 connected task rows when comments are selected in the query schema. A correlated
 SQL count uses the same comment visibility predicate and runs inside the one
@@ -152,10 +235,6 @@ relation. Scalar aliases, fragments and directives select the count as usual.
 An unrequested count adds no SQL work. Counts have no separate stored column,
 filter or order input. This output-only detail follows the site's example;
 filtering and sorting remain on the schema's real columns.
-
-Remaining on t-2235: other outside table projections, file-backed Memory roots,
-websocket deltas and normalized Tasks client, deleting replaced
-interim reads/tables, and configurable database providers.
 
 ## Runtime account placement and quota windows
 
@@ -167,13 +246,15 @@ interpret them or a passed reset time as available capacity. Duration must be
 positive and finite; usage and reserve are fractions from zero to one. The
 account FK and composite key share observations across all agents, rather than
 keeping agent-local quota copies. The existing `modelAccounts` fields remain the
-site's account summary. Runtime owns ingestion and the capacity evaluator.
+site's account summary: a copy worked out from the windows each time they are
+recorded, kept because admission reads it without a join
+([`accepted-tradeoffs.md`](accepted-tradeoffs.md)). Runtime owns ingestion and the
+capacity evaluator.
 
 `jobs.account` is a nullable FK to the account selected for a job, and
 `jobs.harness` is the selected harness name. Both may be absent before placement.
 Typed relations include `jobs.accountRow`, `modelAccounts.jobsByAccount`, and
-`modelAccounts.modelAccountWindowsByAccount`. These are schema additions for a
-fresh database, not a migration. They add no public GraphQL projection: exact
+`modelAccounts.modelAccountWindowsByAccount`. They add no public GraphQL projection: exact
 account observations still require the account-owner/household-owner projection.
 
 ## Shared operation receipts
@@ -193,6 +274,5 @@ code `conflict`. `get` returns the stored receipt even if expired: the dispatche
 must call `expire(now)` before lookup, as the existing dispatcher does.
 `nextExpiry()` returns the next millisecond deadline for its Clock. This adapter
 writes canonical millisecond UTC strings and does not create tables, schedule
-work, check permission, or publish changes. Mounting it and removing the legacy
-receipt table remain composition work; its presence alone does not switch the
-running program.
+work, check permission, or publish changes. `src/shared-root.ts` gives it to the
+dispatcher, so every operation the program runs keeps its receipt in this table.

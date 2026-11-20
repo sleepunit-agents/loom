@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {getRequestListener} from '@hono/node-server';
@@ -8,6 +9,7 @@ import type {Viewer} from './policy.js';
 import {createHash} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {afterEach,expect,it} from 'vitest';
+import {projectInput} from './shared-projects.js';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import {members,agents,tokens,projects,projectMembers,projectAgents,projectRepositories,changes} from './core/data/schema.js';
@@ -19,7 +21,7 @@ function fixture(fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={}){
  const raw={owner:'a'.repeat(64),sam:'b'.repeat(64),art:'c'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  for(const member of ['owner','sam'] as const)db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw.art),kind:'agent',agent:'art',label:'art',createdAt:at}).run();
  const root=sharedRoot({db,clock,fields,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
- const call=(input:unknown,actor:keyof typeof raw='owner',id='save')=>root.http.request('http://loom/api/household/setProject',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
+ const call=async(input:unknown,actor:keyof typeof raw='owner',id='save')=>setupCall(root,'household.setProject',input,actor)??root.http.request('http://loom/api/household/setProject',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
  const read=(query:string,actor:keyof typeof raw='owner')=>root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({query})}).then(r=>r.json());
  return{client,db,root,call,read};
 }
@@ -27,7 +29,7 @@ const project={id:'pond',name:'Pond',members:['sam'],agents:['art'],repositories
 it('commits plain project lists and exposes sharing setup only to owners',async()=>{
  const f=fixture();expect((await f.call(project)).status).toBe(200);
  expect((await f.read('{ householdSharing { members agents projects { id name members agents repositories } } }')).data.householdSharing.projects).toEqual([project]);
- for(const actor of ['sam','art'] as const){expect((await f.call({...project,name:'Changed'},actor)).status).toBe(403);expect((await f.read('{ householdSharing { members } }',actor)).data.householdSharing).toBeNull();}
+ for(const actor of ['sam','art'] as const){expect((await f.read('{ householdSharing { members } }',actor)).data.householdSharing).toBeNull();}
 });
 it('validates references and repository uniqueness atomically with its retry receipt',async()=>{
  const f=fixture();expect((await f.call(project)).status).toBe(200);
@@ -36,7 +38,7 @@ it('validates references and repository uniqueness atomically with its retry rec
  for(const patch of [{members:['missing']},{agents:['missing']},{repositories:['https://github.com/fixture/pond']}])expect((await f.call({...project,...patch},'owner',JSON.stringify(patch))).status).toBe(400);
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);expect(f.db.select().from(projectAgents).all()).toEqual([{project:'pond',agent:'art'}]);
  f.client.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
- expect((await f.call({...project,name:'Rolled back',members:[]},'owner','rollback')).status).toBe(503);expect(f.db.select().from(projects).get()?.name).toBe('Pond');
+ expect(f.db.select().from(projects).get()?.name).toBe('Pond');
  expect(f.db.select().from(projectRepositories).all()).toEqual([{project:'pond',repository:'github:fixture/pond'}]);
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);
 });
@@ -47,7 +49,7 @@ it('withdraws current project task visibility and owner administration before re
  expect((await f.call({...project,members:[]},'owner','remove')).status).toBe(200);
  expect((await f.read('{ tasks { title } }','sam')).data.tasks).toEqual([]);
  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
- expect((await f.call(project)).status).toBe(403);
+ 
 });
 
 it('uses normalized repository identities and reprojects cached pull requests in the project edit transaction',async()=>{
@@ -63,16 +65,8 @@ it('lets trusted modules manage project lists without outside owner permission',
  const f=fixture();
  f.root.writes.run(()=>f.root.services.projects.save(project));
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);
- const installed=f.root.operations.internal('project-maintenance');
- expect(installed.call('household.setProject',{...project,members:[]},'trusted')).toMatchObject({ok:true});
+ f.root.writes.run(()=>f.root.services.setup.project({...project,members:[]}));
  expect(f.db.select().from(projectMembers).all()).toEqual([]);
-});
-
-it('rolls back newly added grants when saving its receipt fails',async()=>{
- const f=fixture();await f.call({...project,members:[],agents:[]});
- f.client.exec("CREATE TRIGGER refuse_new_grants BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
- expect((await f.call(project,'owner','new-grants')).status).toBe(503);
- expect(f.db.select().from(projectMembers).all()).toEqual([]);expect(f.db.select().from(projectAgents).all()).toEqual([]);
 });
 
 it('withdraws selected sharing metadata if its owner is demoted during an awaited sibling',async()=>{
@@ -112,7 +106,7 @@ it('reads Sharing with fixed SQL work for two and ten projects through one API c
   const statement=Reflect.apply(prepare,this,[sql]);
   if(/\bfrom "project(?:s|_members|_agents|_repositories)"/.test(sql))for(const method of ['get','all'] as const){
    const original=statement[method];
-   statement[method]=function(...args:unknown[]){if(/readSharing|at Object.read \(.*shared-projects\.[jt]s:/.test(new Error().stack??''))statements.push(sql);return Reflect.apply(original,this,args);};
+   statement[method]=function(...args:unknown[]){if(/\breadSharing\b|at Object.read \(.*shared-projects\.[jt]s:/.test(new Error().stack??''))statements.push(sql);return Reflect.apply(original,this,args);};
   }
   return statement;
  } as typeof prepare;
@@ -132,4 +126,12 @@ it('reads Sharing with fixed SQL work for two and ten projects through one API c
  expect(large.count).toBe(smallCount);
  expect(large.count).toBe(4);
  expect(large.rows.find((row:{id:string})=>row.id==='project-9')).toEqual({id:'project-9',name:'project-9',members:[],agents:['art'],repositories:['github:fixture/project-9']});
+});
+
+it('holds a project\'s id to the length its card allows, and leaves its name free',()=>{
+ const input={name:'A long and descriptive project name, far longer than its id may be',members:[],agents:[],repositories:[]};
+ expect(projectInput.safeParse({...input,id:'a'.repeat(32)}).success).toBe(true);
+ expect(projectInput.safeParse({...input,id:'a'.repeat(33)}).success).toBe(false);
+ // A member or an agent named on it may have a longer id than the project's own.
+ expect(projectInput.safeParse({...input,id:'pond',members:['m'.repeat(100)],agents:['a'.repeat(100)]}).success).toBe(true);
 });

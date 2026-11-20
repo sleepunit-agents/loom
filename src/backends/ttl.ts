@@ -1,3 +1,4 @@
+import { DAY_MS } from '../core/day.js';
 /**
  * TTL parsing and expiration utilities for memory aging.
  *
@@ -27,7 +28,7 @@ export function parseTTL(ttl: string | undefined): number | null {
   const unit = match[2];
 
   switch (unit) {
-    case 'd': return amount * 24 * 60 * 60 * 1000;
+    case 'd': return amount * DAY_MS;
     case 'h': return amount * 60 * 60 * 1000;
     default: throw new Error(`Unknown TTL unit: "${unit}"`);
   }

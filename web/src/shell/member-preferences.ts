@@ -8,7 +8,7 @@ export type MemberPreferenceRow = Omit<Prefs, 'mode' | 'at'> & { member: string;
 export type MemberPreferencesData = { memberPreferences: MemberPreferenceRow[] };
 export type PreferenceRecord = LiveRecord & { prefs: Prefs };
 export const memberPreferencesQuery = `query DeskPreferences {
-  memberPreferences { member look ground sound pixel icons haptics oneWindow zoom motion contrast changedAt }
+  memberPreferences { member look ground sound pixel haptics oneWindow zoom motion contrast changedAt }
 }`;
 
 /** The current authenticated mailbox supplies member identity. Never infer the
@@ -22,8 +22,8 @@ export function memberPreferences(identity: DataQuerySnapshot<HomeCommsData>, qu
   if (!member) return { status: 'denied', records: [] };
   const rows = query.data.memberPreferences.filter(row => row.member === member);
   if (rows.length !== 1) return { status: rows.length ? 'denied' : 'live', records: [] };
-  const { look, ground, sound, pixel, icons, haptics, oneWindow, zoom, motion, contrast } = rows[0];
-  return { status: 'live', records: [{ id: member, prefs: { look, ground, sound, pixel, icons, haptics, oneWindow, zoom, motion, contrast } }] };
+  const { look, ground, sound, pixel, haptics, oneWindow, zoom, motion, contrast } = rows[0];
+  return { status: 'live', records: [{ id: member, prefs: { look, ground, sound, pixel, haptics, oneWindow, zoom, motion, contrast } }] };
 }
 export function useMemberPreferences(): Snapshot<PreferenceRecord> {
   const identity = useDataQuery<HomeCommsData>(homeCommsQuery);

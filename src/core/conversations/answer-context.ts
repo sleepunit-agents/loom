@@ -1,10 +1,11 @@
 /** Ephemeral context for an answer to this conversation's own plain question.
  * No words are copied into a new message, Inbox row, job or receipt. */
 import {and,eq} from 'drizzle-orm';
-import {household,inbox,messages,threads} from '../data/schema.js';
+import {inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInboxQuestion,hasPrivateInboxPayload} from './private-inbox-words.js';
+import { commsKeepDays } from '../data/comms-days.js';
 type Item=typeof inbox.$inferSelect;
 export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:string|null;link:string|null};
 export type AnswerContext={question:AnswerQuestion;until:number};
@@ -12,7 +13,7 @@ export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Prom
  const {db}=comms;
  if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(db,answer)){
   const snapshot=()=>{const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
-  const before=snapshot(),days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
+  const before=snapshot(),days=()=>commsKeepDays(db);
   if(!before||privateInboxDeadline(before,days())<=Date.parse(comms.now()))return()=>null;
   const envelope=privateInboxEnvelope(before.words);if(!envelope)return()=>null;
   const value=privateInboxQuestion(await comms.key.open(Buffer.from(envelope.cipher,'base64')));
@@ -35,8 +36,7 @@ export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Prom
  };
  const before=snapshot();if(!before)return()=>null;
  const deadline=(state:NonNullable<ReturnType<typeof snapshot>>)=>{
-  const days=db.select({days:household.commsDays}).from(household).get()?.days??14;
-  return Number.isInteger(days)&&days>=1&&days<=14?wordsDeadline(state.message,days):NaN;
+  return wordsDeadline(state.message,commsKeepDays(db));
  };
  if(!(deadline(before)>Date.parse(comms.now())))return()=>null;
  let text:string|null;

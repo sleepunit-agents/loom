@@ -52,11 +52,12 @@ export class DataLive {
   currentRead(version: number | undefined): boolean { return !this.stopped && version !== undefined && version === this.version; }
   private executions = new ExecutionDrain();
   changed() { this.version++; for (const listener of [...this.listeners]) listener(); }
-  /** Timing rows cannot change private selection membership. Wake readers
-   * without making an otherwise current read invalidate its own publication.
-   * Real data/access writes must always use changed(). */
-  timingsChanged() { this.metadataChanged(); }
-  /** Non-authority presentation/timing metadata cannot withdraw private data. */
+  /** Wake readers without making an otherwise current read invalidate its own
+   * publication. Only for times loom stamps as it is used (a credential's last
+   * use, a machine's last report, a timing row): they cannot change who may see
+   * what or withdraw private data. The composition calls this rarely
+   * (next-data.ts, STAMP_WAKE_MS). Real data and access writes must always use
+   * changed(). */
   metadataChanged() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
