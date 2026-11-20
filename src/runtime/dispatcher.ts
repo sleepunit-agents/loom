@@ -76,6 +76,7 @@ export class Dispatcher {
       const at = this.now(), roles = this.roles();
       const queued = this.db.select({ job: jobs, round: { change: changeReviewRounds.change, headCommit: changeReviewRounds.headCommit }, source: { repository: changes.repository, branch: changes.branch } }).from(jobs)
         .leftJoin(changeReviewRounds, eq(jobs.id, changeReviewRounds.job)).leftJoin(changes, eq(changeReviewRounds.change, changes.id)).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
+      let sharing: ReturnType<typeof sharedSharing> | undefined;
       for (const { job, round, source } of queued) {
         if (round && (!source || !this.coldReviewBoxes.has(box) || job.startedByKind === 'program')) continue;
         if (job.retryAt && job.retryAt > at) continue;
@@ -109,7 +110,7 @@ export class Dispatcher {
           if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
           continue;
         }
-        if (cv && review && (!jobMatchesConversation(job,cv) || !mayRunPrivateWork({member: cv.member ?? undefined, agent: cv.agent, project: cv.project ?? undefined}, sharedSharing(this.db)))) {
+        if (cv && review && (!jobMatchesConversation(job,cv) || !mayRunPrivateWork({member: cv.member ?? undefined, agent: cv.agent, project: cv.project ?? undefined}, sharing ??= sharedSharing(this.db)))) {
           if (this.jobs.unplaceable(job.id, 'The assignment for the private handoff ended.')) ended?.push(job.id);
           continue;
         }
