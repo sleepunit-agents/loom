@@ -167,9 +167,18 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    return data.memoryKnowledgeSearch.map(page=>'## '+page.title+'\n_'+page.domain+' · '+page.slug+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_\n\n'+page.body).join('\n\n---\n\n');
   });
 
- tool('knowledge_write','Add a shared knowledge page. source, if given, is an http or https link; without one the page stays provisional.',
-  z.object({title:z.string().min(1).max(200),domain:z.string().min(1).max(200),body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH),source:z.string().max(4000).optional()}).strict(),
-  async input=>{const value=await run('mind.knowledgeAdd',input) as {slug:string};return 'Wrote knowledge page '+value.slug;});
+ tool('knowledge_write','Create with title, domain and body. Append with mode "append", slug and body. Optional source URL.',
+  z.object({mode:z.enum(['create','append']).optional(),slug:pageSlug.optional(),title:z.string().min(1).max(200).optional(),
+   domain:z.string().min(1).max(200).optional(),body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH),source:z.string().max(4000).optional()}).strict(),
+  async ({mode,slug,title,domain,body,source})=>{
+   if(mode==='append'){
+    if(!slug || title!==undefined || domain!==undefined)throw new Refusal('Append needs the existing page slug and additional words');
+    await run('mind.knowledgeAppend',{slug,body,...(source!==undefined && {source})});return 'Appended to knowledge page '+slug;
+   }
+   if(!title || !domain || slug!==undefined)throw new Refusal('Creating a page needs its title, domain and words');
+   const value=await run('mind.knowledgeAdd',{title,domain,body,...(source!==undefined && {source})}) as {slug:string};
+   return 'Wrote knowledge page '+value.slug;
+  });
 
  tool('note_read','Read one of your notes by path.',
   z.object({path:notePath}).strict(),
@@ -282,10 +291,10 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    if(page.history?.length)lines.push('','## Earlier versions',...page.history.map(row=>'- '+row.id+' ('+row.op+', replaced '+row.replacedAt+(row.actor?' by '+row.actor:'')+')'));
    return lines.join('\n');
   });
- tool('knowledge_edit','Change a shared knowledge page: replace its body (the old body is kept as a version), add a source (an http or https link), or both.',
+ tool('knowledge_edit','Replace page text, add a source URL, or both. Previous text is kept.',
   z.object({slug:pageSlug,body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
- tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check. A note is added to the page as a dated section; without one the page is left as it is. freshnessAnchor is the version or date the page holds true as of.',
+ tool('knowledge_check','Record a page check. A note adds a dated section. freshnessAnchor gives the verified version or date.',
   z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
   async input=>{const {outcome:_outcome,...check}=input;await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',check);return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
  tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',

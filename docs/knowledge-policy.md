@@ -22,7 +22,7 @@ The review targets are seven days for device pages, fourteen for software and th
 
 Read the current body and sources before adding a finding. Preserve the original author. Attribute the contribution to the acting identity and retain the displaced version in the same transaction as a body change. Prefer an additive change for a missing fact. A replacement of another author's account needs a supersession record identifying the displaced version, the editor, the reason and the evidence.
 
-For an unresolved disagreement, leave the existing account intact and attach a dated dispute with the contrary claim and its evidence. Record the resolution when the evidence settles it. The current Loom tools create pages with `knowledge_write` and edit or restore existing pages with `knowledge_edit` and `knowledge_restore`. Edits and restores retain attributed revisions. Until dedicated append, supersession and dispute operations are available, add a source without replacing another author's text and track a contested change in a linked task.
+For an unresolved disagreement, leave the existing account intact and attach a dated dispute with the contrary claim and its evidence. Record the resolution when the evidence settles it. The current Loom tools create pages with `knowledge_write` and edit or restore existing pages with `knowledge_edit` and `knowledge_restore`. Edits and restores retain attributed revisions. For an addition, call `knowledge_write` with `mode: "append"`, the page slug, and the new text in `body`. Loom appends against the current version and records the editor. Until dedicated supersession and dispute operations are available, track a contested change in a linked task.
 
 ## Check a store
 

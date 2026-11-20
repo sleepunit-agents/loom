@@ -136,6 +136,13 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       },
     }));
   const slug = pageSlug;
+  replace('mind.knowledgeAppend', 'append', z.object({
+    slug, body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH), source: z.string().trim().max(4000).default(''),
+  }).strict(), (page, value: { body: string }) => {
+    const combined = page.body + '\n\n' + value.body;
+    if (combined.length > MAX_PAGE_BODY_LENGTH) throw new OperationError('invalid', 'The combined page exceeds the body limit');
+    return combined;
+  }, (value: { source: string }) => value.source);
   // Edit: new words, a source to add, or both.
   replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH).optional(), source: z.string().trim().max(4000).default('') }).strict()
     .refine(value => value.body !== undefined || value.source !== '', 'Give new words, a source, or both'),

@@ -569,7 +569,7 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  for(const [path,id] of [['plans/pond','held-over'],['guests/door','held-again']])expect(await api('memory','noteWrite',{path,body:'Overwritten',lifespan:'keep'},id,token),path).toMatchObject({status:403,result:{message:HELD_REFUSALS.note}});
  expect(note('plans/pond')).toEqual({body:'The owner\'s plan',by:'art'});expect(note('guests/door').body).toBe('The code is 1234');
  // The household's knowledge and people: nothing.
- for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
+ for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeAppend',{slug,body:'Unverified detail.'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
   expect(await api('mind',verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.knowledge}});
  // Adding a person is refused too. Here the people rule already refuses this agent's body before loom's line is reached.
  expect((await api('mind','personAdd',{name:'Mallory'},'held-person',token)).status).toBe(403);

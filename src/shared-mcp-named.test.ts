@@ -299,6 +299,24 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
  }finally{await art.client.close();await p.close();}
 });
 
+it('appends contributions from two terminals to the current page and records their editors',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ try{
+  const slug='shared-page';
+  await art.call('knowledge_write',{title:'Shared page',domain:'tools',body:'First version'});
+  const append=(who:typeof art,body:string)=>who.call('knowledge_write',{mode:'append',slug,body});
+  const results=await Promise.all([append(art,'First addition'),append(mark,'Second addition')]);
+  expect(results.map(r=>r.text)).toEqual(Array(2).fill('Appended to knowledge page '+slug));
+  const page=(await art.call('knowledge_read',{slug})).text;
+  expect(page).toMatch(/First version\n\n(First addition\n\nSecond addition|Second addition\n\nFirst addition)/);
+  for(const editor of ['art','mark'])expect(page).toMatch(new RegExp('\\(append, replaced [^\\n]+ by '+editor+'\\)'));
+  const command={operation:'mind.knowledgeAppend',input:{slug,body:'Retry proof'},id:'retry-same-append'};
+  const first=await art.call('loom_command',command);expect(JSON.parse(first.text).ok).toBe(true);
+  expect((await art.call('loom_command',command)).text).toBe(first.text);
+  expect((await art.call('knowledge_read',{slug})).text.match(/Retry proof/g)).toHaveLength(1);
+ }finally{await art.client.close();await mark.client.close();await p.close();}
+});
+
 it('lists the current attributed approval answer after an owner answers through MCP',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  const owner=new Client({name:'fictional-owner-terminal',version:'1'});
