@@ -13,7 +13,7 @@ import { MESSAGE_WORDS_MAX } from './words.js';
 import { ConversationMail } from './mail.js';
 const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
 /** `quiet` names a body whose status report writes nothing to the agent's status row (one on anybody else's word). */
-export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,quiet?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>)=>boolean):void {
+export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,quiet?:(work:NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>)=>boolean,maySendProgress?:(viewer:Viewer)=>boolean):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);
  const threadFor=(viewer:Viewer)=>{
@@ -37,6 +37,7 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),...details}).strict(),
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
+  may:(viewer,input)=>common.may(viewer)&&(input.kind!=='progress'||maySendProgress?.(viewer)===true),
   async prepare(input,ctx){
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
    const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:kind==='progress'?'reply':kind,progress:kind==='progress',words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
