@@ -119,7 +119,11 @@
     {
       "id": "data-018",
       "promise": "migrations The list of changes already made to the database's shape, so each is applied once.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "dataMigrations"
+      }
     },
     {
       "id": "data-019",
