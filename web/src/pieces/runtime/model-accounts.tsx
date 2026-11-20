@@ -9,7 +9,7 @@ export {runtimeAccountsQuery} from './model-query';
 type Summary={__typename:'RuntimeAccountSummary';label:string;level:string};
 type UsageWindow={window:string;usage:number|null;usageReadAt:string|null;resetsAt:string|null;reserve:number|null};
 type Login={reporting:boolean;needsSignIn:boolean;canRequest:boolean;box:{id:string;name:string};place:'host'|'containers';harness:string;state:'signed-in'|'signed-out';expiresAt:string|null;checkedAt:string};
-type Detail={__typename:'RuntimeAccountDetail';label:string;level:string;id:string;owner:string;provider:string;usage:number|null;usageReadAt:string|null;resetsAt:string|null;hasRoom:boolean;windows:UsageWindow[];logins:Login[];signedInOn:{id:string;name:string}[]};
+type Detail={__typename:'RuntimeAccountDetail';label:string;level:string;id:string;owner:string;provider:string;usage:number|null;usageReadAt:string|null;resetsAt:string|null;hasRoom:boolean;pendingSignIns:{id:string;name:string}[];windows:UsageWindow[];logins:Login[];signedInOn:{id:string;name:string}[]};
 export type RuntimeAccount=Summary|Detail;
 export type AgentModel={agent:string;model:string;position:number};
 const time=(value:string|null,zone?:string)=>value?fullTime(value,zone):'Not available';
@@ -41,12 +41,13 @@ function AccountDetails({account,zone,active}:{account:Detail;zone?:string;activ
    <p>Has room: {account.hasRoom?'Yes':'No'}</p>
   </section>
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
+   {account.pendingSignIns?.map(box=><p key={box.id}>{box.name} · Sign-in requested</p>)}
    {account.logins?.length?account.logins.map(login=><div key={JSON.stringify([login.box.id,login.place,login.harness])}>
     <strong>{login.box.name}</strong> · {login.harness} · {login.place==='host'?'On the machine':'In houses'}
     <p>{!login.reporting&&'Last known: '}{login.state==='signed-in'?'Signed in':'Signed out'} · Checked {time(login.checkedAt,zone)}</p>
     {login.expiresAt&&<p>Ends {time(login.expiresAt,zone)}</p>}
     {active&&login.canRequest&&<SignInButton account={account.id} box={login.box.id}/>}
-   </div>):<p>No sign-ins reported.</p>}
+   </div>):!account.pendingSignIns?.length&&<p>No sign-ins reported.</p>}
    <p>Configured machines: {account.signedInOn.map(box=>box.name).join(' · ')||'No machines'}</p>
   </section>
  </div>;

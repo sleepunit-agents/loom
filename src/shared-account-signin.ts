@@ -25,7 +25,7 @@ import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
 import { accountSignins, boxes, inbox, modelAccounts } from './core/data/schema.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
-import { OperationError, type Operations } from './core/operations/index.js';
+import { OperationError, type Context, type Operations } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
 import { signInReason } from './runtime/account-signin-reasons.js';
 import { SIGNIN_MS } from './runtime/account-signin-time.js';
@@ -89,17 +89,18 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   const people = { write: true, recheckPolicy: true, refuses: true, doors: ['http'] as const };
   const workers = { write: true, recheckPolicy: true, doors: ['http'] as const };
 
+  const ask = (ctx: Context, input: { account: string; box: string }) => {
+    if (!mayAsk(ctx.viewer, input)) throw new OperationError('denied', 'Sign-in is unavailable for this machine');
+    if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new OperationError('denied', 'A person or an agent asks for a sign-in');
+    const at = now(); sweep(at);
+    const current = db.select().from(accountSignins).where(and(eq(accountSignins.account, input.account), eq(accountSignins.box, input.box), inArray(accountSignins.state, [...open]))).get();
+    if (current) return { id: current.id };
+    const key = 'signin-' + randomUUID();
+    db.insert(accountSignins).values({ id: key, account: input.account, box: input.box, askedByKind: ctx.viewer.kind, askedBy: ctx.viewer.id, state: 'asked', askedAt: at, changedAt: at }).run();
+    ctx.changed('accountSignin', key); return { id: key };
+  };
   operations.register({ ...people, doors: [...people.doors], name: 'runtime.accountSignIn', input: z.object({ account: name, box: name }).strict(), output: z.object({ id: z.string() }).strict(),
-    may: mayAsk,
-    run(ctx, input) {
-      if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new OperationError('denied', 'A person or an agent asks for a sign-in');
-      const at = now(); sweep(at);
-      const current = db.select().from(accountSignins).where(and(eq(accountSignins.account, input.account), eq(accountSignins.box, input.box), inArray(accountSignins.state, [...open]))).get();
-      if (current) return { id: current.id };
-      const key = 'signin-' + randomUUID();
-      db.insert(accountSignins).values({ id: key, account: input.account, box: input.box, askedByKind: ctx.viewer.kind, askedBy: ctx.viewer.id, state: 'asked', askedAt: at, changedAt: at }).run();
-      ctx.changed('accountSignin', key); return { id: key };
-    } });
+    may:mayAsk,run:ask });
   operations.register({ doors: [...people.doors], name: 'runtime.accountSignInStatus', input: id,
     output: z.object({ state: z.enum(accountSignins.state.enumValues), why: z.string().nullable(), item: z.string().nullable() }).strict(),
     may: (viewer, input) => { const row = request(input.id); return !!row && mayAsk(viewer, row); },
@@ -186,6 +187,6 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       ctx.changed('accountSignin', row.id); return { saved: true as const };
     },
     after(input) { signIns.committed(input); } });
-  return { /** For the program's periodic sweep. */ expire() { db.transaction(() => sweep(now())); } };
+  return { ask, /** For the program's periodic sweep. */ expire() { db.transaction(() => sweep(now())); } };
 }
 const USED = '(used)';

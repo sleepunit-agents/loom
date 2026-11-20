@@ -11,7 +11,7 @@ import {RuntimeAccounts,runtimeAccountsQuery} from './model-accounts';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 afterEach(async()=>{await act(async()=>tree?.unmount());f.query.mockClear();});
-const detail:RuntimeAccount={__typename:'RuntimeAccountDetail',id:'private-account-id',label:'Main subscription',level:'plenty',owner:'alice',provider:'private-provider',usage:.58,usageReadAt:'2026-11-15T12:00:00Z',resetsAt:'2026-11-19T12:00:00Z',hasRoom:true,windows:[],logins:[],signedInOn:[{id:'opaque-machine',name:'Workshop'}]};
+const detail:RuntimeAccount={__typename:'RuntimeAccountDetail',id:'private-account-id',label:'Main subscription',level:'plenty',owner:'alice',provider:'private-provider',usage:.58,usageReadAt:'2026-11-15T12:00:00Z',resetsAt:'2026-11-19T12:00:00Z',hasRoom:true,pendingSignIns:[],windows:[],logins:[],signedInOn:[{id:'opaque-machine',name:'Workshop'}]};
 it('renders the actual detailed account selection and immediately replaces it with a coarse summary',async()=>{
  f.snapshot={status:'live',data:{modelAccounts:[detail]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
