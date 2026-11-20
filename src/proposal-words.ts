@@ -9,6 +9,8 @@
  * what is there now is said (shared-household-proposals.ts, the file header: proposing must not be a way to read).
  *
  * It never guesses a name. Where an owner is reading and loom holds none, it says so in words. */
+import { parseOutsidePersonKey } from './pieces/bridges/keys.js';
+
 export interface CardFact { label: string; value: string; /** A raw id kept for certainty: drawn small, and last. */ small?: boolean }
 /** A name loom already holds, and where it came from. */
 export interface HeldName { name: string; source: string }
@@ -36,8 +38,6 @@ export interface ProposalCard {
   ifYes?: string; ifNo?: string;
   /** True when an owner's reading shows the change is already so. */
   nothing: boolean;
-  /** The exact fields asked for, one per line, for the record. */
-  exact: CardFact[];
 }
 
 type Rec = Record<string, unknown>;
@@ -53,39 +53,18 @@ const yes = (value: unknown) => value ? 'Yes' : 'No';
 const list = (values: string[], none = 'None') => values.length ? values.join(', ') : none;
 const numbered = (values: string[], none = 'None') => values.length ? values.map((value, index) => (index + 1) + '. ' + value).join('\n') : none;
 
-/** A value of the exact record, as words on one line. */
-function plain(value: unknown): string {
-  if (value === null || value === undefined) return 'none';
-  if (typeof value === 'boolean') return value ? 'yes' : 'no';
-  if (typeof value === 'string') return value === '' ? 'empty' : value;
-  if (typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.length ? value.map(entry => entry && typeof entry === 'object' && !Array.isArray(entry)
-    ? Object.entries(entry as Rec).map(([key, inner]) => key + ' ' + plain(inner)).join(' ') : plain(entry)).join('; ') : 'none';
-  return Object.entries(value as Rec).map(([key, inner]) => key + ' ' + plain(inner)).join(', ');
-}
-/** The exact fields asked for: each field of the input by its own name, nested ones by their path. */
-export function exactFields(input: unknown, path = ''): CardFact[] {
-  return Object.entries(rec(input)).flatMap(([key, value]): CardFact[] => {
-    const label = path ? path + '.' + key : key;
-    if (value && typeof value === 'object' && !Array.isArray(value)) return exactFields(value, label);
-    if (Array.isArray(value) && value.some(entry => entry && typeof entry === 'object'))
-      return value.flatMap((entry, index) => {
-        const item = label + ' ' + (index + 1);
-        return Object.keys(rec(entry)).length ? exactFields(entry, item) : [{ label: item, value: plain(entry) }];
-      });
-    return [{ label, value: plain(value) }];
-  });
-}
-
 interface Told { title: string; facts: CardFact[]; ifYes?: string; ifNo?: string; nothing?: boolean }
 type Outside = { platform: string; workspace: string; user: string };
+type ChangeRow = [label: string, was: string | undefined, asked: string, equal?: boolean];
+const sameValue = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
+
 const NOTHING = 'Nothing would change: it is already like this.';
 
 /** Field by field: with an owner's reading of what is there, only what differs, as before and after. */
-function changes(before: { value: unknown } | undefined, rows: Array<[label: string, was: string | undefined, asked: string]>): { facts: CardFact[]; nothing: boolean } {
+function changes(before: { value: unknown } | undefined, rows: ChangeRow[]): { facts: CardFact[]; nothing: boolean } {
   if (!before || before.value === null) return { facts: rows.map(([label, , asked]) => ({ label, value: asked })), nothing: false };
   // A value of several lines is said twice, as it is now and as it would be: an arrow between two lists reads badly.
-  const facts = rows.filter(([, was, asked]) => was !== asked).flatMap(([label, was, asked]): CardFact[] => (was ?? '').includes('\n') || asked.includes('\n')
+  const facts = rows.filter(([, was, asked, equal]) => !(equal ?? was === asked)).flatMap(([label, was, asked]): CardFact[] => (was ?? '').includes('\n') || asked.includes('\n')
     ? [{ label: label + ', now', value: was ?? 'Not set' }, { label: label + ', if allowed', value: asked }] : [{ label, value: (was ?? 'Not set') + ' → ' + asked }]);
   return facts.length ? { facts, nothing: false } : { facts: [{ label: 'What changes', value: NOTHING }], nothing: true };
 }
@@ -94,18 +73,20 @@ export function proposalCard(change: string, rawInput: unknown, context: CardCon
   try {
     const told = tell(change, rec(rawInput), context);
     if (!told) return undefined;
-    return { title: told.title, facts: told.facts.filter(fact => fact.value !== ''), nothing: !!told.nothing, exact: exactFields(rawInput),
+    return { title: told.title, facts: told.facts.filter(fact => fact.value !== ''), nothing: !!told.nothing,
       ...(told.ifYes ? { ifYes: told.ifYes } : {}), ...(told.ifNo ? { ifNo: told.ifNo } : {}) };
   } catch { return undefined; }
 }
 
 function tell(change: string, input: Rec, context: CardContext): Told | undefined {
   const { names, before } = context;
-  const name = (id: unknown) => context.name?.(str(id)) ?? cap(str(id));
+  const name = (id: unknown) => context.name?.(str(id)) ?? (before ? cap(str(id)) : str(id));
   const projectName = (id: unknown) => context.projectName?.(str(id)) ?? str(id);
   const machineName = (id: unknown) => context.machineName?.(str(id)) ?? str(id);
   const was = before && before.value !== null ? rec(before.value) : undefined;
   const isNew = !!before && before.value === null;
+  const field = (label: string, key: string, format: (value: unknown) => string): ChangeRow =>
+    [label, was && format(was[key]), format(input[key]), sameValue(was?.[key], input[key])];
 
   /** An outside account: the name loom holds, or, for an owner, that it holds none; otherwise just the id. */
   const outside = (who: Outside) => {
@@ -128,6 +109,34 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   const tools = (value: unknown) => arr(value).map(rec).map(tool => str(tool.name) + ': ' + str(tool.description)).join('\n');
 
   switch (change) {
+    case 'placeSchedule': {
+      const setting = input.action === 'set', requested = rec(setting ? input.trigger : input.change);
+      const asker = rec(input.asker), address = parseOutsidePersonKey(str(asker.id));
+      const account = asker.kind === 'outside' && address ? outside(address) : undefined;
+      const askedBy = asker.kind === 'member' ? name(asker.id) : account?.short ?? 'An outside account';
+      const fields: [string, string, (value: unknown) => string][] = [
+        ['Times', 'times', str], ['Days', 'days', value => str(value) || 'Every day'],
+        ['Lifespan', 'lifespan', value => value === 'today' ? 'Today only' : 'Until stopped'],
+        ['Note from the asker', 'note', str], ['Instructions for each firing', 'instructions', str],
+        ['Requested model', 'wantsModel', value => str(value) || 'Default'],
+        ['Machine needs', 'needs', value => list(strings(value))],
+        ['Machine preferences', 'prefers', value => value === null ? 'Inherit from the agent' : list(strings(value))],
+      ];
+      const facts = fields.flatMap(([label, key, format]) => {
+        const value = requested[key] === undefined ? was?.[key] : requested[key];
+        if (value === undefined) return [];
+        const previous = was?.[key];
+        return [{ label, value: previous !== undefined && JSON.stringify(previous) !== JSON.stringify(value)
+          ? format(previous) + ' → ' + format(value) : format(value) }];
+      });
+      return { title: (setting ? 'Set a repeating schedule for ' + name(input.agent)
+        : 'Change the repeating schedule ' + str(input.id) + ' for ' + name(input.agent)) + ' in conversation ' + str(input.conversation),
+        facts: [{ label: 'Asked by', value: askedBy }, { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [account.id] : [])],
+        ifYes: setting ? 'Each firing starts a job in that conversation on the asker’s word, with loom’s tools only.'
+          : 'The schedule changes as shown and continues on the asker’s word.',
+        ifNo: setting ? 'No schedule is set.' : 'The schedule stays as it is.' };
+
+    }
     case 'kit': {
       const agent = name(input.agent), kit = str(input.kit), next = input.tools === null ? null : arr(input.tools).map(rec);
       const had = was ? was.tools : undefined;
@@ -194,8 +203,8 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     }
     case 'project': {
       const names_ = (value: unknown) => list(strings(value).map(name));
-      const told = changes(before, [['Name', was && str(was.name), str(input.name)], ['Members', was && names_(was.members), names_(input.members)],
-        ['Agents', was && names_(was.agents), names_(input.agents)], ['Repositories', was && list(strings(was.repositories)), list(strings(input.repositories))]]);
+      const told = changes(before, [['Name', was && str(was.name), str(input.name)], field('Members', 'members', names_),
+        field('Agents', 'agents', names_), field('Repositories', 'repositories', value => list(strings(value)))]);
       return { title: (isNew ? 'Create the project ' : was ? 'Change the project ' : 'Set up the project ') + str(input.name) + (str(input.name).toLowerCase() === str(input.id) ? '' : ' (' + str(input.id) + ')'), ...told };
     }
     case 'projectMerge': { const stands = (value: unknown) => { const project = rec(value); return !value ? 'There is no such project.'
@@ -216,14 +225,14 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     }
     case 'member': {
       const role = (row: Rec) => row.fullOwner ? 'Owner of the household and of every agent' : row.role === 'owner' ? 'Owner of the household' : 'Member';
-      const agentsOf = (row: Rec) => list(strings(row.agents).map(name));
-      const told = changes(before, [['Role', was && role(was), role(input)], ['Their agents', was && agentsOf(was), agentsOf(input)]]);
+      const agentsOf = (value: unknown) => list(strings(value).map(name));
+      const told = changes(before, [['Role', was && role(was), role(input)], field('Their agents', 'agents', agentsOf)]);
       return { title: isNew ? 'Add ' + name(input.id) + ' to the household as ' + (input.role === 'owner' ? 'an owner' : 'a member') : was ? 'Change what ' + name(input.id) + ' is in the household'
         : 'Set ' + name(input.id) + ' as ' + (input.role === 'owner' ? 'an owner' : 'a member') + ' of the household', ...told };
     }
     case 'agent': {
       const face = (row: Rec) => str(row.faceShape) + ' with ' + str(row.faceEyes) + ' eyes', colours = (row: Rec) => str(row.markBg) + ' behind ' + str(row.markFg);
-      const told = changes(before, [['About', was && (str(was.about) || 'Nothing written'), str(input.about) || 'Nothing written'], ['Face', was && face(was), face(input)], ['Colours', was && colours(was), colours(input)]]);
+      const told = changes(before, [field('About', 'about', value => str(value) || 'Nothing written'), ['Face', was && face(was), face(input)], ['Colours', was && colours(was), colours(input)]]);
       return { title: isNew ? 'Add an agent called ' + name(input.id) + ' to the household' : 'Change how ' + name(input.id) + ' is described and drawn', ...told };
     }
     case 'settings': {
@@ -231,7 +240,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         backupTarget: 'Backups go to', backupAt: 'Backup time', backupKeep: 'Backups kept', backupRecipients: 'Keys backups are locked to' };
       const said = (key: string, value: unknown) => value === null || value === undefined || value === '' ? 'Not set' : key === 'defaultAgent' ? name(value) : Array.isArray(value) ? numbered(strings(value)) : str(value);
       const keys = Object.keys(input);
-      const told = changes(before, keys.map(key => [words[key] ?? key, was && said(key, was[key]), said(key, input[key])]));
+      const told = changes(before, keys.map(key => field(words[key] ?? key, key, value => said(key, value))));
       const only = keys.length === 1 ? keys[0]! : '', value = input[only], set = said(only, value);
       const one: Record<string, string> = { defaultAgent: value ? 'Make ' + set + ' the household’s default agent' : 'Leave the household with no default agent', timezone: 'Set the household’s time zone to ' + set,
         commsDays: 'Have Comms keep words for ' + count(Number(value), 'day'), githubOwner: value ? 'Set the household’s GitHub owner to ' + set : 'Clear the household’s GitHub owner',
@@ -255,9 +264,12 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : had ? 'The standing answer is: ' + had : 'There is no such rule.' }] : [])] };
     }
     case 'bodyPolicy': {
-      const people = (row: Rec) => arr(row.people).map(rec).map(person => outside(person as unknown as Outside).short + ': tier ' + str(person.tier)).join('\n') || 'Nobody';
-      const denied = (row: Rec) => arr(row.deniedTools).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')).join('\n') || 'None';
-      const told = changes(before, [['Outside accounts it takes messages from', was && people(was), people(input)], ['Tools its body is not given', was && denied(was), denied(input)]]);
+      const people = (value: unknown) => arr(value).map(rec).map(person => {
+        const account = outside(person as unknown as Outside);
+        return account.short + (names ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier);
+      }).join('\n') || 'Nobody';
+      const denied = (value: unknown) => arr(value).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')).join('\n') || 'None';
+      const told = changes(before, [field('Outside accounts it takes messages from', 'people', people), field('Tools its body is not given', 'deniedTools', denied)]);
       return { title: 'Change which outside people ' + name(input.agent) + ' takes messages from, and which tools it is not given', ...told };
     }
     case 'secretRule': {
@@ -274,8 +286,8 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       return { title: 'For a secret with no rule of its own: ' + (answers[str(input.answer)] ?? str(input.answer)), ...told };
     }
     case 'houseSecrets': {
-      const handed = (row: Rec) => arr(row.secrets).map(rec).map(entry => str(entry.secret) + ' (as ' + str(entry.alias) + ')').join('\n') || 'None';
-      const told = changes(before, [['Secret for its house repository', was && (str(was.repository) || 'None'), str(input.repository) || 'None'], ['Secrets handed over at start', was && handed(was), handed(input)]]);
+      const handed = (value: unknown) => arr(value).map(rec).map(entry => str(entry.secret) + ' (as ' + str(entry.alias) + ')').join('\n') || 'None';
+      const told = changes(before, [['Secret for its house repository', was && (str(was.repository) || 'None'), str(input.repository) || 'None'], field('Secrets handed over at start', 'secrets', handed)]);
       return { title: 'Change which secrets ' + owns(name(input.agent)) + ' house is handed when it starts', ...told };
     }
     case 'bridge': return bridge(input, context, name, channel, outside);
@@ -291,11 +303,11 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       return { title: input.on ? 'Have loom measure itself' + (input.send_outside ? ', and send the measurements outside' : '') : 'Stop loom measuring itself', ...told };
     }
     case 'boxSettings': {
-      const runs = (row: Rec) => arr(row.agents).map(rec).map(entry => name(entry.agent) + (entry.lent ? ' (lent to it)' : '')).join(', ') || 'None';
-      const rows: Array<[string, string | undefined, string]> = [['Name', was && str(was.name), str(input.name)], ['Runs any agent of its owner', was && yes(was.hostsAny), yes(input.hostsAny)],
-        ['Only reports, runs nothing', was && yes(was.reportOnly), yes(input.reportOnly)], ['Always on', was && yes(was.alwaysOn), yes(input.alwaysOn)], ['Agents it runs', was && runs(was), runs(input)],
-        ['What its owner says it has', was && list(strings(was.facts)), list(strings(input.facts))],
-        ...(input.readers === undefined ? [] : [['Agents that may read it', was && list(strings(was.readers).map(name)), list(strings(input.readers).map(name))] as [string, string | undefined, string]])];
+      const runs = (value: unknown) => arr(value).map(rec).map(entry => name(entry.agent) + (entry.lent ? ' (lent to it)' : '')).join(', ') || 'None';
+      const rows: ChangeRow[] = [['Name', was && str(was.name), str(input.name)], ['Runs any agent of its owner', was && yes(was.hostsAny), yes(input.hostsAny)],
+        ['Only reports, runs nothing', was && yes(was.reportOnly), yes(input.reportOnly)], ['Always on', was && yes(was.alwaysOn), yes(input.alwaysOn)], field('Agents it runs', 'agents', runs),
+        field('What its owner says it has', 'facts', value => list(strings(value))),
+        ...(input.readers === undefined ? [] : [field('Agents that may read it', 'readers', value => list(strings(value).map(name)))])];
       const told = changes(before, rows), machine = 'the machine ' + str(input.name);
       const only = was && !told.nothing && told.facts.length === 1 ? told.facts[0]!.label : '';
       const title = only === 'Always on' ? (input.alwaysOn ? 'Keep ' + machine + ' always on' : 'Stop keeping ' + machine + ' always on')
@@ -315,7 +327,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         ['Housefile', was && (str(was.houseFile) || 'None: the core house'), str(input.houseFile) || 'None: the core house'], ['Branch', was && str(was.houseBranch), str(input.houseBranch)],
         ['May run containers inside its house', was && yes(was.nestedContainers), yes(input.nestedContainers)], ['Needs a graphics card', was && yes(was.gpu), yes(input.gpu)],
         ...(input.prefers === undefined ? [] : [['Prefers a machine with', was && list(strings(was.prefers)), list(strings(input.prefers))] as [string, string | undefined, string]]),
-        ['Machines, in order', was && numbered(strings(was.boxes).map(machineName)), numbered(strings(input.boxes).map(machineName))], ['Ports its house may open', was && ports(was), ports(input)]]);
+        field('Machines, in order', 'boxes', value => numbered(strings(value).map(machineName))), ['Ports its house may open', was && ports(was), ports(input)]]);
       return { title: (isNew ? 'Set how ' : 'Change how ') + name(input.agent) + ' runs' + (input.houseFile === '' ? ', in the core house with no Housefile of its own' : ''), ...told };
     }
     case 'models': {
@@ -327,7 +339,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       return { title: 'Set ' + owns(name(input.agent)) + ' GitHub accounts', ...told };
     }
     case 'order': {
-      const told = changes(before, [['Order', was && numbered(strings(was.ids).map(name)), numbered(strings(input.ids).map(name))]]);
+      const told = changes(before, [field('Order', 'ids', value => numbered(strings(value).map(name)))]);
       return { title: 'Change the order ' + (input.of === 'members' ? 'people' : 'agents') + ' are listed in', ...told };
     }
     case 'remove': case 'restore': {
@@ -340,7 +352,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : isNew ? 'loom has nothing by that name.' : was?.removed ? 'It is removed.' : 'It is in use.' }] : [])] };
     }
     case 'secretDescription': {
-      const told = changes(before, [['What it is for', was && (str(was.description) || 'Nothing written'), str(input.description) || 'Nothing written']]);
+      const told = changes(before, [field('What it is for', 'description', value => str(value) || 'Nothing written')]);
       return { title: 'Change what the secret ' + str(input.secret) + ' is said to be for', facts: [...told.facts, { label: 'Its value', value: 'Not shown, and not changed.' }], nothing: told.nothing };
     }
     case 'tokenRevoke': return { title: 'Revoke the token ' + str(input.label), facts: [{ label: 'Token', value: str(input.label) },
@@ -366,11 +378,19 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
     return { label: 'Workspace', value: held ? workspace + ' (' + held.source + ' ' + held.name + ')' : names ? workspace + ' (loom holds no name for it)' : workspace }; };
   switch (str(input.action)) {
     case 'connection': {
-      const channels = (value: unknown) => list(strings(value), 'None');
+      const bot = (row: Rec) => {
+        const user = str(row.botUser);
+        const resolved = names?.person(str(row.platform), str(row.workspace), user);
+        return resolved ? resolved.name + ' (' + user + ')' : user;
+      };
+      const channels = (row: Rec, key: string) => list(strings(row[key]).map(id => {
+        const result = channel(str(row.platform), str(row.workspace), id);
+        return result.held ? result.short + ' (' + id + ')' : result.short;
+      }));
       const told = changes(before, [['Agent', was && name(was.agent), name(input.agent)], ['Platform', was && platformWord(str(was.platform)), platform], ['Workspace', was && str(was.workspace), workspace],
-        ['Bot account', was && str(was.botUser), str(input.botUser)], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
+        ['Bot account', was && bot(was), bot(input), was?.botUser === input.botUser], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
         ['Secret holding its app token', was && (str(was.appSecret) || 'None'), str(input.appSecret) || 'None'], ['Switched on', was && yes(was.enabled), yes(input.enabled)],
-        ['Listens only in', was && channels(was.only), channels(input.only)], ['Ignores', was && channels(was.ignore), channels(input.ignore)]]);
+        ['Listens only in', was && channels(was, 'only'), channels(input, 'only'), sameValue(was?.only, input.only)], ['Ignores', was && channels(was, 'ignore'), channels(input, 'ignore'), sameValue(was?.ignore, input.ignore)]]);
       const only = was && !told.nothing && told.facts.length === 1 && told.facts[0]!.label === 'Switched on';
       return { title: only ? (input.enabled ? 'Switch on ' : 'Switch off ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')'
         : isNew ? 'Connect ' + name(input.agent) + ' to ' + platform + ' (connection ' + str(input.id) + ')' : (was ? 'Change ' : 'Set up ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')', ...told };
@@ -385,11 +405,13 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
     }
     case 'channel': {
       const at = channel(str(input.platform), workspace, str(input.channel));
-      const reports = (value: unknown) => { if (!value) return 'Nowhere';
-        const target = typeof value === 'string' ? (JSON.parse(value) as string[]) : [str(rec(value).platform), str(rec(value).workspace), str(rec(value).channel)];
-        return channel(target[0]!, target[1]!, target[2]!).short; };
-      const told = changes(before, [['Answers there', was && name(was.answers), name(input.answers)], ['Other bots may talk to it there', was && yes(was.botsMayTalk), yes(input.botsMayTalk)],
-        ['Extra brief for that channel', was && (str(was.brief) || 'None'), str(input.brief) || 'None'], ['Notes from guests’ work go to', was && reports(was.reportsTo), reports(input.reportsTo)]]);
+      const reportTuple = (value: unknown): string[] | null => !value ? null : typeof value === 'string'
+        ? JSON.parse(value) as string[] : [str(rec(value).platform), str(rec(value).workspace), str(rec(value).channel)];
+      const reports = (target: string[] | null) => target
+        ? channel(target[0]!, target[1]!, target[2]!).short + ' (' + target[2] + ' in ' + target[1] + ')' : 'Nowhere';
+      const prior = reportTuple(was?.reportsTo), next = reportTuple(input.reportsTo);
+      const told = changes(before, [['Answers there', was && name(was.answers), name(input.answers), was?.answers === input.answers], ['Other bots may talk to it there', was && yes(was.botsMayTalk), yes(input.botsMayTalk)],
+        ['Extra brief for that channel', was && (str(was.brief) || 'None'), str(input.brief) || 'None'], ['Notes from guests’ work go to', was && reports(prior), reports(next), sameValue(prior, next)]]);
       return { title: (was && was.answers === input.answers ? 'Change how ' + name(input.answers) + ' answers in ' : 'Let ' + name(input.answers) + ' answer in ') + at.short,
         facts: [...told.facts, ...(at.held ? [{ label: 'Channel name from', value: at.held.source }] : []), place(), { label: 'Channel id', value: str(input.channel), small: true }], nothing: told.nothing };
     }
@@ -417,6 +439,11 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
 
 /** The card's facts as lines of words, for where a card is read as text (the `approvals` tool, a stored summary). */
 export const factLines = (facts: readonly CardFact[]): string => facts.map(fact => fact.value.includes('\n') ? fact.label + ':\n' + fact.value.split('\n').map(line => '  ' + line).join('\n') : fact.label + ': ' + fact.value).join('\n');
+
+export function publicProposalTitle(card: { operation?: string | null; details: string; what: string }): string {
+  const kept = storedProposal(card);
+  return kept ? (proposalCard(kept.change, kept.input)?.title ?? card.what).slice(0, 1500) : card.what.slice(0, 1500);
+}
 
 /** The change and input a stored household card keeps (its `details`), or nothing when it is not one. */
 export function storedProposal(card: { operation?: string | null; details: string }): { change: string; input: unknown } | undefined {

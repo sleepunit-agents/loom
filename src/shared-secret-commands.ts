@@ -1,6 +1,6 @@
 /** One outside command surface; installed code calls the services directly. */
 import { createHmac, createSecretKey } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
@@ -30,7 +30,9 @@ const writeFailure=(error:unknown)=>{const message=error instanceof Error?error.
  * repository, and named secrets under the alias the house knows each by. */
 export function validateHouseSecrets(db:DataDatabase,input:z.infer<typeof houseSecretsInput>){
   if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw Error('Unknown agent');
-  for(const name of [input.repository,...input.secrets.map(value=>value.secret)])if(name!==null&&!db.select().from(secrets).where(eq(secrets.name,name)).get())throw Error('Unknown secret');
+  const names=[...new Set([input.repository,...input.secrets.map(value=>value.secret)].filter(name=>name!==null))];
+  const found=db.select({name:secrets.name}).from(secrets).where(inArray(secrets.name,names)).all();
+  if(found.length!==names.length)throw Error('Unknown secret');
   const settings=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,input.agent)).get();
   // The repository secret is a column of the run settings; those must exist first.
   if(!settings&&input.repository!==null)throw Error('Agent has no run settings');

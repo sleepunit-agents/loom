@@ -3,8 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
 import { displayName } from '../../kit/words';
-import { exactFields, storedProposal } from '../../../../src/proposal-words';
-import { plainCard, approvalTitle, type CardFact, quotedDecision, folders, matches, rows, kindWord, kindChoice, tierWord, scopeWord, ruleKey, recordWord, type Approval, type ApprovalSnapshot, type Rule } from './model';
+import { approvalTitle, type CardFact, quotedDecision, folders, matches, rows, kindWord, kindChoice, tierWord, scopeWord, ruleKey, recordWord, type Approval, type ApprovalSnapshot, type Rule } from './model';
 export type { ApprovalSnapshot } from './model';
 
 export type RenderApprovalChange = (approval: Approval) => ReactNode;
@@ -16,6 +15,7 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
  */
 export interface ApprovalActions {
   setRule?: SaveRule;
+  refreshProposal?(id: string): void;
   supports?(approval: Approval): boolean;
   /** confirm is the second, explicit yes a dangerous action needs. */
   allow(id: string, confirm?: boolean): Promise<void>;
@@ -33,16 +33,20 @@ const same = (words: string) => words.trim().replace(/[?.!\s]+$/, '').toLowerCas
 const forWhom = (a: Approval, viewer: string | undefined, name: Name) => a.member ? a.member === viewer ? 'for you' : `for ${name(a.member)}` : '';
 /** A card's plain facts, in the kit's own list. A raw id kept for certainty is drawn small. */
 const cardFacts = (facts: readonly CardFact[]) => facts.map(fact => <Fact key={fact.label} label={fact.label}>{fact.small ? <span className="loom-reader__meta">{fact.value}</span> : fact.value}</Fact>);
-/** `blocked`: the plain line saying this cannot be allowed. Allow is then off, with that line as its reason; Deny stays. */
-function Answer({ approval, actions, blocked }: { approval: Approval; actions?: ApprovalActions; blocked?: string }) {
+function Answer({ approval, actions, caution }: { approval: Approval; actions?: ApprovalActions; caution?: ReactNode }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
+  const [allowed, setAllowed] = useState(false);
   const dangerous = approval.kind === 'dangerous';
   const active = useRef(false);
-  async function send(action: () => Promise<void>) {
+  async function send(action: () => Promise<void>, allowing = false) {
     if (active.current) return;
     active.current = true; setBusy(true); setError('');
     // A refusal is the program's own answer, in words written for the person answering: say it as it is.
-    try { await action(); } catch (error) {
+    try {
+      await action();
+      if (allowing) setAllowed(true);
+    } catch (error) {
+      if (allowing) actions?.refreshProposal?.(approval.id);
       const refused = error as { name?: unknown; message?: unknown } | null;
       setError(refused?.name === 'WorkRefused' && typeof refused.message === 'string' ? refused.message : 'Could not save your answer. Reconnect and try again.');
     }
@@ -50,14 +54,15 @@ function Answer({ approval, actions, blocked }: { approval: Approval; actions?: 
   }
   // One filled button: Allow, or (a dangerous request, asked a second time) Yes, allow it. Always and Deny stay quiet.
   return <>
+    {!allowed && caution}
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <>
-      {dangerous && confirming && !blocked && <Body>This cannot be undone.</Body>}
+      {dangerous && confirming && <Body>This cannot be undone.</Body>}
       <Actions label="Answer approval">
-        {dangerous && confirming && !blocked
-          ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
+        {dangerous && confirming
+          ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true), true)}>Yes, allow it</Button>
             <Button disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
-          : <Button variant="primary" disabled={busy || !!blocked} title={blocked} aria-describedby={blocked ? `blocked-${approval.id}` : undefined} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
-        {!blocked && actions.always?.approval === approval.id && <Button disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
+          : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id), true)}>Allow</Button>}
+        {actions.always?.approval === approval.id && <Button disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
         <Button disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
       </Actions></>}
     {busy && <Body quiet role="status">Saving answer…</Body>}
@@ -65,59 +70,55 @@ function Answer({ approval, actions, blocked }: { approval: Approval; actions?: 
   </>;
 }
 function Details({ approval: a, snapshot, actions, renderChange, inline = false, viewer, name }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; viewer?: string; name: Name } & ChangePresentation) {
-  const change = renderChange?.(a);
+  const household = a.operation === 'household.change';
+  const change = household ? undefined : renderChange?.(a);
   const record = snapshot.record.filter(r => r.approval === a.id).sort((x, y) => x.seq - y.seq);
   const decision = record.filter(r => r.event === 'allow' || r.event === 'deny').at(-1);
   const answered = a.decidedBy && <Meta>{quotedDecision(decision) ?? `Answered by ${name(a.decidedBy)}`}</Meta>;
   const time = (at: string) => <time dateTime={at} title={fullTime(at, snapshot.timezone)}>{briefTime(at, snapshot.timezone)}</time>;
   const ends = a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)}</Meta>;
   const whom = forWhom(a, viewer, name);
-  // A household card is said in plain words made from the change it keeps (model.ts, plainCard); any other
-  // approval says the words it stored.
-  const card = change ? undefined : plainCard(a, name);
-  const stored = !card && !change ? storedProposal(a) : undefined;
-  const exact = card?.exact ?? (stored ? exactFields(stored.input) : undefined);
-  const waiting = a.state === 'pending';
-  const blocked = waiting ? a.blocked ?? undefined : undefined, problem = waiting && !blocked ? a.problem ?? undefined : undefined;
-  const cannot = (blocked || problem) && <Body id={`blocked-${a.id}`} role="note">{blocked ?? `This cannot be allowed as it stands: ${problem}`}</Body>;
+  const card = a.card;
+  const title = card?.title ?? approvalTitle(a);
+  const exact = card?.exact;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
+  const caution = card && a.state === 'pending' && a.blocked
+    ? <Body role="note">loom will refuse this as things stand: {a.blocked.replace(/^This cannot be allowed(?: yet| as it stands)?: /, '')}</Body>
+    : !household && a.problem ? <Body role="note">This cannot be allowed as it stands: {a.problem}</Body> : null;
+  const showStored = !household || !!card;
   // In a conversation: the same request and the same answer controls on a compact card, built from the kit's reader
   // parts like a question's (inbox-view ChatQuestion). Its record and its exact fields are in Approvals.
-  if (inline) return <Reader aria-label={card ? `${card.title}?` : a.ask} data-inline="">
-    <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}{whom && ` · ${whom}`}</Meta>
-    <Body><strong>{card ? `${card.title}?` : a.ask}</strong></Body>
+  if (inline) return <Reader aria-label={household ? title : a.ask} data-inline="">
+    <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}{showStored && whom && ` · ${whom}`}</Meta>
+    <Body><strong>{household ? title : a.ask}</strong></Body>
     <Body quiet>{a.why}</Body>
     {card && card.facts.length > 0 && <Facts>{cardFacts(card.facts)}</Facts>}
-    <Body quiet>Allow: {ifYes} Deny: {ifNo}</Body>
-    {!card && !change && a.changeSummary && <Body>{a.changeSummary}</Body>}
+    {showStored && <Body quiet>Allow: {ifYes} Deny: {ifNo}</Body>}
+    {!household && !change && a.changeSummary && <Body>{a.changeSummary}</Body>}
     {change}
-    {cannot}
-    {!card && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
-    <Answer key={a.id} approval={a} actions={actions} blocked={blocked} />
-    {answered}{ends}
+    {!household && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
+    <Answer key={a.id} approval={a} actions={actions} caution={caution} />
+    {showStored && <>{answered}{ends}</>}
   </Reader>;
   return <Reader aria-label="Approval">
     <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}</Meta>
-    <Title>{card?.title ?? a.what}</Title>
-    <Meta>{[name(a.agent), a.project, whom].filter(Boolean).join(' · ')}</Meta>
-    {!card && a.ask && same(a.ask) !== same(a.what) && <Body>{a.ask}</Body>}
+    <Title>{title}</Title>
+    {showStored && <Meta>{[name(a.agent), a.project, whom].filter(Boolean).join(' · ')}</Meta>}
+    {!household && a.ask && same(a.ask) !== same(a.what) && <Body>{a.ask}</Body>}
     <Facts>
       <Fact label="Why">{a.why}</Fact>
       {card && cardFacts(card.facts)}
-      <Fact label="If you allow">{ifYes}</Fact>
-      <Fact label="If you deny">{ifNo}</Fact>
-      {!card && !change && <Fact label="Exactly what will change">{a.changeSummary}</Fact>}
-      {!card && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
+      {showStored && <Fact label="If you allow">{ifYes}</Fact>}
+      {showStored && <Fact label="If you deny">{ifNo}</Fact>}
+      {!household && !change && <Fact label="Exactly what will change">{a.changeSummary}</Fact>}
+      {!household && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
     </Facts>
     {change}
-    {cannot && <Section label="Can this be allowed?">{blocked ? cannot : <Body>{problem}</Body>}</Section>}
-    <Answer key={a.id} approval={a} actions={actions} blocked={blocked} />
-    {!decision && answered}{ends}
-    {exact && <Disclosure label="Details"><Facts>
-      {exact.map(fact => <Fact key={fact.label} label={fact.label}>{fact.value}</Fact>)}
-    </Facts></Disclosure>}
-    {!exact && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
-    {record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
+    <Answer key={a.id} approval={a} actions={actions} caution={caution} />
+    {showStored && <>{!decision && answered}{ends}</>}
+    {exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>}
+    {!household && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
+    {showStored && record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
   </Reader>;
 }
 
@@ -178,7 +179,7 @@ export default function Approvals({ snapshot, actions, renderChange, navigation,
       : rulesView ? rules.length ? <List label="Standing rules">{rules.map(r => <Row key={ruleKey(r)} title={scopeWord(r.scope)} meta={`${kindChoice[r.kind] ?? r.kind}${r.person ? ` · for ${name(r.person)}` : ''}`} status={tierWord[r.tier] ?? r.tier}
           selected={openRule?.key === ruleKey(r)} onClick={() => setRuleOpen({ key: ruleKey(r), rule: r })} />)}</List> : <Empty title={query ? 'No matching rules' : 'No standing rules'} text={actions?.setRule ? undefined : 'Only a household owner can change standing rules.'} />
       : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <NoteRow key={n.id} title={n.what} meta={`${name(n.agent)} · ${kindWord[n.kind as Approval['kind']] ?? n.kind} · ${n.target}`} status={briefTime(n.at, snapshot.timezone)} />)}</List> : <Empty title={query ? 'No matching steps' : 'No reported steps'} />
-      : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={approvalTitle(a, name)} meta={a.why} status={`${name(a.agent)} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
+      : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={approvalTitle(a)} meta={a.why} status={`${name(a.agent)} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
     reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} viewer={viewer} name={name} />
       : openRule ? <RuleReader key={openRule.key} rule={openRule.rule} rules={snapshot.rules} save={actions?.setRule} name={name} zone={snapshot.timezone} /> : null}
     open={!!approval || !!openRule} onBack={() => { setRuleOpen(undefined); if (approval) setSelected(undefined); }} backLabel="Back to Approvals"

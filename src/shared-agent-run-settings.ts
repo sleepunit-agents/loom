@@ -1,5 +1,5 @@
 /** Agent owners configure houses; only workers execute them. */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { mayAct, maySee, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
@@ -30,11 +30,11 @@ export function mayChangeAgentRunSettings(db:DataDatabase,viewer:Viewer,agent:st
 export function validateAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infer<typeof agentRunSettingsInput>){
    if(!mayChangeAgentRunSettings(db,viewer,input.agent))throw new OperationError('denied','Current agent owner required');
    const sharing=sharedSharing(db);
-   for(const id of input.boxes){
-    const box=db.select().from(boxes).where(eq(boxes.id,id)).get();
-    const lent=db.select().from(boxAgents).where(and(eq(boxAgents.box,id),eq(boxAgents.agent,input.agent))).get();
-    if(!box||box.revokedAt||!lent?.lent&&!maySee(viewer,{type:'runtime.box',member:box.owner},sharing))throw new OperationError('invalid','Choose an available machine');
-   }
+   const available=db.select({id:boxes.id,owner:boxes.owner,revokedAt:boxes.revokedAt,lent:boxAgents.lent})
+    .from(boxes).leftJoin(boxAgents,and(eq(boxAgents.box,boxes.id),eq(boxAgents.agent,input.agent)))
+    .where(inArray(boxes.id,input.boxes)).all();
+   if(available.length!==new Set(input.boxes).size||available.some(box=>box.revokedAt||!box.lent&&!maySee(viewer,{type:'runtime.box',member:box.owner},sharing)))
+    throw new OperationError('invalid','Choose an available machine');
 }
 /** Apply the typed edit, preserving separately governed Secret references. */
 export function applyAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infer<typeof agentRunSettingsInput>){

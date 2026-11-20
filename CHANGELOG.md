@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Household proposal cards describe the requested change in plain words. Owners see the names loom already holds, what would change, and what needs fixing before they can allow a blocked request.
+- Household proposal cards use plain titles. Owners can open a preview of the requested changes, held names and exact input. Cautions report what would make Allow refuse while both answer buttons remain available.
 
 - Home fills the desk with a single live agent’s face, current work and conversations. Removed agents leave active rosters and choices while their history stays readable.
 - loom watches each machine's disks, available memory, and container runtime. The worker reads `/`, its state directory when it has one, and the entries in `watchPaths`. Include the container runtime's data directory when it is on a separate filesystem. Each watched path gets its own bounded helper, so a hung mount leaves its own helper asleep while other paths continue to report. loom keeps the last reading and condition for each watched path. Notices close after a day of accumulated unreadable observations or sustained absence from reports. Your machines shows each path’s condition and marks aged readings with the time they were read. Schema 20 adds `box_readings` and `box_alert_settings`. Update loom before its workers.

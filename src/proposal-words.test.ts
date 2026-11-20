@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { householdChanges } from './shared-household-proposals.js';
-import { exactFields, factLines, proposalCard, storedProposal, type CardNames } from './proposal-words.js';
+import { factLines, proposalCard, storedProposal, type CardNames } from './proposal-words.js';
 
 const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
 const tool = { name: 'pond_status', description: 'Read station status in the Pond deployment.', repository: 'https://github.com/org/house.git', commit: 'a'.repeat(40), image: 'sha256:' + 'b'.repeat(64),
@@ -30,7 +30,7 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
   secretRule: [[{ secret: 'pond-key', answer: 'auto', minutes: 30, agents: [{ agent: 'art', when: 'on_request' }] }, 'Change who may use the secret pond-key', ['Answer: Allow automatically', 'Automatic grant lasts: 30 minutes', 'When asked: Art', 'At startup: No agent']]],
   secretDefault: [[{ answer: 'never' }, 'For a secret with no rule of its own: never allow']],
   houseSecrets: [[{ agent: 'art', repository: 'house-key', secrets: [{ alias: 'POND', secret: 'pond-key' }] }, 'Change which secrets Art’s house is handed when it starts', ['Secrets handed over at start: pond-key (as POND)']]],
-  bridge: [[{ action: 'connection', id: 'art-slack', platform: 'slack', agent: 'art', workspace: 'T02AYL3QM', botUser: 'UBOT', tokenSecret: 'slack-token', appSecret: 'slack-app', enabled: true, only: [], ignore: ['C1'] }, 'Set up Art’s Slack connection (art-slack)', ['Switched on: Yes', 'Ignores: C1']],
+  bridge: [[{ action: 'connection', id: 'art-slack', platform: 'slack', agent: 'art', workspace: 'T02AYL3QM', botUser: 'UBOT', tokenSecret: 'slack-token', appSecret: 'slack-app', enabled: true, only: [], ignore: ['C1'] }, 'Set up Art’s Slack connection (art-slack)', ['Switched on: Yes', 'Ignores: the channel C1 on Slack']],
     [{ action: 'disconnect', id: 'mark-discord' }, 'Disconnect the Discord or Slack connection mark-discord'],
     [{ action: 'channel', platform: 'discord', workspace: 'G1', channel: 'C9', answers: 'art', botsMayTalk: false }, 'Let Art answer in the channel C9 on Discord', ['Other bots may talk to it there: No', 'Channel id: C9']],
     [{ action: 'removeChannel', platform: 'discord', workspace: 'G1', channel: 'C9' }, 'Stop answering in the channel C9 on Discord'],
@@ -51,13 +51,13 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
   boxRevoke: [[{ name: 'workshop' }, 'Revoke the machine workshop']],
   browserSignOut: [[{ member: 'lee', device: 'Chrome on Mac' }, 'Sign out Lee’s browser Chrome on Mac']],
 };
-const everything = (card: NonNullable<ReturnType<typeof proposalCard>>) => [card.title, factLines(card.facts), factLines(card.exact), card.ifYes ?? '', card.ifNo ?? ''].join('\n');
+const everything = (card: NonNullable<ReturnType<typeof proposalCard>>) => [card.title, factLines(card.facts), card.ifYes ?? '', card.ifNo ?? ''].join('\n');
 
 it('has a fixture for every kind of change household.propose takes', () => {
   expect(Object.keys(kinds).sort()).toEqual([...householdChanges].sort());
 });
 it.each(Object.entries(kinds).flatMap(([change, rows]) => rows.map(([input, title, facts]) => ({ change, input, title, facts: facts ?? [] }))))('says a $change card as one sentence and plain facts: $title', ({ change, input, title, facts }) => {
-  const card = proposalCard(change, input)!;
+  const card = proposalCard(change, input, { name: id => id.charAt(0).toUpperCase() + id.slice(1) })!;
   expect(card.title).toBe(title);
   expect(card.title).not.toMatch(/[.?]$/);
   const lines = factLines(card.facts);
@@ -109,5 +109,27 @@ it('reads the change a stored household card keeps, and says nothing for any oth
   expect(storedProposal({ operation: 'household.change', details: 'not json' })).toBeUndefined();
   expect(proposalCard('somethingNew', { a: 1 })).toBeUndefined();
   expect(proposalCard('kitGrant', null)).toBeDefined();
-  expect(exactFields({ agent: 'art', to: gage, grant: true, tools: [{ name: 'a', args: ['x'] }] }).map(fact => fact.label + '=' + fact.value)).toEqual(['agent=art', 'to.platform=slack', 'to.workspace=T02AYL3QM', 'to.user=U07V8CZUC1J', 'grant=yes', 'tools 1.name=a', 'tools 1.args=x']);
+});
+
+it('resolves channel filters and distinguishes report destinations sharing a name', () => {
+  const shared = { ...names, channel: () => ({ name: '#reports', source: 'Discord' }) };
+  const connection = { action: 'connection', id: 'art-discord', agent: 'art', platform: 'discord', workspace: 'G1', only: ['C1'], ignore: ['C2'] };
+  const facts = proposalCard('bridge', connection, { names: shared, before: { value: null } })!.facts;
+  expect(facts).toContainEqual({ label: 'Listens only in', value: '#reports on Discord (C1)' });
+  expect(facts).toContainEqual({ label: 'Ignores', value: '#reports on Discord (C2)' });
+  const input = { action: 'channel', platform: 'discord', workspace: 'G1', channel: 'C0', answers: 'art', botsMayTalk: false, reportsTo: { platform: 'discord', workspace: 'G2', channel: 'C2' } };
+  const preview = proposalCard('bridge', input, { names: shared, before: { value: { ...input, reportsTo: '["discord","G1","C1"]' } } })!;
+  expect(preview.nothing).toBe(false);
+  expect(preview.facts).toContainEqual({ label: 'Notes from guests’ work go to', value: '#reports on Discord (C1 in G1) → #reports on Discord (C2 in G2)' });
+});
+
+it('shows machine needs and preferences on a repeating schedule', () => {
+  const input = { action: 'set', agent: 'art', conversation: 'cv-one',
+    asker: { kind: 'outside', id: JSON.stringify([gage.platform, gage.workspace, gage.user]) },
+    trigger: { needs: ['gpu', 'local'], prefers: ['fast'] } };
+  const card = proposalCard('placeSchedule', input, { names, before: { value: null } })!;
+  expect(card.title).toBe('Set a repeating schedule for Art in conversation cv-one');
+  expect(card.facts).toContainEqual({ label: 'Asked by', value: 'Gage Taylor (Slack)' });
+  expect(factLines(card.facts)).toContain('Machine needs: gpu, local\nMachine preferences: fast');
+  expect(factLines(card.facts)).not.toContain('["');
 });

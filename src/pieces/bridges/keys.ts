@@ -35,3 +35,15 @@ export function parseInboxSourceId(value: string | null): { workspace: string; c
  * agent's setting for that outside account and deliberately outlives a person
  * link (docs/accepted-tradeoffs.md, "An outside account is named in three places"). */
 export const outsidePersonKey = (platform: 'discord' | 'slack', workspace: string, user: string): string => JSON.stringify([platform, workspace, user]);
+
+
+/** Reads the exact platform, workspace and account written by outsidePersonKey. */
+export function parseOutsidePersonKey(key: string): { platform: 'discord' | 'slack'; workspace: string; user: string } | undefined {
+  try {
+    const parts: unknown = JSON.parse(key);
+    if (!Array.isArray(parts) || parts.length !== 3) return;
+    const [platform, workspace, user] = parts as unknown[];
+    if ((platform === 'discord' || platform === 'slack') && typeof workspace === 'string' && workspace && typeof user === 'string' && user)
+      return { platform, workspace, user };
+  } catch { /* Not an outside account key. */ }
+}

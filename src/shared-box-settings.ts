@@ -1,5 +1,5 @@
 /** An enrolled machine's owner controls hosting; enrollment stays with Sign-in. */
-import { and, eq, ne, isNull } from 'drizzle-orm';
+import { and, eq, inArray, ne, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, boxes, boxAgents, boxFacts } from './core/data/schema.js';
@@ -18,8 +18,9 @@ export function validateBoxSettings(db:DataDatabase,input:z.infer<typeof boxSett
    if(!box||box.revokedAt)throw new OperationError('denied','Available machine required');
    const sharing=sharedSharing(db);
    for(const reader of input.readers ?? []) if(!sharing.agents?.includes(reader))throw new OperationError('invalid','Choose existing agents');
+   const existing=new Set(db.select({id:agents.id}).from(agents).where(inArray(agents.id,input.agents.map(row=>row.agent))).all().map(row=>row.id));
    for(const value of input.agents){
-    if(!db.select({id:agents.id}).from(agents).where(eq(agents.id,value.agent)).get())throw new OperationError('invalid','Choose existing agents');
+    if(!existing.has(value.agent))throw new OperationError('invalid','Choose existing agents');
     // Who has an agent is policy.ts's reading (membersWithAgent), the one placement goes by.
     const owned=membersWithAgent(value.agent,sharing).includes(box.owner);
     if(value.lent===owned)throw new OperationError('invalid','Lending must match current agent ownership');

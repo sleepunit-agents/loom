@@ -12,10 +12,10 @@ export function canonicalKitImage(id:unknown):string|undefined{
   if(SHA256_HEX.test(id))return 'sha256:'+id;
 }
 export const programLiteral=z.string().max(4096).refine(value=>!value.includes('\0'));
-export const programPath=z.string().refine(houseFile).regex(/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9_-][a-zA-Z0-9._-]*)*$/);
+export const programPath=z.string().max(512).refine(houseFile).regex(/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9_-][a-zA-Z0-9._-]*)*$/);
 export const programSecretAlias=houseSecretAlias.regex(/^KIT_[A-Z][A-Z0-9_]{0,59}$/);
 export const pinnedProgram=z.strictObject({
-  program:programPath, repository:z.string().refine(houseRepository),
+  program:programPath, repository:z.string().max(2048).refine(houseRepository),
   commit:z.string().regex(COMMIT),image:z.string().regex(KIT_IMAGE),
   args:z.array(programLiteral).max(64),
   secrets:z.record(programSecretAlias,secretName).refine(bindings=>Object.keys(bindings).length<=16),

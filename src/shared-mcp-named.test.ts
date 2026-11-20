@@ -272,37 +272,42 @@ it('lists the current attributed approval answer after an owner answers through 
 it('proposes a change, sees the approval waiting, and reads its own inbox',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
-  const filed=(await art.call('propose',{change:'settings',input:{commsDays:7},why:'FICTIONAL_REASON'})).text;
+  const filed=(await art.call('propose',{change:'settings',input:{commsDays:7},why:'FICTIONAL_REASON\n# heading <img> `code`'})).text;
   expect(filed).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
   const pending=(await art.call('approvals',{state:'pending'})).text;
-  expect(pending).toContain('## Have Comms keep words for 7 days?');expect(pending).toContain('Days Comms keeps words: 7');expect(pending).toContain('Why: FICTIONAL_REASON');
+  expect(pending).toContain('## Have Comms keep words for 7 days');expect(pending).not.toContain('Days Comms keeps words: 7');expect(pending).toContain('Why: FICTIONAL_REASON &#35; heading &#60;img&#62; &#96;code&#96;');
   // An agent reading its own pending asks reads the card's sentence and plain facts: never the raw input.
   expect(pending).not.toContain('{"');
   expect((await art.call('approvals',{state:'denied'})).text).toBe('No approvals are denied.');
   // A refusal carries the door's own words, not a bare "refused".
   const refusedChange=await art.call('propose',{change:'settings',input:{commsDays:8},why:'again'});
   expect(refusedChange.error).toBe(true);expect(refusedChange.text).toBe('A card for this is already waiting for an answer (conflict)');
+  const tool={name:'status',description:'Read station status',program:'bin/status',repository:'https://github.com/example/house.git',commit:'a'.repeat(40),image:'sha256:'+'b'.repeat(64),args:[],parameters:{},secrets:{KIT_TEST:'PRIVATE_TEST_SECRET'}};
+  expect((await art.call('propose',{change:'kit',input:{agent:'art',kit:'pond-kit',tools:[tool]},why:'Request kit definition'})).error).toBe(false);
+  const kitTitle=(await art.call('approvals',{state:'pending'})).text;
+  expect(kitTitle).toContain('Give art a kit called pond-kit');
+  expect(kitTitle).not.toMatch(/PRIVATE_TEST_SECRET|Read station status|bin\/status/);
   const same=await art.call('task_close',{id:'t-999',reason:'x'});expect(same.error).toBe(true);expect(same.text).not.toBe('The command was refused');expect(same.text).toMatch(/\((denied|not-found|invalid|conflict)\)$/);
   expect((await art.call('propose',{change:'settings',input:{commsDays:99},why:'x'})).error).toBe(true);
   expect(p.composition.services.household.settings().commsDays).toBe(14);
   expect((await art.call('inbox',{})).error).toBe(false);
   // A merge of two projects is proposed like any other household change, and nothing is merged by asking.
   expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond',into:'fictional-shed'},why:'FICTIONAL_MERGE'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
-  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Merge the project fictional-pond into the project fictional-shed?');
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Merge the project fictional-pond into the project fictional-shed');
   expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond'},why:'x'})).error).toBe(true);
   expect(p.composition.services.projects.describe('fictional-pond')).toMatchObject({removed:false,agents:['art']});
   // Retiring a project is proposed the same way, and its mirror.
   expect((await art.call('propose',{change:'projectRetire',input:{project:'fictional-shed'},why:'FICTIONAL_RETIRE'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
-  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Retire the project fictional-shed?');
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Retire the project fictional-shed');
   expect((await art.call('propose',{change:'projectRevive',input:{project:'fictional-shed'},why:'FICTIONAL_REVIVE'})).error).toBe(false);
   // Asking to be let onto a project: for itself only, and not onto one it is already on.
   expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-shed',agent:'art'},why:'FICTIONAL_JOIN'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
-  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Let Art work on the project fictional-shed?');
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Let art work on the project fictional-shed');
   // A grant to an outside account says who, as far as the card itself says it: the id, with no name looked up.
   expect((await art.call('propose',{change:'kitGrant',input:{agent:'art',kit:'pond-et-livonia',to:{platform:'slack',workspace:'T02AYL3QM',user:'U07V8CZUC1J'},grant:true},why:'FICTIONAL_GRANT'})).error).toBe(false);
   const listed=(await art.call('approvals',{state:'pending'})).text;
-  expect(listed).toContain('## Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit?');
-  expect(listed).toContain('Account id: U07V8CZUC1J');expect(listed).not.toContain('{"');
+  expect(listed).toContain('## Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use art’s pond-et-livonia kit');
+  expect(listed).not.toContain('Account id: U07V8CZUC1J');expect(listed).not.toContain('{"');
   const forMark=await art.call('propose',{change:'projectJoin',input:{project:'fictional-shed',agent:'mark'},why:'x'});expect(forMark.error).toBe(true);expect(forMark.text).toMatch(/\(denied\)$/);
   expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-pond',agent:'art'},why:'x'})).text).toBe('art is already on project fictional-pond (invalid)');
   expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});

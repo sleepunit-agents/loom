@@ -18,7 +18,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
 import { householdId, projectId } from './slug.js';
 const id=projectId,list=z.array(householdId).max(1000).transform(values=>[...new Set(values)].sort());
-export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
+export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().max(256).regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 /** Merging one project into another: `from` is emptied into `into` and removed. */
 export const projectMergeInput=z.object({from:id,into:id}).strict();
 /** Every household table that names a project, by its SQL name, and what a merge does with the rows that
@@ -67,9 +67,10 @@ export const projectJoinInput=z.object({project:id,agent:householdId}).strict();
 export const alreadyOnProject=(value:{project:string;agent:string})=>new OperationError('invalid',value.agent+' is already on project '+value.project);
 export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toISOString()){
  const validate=(value:z.infer<typeof projectInput>)=>{
-  for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new OperationError('invalid','Choose existing members');
-  for(const agent of value.agents)if(!db.select().from(agents).where(eq(agents.id,agent)).get())throw new OperationError('invalid','Choose existing agents');
-  for(const repository of value.repositories){const bound=db.select().from(projectRepositories).all().find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
+  if(db.select({id:members.id}).from(members).where(inArray(members.id,value.members)).all().length!==value.members.length)throw new OperationError('invalid','Choose existing members');
+  if(db.select({id:agents.id}).from(agents).where(inArray(agents.id,value.agents)).all().length!==value.agents.length)throw new OperationError('invalid','Choose existing agents');
+  const repositories=value.repositories.length?db.select().from(projectRepositories).all():[];
+  for(const repository of value.repositories){const bound=repositories.find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
  };
  return {
   validate,

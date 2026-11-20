@@ -5,7 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
 const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
 vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
-vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])));
+vi.mock('../kit', async () => ({ ...Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])), Disclosure: ((Real) => (props: { label: string; children?: ReactNode }) => props.label === 'Exact request' ? h(Real, props) : h('Disclosure', { label: props.label }, props.children))((await import('../kit/reader')).Disclosure) }));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
@@ -379,21 +379,30 @@ it.each(['app','inline'])('shows a household owner what a waiting household card
  fixture();const card=feed.approvals.approvals[0];
  Object.assign(card,{operation:'household.change',target:'household:member:lee',details:JSON.stringify({change:'member',after:{id:'lee',role:'owner'},seal:{nonce:'n',digest:'d'}}),changeSummary:'member lee: {"id":"lee","role":"owner"}'});
  const told={summary:'Role: Member → Owner of the household',problem:'That is how it already is',blocked:'This cannot be allowed: it is already so, and nothing would change. Deny it.',
-  card:{title:'Change what Lee is in the household',nothing:false,facts:[{label:'Role',value:'Member → Owner of the household'}],exact:[{label:'id',value:'lee'},{label:'role',value:'owner'}]}};
+  card:{title:'Change what Lee is in the household',nothing:false,facts:[{label:'Role',value:'Member → Owner of the household'}],exact:JSON.stringify({id:'lee',role:'owner'},null,2)}};
  const request=vi.fn(async(_url:string,_options:RequestInit)=>({ok:true,json:async()=>({ok:true,value:told})}));vi.stubGlobal('fetch',request);
  const node=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id});
  // Someone who is not an owner sees the card in plain words made from what the card itself keeps, and nothing
  // is asked for them: no name, nothing of what is there now, and no raw JSON.
  await draw(node());await act(async()=>{});
- expect(request).not.toHaveBeenCalled();expect(words()).toContain('Set Lee as a');expect(words()).not.toContain('→');expect(words()).not.toContain('{\\"');
+ expect(request).not.toHaveBeenCalled();expect(words()).toContain('Set lee as a');expect(words()).not.toContain('→');expect(words()).not.toContain('{\\"');
  await act(async()=>tree.unmount());
  feed.owner=true;await draw(node());await act(async()=>{});
- expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposal',expect.objectContaining({method:'POST',credentials:'same-origin',body:JSON.stringify({input:{id:card.id}})}));
+ expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposalPreview',expect.objectContaining({method:'POST',credentials:'same-origin',body:JSON.stringify({input:{id:card.id}})}));
  expect(words()).toContain('Change what Lee is in the household');expect(words()).toContain('Member → Owner of the household');expect(words()).toContain('it is already so, and nothing would change');expect(words()).not.toContain('{\\"');
- // Allow is off, with the line as its reason; Deny stays.
+ // The caution leaves both buttons available.
  const buttons=tree.root.findAllByType('Button' as never);
- expect(buttons.find((button:{props:{children:unknown}})=>button.props.children==='Allow')?.props).toMatchObject({disabled:true,title:told.blocked});
+ expect(buttons.find((button:{props:{children:unknown}})=>button.props.children==='Allow')?.props).toMatchObject({disabled:false});
  expect(buttons.find((button:{props:{children:unknown}})=>button.props.children==='Deny')?.props.disabled).toBe(false);
+ if (surface==='app') {
+  const disclose=tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Exact request');
+  expect(disclose).toBeDefined();
+  await act(async()=>disclose!.props.onClick());
+  const exact=tree.root.findByType('pre');
+  expect(JSON.parse(exact.props.children)).toEqual({id:'lee',role:'owner'});
+  const outsideExact=tree.root.findAll((node: { type: unknown; props: { children?: unknown } }) => typeof node.type==='string' && node.type!=='pre' && typeof node.props.children==='string');
+  for (const node of outsideExact) expect(node.props.children).not.toMatch(/\{\s*"/);
+ }
  // A card that is answered, or is not a household change, is shown as it is.
  await act(async()=>tree.unmount());request.mockClear();card.state='used';await draw(node());await act(async()=>{});
  expect(request).not.toHaveBeenCalled();
@@ -408,4 +417,42 @@ it('shows a quoted decision in approval notices while the card is visible', asyn
  feed.approvals.approvals=[];
  await act(async()=>{tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));});
  expect(words()).not.toContain(note);
+});
+
+it('reads only the open card, keeps the dangerous confirmation available, and refreshes after refusal', async () => {
+ fixture(); feed.owner=true;
+ const selected={...feed.approvals.approvals[0],operation:'household.change',kind:'dangerous' as const,
+  details:JSON.stringify({change:'tokenRevoke',after:{label:'spare'}})};
+ feed.approvals.approvals=[selected,{...selected,id:'a-other'}];
+ const card={title:'Revoke the token spare',nothing:false,facts:[],exact:'{}'};
+ let complete!: (response: Response) => void;
+ const pending=new Promise<Response>(resolve=>{complete=resolve;});
+ const request=vi.fn<typeof fetch>()
+  .mockReturnValueOnce(pending)
+  .mockResolvedValueOnce(Response.json({ok:false,code:'conflict',message:'Actual refusal'},{status:409}))
+  .mockResolvedValueOnce(Response.json({ok:true,value:{summary:'',problem:null,card,blocked:'Fresh caution'}}))
+  .mockResolvedValueOnce(Response.json({ok:true,value:{id:selected.id}}));
+ vi.stubGlobal('fetch',request);
+ const root='/p/approvals-preview';
+ await draw(h(ApprovalsApp,{path:root}));
+ expect(request).not.toHaveBeenCalled();
+ await act(async()=>tree.update(h(ApprovalsApp,{path:root+'/approval/'+selected.id})));
+ expect(request).toHaveBeenCalledTimes(1);
+ expect(request.mock.calls[0][1]?.body).toBe(JSON.stringify({input:{id:selected.id}}));
+ const button=(label:string)=>tree.root.findAllByType('Button' as never).find((entry:{props:{children:unknown}})=>entry.props.children===label)!;
+ expect(button('Allow').props.disabled).toBe(false);
+ await act(async()=>button('Allow').props.onClick());
+ expect(button('Yes, allow it').props.disabled).toBe(false);
+ await act(async()=>complete(Response.json({ok:true,value:{summary:'',problem:null,card,blocked:'Initial caution'}})));
+ expect(words()).toContain('Initial caution');
+ expect(button('Yes, allow it').props.disabled).toBe(false);
+ await act(async()=>button('Yes, allow it').props.onClick());
+ expect(JSON.parse(String(request.mock.calls[1][1]?.body)).input).toMatchObject({id:selected.id,answer:'allow',confirm:true});
+ expect(request.mock.calls[2][0]).toBe('/api/household/proposalPreview');
+ expect(words()).toContain('Actual refusal');
+ expect(words()).toContain('Fresh caution');
+ expect(words()).not.toContain('Initial caution');
+ await act(async()=>button('Yes, allow it').props.onClick());
+ expect(words()).not.toContain('Fresh caution');
+ expect(request).toHaveBeenCalledTimes(4);
 });

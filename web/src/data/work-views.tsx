@@ -27,30 +27,23 @@ function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): Approv
   return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),setRule:sendApprovalRule,allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
-/** A household owner is shown each waiting household card as the program says it to an owner: with the names it
- * holds for the outside accounts the card mentions, what the change would replace, and anything that already
- * stands against allowing it. None of that is on the card (work-proposal.ts), so it is read: once for every
- * waiting card, so the list says who each is for, and again each time one is opened, because what stands
- * against a card can change while it waits. */
-function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owner: boolean, list = true): ApprovalSnapshot {
-  const waiting = owner && snapshot.status === 'live' ? snapshot.approvals.filter(row => row.state === 'pending' && row.operation === 'household.change').map(row => row.id) : [];
-  const opened = id !== undefined && waiting.includes(id) ? id : undefined;
-  const others = list ? waiting.filter(row => row !== opened).join('\n') : '';
-  const [now, setNow] = useState<Readonly<Record<string, ProposalNow | null>>>({});
-  const read = (ids: string[]) => {
+/** Read the owner preview for the open card and discard results when it closes or changes. */
+function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owner: boolean) {
+  const opened = owner && snapshot.status === 'live' ? snapshot.approvals.find(row =>
+    row.id === id && row.state === 'pending' && row.operation === 'household.change')?.id : undefined;
+  const [revision, setRevision] = useState(0);
+  const [preview, setPreview] = useState<{ id: string; revision: number; value: ProposalNow }>();
+  useEffect(() => {
+    setPreview(undefined);
+    if (!opened) return;
     let current = true;
-    for (const key of ids) void readProposal(key).then(value => { if (current) setNow(held => ({ ...held, [key]: value ?? null })); });
+    void readProposal(opened).then(value => { if (current && value) setPreview({ id: opened, revision, value }); });
     return () => { current = false; };
-  };
-  useEffect(() => opened ? read([opened]) : undefined, [opened]);
-  useEffect(() => others ? read(others.split('\n')) : undefined, [others]);
-  if (!waiting.length) return snapshot;
-  return { ...snapshot, approvals: snapshot.approvals.map(row => {
-    const held = waiting.includes(row.id) ? now[row.id] : undefined;
-    if (held) return { ...row, changeSummary: held.summary, problem: held.problem, card: held.card, blocked: held.blocked };
-    if (row.id !== opened || held === null) return row;
-    return { ...row, blocked: 'Checking whether this proposal can be allowed.' };
-  }) };
+  }, [opened, revision]);
+  const held = preview?.id === opened && preview?.revision === revision ? preview?.value : undefined;
+  const refresh = (id: string) => { if (id === opened) setRevision(value => value + 1); };
+  return { snapshot: held ? { ...snapshot, approvals: snapshot.approvals.map(row => row.id === opened
+    ? { ...row, card: held.card, blocked: held.blocked } : row) } : snapshot, refresh };
 }
 
 // Times are said in the household's zone (the desk's own clock reading, data/zone.ts) unless the root supplies
@@ -61,8 +54,7 @@ export function useApprovalSnapshot(timezone?: string) {
   return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone ?? zone ?? localTimezone());
 }
 export function useApprovalList() {
-  const owner = useWorkAccess().owner;
-  return useProposalNow(useApprovalSnapshot(), undefined, owner);
+  return useApprovalSnapshot();
 }
 export function useChangeSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
@@ -93,7 +85,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
     try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
-  const snapshot = useProposalNow(read, selected, access.owner);
+  const { snapshot, refresh } = useProposalNow(read, selected, access.owner);
   const folder = ['history', 'rules', 'notices'].find(id => currentPath === `${base}/${id}`) ?? 'pending';
   const visit = (next: string) => {
     if (go) go(next);
@@ -104,7 +96,8 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
   };
   const standing=alwaysInput(snapshot.approvals.find(card=>card.id===selected),changes.status==='live'?changes.changes:[],access.members);
   const defaultActions=ownerApprovalActions(access.owner,standing);
-  return <Approvals snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
+  const answerActions = actions ?? defaultActions;
+  return <Approvals snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
@@ -165,9 +158,10 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const owner=useWorkAccess().owner, snapshot=useProposalNow(useApprovalSnapshot(timezone),id,owner,false), names=useAgentNames(), viewer=useViewer();
+  const owner=useWorkAccess().owner, { snapshot, refresh }=useProposalNow(useApprovalSnapshot(timezone),id,owner), names=useAgentNames(), viewer=useViewer();
   const defaultActions=ownerApprovalActions(owner);
-  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  const answerActions = actions ?? defaultActions;
+  return <ApprovalCard id={id} snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   const names = useAgentNames();

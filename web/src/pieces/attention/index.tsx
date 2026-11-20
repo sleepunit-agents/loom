@@ -1,6 +1,6 @@
 import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { LiveApprovalCard, useApprovalList } from '../../data/work-views';
-import { plainCard } from '../approval-view/model';
+import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
@@ -68,7 +68,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
-    words={row => { const approval = cardOf(row), card = approval && plainCard(approval); return card ? `${card.title}?` : undefined; }}
+    words={row => { const approval = cardOf(row); return approval?.operation === 'household.change' ? approvalTitle(approval) : undefined; }}
     sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
       : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} /> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}

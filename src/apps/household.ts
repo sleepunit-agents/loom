@@ -1,6 +1,6 @@
 /** Trusted household membership and agent appearance over the shared schema. */
 import { HH_MM } from '../core/tempo/calendar.js';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
@@ -49,9 +49,10 @@ export function householdService(db: DataDatabase, now: () => string) {
     if (old?.role === 'owner' && value.role !== 'owner' && !db.select({ id: members.id }).from(members)
       .where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${value.id}`).get())
       throw new HouseholdError('conflict', 'At least one household owner must remain');
-    const owned=value.fullOwner?db.select({id:agents.id}).from(agents).all().map(row=>row.id):value.agents;
-    for (const agent of owned) if (!db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent)).get())
-      throw new HouseholdError('invalid', 'Unknown agent');
+    const { agents: requested, fullOwner } = value;
+    const found = db.select({ id: agents.id }).from(agents).where(fullOwner ? undefined : inArray(agents.id, requested)).all();
+    if (!fullOwner && found.length !== new Set(requested).size) throw new HouseholdError('invalid', 'Unknown agent');
+    const owned = fullOwner ? found.map(row => row.id) : requested;
     return { old, owned };
   };
   const validateRemoval = (of: Removable, id: string, removed: boolean) => {
@@ -62,7 +63,6 @@ export function householdService(db: DataDatabase, now: () => string) {
     if (removed && of === 'member' && !db.select({ id: members.id }).from(members).where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${id}`).get())
       throw new HouseholdError('conflict', 'At least one household owner must remain');
     if (removed && of === 'agent' && db.select().from(household).get()?.defaultAgent === id) throw new HouseholdError('conflict', 'Choose another default agent first');
-    return table;
   };
   const validateSettings = (row: z.infer<typeof settingsInput>) => {
     if (row.defaultAgent && !db.select({ id: agents.id }).from(agents).where(eq(agents.id, row.defaultAgent)).get())
@@ -73,7 +73,6 @@ export function householdService(db: DataDatabase, now: () => string) {
     const have = db.select({ id: table.id }).from(table).all().map(row => row.id);
     if (new Set(ids).size !== ids.length || have.length !== ids.length || have.some(id => !ids.includes(id)))
       throw new HouseholdError('invalid', 'Name every one of the ' + of + ' exactly once');
-    return table;
   };
   return {
     validateMember, validateRemoval, validateSettings, validateOrder,
@@ -109,7 +108,8 @@ export function householdService(db: DataDatabase, now: () => string) {
      * anything (shared-sharing.ts), a removed connection is switched off. Restore puts it back. */
     setRemoved(of: Removable, id: string, removed: boolean) {
       return db.transaction(() => {
-        const table = validateRemoval(of, id, removed);
+        validateRemoval(of, id, removed);
+        const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
         db.update(table).set({ removedAt: removed ? now() : null }).where(eq(table.id, id)).run();
         // A removed connection is switched off. Restoring it leaves it off until someone turns it on.
         if (of === 'bridge' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(eq(bridgeConnections.id, id)).run();
@@ -145,7 +145,8 @@ export function householdService(db: DataDatabase, now: () => string) {
     /** The order members or agents are listed in: every one of them, named exactly once. */
     setOrder(of: 'members' | 'agents', ids: readonly string[]) {
       return db.transaction(() => {
-        const table = validateOrder(of, ids);
+        validateOrder(of, ids);
+        const table = of === 'members' ? members : agents;
         ids.forEach((id, position) => db.update(table).set({ position }).where(eq(table.id, id)).run());
         return { saved: true as const };
       });

@@ -61,7 +61,7 @@ import {installMemorySignals} from './transport/memory-signals.js';
 import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
-import { outsideNames, type NamedCard } from './shared-outside-names.js';
+import { outsideNames } from './shared-outside-names.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
@@ -161,7 +161,7 @@ export function sharedRoot(options: {
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db, now), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
-  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume']; schedule?: ReturnType<typeof installSharedTempo>['placeSchedule']; people?: (viewer: Viewer) => NamedCard[] } = {};
+  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume']; schedule?: ReturnType<typeof installSharedTempo>['placeSchedule'] } = {};
   // The household's own key when it has one. Without one (a program run with no Comms) the key lasts as long
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
@@ -175,8 +175,8 @@ export function sharedRoot(options: {
       tempo: () => late.tempo!(),
       schedule: ask => late.schedule!(ask),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
-      // Person cards are read as the owner looking at the card, so a card that owner may not open names nobody.
-      names: viewer => outsideNames(db, () => late.people?.(viewer) ?? []),
+      // Proposal names come from owner-readable bridge records.
+      names: () => outsideNames(db),
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
@@ -199,7 +199,6 @@ export function sharedRoot(options: {
   const tasks=taskService(db,now,(person,conversation)=>canReadSharedConversation(db,addressee(person),conversation));
   const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding,report);
   const startupCleanups:Array<()=>void>=[memory.close];
-  late.people = viewer => memory.people.list(viewer).map(person => ({ name: person.name, ...(person.agent ? { agent: person.agent } : {}), fields: person.fields }));
   try{
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
   startupCleanups.push(notices.close);

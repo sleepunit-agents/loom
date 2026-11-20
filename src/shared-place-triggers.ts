@@ -84,17 +84,25 @@ export const repeats = (trigger: { times?: string | null; lifespan?: string }): 
 /** What a body is told when what it asked went to the owners instead of being set or changed. */
 export const SCHEDULE_ASKED = 'Not done yet. A repeating schedule asked for by somebody who is not one of the agent\'s owners needs an owner\'s answer, so loom sent the request to them as a card, with who asked, the times and the words in full. Nothing is set or changed until an owner allows it. Say so to the person; the answer comes to this conversation.';
 export const NO_OWNER_TO_ASK = 'A repeating schedule asked for by somebody who is not one of the agent\'s owners needs an owner\'s answer, and this program cannot ask one. Set a one-time schedule, or have an owner set it.';
-const asker = z.object({ kind: z.enum(['member', 'outside']), id: z.string().min(1) }).strict();
-const asked = { agent: z.string().min(1), conversation: z.string().min(1), place: z.string().min(1).max(500), asker };
+const cardId = z.string().min(1).max(512);
+// Leave room for every minute of the day, written as a comma-separated HH:MM list.
+const scheduleText = z.string().min(1).max(24 * 60 * 8);
+const asker = z.object({ kind: z.enum(['member', 'outside']), id: cardId }).strict();
+const asked = { agent: cardId, conversation: cardId, place: z.string().min(1).max(500), asker };
 /** A repeating schedule in a shared place, asked for there on the word of somebody who is not one of the agent's
  * owners: the card an owner answers (shared-household-proposals.ts, `placeSchedule`). It holds the trigger as it
  * would have been recorded, or the change to one that stands, and who asked. loom files it and nobody proposes it,
  * so the asker on it is loom's reading of the job's mail and never a caller's claim. */
 export const placeScheduleAsk = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('set'), ...asked, trigger: triggerInput.extend({ id: z.string().min(1), sourceKind: z.literal('time'), targetKind: z.literal('inbox'), toKind: z.literal('agent'), file: z.null().optional() }).strict() }).strict(),
+  z.object({ action: z.literal('set'), ...asked, trigger: triggerInput.extend({
+    id: cardId, sourceKind: z.literal('time'), targetKind: z.literal('inbox'), toKind: z.literal('agent'), file: z.null().optional(),
+    owner: cardId.nullish(), watches: cardId.nullish(), target: cardId.nullish(), to: cardId.nullish(),
+    project: cardId.nullish(), conversation: cardId.nullish(), readStateFrom: cardId.nullish(),
+    times: scheduleText.nullish(), days: scheduleText.nullish(),
+  }).strict() }).strict(),
   // `standing`: the note, words and times as they stood when it was asked, for the card to show beside the change.
-  z.object({ action: z.literal('edit'), ...asked, id: z.string().min(1), change: triggerEdit.extend({ file: z.null().optional() }).strict(),
-    standing: z.object({ note: z.string(), instructions: z.string().nullable(), times: z.string().nullable(), days: z.string().nullable() }).strict().optional() }).strict(),
+  z.object({ action: z.literal('edit'), ...asked, id: cardId, change: triggerEdit.extend({ file: z.null().optional(), times: scheduleText.optional(), days: scheduleText.nullish() }).strict(),
+    standing: z.object({ note: triggerInput.shape.note, instructions: triggerInput.shape.instructions.unwrap(), times: scheduleText.nullable(), days: scheduleText.nullable() }).strict().optional() }).strict(),
 ]);
 export type PlaceScheduleAsk = z.infer<typeof placeScheduleAsk>;
 /** The card's words, for everyone who may read it: who asked, where, the times, and the note and words in full. The
