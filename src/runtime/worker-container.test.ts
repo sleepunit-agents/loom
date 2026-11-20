@@ -1229,7 +1229,7 @@ it('starts and ends a body without touching anything inside its account\'s sign-
   expect(seen()).toEqual(before);
 });
 
-const mappedEngineInfo = {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
+const mappedEngineInfo = {version:{APIVersion:'5.4.2'},host:{cgroupControllers:['cpu','pids','memory'],security:{rootless:true},
       idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
 
 it('mounts a job-only kit socket and gives the body no worker credential, even with a shell',async()=>{

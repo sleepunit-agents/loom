@@ -76,24 +76,26 @@ it('accepts the full stdout allowance even when Docker frames each byte separate
   expect((await runKitContainer(engine, input)).toString()).toBe(text);
 });
 
-it.each(['rootless','rootful','short mapping','gap','missing zero','old API','host bind','lost start'] as const)('checks the %s engine before creating a mapped helper', async mode => {
+it.each(['rootless','rootful','short mapping','gap','missing zero','old API','missing cpu','short UID','dropped limits','host bind','lost start'] as const)('checks the %s engine before creating a mapped helper', async mode => {
   const {engine,calls,writes} = fixture('online');
   const base = {container_id:0,host_id:1000,size:1};
   const rest = {container_id:1,host_id:20000,size:32767};
-  const uidmap = mode === 'missing zero' ? [rest] : [rest,base];
-  const gidmap = mode === 'short mapping' ? [base] : mode === 'gap' ? [base,{...rest,container_id:2}] : uidmap;
+  const uidmap = mode === 'missing zero' ? [rest] : mode === 'short UID' ? [base] : [rest,base];
+  const gidmap = mode === 'short mapping' ? [base] : mode === 'gap' ? [base,{...rest,container_id:2}] : mode === 'short UID' ? [base,rest] : uidmap;
   const control = {...engine, json: async (...args:Parameters<DockerEngine['json']>) => {
     if (args[1].endsWith('/libpod/info')) return {version:{ APIVersion:mode === 'old API' ? '4.9.0' : '5.4.2' },
-      host:{security:{rootless:mode !== 'rootful'},idMappings:{uidmap,gidmap}}};
+      host:{cgroupControllers:mode === 'missing cpu' ? ['pids','memory'] : ['cpu','memory','pids'],security:{rootless:mode !== 'rootful'},idMappings:{uidmap,gidmap}}};
     const response = await engine.json(...args);
-    if (mode === 'host bind' && args[1].startsWith('/containers/') && args[1].endsWith('/json'))
-      return {Mounts:[{Type:'bind',Source:'/outside',Destination:'/inside'}]};
+    if (args[1].startsWith('/containers/') && args[1].endsWith('/json')) return {
+      Mounts:mode === 'host bind' ? [{Type:'bind',Source:'/outside',Destination:'/inside'}] : [],
+      HostConfig:{Memory:mode === 'dropped limits' ? 0 : 134217728,PidsLimit:32,CpuPeriod:100000,CpuQuota:50000},
+    };
     if (mode === 'lost start' && args[1].endsWith('/start')) throw new Error('Start reply lost');
     return response;
   }};
   const run = runKitContainer(control,{...input,runtime:'crun',podmanHelperSubid:32767});
-  if (mode === 'host bind') {
-    await expect(run).rejects.toThrow('Unexpected container storage');
+  if (mode === 'host bind' || mode === 'dropped limits') {
+    await expect(run).rejects.toThrow(mode === 'host bind' ? 'Unexpected container storage' : 'Unexpected helper resource limits');
     expect(calls.some(c=>c.path.endsWith('/start'))).toBe(false);
     expect(writes).toEqual([]);
     expect(calls.at(-1)?.method).toBe('DELETE');
@@ -108,7 +110,8 @@ it.each(['rootless','rootful','short mapping','gap','missing zero','old API','ho
   }
   if (mode !== 'rootless') {
     await expect(run).rejects.toThrow();
-    expect(calls.some(c=>c.path.includes('/create'))).toBe(false);
+    expect(calls.some(c=>c.path.includes('/create') || c.method === 'DELETE')).toBe(false);
+    expect(writes).toEqual([]);
     return;
   }
   expect((await run).toString()).toBe('online');
