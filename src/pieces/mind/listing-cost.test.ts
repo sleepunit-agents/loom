@@ -7,7 +7,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { PeopleStore } from '../../backends/people.js';
 import { ProjectsStore } from '../../backends/projects.js';
 import { FakeClock } from '../../core/clock.js';
@@ -26,6 +26,35 @@ function facts() {
   const sharing = (): Sharing => { state.asked++; return { members: { owner: { owner: false, agents: state.owns ? ['fiction'] : [] } }, projects: {}, agents: ['fiction'] }; };
   return { state, sharing };
 }
+
+it('reads a visible source in two statements when listing either two or ten paused cards', () => {
+  const memories = join(home(), 'memories.db');
+  const store = new ProjectsStore({ dbPath: memories });
+  closes.push(() => store.close());
+  const {state, sharing} = facts();
+  let directoryReads = 0;
+  const reader = createProjectsReader(new FakeClock(now), {
+    get agents() { directoryReads++; return [{agent: 'fiction', memories}]; }, sharing,
+  });
+  closes.push(() => reader.close());
+  const measure = () => {
+    directoryReads = 0;
+    const prepared = vi.spyOn(BetterSqlite3.prototype, 'prepare');
+    try {
+      const rows = reader.list(viewer);
+      return {slugs: rows.map(row => row.slug), statements: prepared.mock.calls.length, directoryReads};
+    } finally { prepared.mockRestore(); }
+  };
+  const slugs: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const slug = 'pond-' + i;
+    store.write({slug, name: 'Pond ' + i, status: 'paused'});
+    slugs.push(slug);
+    if (i === 1 || i === 9) expect.soft(measure()).toEqual({slugs: [...slugs], statements: 2, directoryReads: 2});
+  }
+  state.owns = false;
+  expect(measure()).toEqual({slugs: [], statements: 0, directoryReads: 1});
+});
 
 it('reads the sharing facts and the people once for a whole listing of projects, and afresh for the next', () => {
   const memories = join(home(), 'memories.db'), store = new ProjectsStore({ dbPath: memories });
