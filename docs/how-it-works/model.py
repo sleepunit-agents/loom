@@ -857,6 +857,8 @@ area("measuring", "Measuring",
 
 # Things kept that no screen reads: explained briefly, not column by column.
 PLUMBING = [
+ ("trigger_acceptances", "The job that last accepted an individual trigger delivery."),
+ ("trigger_journals", "Lessons and versioned state carried between firings of the same trigger."),
  ("machine_reads", "Diagnostic request metadata for the machine owner’s history. The answer text is never stored here."),
  ("migrations", "The list of changes already made to the database's shape, so each is applied once."),
  ("operation_results", "The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice."),

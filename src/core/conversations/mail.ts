@@ -9,7 +9,7 @@ import {prepareHistoryContext,type HistoryLine} from './history-context.js';
 import {prepareBridgeHistory} from './bridge-history.js';
 import {prepareAnswerContext,type AnswerContext} from './answer-context.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
+import { inbox, inboxRefs, messages, threads, triggerAcceptances } from '../data/schema.js';
 import { mailWords } from './volume.js';
 import { CommsMessages } from './messages.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -123,6 +123,10 @@ export class ConversationMail {
       const item = this.held(conversation, job, itemId);
       if (item.job !== job || !['taken', 'done'].includes(item.state)) throw new Error('Item is not held by this job');
       this.delivered(item);
+      if (item.source === 'trigger' && item.fromKind === 'schedule') {
+        this.comms.db.insert(triggerAcceptances).values({item: item.id, job})
+          .onConflictDoUpdate({target: triggerAcceptances.item, set: {job}}).run();
+      }
       if (item.firstAcceptedAt !== null) return item;
       return this.comms.db.update(inbox).set({firstAcceptedAt:this.comms.now()})
         .where(eq(inbox.id,item.id)).returning().get()!;

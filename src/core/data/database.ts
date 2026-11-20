@@ -365,6 +365,8 @@ const upgrades: readonly (readonly string[])[] = [
   ["ALTER TABLE inbox ADD COLUMN first_accepted_at text CHECK (first_accepted_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', first_accepted_at) = first_accepted_at or strftime('%Y-%m-%dT%H:%M:%fZ', first_accepted_at) = first_accepted_at, 0))"],
   // 22: keep the measured input of the job’s first model call.
   ["ALTER TABLE job_usage ADD COLUMN first_context integer"],
+  // 23: a private journal belongs to its trigger for its lifetime.
+  ["CREATE TABLE `trigger_journals` (\n\t`trigger` text PRIMARY KEY NOT NULL,\n\t`lessons` text DEFAULT '' NOT NULL,\n\t`state` text DEFAULT '' NOT NULL,\n\t`state_revision` integer DEFAULT 0 NOT NULL,\n\t`state_changed_at` text,\n\tFOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE cascade\n);", "CREATE TABLE `trigger_acceptances` (\n\t`item` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\tFOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

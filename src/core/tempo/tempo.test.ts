@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
 import { agents, approvals, conversations, inbox, jobs, members, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
+import { appendLesson, readJournal, replaceJournalState } from './journal.js';
 import { createTempo } from './tempo.js';
 
 it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
@@ -281,5 +282,25 @@ it('refreshes watched answers after shared commits without repeating a durable o
     db.transaction(() => db.update(approvals).set({ state: 'allowed', decidedAt: now() }).where(eq(approvals.id, 'a')).run());
     tempo.committed(); expect(occurrences).toHaveLength(1);
     tempo.committed(); expect(occurrences).toHaveLength(1);
+  } finally { tempo.close(); client.close(); }
+});
+
+it('keeps lessons off the shared inbox and rejects a stale state revision', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const at = () => new Date(clock.now()).toISOString();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const tempo = createTempo(db, clock, { conversations: new Conversations(db, at), admit: () => true, operation: () => {} });
+  try {
+    const { id } = tempo.triggers.set({ ownerKind: 'agent', owner: 'art', sourceKind: 'answer', watches: 'approval:1',
+      lifespan: 'until-stopped', targetKind: 'inbox', toKind: 'agent', to: 'art', instructions: 'Check', note: 'Recurring check' });
+    appendLesson(db, id, 'Read both sources.');
+    expect(() => appendLesson(db, id, '🐟'.repeat(4096))).toThrow(/bytes/);
+    expect(() => appendLesson(db, id, 'bad\0lesson')).toThrow(/null character/);
+    const revision = replaceJournalState(db, id, 0, 'first page', at());
+    expect(replaceJournalState(db, id, revision, '', at())).toBe(2);
+    expect(() => replaceJournalState(db, id, 0, 'stale page', at())).toThrow(/changed/);
+    expect(readJournal(db, id)).toMatchObject({ state: '', stateRevision: 2, lessons: 'Read both sources.' });
+    tempo.triggers.event('answer', 'approval:1', 'allowed');
+    expect(db.select().from(inbox).all()).toMatchObject([{ words: 'Check' }]);
   } finally { tempo.close(); client.close(); }
 });

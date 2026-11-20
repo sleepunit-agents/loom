@@ -226,3 +226,51 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
  expect(readFileSync(join(b.home,'agents','mark','IDENTITY.md'),'utf8')).toBe('MARK_SECRET_CREED');
  const marks=new ProjectsStore({dbPath:join(b.home,'agents','mark','memories.db')});try{expect(marks.rows(false)).toHaveLength(1);expect(JSON.stringify(marks.read('fictional-mark-shed'))).toContain('MARK_SECRET_PROJECT');}finally{marks.close();}
 });
+
+it('carries a journal between actual trigger deliveries and confines body commands to the accepted wake', async () => {
+ const b = await body(), {db,root,clock} = b.fixture;
+ const engine = root.services.tempo.triggers;
+ const t = engine.set({ ownerKind:'agent', owner:'art', project:'pond', sourceKind:'answer', watches:'approval:example',
+   lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'art', note:'Test journal', instructions:'Check both sources' });
+ engine.event('answer','approval:example','first');
+ const first = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':first')).get()!;
+ const cmd = (operation:string, input:Record<string,unknown>, id:string) => b.call('loom_command',{operation,input,id});
+ const read = () => cmd('tempo.readJournal',{},'read');
+ expect((await read()).text).toContain('denied');
+ db.update(schema.jobs).set({conversation:first.conversation, member:null}).where(eq(schema.jobs.id,'job')).run();
+ expect((await read()).text).toContain('denied');
+ db.update(schema.inbox).set({state:'taken', job:'job', firstAcceptedAt:new Date(clock.now()).toISOString()}).where(eq(schema.inbox.id,first.id)).run();
+ expect((await read()).text).toContain('denied');
+ expect((await b.fixture.call('accept',{items:[first.id]},'accept-first')).status).toBe(200);
+ expect((await read()).text).toContain('"stateRevision":0');
+ const save = () => cmd('tempo.appendLesson',{lesson:'Count each source once.'},'lesson');
+ expect((await save()).text).toContain('"saved":true');
+ expect((await save()).text).toContain('"saved":true');
+ expect((await cmd('tempo.replaceJournalState',{revision:0,state:'page 2'},'state')).text).toContain('"revision":1');
+ expect((await cmd('tempo.replaceJournalState',{revision:0,state:'old'},'other-write')).text).toContain('changed since');
+ const longInstructions = 'x'.repeat(100000);
+ engine.edit(t.id,{instructions:longInstructions},{kind:'agent',id:'art'});
+ engine.event('answer','approval:example','second');
+ const second = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':second')).get()!;
+ expect(second.words).toBe(longInstructions);
+ db.update(schema.inbox).set({job:'job'}).where(eq(schema.inbox.id,second.id)).run();
+ const taken = await root.http.request('/api/conversation/take', {method:'POST', headers:{
+   'content-type':'application/json', authorization:'Bearer '+bodyCredentials.body,
+ }, body:JSON.stringify({input:{}})});
+ expect(taken.status).toBe(200);
+ const items = (await taken.json()).value.items as {id:string;words:string}[];
+ expect(items.find(item=>item.id===second.id)?.words).toBe(longInstructions);
+ const carry = () => cmd('tempo.wakeLessons',{items:[second.id]},'carry');
+ expect(JSON.parse((await carry()).text).value).toBeNull();
+ expect((await b.fixture.call('accept',{items:[second.id]},'accept-second')).status).toBe(200);
+ expect(JSON.parse((await carry()).text).value).toBe('Count each source once.');
+ expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
+ expect((await read()).text).toContain('page 2');
+ const late = await root.http.request('/api/tempo/readJournal', {method:'POST', headers:{
+   'content-type':'application/json', authorization:'Bearer '+bodyCredentials.body,
+ }, body:JSON.stringify({input:{}})});
+ expect(late.status).toBe(200);
+ root.writes.run(() => db.update(schema.jobs).set({state:'done'}).where(eq(schema.jobs.id,'job')).run());
+ await expect(late.text()).rejects.toThrow('Data access ended');
+ expect((await save()).text).toMatch(/denied|refused|unavailable/i);
+});

@@ -55,9 +55,14 @@ export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSna
 }
 
 function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
-  const detail = useDataQuery<{tempoProgram: {program: {name:string}; programState:unknown; lastResult:string|null}|null}>(
-    'query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
+  const detail = useDataQuery<{
+    tempoProgram: { program: { name: string }; programState: unknown; lastResult: string | null } | null;
+  }>('query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
+  const journalDetail = useDataQuery<{
+    tempoJournal: { lessons: string; state: string; stateChangedAt: string | null } | null;
+  }>('query JournalDetails($id:String!){tempoJournal(id:$id)}', {id: trigger.id});
   const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
+  const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
   const lastDecision = program?.lastResult ?? history(snapshot.events, trigger.id).find(event => event.event === 'program')?.note;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
@@ -81,6 +86,11 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
     </dl>
+    {journal && <section aria-label="Trigger journal" className="grid gap-2">
+      <h2>Lessons</h2><p className="whitespace-pre-wrap break-words">{journal.lessons || 'No lessons yet.'}</p>
+      <h2>Saved state</h2><pre className="whitespace-pre-wrap break-all">{journal.state || 'Empty'}</pre>
+      {journal.stateChangedAt && <p>Last changed {time(journal.stateChangedAt)} · {snapshot.timezone}</p>}
+    </section>}
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
     {actions && <TriggerActions trigger={trigger} pauses={snapshot.pauses} actions={actions} />}

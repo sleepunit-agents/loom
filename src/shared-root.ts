@@ -77,6 +77,8 @@ import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
+import { guardedResponse } from './core/data/guarded-response.js';
+import { isJournalRead, registerTriggerJournal } from './shared-trigger-journal.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedNotices } from './shared-notices.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
@@ -499,10 +501,17 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer=await executeCommand(auth,`${c.req.param('piece')}.${c.req.param('operation')}`,parsed.data.input,parsed.data.id,request.signal);
+    const name = c.req.param('piece') + '.' + c.req.param('operation');
+    const epoch = isJournalRead(name) ? data.readVersion() : undefined;
+    const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,request.signal);
+    if (epoch !== undefined && answer.ok) {
+      return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
+        () => !closing && auth.valid() && data.readVersion() === epoch);
+    }
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text));
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {
     now, bodyJob, isProgram: viewer => !!credentials.program(viewer), words: comms?.service.words.bind(comms.service),

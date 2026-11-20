@@ -2230,7 +2230,24 @@ export const machineReads = sqliteTable('machine_reads', {
   outcome: text('outcome').notNull(),
 }, t => [index('machine_reads_machine_time').on(t.machine,t.askedAt)]);
 
+/** Private carry-over for a trigger. Access is scoped to the firing that produced it. */
+export const triggerJournals = sqliteTable('trigger_journals', {
+  trigger: text('trigger').primaryKey().references(() => triggers.id, { onDelete: 'cascade' }),
+  lessons: text('lessons').notNull().default(''),
+  state: text('state').notNull().default(''),
+  stateRevision: integer('state_revision').notNull().default(0),
+  stateChangedAt: text('state_changed_at'),
+});
+
+/** The job that acknowledged this trigger delivery, including after reassignment. */
+export const triggerAcceptances = sqliteTable('trigger_acceptances', {
+  item: text('item').primaryKey().references(() => inbox.id, { onDelete: 'cascade' }),
+  job: text('job').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
+});
+
 export const plumbing = {
+  triggerAcceptances,
+  triggerJournals,
   agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,
   programFirings,
   machineReads,

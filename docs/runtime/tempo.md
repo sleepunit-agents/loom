@@ -220,3 +220,17 @@ Overlapping firings are skipped. Set `programPeriod: "day"` to admit at most one
 household calendar date, including failed or quiet attempts. Leave it unset for a frequent
 watch. The trigger details show the latest outcome and its retained state. The scoped query
 `tempoProgram(id: String!)` returns the descriptor and state to the owner or the agent.
+
+## Lessons and state between runs
+
+An agent-owned standing trigger that wakes its own agent in a private wake can keep two texts. Open the trigger in Tempo as a household owner to see its lessons, saved state and the time its state last changed. Each text holds up to 16,384 UTF-8 bytes.
+
+The firing job uses its existing `loom_command` tool. Loom identifies the trigger from the delivery the job accepted.
+
+| Operation | Input | Result |
+| --- | --- | --- |
+| `tempo.readJournal` | `{}` | Lessons, state, state revision and last state change |
+| `tempo.appendLesson` | `{"lesson":"Check both sources."}` | Appends a lesson that arrives with the next wake |
+| `tempo.replaceJournalState` | `{"revision":0,"state":"page 2"}` | Returns the new revision |
+
+Read the revision before updating state. If another run changed it, read the latest state before making a new change. Use the same command ID to retry an intended write.

@@ -499,3 +499,26 @@ it('shows a Slack job on a guest’s word what it was sent, since it cannot open
  expect(f.native.mock.calls[0][1]).toContain('SHOWN:bi:file');
  expect(saveAttachments).not.toHaveBeenCalled();
 });
+
+it.each([true,false])('continues an acknowledged wake when the coordinator supports trigger journals: %s', async supported => {
+ const f=fixture(), value=JSON.parse(f.input.toString()), paths:string[]=[];
+ value.job.venue='wake'; value.job.thread=null;
+ const fetcher:typeof fetch=async (url, init) => {
+   const path=String(url).split('/').at(-1)!; paths.push(path);
+   if(path==='wakeLessons') {
+     expect(paths).toContain('accept');
+     expect(JSON.parse(String(init?.body)).input).toEqual({items:['mail']});
+     return supported ? Response.json({ok:true,value:'Count both sources.'})
+       : Response.json({ok:false,code:'not-found',message:'Unknown operation'},{status:404});
+   }
+   const reply=await f.options.fetch(url,init);
+   if(path!=='take') return reply;
+   const result=await reply.json();
+   Object.assign(result.value.items[0],{source:'trigger',fromKind:'schedule',fromId:'art'});
+   return Response.json(result);
+ };
+ const native=vi.fn(async()=>({text:'Done',model:'fixture',actions:[]}));
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:fetcher,native})).toBe(0);
+ const lesson = 'Lessons recorded by earlier runs of this trigger:\nCount both sources.';
+ expect(native).toHaveBeenCalledWith(expect.anything(),supported ? expect.stringContaining(lesson) : expect.not.stringContaining(lesson),expect.any(AbortSignal));
+});
