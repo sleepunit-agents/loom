@@ -1,4 +1,6 @@
 import {Fragment, useState} from 'react';
+import {Empty, Error, Fact, Facts, Input, LinkButton, Loading, Meta, Reader, Title} from '../../kit';
+import './usage.css';
 import {useDataQuery} from '../../data/graphql';
 
 export const conversationsQuery = `query UsageConversations($from:String!, $to:String!) {
@@ -25,27 +27,34 @@ function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
   // Another date range keeps this conversation's last table until its own answers. A row is mounted per conversation,
   // so a kept table is never another conversation's.
   const {status,data,settling}=useDataQuery<{conversationJobUsage:Job[]}>(jobsQuery,{...range,conversation},{keep:true});
-  if(status!=='live'||!data)return <p>{status==='loading'?'Loading jobs…':'Job usage unavailable.'}</p>;
-  return <table aria-busy={settling||undefined}><caption>Jobs in this conversation</caption><thead><tr>
-    <th>Job</th><th>State</th><th>Harness</th><th>Model</th>{Object.values(metrics).map(label=><th key={label}>{label}</th>)}
-    <th>Calls by tool</th><th>Source</th><th>Observations</th>
-  </tr></thead><tbody>{data.conversationJobUsage.map(({id,title,runKind,linkedWakeJob,state,usage,observations})=><tr key={id}>
-    <th scope="row">{runKind && <span>{runKind==='program'?'Program':runKind==='main'?'Main session':'Subagent'} · </span>}{title||id}{title&&title!==id&&<small> ({id})</small>}{linkedWakeJob&&<small> · Woke job {linkedWakeJob}</small>}</th><td>{state}</td><td>{usage?.harness??'Unknown'}</td><td>{usage?.model??'Unknown'}</td>
-    {(Object.keys(metrics) as (keyof typeof metrics)[]).map(key=><td key={key}>{format(usage?.[key])}</td>)}
-    <td>{usage?.tools ? usage.tools.map(tool=>tool.name+' × '+format(tool.count)).join(', ')||'None' : 'Unknown'}</td>
-    <td>{usage?.source??'Pending'}</td><td>{observations.join(' ')}</td>
-  </tr>)}</tbody></table>;
+  if(status!=='live'||!data)return status==='loading'?<Loading label="Loading jobs…" />:<Error text="Job usage unavailable." />;
+  if(!data.conversationJobUsage.length)return <Empty title="No jobs in this conversation for this period." />;
+  return <section aria-label="Jobs in this conversation" aria-busy={settling||undefined}>
+    {data.conversationJobUsage.map(({id,title,runKind,linkedWakeJob,state,usage,observations})=><Reader key={id} data-inline>
+      <header><Meta>{[runKind && (runKind==='program'?'Program':runKind==='main'?'Main session':'Subagent'),state].filter(Boolean).join(' · ')}</Meta>
+        <Title>{title||id}</Title></header>
+      <Facts>
+        <Fact label="Job ID">{title && title!==id ? id : undefined}</Fact>
+        <Fact label="Woke job">{linkedWakeJob}</Fact>
+        <Fact label="Harness">{usage?.harness??'Unknown'}</Fact><Fact label="Model">{usage?.model??'Unknown'}</Fact>
+        {Object.entries(metrics).map(([key,label])=><Fact key={key} label={label}>{format(usage?.[key as keyof typeof metrics])}</Fact>)}
+        <Fact label="Calls by tool">{usage?.tools ? usage.tools.map(tool=>tool.name+' × '+format(tool.count)).join(', ')||'None' : 'Unknown'}</Fact>
+        <Fact label="Source">{usage?.source??'Pending'}</Fact>
+      </Facts>
+      {observations.map((words,index)=><p key={index}>{words}</p>)}
+    </Reader>)}
+  </section>;
 }
 function Conversations({range}:{range:Range}) {
   const [open,setOpen]=useState<string|null>();
   // Another date range keeps the last table, and the conversation opened in it, until the new one answers.
   const {status,data,settling}=useDataQuery<{jobUsageRollup:Group[]}>(conversationsQuery,{...range},{keep:true});
-  if(status!=='live'||!data)return <p>{status==='loading'?'Loading conversations…':'Conversation usage unavailable.'}</p>;
-  if(!data.jobUsageRollup.length)return <p>No jobs in this period.</p>;
+  if(status!=='live'||!data)return status==='loading'?<Loading label="Loading conversations…" />:<Error text="Conversation usage unavailable." />;
+  if(!data.jobUsageRollup.length)return <Empty title="No jobs in this period." />;
   const groups=[...data.jobUsageRollup].sort((a,b)=>(b.totalTokens??-1)-(a.totalTokens??-1)||(a.key??'').localeCompare(b.key??''));
-  return <table aria-busy={settling||undefined}><thead><tr><th>Conversation</th><th>Reported tokens</th><th>Jobs</th><th>Retries</th></tr></thead>
-    <tbody>{groups.map(g=><Fragment key={JSON.stringify(g.key)}><tr><th scope="row"><button aria-expanded={open===g.key}
-      onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key||'Jobs without a conversation'}</button></th>
+  return <table className="usage-groups" aria-label="Conversation usage" aria-busy={settling||undefined}><thead><tr><th scope="col">Conversation</th><th scope="col">Reported tokens</th><th scope="col">Jobs</th><th scope="col">Retries</th></tr></thead>
+    <tbody>{groups.map(g=><Fragment key={JSON.stringify(g.key)}><tr><th scope="row"><LinkButton aria-expanded={open===g.key}
+      onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key||'Jobs without a conversation'}</LinkButton></th>
       <td>{format(g.totalTokens)}</td><td>{format(g.jobCount)}</td><td>{format(g.retryCount)}</td></tr>
       {open===g.key&&<tr><td colSpan={4}><Jobs conversation={g.key} range={range}/></td></tr>}
     </Fragment>)}</tbody></table>;
@@ -64,10 +73,10 @@ export default function Usage() {
   const [last,setLast]=useState(()=>localDay(0));
   const [first,setFirst]=useState(()=>localDay(-6));
   const valid=first&&last&&first<=last&&Number.isFinite(Date.parse(first))&&Number.isFinite(Date.parse(last));
-  return <main style={{padding:'1rem',overflow:'auto'}}><h1>Job usage</h1>
+  return <main className="usage-page" aria-label="Job usage">
     <fieldset><legend>Date range ({Intl.DateTimeFormat().resolvedOptions().timeZone})</legend>
-      <label>From <input type="date" value={first} max={last} onChange={e=>setFirst(e.target.value)}/></label>
-      <label> Through <input type="date" value={last} min={first} onChange={e=>setLast(e.target.value)}/></label>
+      <label>From <Input type="date" value={first} max={last} onChange={e=>setFirst(e.target.value)}/></label>
+      <label> Through <Input type="date" value={last} min={first} onChange={e=>setLast(e.target.value)}/></label>
     </fieldset>
     {valid?<Conversations range={{from:midnight(first).toISOString(),to:midnight(last,1).toISOString()}}/>:<p>Choose a valid date range.</p>}
   </main>;

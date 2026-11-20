@@ -52,7 +52,7 @@ it('keeps the table and the opened conversation on screen while another date ran
     await act(async()=>first.props.onChange({target:{value:day(1)}}));
     const text=JSON.stringify(tree.toJSON());
     expect(text).toContain('Large');expect(text).toContain('Inspect parser');expect(text).not.toContain('Loading');
-    expect(tree.root.findAllByType('table').map(table=>table.props['aria-busy'])).toEqual([true,true]);
+    expect(tree.root.findAll(node=>(node.type==='table'||node.type==='section')&&node.props['aria-busy']).map(node=>node.props['aria-busy'])).toEqual([true,true]);
     expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(true);
     expect(feed.mock.calls.at(-1)![1]).toMatchObject({from:new Date(day(1)+'T00:00:00').toISOString(),conversation:'large'});
   } finally { await act(async()=>tree.unmount()); }
