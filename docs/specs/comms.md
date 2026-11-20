@@ -564,18 +564,19 @@ Messages (`comms_messages`):
 - **Unread.** A thread is unread when its newest `reply` has a `seq` past `read_seq`. The app sets `read_seq` while
   the thread is on screen and the app is in front.
 - **Archive and unarchive.**
-  - Archiving hides a thread from the default list (an "Archived" filter shows it). It ends its body, so the runtime
-    saves its slot: core calls the runtime's piece API as the household owner, `run {argv: ["deliver", "end",
-    "<conversation>"]}`, a runtime verb that ends that conversation's body if it has one (a no-op if not). A runtime
-    that doesn't answer leaves the body to its warm-idle timeout, and the archive still stands.
+  - Archiving hides the thread from the default list and leaves it in the Archived filter. Before archiving
+    or deleting, the piece API asks the runtime to interrupt the thread's conversation on the member's behalf.
+    Either action can proceed once the runtime accepts the interrupt or confirms with a 404 that there is
+    no such conversation. If the runtime is unavailable, the route returns 503 and keeps the thread and its
+    messages. Other runtime refusals also leave the thread in place.
   - Its conversation, digests and record stay, as for every conversation.
   - Unarchiving brings it back. Sending to an archived thread is a `409`: unarchive first.
 - **Pinning** puts a thread at the top of the list. A member has at most 8 pinned threads, and a ninth pin is a `409`.
 - **Stop.** The Stop button sets `stop` for the thread's next `status` call: the runtime's own stop path, as the
   bridges' stop word uses it.
-- **Delete** removes the thread's row and every message of it, words included, at once. `comms.db` runs with SQLite's
+- **Delete** asks for confirmation, waits for the same interrupt response as Archive, then removes the thread's row and messages, including their words. `comms.db` runs with SQLite's
   `secure_delete` on, so freed pages are zeroed. The
-  conversation record and its digests stay, as they do for every venue. It asks first.
+  conversation record and its digests stay, as they do for every venue.
 
 **What the conversation page shows.** A `loom` conversation has no venue render: `conversation({id})` and
 `loom:conversation/<id>` show core's generic render (conversations.md, "Rendering": metadata, digests, turn counts),
