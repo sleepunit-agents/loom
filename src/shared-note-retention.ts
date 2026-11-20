@@ -50,6 +50,7 @@ export function sweepAgentNotes(db: DataDatabase, agent: AgentSource, knowledgeF
 /** The retired note timer ran at 04:41. Keep that hour on the household clock. */
 export function nightlyNoteRetention(db: DataDatabase, clock: Clock, sources: MindSources, agentId: string,
   changed: () => void, report: (error: Error) => void) {
+  let stopped = false;
   let cancel: (() => void) | undefined;
   const schedule = () => {
     cancel = clock.at(nextTime('04:41', 'daily', clock.now(), householdTimezone(db)), () => {
@@ -60,9 +61,9 @@ export function nightlyNoteRetention(db: DataDatabase, clock: Clock, sources: Mi
         if (!agent) throw new Error('Note retention agent unavailable');
         if (sweepAgentNotes(db, agent, sources.commons.knowledge, () => clock.now(), false).gone.length) changed();
       } catch { report(new Error('Nightly note retention could not finish')); }
-      finally { schedule(); }
+      finally { if (!stopped) schedule(); }
     });
   };
   schedule();
-  return () => cancel?.();
+  return () => { stopped = true; cancel?.(); };
 }
