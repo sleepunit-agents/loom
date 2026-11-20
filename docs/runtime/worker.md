@@ -1782,6 +1782,13 @@ that lets the coordinator continue there. Closing the thread withdraws the
 destination. Upgrade the server first. Workers advertise result delivery when
 they poll for work.
 
+A private work-role or Codex handoff accepts an optional UTC `notBefore` timestamp.
+Choose a future instant within the brief’s retention period. Loom saves the encrypted
+brief immediately and admits it after that time and the usual Inbox settling interval.
+The schedule survives a coordinator restart. Worker capacity and current access are
+checked when the job is placed. The original thread can read the scheduled time
+with `conversation.handoffStatus` using the returned child conversation ID.
+
 Briefs remain encrypted in the existing Inbox words cell with an original
 household retention deadline of at most 14 days. Only the bound receiving body or a currently authorized member through the
 existing Inbox read may open them; current policy can shorten that deadline, and expiry withdraws

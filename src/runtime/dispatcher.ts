@@ -2,6 +2,8 @@
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
 import { jobMatchesConversation, reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import { handoffDeadline } from '../core/conversations/handoff-words.js';
+import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
@@ -11,7 +13,7 @@ import { sharedSharing } from '../shared-sharing.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, inbox, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
@@ -100,6 +102,15 @@ export class Dispatcher {
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
         const cv=job.conversation?this.db.select().from(conversations).where(eq(conversations.id,job.conversation)).get():undefined;
         const review=cv && reviewRequest(cv);
+        if (cv?.handoffNotBefore && review) {
+          if (Date.parse(cv.handoffNotBefore) > Date.parse(at)) continue;
+          const brief = this.db.select({at:inbox.at,words:inbox.words}).from(inbox).where(and(
+            eq(inbox.conversation,cv.id),eq(inbox.source,'handoff'),eq(inbox.sourceId,JSON.stringify([review.parent,review.clientId])))).get();
+          if (!brief || handoffDeadline(brief,commsKeepDays(this.db)) <= Date.parse(at)) {
+            if (this.jobs.unplaceable(job.id,'The scheduled handoff brief expired.')) ended?.push(job.id);
+            continue;
+          }
+        }
         const selected=review?.role;
         const workRole=selected && this.workRoles.find(role=>role.agent===job.agent && role.id===selected.id && roleRevision(role)===selected.revision);
         if(selected && !workRole){
