@@ -140,6 +140,14 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const delegated=!!(input.harness || input.role);
    const recipient=delegated?cv.agent:input.agent;
    if(!recipient)throw new OperationError('invalid','A hand-off names an agent or a place');
+   // Omitting the schedule on a retry must still find the original scheduled request.
+   if(delegated && !input.notBefore && job.retryOf){
+    const rootSource=JSON.stringify([scheduledParent(job),input.clientId]);
+    const scheduled=db.select({time:conversations.handoffNotBefore}).from(inbox)
+     .innerJoin(conversations,eq(inbox.conversation,conversations.id))
+     .where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,rootSource))).get();
+    if(scheduled?.time)throw new OperationError('conflict','Handoff scope changed');
+   }
    const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;

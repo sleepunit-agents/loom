@@ -96,6 +96,9 @@ it('recognizes the same scheduled request from the coordinator’s automatic ret
  f.db.update(s.jobs).set({state:'running',box:'box'}).where(eq(s.jobs.id,successor.id)).run();
  const token='body_'+'e'.repeat(64);
  f.db.insert(s.tokens).values({fingerprint:credentialHash(token),kind:'agent',agent:'art',job:successor.id,label:'Retry',createdAt:now()}).run();
+ const {notBefore:_time,...immediate}=request;
+ expect((await f.call('handoff',immediate,'omit-time',token)).status).toBe(409);
+ expect(f.db.select().from(s.jobs).where(eq(s.jobs.conversation,saved.conversation)).all()).toHaveLength(0);
  const resumed=await f.call('handoff',request,'resumed',token);
  expect(resumed.status,await resumed.clone().text()).toBe(200);
  expect((await resumed.json()).value).toEqual(saved);
