@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SqliteVecBackend, bufToF32 } from './sqlite-vec.js';
-import { heatOf } from './salience.js';
+import { digestOnConnection, heatOf, hottestIds, memoryBandReport } from './salience.js';
 import type { EmbeddingProvider } from './types.js';
 
 /**
@@ -67,6 +67,46 @@ describe('SqliteVecBackend', () => {
   afterEach(() => {
     backend.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('keeps explicitly human statements hot across the three salience readers', async () => {
+    for (const sourcing of ['human', 'relayed', 'observed', 'inferred'] as const) {
+      await backend.remember({category: 'user', title: sourcing, content: 'alpha ' + sourcing, sourcing});
+    }
+    const db = backend.getDatabase();
+    db.prepare("UPDATE memories SET authored_at='2020-01-01', created='2020-01-01'").run();
+    const now = Date.parse('2026-11-20');
+    expect(memoryBandReport(db, now).bands).toEqual({Hot: 1, Warm: 0, Cool: 3});
+    expect(hottestIds(db, '1=1', [], 1, now)).toEqual([(db.prepare("SELECT id FROM memories WHERE sourcing='human'").get() as {id:number}).id]);
+    expect(digestOnConnection(db, {nowMs: now})).toContain('## Top of mind\n- **human**');
+  });
+
+  it('ranks feedback from stored confidence and its observation time', async () => {
+    for (const title of ['Confirmed', 'Contradicted']) {
+      await backend.remember({category: 'feedback', title, content: 'alpha ' + title});
+    }
+    const db = backend.getDatabase();
+    db.prepare("UPDATE memories SET authored_at='2026-01-02', created='2026-01-02', observed_at='2026-02-01', confidence=0.3").run();
+    db.prepare("UPDATE memories SET confidence=0.9 WHERE title='Confirmed'").run();
+    const now = Date.parse('2026-02-01');
+    const confirmed = db.prepare("SELECT id FROM memories WHERE title='Confirmed'").get() as {id: number};
+    expect(hottestIds(db, '1=1', [], 1, now)).toEqual([confirmed.id]);
+    expect(memoryBandReport(db, now).bands).toEqual({Hot: 1, Warm: 1, Cool: 0});
+    expect(digestOnConnection(db, {nowMs: now})).toContain('## Top of mind\n- **Confirmed**');
+  });
+
+  it('weights authored feedback smoothly around neutral and lets old evidence fade', () => {
+    const now = Date.parse('2026-02-01');
+    const row = {category:'feedback', created:'2026-01-02', updated:null, observed_at:'2026-02-01'};
+    const heat = (confidence: number, observed_at = row.observed_at) => heatOf({...row, confidence, observed_at}, now);
+    const neutral = heatOf(row, now);
+    expect(heat(0.6)).toBe(neutral);
+    expect(heat(0.3)).toBeLessThan(heat(0.599));
+    expect(heat(0.599)).toBeLessThan(neutral);
+    expect(heat(0.601)).toBeGreaterThan(neutral);
+    expect(heat(0.601) - heat(0.599)).toBeLessThan(0.003);
+    expect(heat(0.9)).toBeGreaterThan(heat(0.601));
+    expect(heat(0.9, '2020-01-01')).toBeCloseTo(neutral, 8);
   });
 
   it('keeps metadata, observation, archive and restore cold; real edits and repeated remember reheat', async () => {

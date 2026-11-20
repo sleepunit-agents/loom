@@ -25,7 +25,7 @@ type Stored=Identity&{result:string};
 const category=z.enum(MEMORY_CATEGORIES);
 const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
 const remember=z.object({category,title:authored.max(200),content:authored.max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional(),
- sourcing:z.enum(['observed','relayed','inferred','system']).optional().describe('How the memory was produced: observed first-hand, relayed by someone, inferred, or written by the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
+ sourcing:z.enum(['human','observed','relayed','inferred','system']).optional().describe('Use human for a statement directly attributed to a person. Other sources are first-hand observation, a relay, inference, or the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
 /** What the composition says of a caller that may only add (the body of a job on anybody else's word,
  * shared-place-mail.ts): why every other command is refused it, and the stamp loom puts on what it adds. */

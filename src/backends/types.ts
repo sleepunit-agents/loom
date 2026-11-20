@@ -9,16 +9,17 @@
 // ─── Input / Output Types ────────────────────────────────────────────────────
 
 /**
- * How a memory was sourced — mirrors the knowledge wing's sourcing field.
+ * How a memory was sourced.
  * Displayed at injection time so readers can calibrate confidence.
  *
+ * - `human`     — explicitly attributed to a person who stated or wrote it.
  * - `observed`  — directly witnessed by this body: measured, tested, read from source.
  * - `relayed`   — learned from another person/body: conversation, letter, episode.
  * - `inferred`  — AI-generated reasoning/synthesis: extrapolation, pattern-matching.
  *                 Treat with appropriate skepticism — not ground truth.
  * - `system`    — auto-written by the harness (episode fallback, lane output, etc.).
  */
-export type MemorySourcing = 'observed' | 'relayed' | 'inferred' | 'system';
+export type MemorySourcing = 'human' | 'observed' | 'relayed' | 'inferred' | 'system';
 
 export type { MemoryScope } from './scope.js';
 import type { MemoryScope } from './scope.js';

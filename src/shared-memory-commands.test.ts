@@ -460,7 +460,7 @@ it('lists live memories newest first by category and project with sourcing, forg
  const f=await fixture(),ids:string[]=[];
  for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other'],[4,'project','pond'],[5,'project','pond']] as const){
   vi.setSystemTime(Date.parse('2026-11-14T18:00:00Z')+i*60000);
-  const made=await f.call('remember',{category,project,title:'Listed '+i,content:'alpha listed '+i,...(i===1?{sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'}:{}),...(i===5?{ttl:'1h'}:{})},'list-'+i);expect(made.status).toBe(200);ids.push(made.result.value.ids[0]);
+  const made=await f.call('remember',{category,project,title:'Listed '+i,content:'alpha listed '+i,...(i===1?{sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'}:{}),...(i===2?{sourcing:'human'}:{}),...(i===5?{ttl:'1h'}:{})},'list-'+i);expect(made.status).toBe(200);ids.push(made.result.value.ids[0]);
  }
  expect(f.source.prepare('SELECT sourcing,provenance FROM memories WHERE uuid=?').get(ids[1].slice(4))).toEqual({sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'});
  expect((await f.call('remember',{...input,title:'Bad sourcing',sourcing:'guessed'},'bad-sourcing')).status).toBe(400);expect((await f.call('remember',{...input,title:'Long provenance',provenance:'p'.repeat(2001)},'long-provenance')).status).toBe(400);
@@ -469,6 +469,7 @@ it('lists live memories newest first by category and project with sourcing, forg
  expect((await f.call('archive',{id:ids[4]},'list-archive')).status).toBe(200);
  const later=Date.parse('2026-11-14T20:30:00Z');vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
  const all=(await f.query('{memoryList(agent:"art"){id title category project created updated sourcing}}')).memoryList as Array<{id:string;title:string;category:string;project:string;created:string;updated:string;sourcing:string|null}>;
+ expect(all[1].sourcing).toBe('human');
  expect(all.map(row=>row.id)).toEqual([ids[3],ids[2],ids[1],ids[0]]);expect(all[2]).toMatchObject({title:'Listed 1',category:'project',project:'pond',created:'2026-11-14T18:01:00.000Z',updated:'2026-11-14T18:01:00.000Z',sourcing:'relayed'});
  expect((await f.query('{memoryList(agent:"art",category:"project"){id}}')).memoryList).toEqual([{id:ids[3]},{id:ids[1]},{id:ids[0]}]);
  expect((await f.query('{memoryList(agent:"art",project:"pond"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
