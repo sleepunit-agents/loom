@@ -75,6 +75,25 @@ export function claudeUsage(rows:unknown[]):UsageReport{
   ...(sawAssistant&&allTools?toolCounts([...tools.values()]):{tools:null,toolCalls:null})};
 }
 
+// Codex exec's collab_tool_call.tool enum (0.162.1). Never persist prompts,
+// receiver IDs, agent state or unfamiliar values from the event.
+const collaborationTools = new Set(['spawn_agent', 'send_input', 'wait', 'close_agent']);
+const collaborationLabels = new Set(['collab_tool_call', ...Array.from(collaborationTools, tool => 'collab_tool_call.' + tool),
+ 'collab_tool_call.spawn_agent.completed', 'collab_tool_call.spawn_agent.failed']);
+function codexToolName(item: Row, event: unknown): unknown {
+ if (item.type === 'mcp_tool_call') {
+  const name = item.tool;
+  return typeof name === 'string' && collaborationLabels.has(name)
+   ? 'mcp_tool_call.' + name : name;
+ }
+ if (item.type !== 'collab_tool_call' || typeof item.tool !== 'string' || !collaborationTools.has(item.tool))
+  return item.type;
+ const name = 'collab_tool_call.' + item.tool;
+ if (item.tool === 'spawn_agent' && event === 'item.completed' && (item.status === 'completed' || item.status === 'failed'))
+  return name + '.' + item.status;
+ return name;
+}
+
 export function codexUsage(rows:unknown[]):UsageReport{
  const events=rows.map(object);
  const rawUsage=events.find(row=>row.type==='turn.completed'||row.type==='turn.failed')?.usage;
@@ -92,7 +111,7 @@ export function codexUsage(rows:unknown[]):UsageReport{
    case 'mcp_tool_call':
    case 'command_execution':case 'file_change':case 'web_search':case 'collab_tool_call':
     if(typeof item.id!=='string'||!item.id){complete=false;break;}
-    toolsById.set(item.id,item.type==='mcp_tool_call'?item.tool:item.type);
+    toolsById.set(item.id,codexToolName(item,row.type));
     break;
    default:complete=false;
   }

@@ -57,3 +57,18 @@ it('records the first parent call independently of later calls and nested agents
  expect(claudeUsage([result]).firstContext).toBeUndefined();
  expect(claudeUsage([{...assistant,message:{...assistant.message,id:undefined}},later,result]).firstContext).toBeUndefined();
 });
+
+it('counts native Codex actions once and keeps incomplete or failed spawns apart', () => {
+ const event=(id:string,tool:string,type='item.started',status='in_progress')=>({
+  type,item:{type:'collab_tool_call',id,tool,status,prompt:'private words',receiver_thread_ids:['private-id']},
+ });
+ const events=[event('a','spawn_agent'),event('a','spawn_agent','item.completed','completed'),
+  event('b','spawn_agent','item.completed','failed'),event('c','spawn_agent'),event('d','wait'),
+  event('e','send_input'),event('f','close_agent'),event('g','unknown-private-value'),
+  {type:'item.completed',item:{id:'h',type:'mcp_tool_call',tool:'collab_tool_call.spawn_agent.completed'}}];
+ expect(codexUsage(events).tools).toEqual({'collab_tool_call.spawn_agent.completed':1,
+  'collab_tool_call.spawn_agent.failed':1,'collab_tool_call.spawn_agent':1,'collab_tool_call.wait':1,
+  'collab_tool_call.send_input':1,'collab_tool_call.close_agent':1,collab_tool_call:1,
+  'mcp_tool_call.collab_tool_call.spawn_agent.completed':1});
+ expect(codexUsage(events).toolCalls).toBe(8);
+});
