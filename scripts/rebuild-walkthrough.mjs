@@ -156,16 +156,16 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
-    if(title==='Home'){
-     const runtimeRows=tile.locator('[aria-label$="current runtime jobs"] > li');
-     const expected=runtimeRows.filter({hasText:report.example.runtime.job.title}).first();
-     await expected.waitFor({state:'visible'});await expected.scrollIntoViewIfNeeded();
-     row.runtimeJobs=await runtimeRows.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('h4')?.textContent?.trim()??'',status:row.querySelector('p')?.textContent?.trim()??''})));
+    if(title==='Machines and jobs'){
+     await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
+     const jobs=tile.getByRole('group',{name:'moss jobs now',exact:true}).locator('.loom-kit-note');
+     await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
+     row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
-    if(title==='Your account')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
+    if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     if(title==='Settings'){
      const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
