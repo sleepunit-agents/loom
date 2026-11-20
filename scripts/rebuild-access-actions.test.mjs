@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 import Database from 'better-sqlite3';
 import {it,expect} from 'vitest';
 import {createDataSchema} from '../src/core/data/database.js';
@@ -19,16 +20,22 @@ async function fixture(title,mode){
    try{verifyAccessChange(client,title);return {ok:true};}
    catch(error){return {ok:false,error:String(error)};}
   }
+  const page=new EventEmitter();page.screenshot=async()=>{};
   let visible=false;
   const control={fill:async()=>{},check:async()=>{},waitFor:async()=>{},first:()=>control,isHidden:async()=>!visible,
    getByRole:(_role,options)=>button(options.name),getByLabel:()=>control};
-  const button=name=>({...control,click:async()=>{
+  const button=name=>({...control,focus:async()=>{},press:async key=>{
+   expect(key).toBe('Enter');
    if(name==='Make sign-in link'){
+    const request={url:()=>'http://example/api/signin/link',method:()=>'POST'};
+    page.emit('request',request);
+    const refused=mode==='refused';
+    page.emit('response',{request:()=>request,ok:()=>!refused,status:()=>refused?403:200});
+    if(refused)return;
     visible=true;db.insert(signinLinks).values({id:'c'.repeat(64),token:mode==='wrong-link-member'?b:a,label:'Fixture',expiresAt:'2030-01-01T00:00:00.000Z'}).run();
    }else if(name==='Hide sign-in link'){if(mode!=='link-stays-visible')visible=false;}
   }});
   const tile={getByRole:(_role,options)=>button(options.name),getByText:()=>control,locator:()=>control};
-  const page={waitForResponse:async()=>({ok:()=>true}),screenshot:async()=>{}};
   return await accessAction({page,tile,title,app:{services:{comms:{db:{$client:client}}}},out:'/unused'});
  }finally{client.close();}
 }
@@ -36,6 +43,7 @@ it.each(['Your account','Household setup','Sharing'])('verifies successful persi
  expect(await fixture(title,'valid')).toMatchObject({ok:true});
 });
 it.each([
+ ['Your account','refused','The sign-in link request was refused (HTTP 403)'],
  ['Your account','wrong-link-member','Link belongs to another member'],
  ['Your account','link-stays-visible','The delivered link stayed visible'],
  ['Household setup','missing-member','Member was not persisted'],
