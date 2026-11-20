@@ -130,6 +130,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => page.getByRole('region', { name: 'Review', exact: true }).textContent()).toContain('Changes requested');
       await expect.poll(() => page.getByText('Updated linked task', { exact: false }).count()).toBe(1);
     }
+    app.data.writes.run(() => app.db.update(s.jobs).set({ member: 'sam' }).where(eq(s.jobs.id, 'review-sam')).run());
+    for (const page of [a, b]) await expect.poll(() => page.getByText('Findings for sam', { exact: true }).count()).toBe(1);
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
     for (const page of [a, b]) {
       await expect.poll(() => row(page).count()).toBe(0);
