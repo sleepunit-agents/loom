@@ -1,3 +1,4 @@
+import type { ColdReviewReport } from './cold-review-report.js';
 import type { HouseProgram, ProgramResult } from './house-program.js';
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
@@ -55,7 +56,7 @@ export interface WorkerBody {
   /** `own` is true when the body ended by itself with this code, and not because it was killed. An
    * executor that cannot tell leaves it out. `signalled` is true when a signal ended it, so the code is
    * the executor's word for that (WORKER_EXIT.killed) and not the body's. */
-  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; programResult?: ProgramResult }>;
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; programResult?: ProgramResult; coldReview?: ColdReviewReport }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
@@ -93,7 +94,7 @@ export interface WorkerControl {
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running', signal?: AbortSignal): Promise<boolean>;
   /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
-  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult): Promise<void>;
+  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult, coldReview?: ColdReviewReport): Promise<void>;
 }
 export interface WorkerSchedule {
   every(ms: number, callback: () => void): () => void;
@@ -218,9 +219,10 @@ export async function workOnce(input: {
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
-  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult): Promise<WorkerResult> => {
+  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult, review?: ColdReviewReport): Promise<WorkerResult> => {
     try {
-      if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
+      if (review) await control.finish(assignment.id, exitCode, '', by, undefined, review);
+      else if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
       else await control.finish(assignment.id, exitCode, logTail, by);
       return 'finished';
     }
@@ -301,7 +303,7 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string; signalled?: boolean; programResult?: ProgramResult }, failed: 'release' | 'reap' | undefined = 'release';
+    let result: { exitCode: number; logTail: string; signalled?: boolean; programResult?: ProgramResult; coldReview?: ColdReviewReport }, failed: 'release' | 'reap' | undefined = 'release';
     try {
       try {
         if (assignment.program) {
@@ -338,7 +340,7 @@ export async function workOnce(input: {
     // loom's body program is the one given a body's credential, anything else is the machine's own runner.
     const by = failed || result.signalled ? 'worker' : bootstrap ? 'body' : 'runner';
     if (assignment.program) return await report(result.exitCode, failed ? logTail(result.logTail) : '', by, result.exitCode === 0 ? result.programResult : undefined);
-    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by);
+    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by, undefined, result.coldReview);
   } finally {
     eraseBootstrap(bootstrap); eraseProgramInputs();
     clearTimeout(probeTimer!); clearTimeout(expiryTimer!);

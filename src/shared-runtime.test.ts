@@ -1,3 +1,5 @@
+import { change as fixtureChange } from './pieces/changes/change.fixture.js';
+import { changeReviewStore } from './apps/change-reviews.js';
 import {testProgramPin} from './runtime/pinned-program.fixture.js';
 import {sealHandoff} from './core/conversations/handoff-words.js';
 import Database from 'better-sqlite3';
@@ -671,4 +673,53 @@ it('a live report-only worker returns a memory sample to an authorized body over
   expect(audit.value).toContainEqual(expect.objectContaining({agent:'art',job:job.id,outcome:'answered',bytes:expect.any(Number)}));
   expect(f.db.select().from(operationResults).all().some(row=>JSON.stringify(row).includes('Mem:'))).toBe(false);
  }finally{stop();await running;bootstrap.erase?.();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+
+it('files a worker review only on its assigned job, change and commit, atomically with completion', async () => {
+  const f = fixture(), queued = f.send();
+  const change = 'github:acme/app#3', headCommit = 'a'.repeat(40), tree = 'b'.repeat(64);
+  const row = fixtureChange();
+  f.root.services.changes.put(row);
+  const review = changeReviewStore(f.db, f.now);
+  const report = { change, headCommit, before: tree, after: tree, reply: 'Original findings\nVERDICT: CLEAR' };
+  const input = { job: queued.id, exitCode: 0, logTail: 'discard this output', coldReview: report };
+  await f.control.next();
+  await f.control.started(queued.id, 'image');
+  expect((await f.call('finish', input, 'missing-assignment')).status).toBe(400);
+  review.assign({ job: queued.id, change, headCommit, tier: 'high', round: 1 });
+  f.root.services.changes.put({ ...row, head: { ...row.head, id: 'c'.repeat(40) } });
+  for (const credential of [otherCredential, ownerCredential, agentCredential]) {
+    expect((await f.call('finish', input, 'wrong-authority', credential)).status).toBe(403);
+  }
+  expect((await f.call('finish', { ...input, coldReview: { ...report, headCommit: 'c'.repeat(40) } }, 'wrong-head')).status).toBe(400);
+  f.client.exec("CREATE TRIGGER review_receipt_failure BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.finish' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect((await f.call('finish', input, 'atomic')).status).toBe(503);
+  expect(review.history(change)[0].verdict).toBeNull();
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  f.client.exec('DROP TRIGGER review_receipt_failure');
+  expect((await f.call('finish', input, 'atomic')).status).toBe(200);
+  expect((await f.call('finish', input, 'atomic')).status).toBe(200);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'Other findings\nVERDICT: CLEAR' } }, 'atomic')).status).toBe(409);
+  expect(review.history(change)).toMatchObject([{ current: false, verdict: 'CLEAR', findings: report.reply }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null });
+});
+
+it.each(['unchanged', 'changed', 'missing'] as const)('delivers the %s review from the worker client and closes the assigned round', async evidence => {
+  const f = fixture(), job = f.send(), row = fixtureChange();
+  f.root.services.changes.put(row);
+  const store = changeReviewStore(f.db, f.now);
+  store.assign({ change: row.id, headCommit: row.head.id, job: job.id, round: 1, tier: 'high' });
+  const tree = 'a'.repeat(64);
+  const report = { change: row.id, headCommit: row.head.id, before: tree, after: evidence === 'changed' ? 'b'.repeat(64) : tree,
+    reply: '- MAJOR — unhandled case\nVERDICT: CLEAR' };
+  const outcome = await workOnce({ box: 'worker', control: f.control, signal: new AbortController().signal,
+    schedule: { every: () => () => {} }, executor: { build: async () => 'fixture-image', start: () => ({
+      spawned: Promise.resolve(), release: async () => {}, stop: async () => {},
+      exited: Promise.resolve({ exitCode: 0, logTail: 'private reviewer log', ...(evidence !== 'missing' && { coldReview: report }) }),
+    }) } });
+  expect(outcome).toBe('finished');
+  const valid = evidence === 'unchanged';
+  expect(store.history(row.id)).toMatchObject([{ verdict: valid ? 'BLOCKING' : 'NONE', current: true }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: valid ? 'done' : 'failed', logTail: null });
+  if (!valid) expect(store.history(row.id)[0].findings).not.toContain('unhandled case');
 });

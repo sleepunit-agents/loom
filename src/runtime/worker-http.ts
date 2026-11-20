@@ -244,8 +244,8 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail, exitBy, programResult) => {
-      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult }, ack, undefined, id, remaining));
+    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview) => {
+      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview }, ack, undefined, id, remaining));
     },
   };
 }
