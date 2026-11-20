@@ -1,3 +1,5 @@
+import {deniedTools,hasGuest} from './runtime/harness-traits.js';
+import {mayReadNoteFile} from './runtime/house-note-request.js';
 import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
@@ -94,7 +96,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -240,7 +242,12 @@ export function sharedRoot(options: {
   const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>heldRefusal(db,bodyJob(viewer),action);
   registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
-  memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
+  memory.register(operations,options.commsKey?{body:memoryAgent,mayReadFile:viewer=>{
+    const work=bodyJob(viewer);
+    if(!work)return !!credentials.agentSession(viewer);
+    const room=jobRoom(db,work.job);
+    return !hasGuest(room)&&mayReadNoteFile(deniedTools(room));
+  },hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
     // Of what the agent and the household keep, such a body only adds: a memory, or a new note, each stamped by loom with
     // whose word it was written on. Everything else in those families is refused it.
     {knowledge:held('knowledge'),

@@ -44,11 +44,11 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
  }}},
  /** `addsOnly` names a caller that writes a new note and overwrites none (the body of a job on anybody else's word),
   * with the words that refuse an overwrite and what loom records as the note's writer in place of the agent alone. */
- register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
+ register(operations:Operations,commands:{mayReadFile(viewer:Viewer):boolean;body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   operations.register({name:'memory.noteFile',doors:['http'],input:z.object({path,name:z.string().regex(FILE_NAME)}).strict(),
    output:z.object({sha256:z.string(),contents:z.string()}).strict().nullable(),
-   may:viewer=>!!selected(viewer)&&maySee(viewer,{type:'memory',agent:viewer.id},options.sharing()),
+   may:viewer=>commands.mayReadFile(viewer)&&!!selected(viewer)&&maySee(viewer,{type:'memory',agent:viewer.id},options.sharing()),
    run(ctx,input){
     const notes=selected(ctx.viewer);if(!notes)throw new OperationError('denied','Authenticated agent required');
     try{

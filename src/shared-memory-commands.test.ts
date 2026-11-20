@@ -679,8 +679,14 @@ it('runs the house note CLI against a running job and refuses the same shell han
  expect(await run('read','field/missing')).toMatchObject({code:3,out:''});
  const command={operation:'memory.noteFile',input:{path:'field/log',name:'full.bin'},id:'delayed-file'};
  const headers={authorization:'Bearer '+raw.body,'content-type':'application/json',accept:'application/json, text/event-stream'};
- const direct=await f.root.http.request('/api/memory/noteFile',{method:'POST',headers,body:JSON.stringify({input:command.input,id:command.id})});
- const mcp=await f.root.http.request('/mcp',{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_command',arguments:command}})});
+ const requestDirect=()=>f.root.http.request('/api/memory/noteFile',{method:'POST',headers,body:JSON.stringify({input:command.input,id:command.id})});
+ const requestMcp=()=>f.root.http.request('/mcp',{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_command',arguments:command}})});
+ const pattern='mcp__loom__note_read';
+ f.root.writes.run(()=>{f.db.insert(s.agentDeniedTools).values({agent:'art',pattern,guestsOnly:false}).run();});
+ expect((await requestDirect()).status).toBe(403);
+ expect((await (await requestMcp()).json()).result.isError).toBe(true);
+ f.root.writes.run(()=>{f.db.delete(s.agentDeniedTools).where(eq(s.agentDeniedTools.pattern,pattern)).run();});
+ const direct=await requestDirect(),mcp=await requestMcp();
  expect(direct.status).toBe(200);expect(mcp.status).toBe(200);
  f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).run();});
  for(const pending of [direct,mcp])await expect(pending.text()).rejects.toThrow();
