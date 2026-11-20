@@ -1,6 +1,7 @@
-import type { KnowledgeOpen, KnowledgeRow } from '../../../../src/pieces/mind/knowledge';
+import type { KnowledgeRow } from '../../../../src/pieces/mind/knowledge';
+import type { KnowledgePage } from '../../memory/queries';
 export type PageRow=KnowledgeRow & {id:string};
-export type Page = KnowledgeOpen & { id: string; [key: string]: unknown };
+export type Page = KnowledgePage & { id: string; [key: string]: unknown };
 export const freshWord = { fresh: 'Fresh', aging: 'Getting old', due: 'Due a check' };
 export const date = (s: string, zone?: string) => {
   try { return new Date(s).toLocaleDateString('en-US', { timeZone: zone, month: 'short', day: 'numeric' }); }

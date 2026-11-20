@@ -58,6 +58,16 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   ...summaryFields,body:requiredText,sourcing:text,
   sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
   citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},checked:{type:check},
+  checks:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(check))),resolve:(source,_args,context)=>{
+   if (!allowed(context) || !db) return [];
+   try {
+    // Older knowledge stores predate attributed checks. They still have readable pages.
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verifications'").get()) return [];
+    return db.prepare(`SELECT v.verified_at AS at, v.outcome, v.verifier AS "by"
+     FROM verifications v JOIN pages p ON p.id=v.page_id
+     WHERE p.slug=? AND p.status='active' ORDER BY v.id DESC LIMIT 30`).all(source.slug);
+   } catch { throw new GraphQLError('Verification history is unavailable'); }
+  }},
   history:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(revision))),resolve:(source,_args,context)=>{
    if(!allowed(context))return [];
    try{return db?.prepare(`SELECT r.id,r.slug,r.body,r.op,r.replaced_at AS replacedAt,r.actor

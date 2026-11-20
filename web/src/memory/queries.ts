@@ -30,9 +30,9 @@ export interface PeopleAccess {allowed:boolean;directory:boolean;canAdd:boolean;
 export interface ProjectsAccess {allowed:boolean;agents:string[]}
 export interface ActivityAccess {allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[];expires:number}
 export interface KnowledgeIndex { timezone?:string;total:number;checkDays:number;recentDays:number;pages:KnowledgeRow[] }
-export interface KnowledgePage extends KnowledgeOpen { history:Array<{id:number;slug:string;body:string;op:string;replacedAt:string;actor?:string}> }
+export interface KnowledgePage extends KnowledgeOpen { checks: Array<NonNullable<KnowledgeOpen['checked']>>; history:Array<{id:number;slug:string;body:string;op:string;replacedAt:string;actor?:string}> }
 const knowledgeRow = 'slug title domain updated verified_at fresh by recent';
-const knowledgePage = `${knowledgeRow} body sourcing sources { claim kind locator href excerpt retrievedAt createdAt } citedBy { slug title } checked { at outcome by } history { id slug body op replacedAt actor }`;
+const knowledgePage = `${knowledgeRow} body sourcing sources { claim kind locator href excerpt retrievedAt createdAt } citedBy { slug title } checked { at outcome by } checks { at outcome by } history { id slug body op replacedAt actor }`;
 const cardValue = 'text number boolean strings';
 const personCard = `slug name summary where { key value { ${cardValue} } label source verified_at stale_after_days } how { key value { ${cardValue} } } may { text source }`;
 const personFields = `id slug agent name updated synthesizedAt kind newer mergedFrom

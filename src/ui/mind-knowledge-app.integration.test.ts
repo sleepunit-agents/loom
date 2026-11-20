@@ -67,6 +67,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect(await source.getVerifications('six-voices')).toHaveLength(1);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
+    const checks=b.getByRole('region',{name:'Recent checks'}).locator('li');
+    await expect.poll(()=>checks.count()).toBe(2);
+    expect(await checks.first().innerText()).toMatch(/Asked to check again/);
+    expect(await checks.last().innerText()).toMatch(/Still true/);
     // Trace only this fixture's citation, never arbitrary links or page words.
     // A successful Playwright click can still lose its target between down/up.
     await b.evaluate(()=>{
