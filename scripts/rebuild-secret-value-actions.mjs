@@ -46,13 +46,12 @@ export async function secretValueAction({page,tile,out,home,app}){
   await rule.getByLabel('Automatic grant, minutes',{exact:true}).fill('17');
   await rule.getByLabel('When asked: agent names, separated by commas',{exact:true}).fill('fern');
   await rule.getByLabel('At startup: agent names, separated by commas',{exact:true}).fill('fern');
-  const originalUrl=page.url();
   const input={secret:name,answer:'never',minutes:17,agents:[{agent:'fern',when:'on_request'},{agent:'fern',when:'at_start'}]};
   await rule.getByRole('button',{name:'Review rule',exact:true}).click();
   await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Secret rule request'}),change:'secretRule',input,
    expectedWords:words=>words==='Please propose this standing rule for secret access.\n'+JSON.stringify(input,null,2),
    exists:()=>app.services.comms.db.$client.prepare('SELECT secret FROM secret_rules WHERE secret=? AND answer=? AND minutes=?').get(name,'never',17)});
-  await page.goto(originalUrl);tile=await reload();
+  await page.goto(new URL('/p/settings-preview/item/secrets/'+encodeURIComponent(name),app.url).href);tile=await reload();
   const persistedRule=tile.locator('form').filter({has:page.getByRole('button',{name:'Review rule',exact:true})});
   if(await persistedRule.getByRole('combobox',{name:/^Answer/}).inputValue()!=='never'
    ||await persistedRule.getByLabel('Automatic grant, minutes',{exact:true}).inputValue()!=='17'
