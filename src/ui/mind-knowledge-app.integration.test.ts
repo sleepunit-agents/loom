@@ -193,6 +193,17 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>savedAnnotation.innerText()).toContain('Device returned');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText(/Archive candidate/).count()).toBe(1);
+    await b.locator('.loom-split__back').click();
+    await b.getByRole('button',{name:'Add a fact',exact:true}).click();
+    const secondForm=b.getByRole('form',{name:'Add a fact',exact:true});
+    const secondTitle=secondForm.getByLabel('Title',{exact:true});
+    expect(await secondTitle.isEditable()).toBe(true);
+    expect(await secondTitle.inputValue()).toBe('');
+    await secondTitle.fill('A second shared fact');
+    await secondForm.getByLabel('Topic',{exact:true}).fill('systems');
+    await secondForm.getByLabel('What it says',{exact:true}).fill('Written without reloading.');
+    await secondForm.getByRole('button',{name:'Add',exact:true}).click();
+    await expect.poll(()=>row(a,'A second shared fact').count()).toBe(1);
     }catch(error){
       for(const [name,page] of [['desktop',a],['phone',b]] as const){
         // Inspect the actual shell and reader. Never serialize URLs, history

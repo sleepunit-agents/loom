@@ -108,6 +108,14 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
   if (access.status === 'loading') return <Loading label="Opening knowledge…" />;
   if (access.status !== 'live') return unavailable(access.status);
   if (!permission?.allowed) return unavailable('denied');
+  const resetSavedDraft = () => {
+    setDraft({title:'',domain:'',body:'',source:''});
+    setRequests(previous => {
+      const next = new Map(previous);
+      next.delete('$add');
+      return next;
+    });
+  };
   const addForm = <form aria-label="Add a fact" className="grid gap-4 p-5" onSubmit={event => {
     event.preventDefault(); if (!permission.canAdd || frozen(addAnswer) || addAnswer.result?.ok===true) return;
     const request = call('mind.knowledgeAdd', draft);
@@ -118,11 +126,14 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
         {field === 'body' ? <Textarea required value={draft[field]} onChange={e => setDraft({...draft,[field]:e.target.value})} /> : <Input type={field === 'source' ? 'url' : 'text'} required={field !== 'source'} value={draft[field]} onChange={e => setDraft({...draft,[field]:e.target.value})} />}</label>)}
       <Button type="submit">Add</Button>
     </fieldset>
-    {addAnswer.pending ? <Loading label="Saving fact…" /> : addAnswer.result && (!addAnswer.result.ok ? <div><Error text={`${addAnswer.result.code}: ${addAnswer.result.message}`} />{addAnswer.result.code==='unavailable'&&<Button type="button" disabled={!permission.canAdd} onClick={()=>addRequest?.retry?.()}>Retry this save</Button>}</div> : <p role="status">Added to Knowledge<Button type="button" onClick={() => { const result = addAnswer.result; if (result?.ok) { setAdding(false); navigate((result.value as {slug:string}).slug); } }}>Open fact</Button><Button type="button" onClick={() => { setDraft({title:'',domain:'',body:'',source:''}); setRequests(previous => { const next=new Map(previous);next.delete('$add');return next; }); }}>Add another</Button></p>)}
+    {addAnswer.pending ? <Loading label="Saving fact…" /> : addAnswer.result && (!addAnswer.result.ok ? <div><Error text={`${addAnswer.result.code}: ${addAnswer.result.message}`} />{addAnswer.result.code==='unavailable'&&<Button type="button" disabled={!permission.canAdd} onClick={()=>addRequest?.retry?.()}>Retry this save</Button>}</div> : <p role="status">Added to Knowledge<Button type="button" onClick={() => { const result = addAnswer.result; if (result?.ok) { setAdding(false); navigate((result.value as {slug:string}).slug); } }}>Open fact</Button><Button type="button" onClick={resetSavedDraft}>Add another</Button></p>)}
   </form>;
   return <Split className="h-full" label="Knowledge" folders={folders} folder={query.trim() ? '' : folder} onFolder={id => { setFolder(id); setQuery(''); }}
     search={<Search label="Search knowledge" value={query} onChange={setQuery} />}
-    listAction={<Button disabled={!permission.canAdd} onClick={() => setAdding(true)}>Add a fact</Button>}
+    listAction={<Button disabled={!permission.canAdd} onClick={() => {
+      if (!adding && addAnswer.result?.ok) resetSavedDraft();
+      setAdding(true);
+    }}>Add a fact</Button>}
     listTitle={query.trim() ? `Matching “${query.trim()}”` : listTitle} listCount={shown.length}
     list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at, zone)}` : `written ${date(page.updated, zone)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => { setAdding(false); navigate(page.slug); }} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
     reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} annotationForm={permission.canAdd && <AnnotationForm request={requests.get('$annotation/'+current.slug)}
