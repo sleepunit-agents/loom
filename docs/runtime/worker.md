@@ -1756,6 +1756,17 @@ assignment again after encryption and on replay, and reuses one canonical
 handoff conversation per peer/parent job. Its one Inbox item enters ordinary
 Tempo settling and job admission. No Comms thread is created.
 
+A body working for the member of a private Comms thread can request a fresh
+body of the same agent by passing `harness: "codex"`, `clientId`, `label`,
+and `words` to `conversation.handoff`. Include the repository, commit and
+assignment in the brief. Each client ID identifies a separate child. The
+dispatcher uses the agent’s configured Codex models and checks worker capacity.
+The calling job receives an availability error if no eligible worker can start
+the request. The result is a reply in the originating thread and encrypted mail
+that lets the coordinator continue there. Closing the thread withdraws the
+destination. Upgrade the server first. Workers advertise result delivery when
+they poll for work.
+
 Briefs remain encrypted in the existing Inbox words cell with an original
 household retention deadline of at most 14 days. Only the bound receiving body or a currently authorized member through the
 existing Inbox read may open them; current policy can shorten that deadline, and expiry withdraws

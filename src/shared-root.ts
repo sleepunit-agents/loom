@@ -1,3 +1,4 @@
+import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
 import type {EmbeddingProvider} from './backends/types.js';
 import {sharedMcpRequest} from './shared-mcp.js';
@@ -244,10 +245,20 @@ export function sharedRoot(options: {
   let tempo!: ReturnType<typeof installSharedTempo>;
 
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
+  const reviewReports = new Set<Promise<void>>();
+  const deliverReview = (id:string) => {
+    if(!comms)return;
+    const delivery=reportReviewEnd(comms.service,id,
+      (member,agent,project)=>mayRunPrivateWork({member,agent,project:project??undefined},sharedSharing(db)),
+      write=>data.writes.run(write)).catch(options.reportError);
+    reviewReports.add(delivery);
+    void delivery.finally(()=>reviewReports.delete(delivery));
+  };
   const jobEnded = (id: string) => {
     try {
       tempo?.sources.job(id);
       tempo?.capacityChanged();
+      deliverReview(id);
       options.runtimeJobEnded?.(id);
     } catch (error) { options.reportError(error); }
   };
@@ -309,7 +320,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),codexAvailable:agent=>dispatcher.canStartReview(agent)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -361,7 +372,7 @@ export function sharedRoot(options: {
   };
   // Attachments are read here too (bridges.file). Only a daemon fetches them, so without one there is
   // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
-  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner,
+  const dispatcher=registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner,
     applyProgram: (job, result, changed) => applyProgramResult(db, services.conversations, bridgeDaemon, () => options.bridges?.effectsAllowed() ?? false, job, result, changed) });
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
@@ -475,6 +486,7 @@ export function sharedRoot(options: {
   });
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
+  if(comms)for(const row of recentReviewEnds(comms.service))deliverReview(row.id);
   if (!options.deferRuntimeStart) runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
@@ -509,7 +521,7 @@ export function sharedRoot(options: {
       const measured = measuringReady!.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, pushesStopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, pushesStopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...reviewReports, ...pending.map(entry => entry.done)]).then(results => {
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

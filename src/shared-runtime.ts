@@ -56,7 +56,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ execution: z.enum(['container', 'host']).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
@@ -66,7 +66,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (input.execution !== 'container') throw new OperationError('denied',
         'This server gives jobs only to container workers. Update the worker and configure container.socket.');
       const ended: string[] = [], poll: { stampOnly?: boolean } = {};
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults);
       // An idle worker asks about once a second. A poll that gave no work and moved only the machine's
       // last-seen time is not a change to tell every open window of.
       if (poll.stampOnly && !ended.length) ctx.stampOnly?.();
@@ -146,4 +146,5 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
     after: input => options.jobEnded(input.job),
   });
+  return dispatcher;
 }

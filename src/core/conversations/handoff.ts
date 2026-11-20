@@ -1,3 +1,5 @@
+import {reviewPlace} from './review-place.js';
+import {threads} from '../data/schema.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
@@ -25,6 +27,7 @@ export interface HandoffToSelf{
   conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:OnWord;chain:string[];startedAt:string};
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
+ codexAvailable?(agent:string):boolean;
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
@@ -39,12 +42,17 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  operations.register(operation({...common,name:'conversation.handoff',
   // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
   // another conversation (`to`), as mail there that starts its job like any message.
-  input:z.object({agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
-   .refine(value=>(value.agent===undefined)!==(value.to===undefined)),
+  input:z.object({harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
+   .refine(value=>[value.agent,value.to,value.harness].filter(v=>v!==undefined).length===1),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
    const found=current(viewer);if(!found)return false;
    // To itself: the rule is the composition's and is asked in full when the note is prepared and written.
+   if(input.harness){
+    const person=self?.word(found);
+    const thread=db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get();
+    return found.cv.venue==='loom' && !!thread && !thread.archivedAt && !!found.cv.member && person?.kind==='member' && person.id===found.cv.member;
+   }
    if(input.to)return !!self;
    if(!input.agent||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;
    if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
@@ -75,21 +83,24 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     ctx.changed('conversations',target);ctx.changed('inbox',item.id);ctx.changed('turns',target);
     return {conversation:target,item:item.id};
    }
-   if(!input.agent)throw new OperationError('invalid','A hand-off names an agent or a place');
-   const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,input.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
+   const recipient=input.harness?cv.agent:input.agent;
+   const place=input.harness?reviewPlace(job.id,input.clientId):job.id;
+   if(!recipient)throw new OperationError('invalid','A hand-off names an agent or a place');
+   const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
-    if(!target||target.venue!=='handoff'||target.place!==job.id||target.agent!==input.agent||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
+    if(!target||target.venue!=='handoff'||target.place!==place||target.agent!==recipient||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
     return {conversation:target.id,item:existing.id};
    }
    // The handoff carries every label that says who may read the words it came from: the project, the member,
    // and whether it was a direct message.
    // The composition's rule for a hand-off of any kind: one hop on anybody else's word.
    const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
-   const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
+   if(input.harness && !self?.codexAvailable?.(recipient))throw new OperationError('unavailable','No eligible Codex worker with a signed-in account and free capacity is available for this job.');
+   const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
    if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const word=self?.word({job});
-   const item=cvs.send({conversation:target.id,toKind:'agent',to:input.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
+   const item=cvs.send({conversation:target.id,toKind:'agent',to:recipient,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,...(word?{onWordKind:word.kind,onWord:word.id}:{})});
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});self?.handed({job});
    ctx.changed('conversations',target.id);ctx.changed('inbox',item.id);ctx.changed('turns',target.id);
    return {conversation:target.id,item:item.id};

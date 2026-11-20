@@ -246,3 +246,57 @@ it('keeps a handed-off direct message direct, so its words reach no wider audien
  f.clock.advance(60_000);const {token}=receive(f,created.conversation);
  const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });
+
+it.each(['success','failure','archive'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+ const f=await bodyFixture(clean,{modelRoles:()=>[
+  {model:'first',provider:'claude',harness:'claude',series:'first'},
+  {model:'reviewer',provider:'openai',harness:'codex',series:'reviewer'}]});
+ const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
+ await f.send('Please get a cold review','start-review');
+ db.insert(s.agentModels).values([{agent:'art',model:'first',position:0},{agent:'art',model:'reviewer',position:1}]).run();
+ db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
+ db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();
+ db.update(s.boxes).set({hostsAny:true,lastSeenAt:now()}).run();
+ const request={harness:'codex',label:'Review pull request',clientId:'review-one',words:'Read commit abc.'};
+ expect((await f.call('handoff',request,'unavailable')).status).toBe(503);
+ db.insert(s.modelAccounts).values({id:'paid',owner:'alice',provider:'openai',label:'Subscription',hasRoom:true}).run();
+ db.insert(s.modelAccountWindows).values({account:'paid',window:'week',usage:0.1,usageReadAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000}).run();
+ db.insert(s.modelAccountBoxes).values({account:'paid',box:'box'}).run();
+ const next=async(id:string,capable:boolean)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
+ await next('advertise',true);
+ const response=await f.call('handoff',request,'launch');
+ expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
+ const child=(await response.json()).value.conversation;
+ db.update(s.inbox).set({state:'done',job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
+ db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
+ f.clock.advance(60_000);
+ expect((await (await next('legacy',false)).json()).value).toBeNull();
+ const poll=await next('poll',true);
+ const assignment=(await poll.json()).value;
+ expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:'codex',model:'reviewer'});
+ const token='body_'+'c'.repeat(64);
+ db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
+ db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:now()}).run();
+ const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:assignment.id,conversation:child,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
+ clean.push(()=>sdk.close());
+ if(mode==='archive'){
+  db.update(s.threads).set({archivedAt:now()}).where(eq(s.threads.id,f.thread.id)).run();
+  await expect(sdk.reply({clientId:'no',words:'withheld',model:'reviewer'})).rejects.toThrow();
+  return;
+ }
+ if(mode==='failure'){
+  root.services.runtime.stop(assignment.id,'alice','write-off');
+  await vi.waitFor(()=>expect(db.select().from(s.messages).where(eq(s.messages.kind,'reply')).all()).toHaveLength(1));
+  const failure=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).get()!;
+  expect(await f.key.open(failure.words!)).toContain('the job was stopped');return;
+ }
+ const reply={clientId:'review-result',words:'PRIVATE REVIEW FINDINGS',model:'reviewer'};
+ const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:assignment.id,token}}));
+ expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
+ await sdk.reply(reply);
+ const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();
+ expect(replies).toHaveLength(1);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
+ const mail=db.select().from(s.inbox).where(and(eq(s.inbox.conversation,f.thread.conversation),eq(s.inbox.source,'handoff'))).all();
+ expect(mail).toHaveLength(1);expect(mail[0].onWord).toBe('alice');
+ expect(db.$client.serialize().includes(Buffer.from(reply.words))).toBe(false);
+});

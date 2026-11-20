@@ -17,7 +17,7 @@ import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
-  conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), venueDescription:z.string().optional(), model: z.string(), account: z.string(), accountChoices: z.number().int().min(1).optional(),
+  conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), venueDescription:z.string().optional(), review:z.literal(true).optional(), model: z.string(), account: z.string(), accountChoices: z.number().int().min(1).optional(),
   harness: z.string().min(1), brief: z.string(),
   run: z.object({ policy: z.object({
     deniedTools: z.array(z.object({ pattern: z.string().min(1), guestsOnly: z.boolean() })),
@@ -221,7 +221,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       finally { client.close(); }
     },
     next: async () => (await call('next', {
-      execution: 'container', facts, slots: input.slots, programs: input.programs || undefined,
+      execution: 'container', reviewResults:true, facts, slots: input.slots, programs: input.programs || undefined,
     }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;

@@ -1,3 +1,5 @@
+import { prepareReviewResult } from './review-result.js';
+import { reviewThread } from './review-place.js';
 import { threadTitle } from './title.js';
 /** Job-body producers for a thread's encrypted output and reported state. */
 import { z } from 'zod';
@@ -19,6 +21,14 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   if(found.cv.venue!=='loom'||!thread)throw new OperationError('not-found','Current conversation has no Comms thread');
   return {...found,thread};
  };
+ const replyTarget=(viewer:Viewer,kind:string)=>{
+  const found=requireCurrent(viewer);
+  if(kind==='reply' && found.cv.venue==='handoff'){
+   const thread=reviewThread(db,found.cv);
+   if(thread)return {...found,thread};
+  }
+  return threadFor(viewer);
+ };
  const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-output');
  const details={model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()};
  operations.register(operation({...common,name:'conversation.message',
@@ -28,16 +38,16 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   async prepare(input,ctx){
-   const before=threadFor(ctx.viewer),{kind,clientId,words,model,outcome,latencyMs}=input;
-   const prepared=await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
+   const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
+   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
    return ()=>{
-    const live=threadFor(ctx.viewer);
+    const live=replyTarget(ctx.viewer,input.kind);
     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.id!==before.cv.id||live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||live.cv.agent!==before.cv.agent||live.cv.place!==before.cv.place)throw new OperationError('denied','Conversation changed');
     return prepared();
    };
   },
   run(ctx,input,prepared){
-   const found=threadFor(ctx.viewer),message=(prepared as ()=>{seq:number})();
+   const found=replyTarget(ctx.viewer,input.kind),message=(prepared as ()=>{seq:number})();
    // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
    if(input.kind==='reply')for(const id of new ConversationMail(service).settle(found.cv.id,found.job.id))ctx.changed('inbox',id);
    ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
