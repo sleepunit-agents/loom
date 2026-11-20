@@ -3,6 +3,8 @@
 Data-model sections are generated from model.py so tables are never hand-copied.
 Run: python3 site_build.py   (static output, no script needed to read it)."""
 import html, os, sys
+from pathlib import Path
+from base64 import b64encode
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from model import AREAS
@@ -57,8 +59,16 @@ ICONS = {
     "inbox": '<path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/>',
 }
 
+DESK_ICONS = {"tasks":"violet", "inbox":"cyan", "comms":"pink", "approvals":"pink", "tempo":"violet", "changes":"pink"}
+
+def desk_icon(name):
+    art = Path(HERE).parents[1] / "web/src/assets/house-icons" / f"{name}.small.png"
+    encoded = b64encode(art.read_bytes()).decode("ascii")
+    return f'<i class="desk__glyph t-{DESK_ICONS[name]}" style="--glyph:url(data:image/png;base64,{encoded})"></i>'
+
 def tile(tint, icon, title, body, cls=""):
-    return (f'<div class="tile t-{tint} {cls}"><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24">{ICONS[icon]}</svg></span>'
+    glyph = desk_icon(icon) if cls in ("a", "b", "c") and icon in DESK_ICONS else f'<svg viewBox="0 0 24 24">{ICONS[icon]}</svg>'
+    return (f'<div class="tile t-{tint} {cls}"><div class="tile__bar"><span class="tile__key">{glyph}</span>'
             f'<b>{title}</b><span class="tile__acts"><i></i><i></i><i></i></span></div>{body}</div>')
 
 def chat(title, body, foot=None, sub="with Art"):
@@ -230,7 +240,7 @@ def desk_html():
           <div class="agent">{FACE_B}<div><b>Mark</b><i class="idle">idle</i><span>Nothing right now</span></div></div>
         </div>
       </div>
-      <div class="desk__dock">{"".join(f'<span class="t-{tint}"><svg viewBox="0 0 24 24">{ICONS[icon]}</svg></span>' for tint, icon in [("violet", "tasks"), ("cyan", "inbox"), ("pink", "comms"), ("pink", "approvals"), ("violet", "clock"), ("pink", "changes")])}</div>
+      <div class="desk__dock">{"".join(desk_icon(name) for name in DESK_ICONS)}</div>
     </div>'''
 
 # ───────────────────────── index
