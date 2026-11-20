@@ -18,6 +18,19 @@ describe('notes', () => {
   });
   afterEach(() => { n.close(); rmSync(dir, { recursive: true, force: true }); });
 
+  it('returns verified attachment bytes by note and name, including empty and maximum-size files',()=>{
+    n.write('files','attachments',{by:'art',lifespan:'short'});
+    expect(n.fileContents('files','missing')).toBeNull();
+    for(const bytes of [Buffer.alloc(0),Buffer.alloc(MAX_FILE_BYTES,0xfd)]){
+      const file=n.attach('files','data.bin',bytes);
+      const loaded=n.fileContents('files','data.bin');
+      expect(loaded?.sha256).toBe(file.sha256);
+      expect(loaded?.bytes.equals(bytes)).toBe(true);
+    }
+    writeFileSync(n.filePath('files','data.bin')!,Buffer.alloc(MAX_FILE_BYTES,0xfa));
+    expect(()=>n.fileContents('files','data.bin')).toThrow(/manifest/);
+  });
+
   it('a note is written whole, with a lifespan when new, and keeps its old text as revisions', () => {
     expect(() => n.write('planning/2026-10-30', 'x', { by: 'art' })).toThrow(/needs its lifespan/);
     const a = n.write('planning/2026-10-30', '# Plan', { lifespan: 'while', by: 'art' });

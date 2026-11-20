@@ -27,7 +27,7 @@ const USAGE = `Usage:
   loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
   loom signin --home <dir> [--member <id>] [--agent]
   loom mcp --url <origin> --token-file <file> [--agent <id>]
-  loom note read|list|write|pin|unpin|delete [options]
+  loom note read|list|write|file|pin|unpin|delete [options]
   loom --version
 `;
 
@@ -39,8 +39,8 @@ export function version(): string {
 }
 
 /** Where serve writes. Tests pass their own; the executable uses the process streams. */
-export interface ServeIo { stdout(text: string): void; stderr(text: string): void }
-const processIo: ServeIo = { stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); } };
+export interface ServeIo { stdout(text: string): void; stderr(text: string): void; stdoutBytes?(bytes:Buffer):Promise<void> }
+const processIo: ServeIo = { stdoutBytes:bytes=>new Promise((resolve,reject)=>process.stdout.write(bytes,error=>error?reject(error):resolve())), stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); } };
 
 /** The household's data folder: `--home`, else LOOM_HOME, else ~/.config/loom. */
 const homeOf = (flag?: string) => resolve(flag ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);

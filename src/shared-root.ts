@@ -1,3 +1,5 @@
+import {deniedTools,hasGuest} from './runtime/harness-traits.js';
+import {mayReadNoteFile} from './runtime/house-note-request.js';
 import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
@@ -77,8 +79,8 @@ import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
-import { guardedResponse } from './core/data/guarded-response.js';
-import { isJournalRead, registerTriggerJournal } from './shared-trigger-journal.js';
+import { guardedResponse, isGuardedCommandRead } from './core/data/guarded-response.js';
+import { registerTriggerJournal } from './shared-trigger-journal.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedNotices } from './shared-notices.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
@@ -94,7 +96,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -240,7 +242,12 @@ export function sharedRoot(options: {
   const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>heldRefusal(db,bodyJob(viewer),action);
   registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
-  memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
+  memory.register(operations,options.commsKey?{body:memoryAgent,mayReadFile:viewer=>{
+    const work=bodyJob(viewer);
+    if(!work)return !!credentials.agentSession(viewer);
+    const room=jobRoom(db,work.job);
+    return !hasGuest(room)&&mayReadNoteFile(deniedTools(room));
+  },hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
     // Of what the agent and the household keep, such a body only adds: a memory, or a new note, each stamped by loom with
     // whose word it was written on. Everything else in those families is refused it.
     {knowledge:held('knowledge'),
@@ -502,7 +509,7 @@ export function sharedRoot(options: {
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const name = c.req.param('piece') + '.' + c.req.param('operation');
-    const epoch = isJournalRead(name) ? data.readVersion() : undefined;
+    const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
     const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,request.signal);
     if (epoch !== undefined && answer.ok) {
       return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},

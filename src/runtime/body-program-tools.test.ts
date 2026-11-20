@@ -121,3 +121,9 @@ it.each([401,403])('cancels only a credential refusal at the tool door (%i)',asy
   if(status===403)expect(JSON.parse(reply.content[0].text)).toEqual(denied);
  }finally{tools.close();}
 });
+
+it('refuses attachment reads through generic commands before contacting Root when the room has no file reader',async()=>{
+ const f=await fixture();
+ const reply=await f.tools.call('loom_command',{operation:'memory.noteFile',input:{path:'plans/alpha',name:'frame.bin'},id:'read'});
+ expect(reply.isError).toBe(true);expect(f.fetcher).not.toHaveBeenCalled();
+});

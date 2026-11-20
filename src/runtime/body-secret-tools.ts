@@ -54,6 +54,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  // own making (bridges.reply) leave. Every text in a tool call is looked at, whatever the tool: the reason given
  // to `request_secret`, which goes to the owners' Inbox, like any command. Only texts are looked at: a number
  // or a truth value holds no secret of eight bytes. The scan itself is body-secrets.ts's (saysNoSecret).
+ const allowsBytes=(bytes:Buffer)=>![...exposed,...(input.alsoSecret?.()??[])].some(value=>value.length>0&&bytes.includes(value));
  const allowsReply=(text:string)=>saysNoSecret(text,[...exposed,...(input.alsoSecret?.()??[])]);
  const allowsCall=(value:unknown,depth=0):boolean=>typeof value==='string'?allowsReply(value):!value||typeof value!=='object'?true
   :depth<32&&Object.entries(value).every(([key,inner])=>allowsReply(key)&&allowsCall(inner,depth+1));
@@ -141,6 +142,6 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
   authority=`127.0.0.1:${address.port}`;
   config=Buffer.from(JSON.stringify({mcpServers:{[BODY_TOOLS_SERVER]:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
-  return{config,close,allowsReply,allowedTools,houseNote:noteKey?address.port+'.'+noteKey.toString():undefined};
+  return{config,close,allowsBytes,allowsReply,allowedTools,houseNote:noteKey?address.port+'.'+noteKey.toString():undefined};
  }catch{await close();throw unavailable();}
 }

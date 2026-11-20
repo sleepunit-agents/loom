@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { SHA256_HEX_WITHIN } from './core/sha256-hex.js';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import type { ServeIo } from './index.js';
 
-const usage = 'Usage: loom note read <path> [--json]\n       loom note pin|unpin|delete <path> [--id receipt] [--json]\n       loom note list [prefix] [--limit 1..500] [--json]\n       loom note write <path> [--lifespan keep|while|short] [--body text] [--id receipt] [--json]\n';
+const usage = 'Usage: loom note read <path> [--json]\n       loom note file <path> <name>\n       loom note pin|unpin|delete <path> [--id receipt] [--json]\n       loom note list [prefix] [--limit 1..500] [--json]\n       loom note write <path> [--lifespan keep|while|short] [--body text] [--id receipt] [--json]\n';
 const row = z.object({ path:z.string(), lifespan:z.string(), updated:z.string(), pinned:z.boolean(), files:z.number() }).passthrough();
 
 async function stdinBody() {
@@ -25,7 +25,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
   const [operation,...rest]=args;
   const manage=['pin','unpin','delete'].includes(operation);
   const mutates=manage||operation==='write';
-  if(!['list','read'].includes(operation)&&!mutates){io.stderr(usage);return 2;}
+  if(!['list','read','file'].includes(operation)&&!mutates){io.stderr(usage);return 2;}
   let input:Record<string,unknown>, generatedReceipt:string|undefined, json=false;
   try{
     // parseArgs regards a dash-prefixed string after an option as ambiguous.
@@ -44,10 +44,14 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     }});
     if(values.help){io.stdout(usage);return 0;}
     const [path]=positionals;
-    if(positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
+    if(operation==='file'){
+      if(values.json){io.stderr('loom note file writes raw bytes. Omit --json.\n');return 2;}
+      if(positionals.length!==2){io.stderr('Usage: loom note file <path> <name>\n');return 2;}
+    }else if(positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
     json=!!values.json;
     if(mutates&&values.id===undefined)generatedReceipt=randomUUID();
-    if(manage)input={operation,path,id:values.id??generatedReceipt};
+    if(operation==='file')input={operation,path,name:positionals[1]};
+    else if(manage)input={operation,path,id:values.id??generatedReceipt};
     else if(operation==='list'){
       const limit=values.limit===undefined?100:Number(values.limit);
       if(!Number.isInteger(limit)||limit<1||limit>500)throw Error('--limit must be 1 to 500');
@@ -66,7 +70,17 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
       headers:{authorization:'Bearer '+cap[2],'content-type':'application/json'},body:JSON.stringify(input)});
     if(!reply.ok)throw Error();
     const value=await reply.json();
-    if(manage){
+    if(operation==='file'){
+      if(value.ok!==true)throw Error();
+      if(value.value===null){io.stderr('No such note attachment.\n');return 3;}
+      const file=z.object({contents:z.string(),sha256:z.string()}).strict().parse(value.value);
+      const bytes=Buffer.from(file.contents,'base64');
+      try{
+        if(createHash('sha256').update(bytes).digest('hex')!==file.sha256)throw Error();
+        if(!io.stdoutBytes)throw Error('Binary output unavailable');
+        await io.stdoutBytes(bytes);
+      }finally{bytes.fill(0);}
+    }else if(manage){
       const result=operation==='delete'
         ? z.object({deleted:z.boolean()}).parse(value.value)
         : z.union([z.object({path:z.string(),pinned:z.boolean(),expires:z.string().nullable()}),z.object({missing:z.literal(true)})]).parse(value.value);

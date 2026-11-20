@@ -613,9 +613,10 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const {bodySecretTools}=await import('./runtime/body-secret-tools.js');
  const f=await fixture(),signal=new AbortController().signal;
  const access={url:f.url,token:raw.body,signal,agent:'art',job:'job',conversation:f.thread.conversation,clock:f.clock};
- const tools=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(tools.close);
+ let local:Awaited<ReturnType<typeof bodySecretTools>>;
+ const tools=bodyProgramTools({...access,onStop(){},onStatus(){},allowsFileBytes:bytes=>local.allowsBytes(bytes)});clean.push(tools.close);
  const sentinel='fictional-protected-receipt';
- const local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
+ local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
  const env={LOOM_BODY_HOUSE_NOTE:local.houseNote};
  const run=async(...args:string[])=>{
    let out='',err='';
@@ -655,6 +656,20 @@ it('runs the house note CLI against a running job and refuses the same shell han
  expect(refused.out+refused.err).not.toContain(sentinel);
  const executable=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','read','field/log'],{env:{...process.env,...env}});
  expect(executable.stdout).toBe('later reading\n');
+ const {Notes,MAX_FILE_BYTES}=await import('./notes.js');
+ const stored=new Notes(f.memory.sources.agents[0].directory);
+ const data=Buffer.alloc(MAX_FILE_BYTES,0xff);data[0]=0;data[1]=0x80;
+ try{
+   stored.attach('field/log','full.bin',data);
+   stored.attach('field/log','empty',Buffer.alloc(0));
+   stored.attach('field/log','protected',Buffer.concat([Buffer.from([0xff]),Buffer.from(sentinel)]));
+ }finally{stored.close();}
+ const readFile=(name:string)=>promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','file','field/log',name],
+   {env:{...process.env,...env},encoding:'buffer',maxBuffer:MAX_FILE_BYTES+1024});
+ const full=await readFile('full.bin');expect(full.stdout.equals(data)).toBe(true);
+ expect((await readFile('empty')).stdout.length).toBe(0);
+ await expect(readFile('missing')).rejects.toMatchObject({code:3,stdout:Buffer.alloc(0)});
+ await expect(readFile('protected')).rejects.toMatchObject({code:1,stdout:Buffer.alloc(0)});
  const list=await run('list','field/','--json');expect(list.code).toBe(0);
  expect(JSON.parse(list.out)).toMatchObject([{path:'field/log',bytes:13,pinned:false}]);
  for(const text of ['--help','-h']){
@@ -662,6 +677,18 @@ it('runs the house note CLI against a running job and refuses the same shell han
    expect(await run('read','field/literal')).toMatchObject({code:0,out:text+'\n'});
  }
  expect(await run('read','field/missing')).toMatchObject({code:3,out:''});
- f.db.update(s.jobs).set({state:'done'}).run();
+ const command={operation:'memory.noteFile',input:{path:'field/log',name:'full.bin'},id:'delayed-file'};
+ const headers={authorization:'Bearer '+raw.body,'content-type':'application/json',accept:'application/json, text/event-stream'};
+ const requestDirect=()=>f.root.http.request('/api/memory/noteFile',{method:'POST',headers,body:JSON.stringify({input:command.input,id:command.id})});
+ const requestMcp=()=>f.root.http.request('/mcp',{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_command',arguments:command}})});
+ const pattern='mcp__loom__note_read';
+ f.root.writes.run(()=>{f.db.insert(s.agentDeniedTools).values({agent:'art',pattern,guestsOnly:false}).run();});
+ expect((await requestDirect()).status).toBe(403);
+ expect((await (await requestMcp()).json()).result.isError).toBe(true);
+ f.root.writes.run(()=>{f.db.delete(s.agentDeniedTools).where(eq(s.agentDeniedTools.pattern,pattern)).run();});
+ const direct=await requestDirect(),mcp=await requestMcp();
+ expect(direct.status).toBe(200);expect(mcp.status).toBe(200);
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).run();});
+ for(const pending of [direct,mcp])await expect(pending.text()).rejects.toThrow();
  expect(await run('read','field/log')).toMatchObject({code:1,out:''});
 },30000);

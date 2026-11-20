@@ -538,3 +538,26 @@ it.each(['all','loom'] as const)('hands the note capability to the house harness
    else expect(issued).toBeUndefined();
  }finally{harness.mockRestore();}
 });
+
+it.each([false,true])('uses the room policy when a house shell requests note file contents (denied %s)',async denied=>{
+ const f=fixture(),assigned=JSON.parse(f.input.toString());
+ if(denied)assigned.job.run.policy.deniedTools=[{pattern:'mcp__loom__note_read',guestsOnly:false}];
+ let rootReads=0,responseStatus=0;
+ const fetcher:typeof fetch=async (url,init)=>{
+   if(String(url).endsWith('/runtime/commandCatalog'))return Response.json({ok:true,value:{commands:[{name:'memory.noteFile'}]}});
+   if(String(url).endsWith('/memory/noteFile')){rootReads++;return Response.json({ok:true,value:null});}
+   return f.options.fetch(url,init);
+ };
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+   const [port,key]=input.env.LOOM_BODY_HOUSE_NOTE!.split('.');
+   const reply=await fetch('http://127.0.0.1:'+port+'/house/note',{method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json'},
+     body:JSON.stringify({operation:'file',path:'field/log',name:'empty'})});
+   responseStatus=reply.status;
+   return {text:'done',model:'observed',actions:[]};
+ });
+ try{
+   const code=await bodyProgram({...f.options,native:undefined,stdin:async()=>Buffer.from(JSON.stringify(assigned)),fetch:fetcher,
+     read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house',reach:'all'}),env:{LOOM_BODY_OWN_HARNESS:'0'}});
+   expect(code).toBe(0);expect(responseStatus).toBe(denied?403:200);expect(rootReads).toBe(denied?0:1);
+ }finally{harness.mockRestore();}
+});
