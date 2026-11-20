@@ -28,7 +28,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
  if(actions.includes('commsSend'))await attempt('commsSend',async()=>{
   const approvalCountBefore=app.services.approvals.list().length;
   phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
-  phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
+  phase='fill-message';await tile.getByRole('textbox',{name:'Message Fern',exact:true}).fill(words);
   phase='prepare-send-button';const send=await readyButton(tile.getByRole('button',{name:'Send',exact:true}));
   phase='send-message';const pending=response('/api/comms/send');await send.press('Enter');const sent=await result(pending);
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
@@ -38,7 +38,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   const approvalCountAfter=app.services.approvals.list().length,ordinaryVerified=approvalCountBefore===approvalCountAfter;
   return{ok:false,inconclusive:ok&&ordinaryVerified,receiptVerified:ok,ordinaryVerified,approvalCountBefore,approvalCountAfter,reason:!ordinaryVerified?'Ordinary send created an approval.':ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
  });
- if(actions.includes('commsSendReload'))await attempt('commsSend',async()=>{
+ if(actions.includes('commsSendReload')&&!evidence.commsSend?.error)await attempt('commsSend',async()=>{
   const sent=evidence.commsSend;if(!sent?.receipt)throw Error('Send did not return an accepted receipt');
   phase='reload-send';await page.reload();await page.locator('.next-shell').waitFor();
   phase='reopen-after-reload';const tile=await visibleComms();phase='select-after-reload';await select(tile);
@@ -61,8 +61,8 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   phase='reload-answer';await page.reload();await page.locator('.next-shell').waitFor();
   if(!evidence.inboxAnswer?.ok)throw Error('Inbox answer did not complete');
   const tile=await visibleComms();await select(tile);
-  const card=tile.getByRole('article',{name:'Inbox item',exact:true}).filter({has:page.getByRole('heading',{name:question,exact:true})});
-  const answer=card.getByRole('heading',{name:'Answer',exact:true});
+  const card=tile.getByRole('article',{name:'Question',exact:true}).filter({has:page.getByText(question,{exact:true})});
+  const answer=card.getByText(/^Yes · alex · /);
   await answer.waitFor({timeout:4000});
   const ok=await card.getByRole('button',{name:'Allow',exact:true}).count()===0&&await card.getByRole('button',{name:'Deny',exact:true}).count()===0;
   const screenshot='action-comms-answer.png';await tile.screenshot({path:join(out,screenshot)});return{ok,screenshot};
