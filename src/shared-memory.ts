@@ -38,6 +38,7 @@ import {registerSemanticMemory} from './pieces/mind/semantic-commands.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
  checkingAgent:string;
+ noteSweepAgent?:string;
  alternateCheckingAgent?:string;
  sections?:{tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole};
 }
@@ -125,6 +126,8 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
  for(const agent of agents)prepareAgentMemory(agent);
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
+ if(options?.noteSweepAgent!==undefined && !options.sources.agents.some(source=>source.agent===options.noteSweepAgent))
+  throw new Error('Note retention needs an existing agent with a declared Notes store');
  if(options?.alternateCheckingAgent!==undefined){
   const alternate=db.select().from(agentRows).where(eq(agentRows.id,options.alternateCheckingAgent)).get();
   if(!alternate||alternate.removedAt||alternate.id===options.checkingAgent)throw new Error('Memory needs a different active alternate checking agent');

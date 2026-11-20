@@ -1,3 +1,4 @@
+import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
 import type {EmbeddingProvider} from './backends/types.js';
@@ -422,6 +423,9 @@ export function sharedRoot(options: {
   }, db).then(value => { meter = value; return value; });
   const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
+  const stopNoteRetention = options.memory?.noteSweepAgent ? nightlyNoteRetention(db,clock,options.memory.sources,
+    options.memory.noteSweepAgent,data.changed,report) : undefined;
+  if (stopNoteRetention) startupCleanups.push(stopNoteRetention);
   const workLife=workLifetime(db,clock,data.writes,options.reportError);
   startupCleanups.push(()=>workLife.close());
   const authenticate = authenticateOutside;
@@ -524,7 +528,7 @@ export function sharedRoot(options: {
       stopMemoryWrites();stopHouseholdProposals();memorySignals?.close();
       stopMachineReads();
       accountReports.close();
-      commsLifetime?.close();workLife.close();
+      commsLifetime?.close();workLife.close();stopNoteRetention?.();
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
