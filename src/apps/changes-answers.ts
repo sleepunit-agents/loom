@@ -1,3 +1,4 @@
+import { mergeTargetFor } from './merge-target.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { changes } from '../core/data/schema.js';
@@ -16,9 +17,9 @@ export function changeAnswers(db: DataDatabase, approvals: ReturnType<typeof app
         if (change.headCommit !== input.head) throw new Error('Change head has changed');
         const approval = approvals.get(input.approval);
         if (!change.agent || approval.agent !== change.agent || approval.kind !== 'merge'
-          || approval.target !== `${change.id}@${input.head}` || approval.operation !== null
+          || approval.target !== mergeTargetFor(change.id, input.head) || approval.operation !== null
           || approval.project !== change.project) throw new Error('Approval does not match this change');
-        const result = input.allow ? approvals.allow(approval.id, input.member, input.basis) : approvals.deny(approval.id, input.member);
+        const result = input.allow ? approvals.allow(approval.id, input.member, input.basis) : approvals.deny(approval.id, input.member, input.basis);
         // Preserve CI/reviewer/author blockers. Only an answer-blocked or
         // merge-ready copy changes groups; the reader will refresh GitHub facts.
         if (change.waitingOn === 'you' || change.waitingOn === 'agent') {

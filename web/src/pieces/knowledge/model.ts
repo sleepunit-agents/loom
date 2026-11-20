@@ -1,8 +1,12 @@
-import type { KnowledgeOpen, KnowledgeRow } from '../../../../src/pieces/mind/knowledge';
+import type { KnowledgeRow } from '../../../../src/pieces/mind/knowledge';
+import type { KnowledgePage } from '../../memory/queries';
 export type PageRow=KnowledgeRow & {id:string};
-export type Page = KnowledgeOpen & { id: string; [key: string]: unknown };
+export type Page = KnowledgePage & { id: string; [key: string]: unknown };
 export const freshWord = { fresh: 'Fresh', aging: 'Getting old', due: 'Due a check' };
-export const date = (s: string) => new Date(s).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
+export const date = (s: string, zone?: string) => {
+  try { return new Date(s).toLocaleDateString('en-US', { timeZone: zone, month: 'short', day: 'numeric' }); }
+  catch { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+};
 export const inFolder = (page: PageRow, folder: string) => folder === 'all' || (folder === 'recent' ? !!page.recent : folder === 'due' ? page.fresh === 'due' : page.domain === folder.slice(2) || page.domain.startsWith(`${folder.slice(2)}/`));
 export function shownPages(pages: readonly PageRow[], folder: string, query: string) {
   const needle = query.trim().toLowerCase();

@@ -9,8 +9,8 @@ vi.mock('../data', () => ({
   call: () => { throw new Error('Shared Settings must not issue legacy commands'); },
 }));
 // Dynamic props are confined to the renderer boundary.
-vi.mock('../kit', () => ({
-  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label, `:${f.count ?? ''}`)), p.listTop, p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
+vi.mock('../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Button:'button',
+  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label, `:${f.count ?? ''}`)), p.listAction, p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
   List: (p: any) => h('div', {}, p.children),
   Row: (p: any) => h('button', { onClick: p.onClick, 'aria-current': p.selected }, p.title, p.meta, p.status),
   Empty: (p: any) => h('p', {}, p.title), Error: (p: any) => h('p', { role: 'alert' }, p.text), Loading: (p: any) => h('p', { role: 'status' }, p.label),
@@ -72,7 +72,7 @@ it('shows request context and retires answer controls immediately after an answe
 it('shows grant scope and recorded expiry without inventing current validity', async () => {
   const grant = vi.fn(id => h('button', {}, `Revoke ${id}`));
   await draw(snapshot(), 'grants', 'g-1', { grant });
-  expect(text()).toContain('2026-11-14T21:00:00.000Z'); expect(text()).toContain('q-1'); expect(grant).toHaveBeenCalledWith('g-1');
+  expect(tree.root.findByProps({dateTime:'2026-11-14T21:00:00.000Z'}).children.join('')).not.toContain('T21:00'); expect(text()).toContain('q-1'); expect(grant).toHaveBeenCalledWith('g-1');
   const s = snapshot(); await draw({ ...s, grants: s.grants.map(row => ({ ...row, job: null })) }, 'grants', 'g-1');
   expect(text()).toContain('Agent-wide'); expect(text()).not.toContain('No expiry');
 });

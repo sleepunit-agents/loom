@@ -40,5 +40,5 @@ describe.runIf(chrome)('kit row DOM activation', () => {
         }
       }
     } finally { await browser.close(); }
-  }, 30_000);
+  });
 });

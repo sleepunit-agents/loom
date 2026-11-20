@@ -2,7 +2,9 @@
 import type {ProjectGroup,ProjectItem} from './projects-model.js';
 import type {ProjectQuery} from './projects-roles.js';
 /** Minimal metadata accepted from Tasks.call; the Tasks implementation owns its domain types. */
-export interface ProjectTask {id:string;title:string;status:string;priority:number;createdAt:string;comments:Array<{at:string}>;project?:string;description?:string;assignee?:string;startedAt?:string;closedAt?:string;closeReason?:string;goal?:string;why?:string;source?:string}
+export interface ProjectTask {id:string;title:string;status:string;priority:number;createdAt:string;comments:Array<{at:string}>;project?:string;description?:string;assignee?:string;startedAt?:string;closedAt?:string;closeReason?:string;goal?:string;why?:string;source?:string;
+ /** Unfinished, in a retired project: listed as shelved, never as waiting, ready or in progress. */
+ shelved?:boolean}
 export interface ProjectTaskLink {id:string;dependsOn:string;type:string}
 type Task=ProjectTask;
 type ScopedTask=ProjectTask;
@@ -20,15 +22,15 @@ export function taskGroups(tasks:ScopedTask[],links:Link[],readyIds:Set<string>,
  const threads=new Set((q.conversations??[]).map(id=>`conversation:${id}`));for(const t of tasks)if(t.source&&threads.has(t.source))tree.add(t.id);
  const names=q.names.map(n=>new RegExp(`(^|[^a-z0-9-])${n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}([^a-z0-9-]|$)`,'i'));
  const matches=(t:ScopedTask)=>q.names.includes(t.project??'')||names.some(re=>re.test([t.title,t.description].join('\n')));
- const groups:ProjectGroup[]=[{title:'Waiting on you',waiting:true,items:[]},{title:'Ready',items:[]},{title:'Blocked or in progress',items:[]},{title:'Done lately',items:[]}];
+ const groups:ProjectGroup[]=[{title:'Waiting on you',waiting:true,items:[]},{title:'Ready',items:[]},{title:'Blocked or in progress',items:[]},{title:'Done lately',items:[]},{title:'Shelved',items:[]}];
  const ordered=tasks.map((task,index)=>({task,index})).sort((a,b)=>(a.task.status==='closed'?1:0)-(b.task.status==='closed'?1:0)||(a.task.status==='closed'&&b.task.status==='closed'?Date.parse(b.task.closedAt??'')-Date.parse(a.task.closedAt??'')||a.index-b.index:a.task.priority-b.task.priority||a.index-b.index));
  for(const {task:t} of ordered){
   if(t.id===q.card.links.epic)continue;
   const inside=tree.has(t.id),closed=t.status==='closed';
   if(closed?(!inside||!t.closedAt||Date.parse(t.closedAt)<Date.parse(q.since)):(!inside&&!matches(t)))continue;
-  const waiting=!closed&&!!t.assignee&&ownerIds.has(t.assignee),group=closed?3:waiting?0:readyIds.has(t.id)?1:2;
+  const shelved=!closed&&!!t.shelved,waiting=!closed&&!shelved&&!!t.assignee&&ownerIds.has(t.assignee),group=closed?3:shelved?4:waiting?0:readyIds.has(t.id)?1:2;
   const moved=[t.createdAt,t.startedAt,...t.comments.map(c=>c.at)].filter((x):x is string=>!!x&&Number.isFinite(Date.parse(x))).sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
-  const status=closed?(t.closeReason==='cancelled'?'cancelled':'done'):!inside?'outside the tree':waiting?t.status:readyIds.has(t.id)?'ready':t.status==='in_progress'?'in progress':'blocked';
+  const status=closed?(t.closeReason==='cancelled'?'cancelled':'done'):shelved?'shelved':!inside?'outside the tree':waiting?t.status:readyIds.has(t.id)?'ready':t.status==='in_progress'?'in progress':'blocked';
   const prose=body(t);
   const item:ProjectItem={title:clip(t.title.trim()||t.id,200),ref:t.id,...(closed?t.closedAt?{when:new Date(t.closedAt).toISOString()}:{}:moved?{when:new Date(moved).toISOString()}:{}),href:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`,status,...(prose?{body:prose}:{}),...(waiting?{waiting:true}:{})};
   groups[group].items.push(item);

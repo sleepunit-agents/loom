@@ -37,7 +37,7 @@ function mix(a: string, b: string, t: number): string {
 }
 /** The rim's width by size (viewBox units): thicker small, so it reads as a lit edge at dock size. */
 const RIM = { dock: 10, row: 7, card: 5 } as const;
-/** loom's first mark (src/household.ts MARKS: Lilac), for a face given no colour of its own. */
+/** loom's first mark (web/src/look.ts MARKS: lilac), for a face given no colour of its own. */
 const LILAC = { bg: '#B8A6FF' };
 const lum = (h: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 

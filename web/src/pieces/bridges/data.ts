@@ -9,7 +9,7 @@ export const bridgesQuery = `query Bridges {
   bridgeChannelFilters { connection channel rule }
   bridgeChannels { platform workspace channel answers botsMayTalk }
   bridgePeople { platform workspace user member }
-  bridgeSends { id incoming connection channel thread text state postedId createdAt }
+  bridgeSends { id incoming connection channel thread text state createdAt }
 }`;
 export interface BridgesData {
   bridgeReader: { id: string; manage?: boolean } | null;

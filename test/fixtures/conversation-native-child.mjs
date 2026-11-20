@@ -21,7 +21,8 @@ try {
  process.stdout.write(JSON.stringify({ask:question.item})+'\n');await resume;
  const second=await client.takeAndAccept(async(item,signal)=>{if(signal.aborted||item.source!=='answer'||item.sourceId!==question.item||item.verdict!=='yes')throw Error('Wrong answer');});
  if(second.accepted!==1||!second.stopRequested)throw Error('Wrong answer batch');
- const stop=await client.status({state:'idle',work:'Fictitious work complete',seenStop:true});
+ await client.settle();
+ const stop=await client.status({state:'idle',work:'Fictitious work complete'});
  if(!stop.stopRequested)throw Error('Stop was not preserved');
  const digest=await client.digest({summary:'Fictitious work complete',items:[{kind:'task',text:'t-4242'}]});
  process.stdout.write(JSON.stringify({accepted:2,reply:reply.seq,revision:digest.revision})+'\n');

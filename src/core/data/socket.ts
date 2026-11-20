@@ -7,6 +7,7 @@ import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
 import { ExecutionDrain } from './execution.js';
+import { DOOR_REQUEST_BYTES } from './http.js';
 import { readDeadline } from './read-lease.js';
 import { DataLive, type MeasureRead } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
@@ -23,7 +24,7 @@ export function dataSocket(options: {
   schema(viewer: Viewer): GraphQLSchema;
   originAllowed(request: IncomingMessage): boolean;
 }) {
-  const ws = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
+  const ws = new WebSocketServer({ noServer: true, maxPayload: DOOR_REQUEST_BYTES, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
   const admitted = new WeakMap<WebSocket, Authentication>();
   const frames = new WeakMap<object, { socket: WebSocket; version: number | undefined; until: number | undefined }>();
   const serializing = new WeakMap<WebSocket, { version: number | undefined; until: number | undefined }[]>();

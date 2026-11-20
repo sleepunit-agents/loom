@@ -22,8 +22,9 @@ it('announces only a visible reader and clears the same source on selection chan
   expect(onAir).not.toHaveBeenCalled();expect(f.reads).toBe(0);
   await act(async()=>tree.update(view('art',true)));
   expect(onAir.mock.calls[0][0]).toEqual({agent:'art'});const source=onAir.mock.calls[0][1];
-  expect(tree.root.findByType('section').props['data-location']).toBe('inline');
-  expect(tree.root.findByType('p').children).toEqual(['No status reported']);
+  // Without the rail it is a small face beside the thread's title: no screen, no name and no status line over the conversation.
+  expect(tree.root.findAllByType('section')).toHaveLength(0);expect(tree.root.findAllByType('p')).toHaveLength(0);
+  expect(tree.root.findByProps({'data-location':'inline'}).findByType('button').props).toMatchObject({'aria-label':'Open Art',title:'Quiet'});
   await act(async()=>tree.update(view('birch',true)));
   expect(onAir.mock.calls.slice(1)).toEqual([[null,source],[{agent:'birch'},source]]);
   await act(async()=>tree.update(view('birch',false)));

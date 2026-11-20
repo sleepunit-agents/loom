@@ -5,6 +5,7 @@ import { tintOf } from '../tint';
 import type { RegisteredApp } from './index';
 import '../launcher.css';
 import { launcherSections, launcherFirst } from './launch-list';
+import { onMac, shortcutHints } from './shortcuts';
 
 /** The registrations are the inventory; no legacy Shell or route discovery. */
 export default function Launcher({ apps, open, onOpenChange, launch }: { apps: readonly RegisteredApp[]; open: boolean; onOpenChange(open: boolean): void; launch(id: string): void }) {
@@ -38,16 +39,17 @@ export default function Launcher({ apps, open, onOpenChange, launch }: { apps: r
         if(candidates[0]) candidates[0].focus(); else if(!down) field.current?.focus();
       }}>
         <div className="loom-launcher__head"><Dialog.Title className="loom-launcher__title">Apps</Dialog.Title>
-          <label className="loom-launcher__field"><AppIcon label="Find" name="search" size="sm" /><input ref={field} value={query} onChange={e=>setQuery(e.target.value)} placeholder="Type to find an app" aria-label="Find an app" autoComplete="off" spellCheck={false} aria-controls="next-launcher-apps" /></label>
-          {account&&<button type="button" className="loom-launcher__me" aria-label="Open your account" onClick={()=>go(account.id)}><span className="loom-letter" aria-hidden="true"><AppIcon label="Your account" name={account.icon} size="sm"/></span><span className="grid text-left leading-tight"><span>Your account</span><span className="loom-data loom-launcher__me-sub">Profile</span></span></button>}
+          <label className="loom-launcher__field"><AppIcon name="search" size="sm" /><input ref={field} value={query} onChange={e=>setQuery(e.target.value)} placeholder="Type to find an app" aria-label="Find an app" autoComplete="off" spellCheck={false} aria-controls="next-launcher-apps" /></label>
+          {account&&<button type="button" className="loom-launcher__me" aria-label="Open your account" onClick={()=>go(account.id)}><span className="loom-letter" data-tint="yellow" aria-hidden="true"><AppIcon app={account.id} name={account.icon} size="sm"/></span><span className="grid text-left leading-tight"><span>Your account</span><span className="loom-data loom-launcher__me-sub">Profile</span></span></button>}
           <Dialog.Close aria-label="Close app launcher">×</Dialog.Close>
         </div>
         <div ref={body} id="next-launcher-apps" className="loom-launcher__body">{sections.map(section=><section key={section.name} className="loom-lsec" aria-label={section.name}><h3 className="loom-lsec__name">{section.name}</h3><div className="loom-lgrid">
           {section.apps.map(app=><button key={app.id} type="button" className="loom-lapp" data-tint={tintOf(app.title)} data-first={app===first||undefined} onClick={()=>go(app.id)}>
-            <span className="loom-lapp__ico loom-launch-tile" data-tint={tintOf(app.title)}><AppIcon label={app.title} name={app.icon} /></span><span className="loom-lapp__nm">{app.title}</span>
+            <span className="loom-lapp__ico loom-launch-tile" data-tint={tintOf(app.title)}><AppIcon app={app.id} name={app.icon} house={40} /></span><span className="loom-lapp__nm">{app.title}</span>
           </button>)}
         </div></section>)}{!shown.length&&<p className="loom-launcher__none" role="status">No app called “{query.trim()}”.</p>}</div>
         <div className="loom-launcher__foot" aria-hidden="true"><span><kbd>Enter</kbd> opens the first match</span><span><kbd>←↑↓→</kbd> move</span><span><kbd>Esc</kbd> closes</span></div>
+        <p className="loom-launcher__foot loom-launcher__keys">{shortcutHints(onMac()).map(hint=><span key={hint.does}>{hint.keys.map((keys,i)=><span key={keys}>{i>0&&' · '}<kbd>{keys}</kbd></span>)} {hint.does}</span>)}</p>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;

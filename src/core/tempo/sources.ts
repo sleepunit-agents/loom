@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, max } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { approvals, changes, changeChecks, changePeople, changeTasks, inbox, jobs, secretRequests, triggers, triggerLog } from '../data/schema.js';
+import { jobUnended } from '../data/job-states.js';
 import type { TriggerEngine } from './triggers.js';
 
 /** Stable watch names shared by the source writers and trigger creators. */
@@ -122,7 +123,7 @@ export class TempoSources {
   job(id: string): void {
     if (this.closed) return;
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
-    if (!row?.endedAt || !['done', 'failed', 'stopped', 'lost'].includes(row.state)) return;
+    if (!row?.endedAt || jobUnended(row.state)) return;
     this.engine.event('job', tempoWatch.job(id), JSON.stringify(['job', id, row.endedAt, row.state]));
   }
 }

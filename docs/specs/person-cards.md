@@ -120,6 +120,12 @@ field):
   be a key inside any value. These are the harness's gating names (see
   "`may` is descriptive"). The list is fixed in loom's code, not configured.
 
+An outside account can be recorded on a directory card with two `where`
+fields. Use `slack` and `slack_workspace` for Slack, or `discord` and
+`discord_workspace` for Discord. Set their values to the account and workspace
+IDs respectively. Owner approval previews use this pair for exact lookups.
+If multiple live cards match the same pair, the directory supplies no name.
+
 There is no `live` section. Things like open tasks or the last conversation are
 for the caller to compute; loom does not store them.
 

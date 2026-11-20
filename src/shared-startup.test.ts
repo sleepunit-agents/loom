@@ -1,5 +1,5 @@
 /** Real CLI/default listener, with only fictional prepared stores and keys. */
-import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {afterEach,beforeAll,beforeEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {generateX25519Identity} from 'age-encryption';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,chmodSync,symlinkSync} from 'node:fs';
@@ -10,27 +10,33 @@ import {once} from 'node:events';
 import {pathToFileURL} from 'node:url';
 import {WebSocket} from 'ws';
 import {createServer} from 'node:http';
-import {createDataSchema} from './core/data/database.js';
+import {dataImage} from '../test/fixtures/data-image.js';
+import {dataSchemaNumber} from './core/data/database.js';
 import {members,agents,memberAgents,household} from './core/data/schema.js';
 import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 import * as startup from './shared-startup.js';
-import {run} from './cli/serve.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import {serve as run,signin} from './index.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 const cleanups:Array<()=>unknown|Promise<unknown>>=[];
 beforeEach(()=>{vi.stubEnv('LOOM_WORKER_SOCKET',undefined);vi.stubEnv('LOOM_PUBLIC_URL',undefined);});
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();vi.unstubAllEnvs();});
+let householdImage:Buffer;
+beforeAll(()=>{
+ householdImage=dataImage(db=>{
+  const at='2026-11-15T12:00:00.000Z';
+  db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
+  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();
+  db.insert(household).values({defaultAgent:'fiction',timezone:'Asia/Tokyo'}).run();
+ });
+});
 async function fixture(){
  const home=mkdtempSync(join(tmpdir(),'loom-default-fiction-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
- const database=join(home,'app.db'),client=new Database(database),db=createDataSchema(client);
- const at='2026-11-15T12:00:00.000Z';
- db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
- db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
- db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();
- db.insert(household).values({defaultAgent:'fiction',timezone:'Asia/Tokyo'}).run();client.close();
+ const database=join(home,'app.db');writeFileSync(database,householdImage,{mode:0o600});
  const webRoot=join(home,'public');mkdirSync(webRoot);writeFileSync(join(webRoot,'next.html'),'<main>SHARED FICTIONAL ENTRY</main>');
  const commsKey=join(home,'comms.key');writeFileSync(commsKey,await generateX25519Identity(),{mode:0o600});
  const common=join(home,'commons'),agent=join(home,'agents/fiction');
@@ -53,9 +59,12 @@ it('normal serve --http installs public assets, current sign-in, Memory, Comms a
  expect(await (await fetch(url+'/p/knowledge-preview')).text()).toBe('<main>SHARED FICTIONAL ENTRY</main>');
  expect(await (await fetch(url+'/auth/session')).json()).toEqual({viewer:null});
  expect((await fetch(url+'/app/key.js')).status).toBe(404);
- expect(printed).toHaveLength(1);
+ // Startup says how to sign in and prints no credential; the operator's command gets the link.
+ expect(printed).toEqual([`To sign in from this machine: loom signin --home ${f.home}\n`]);
+ const asked:string[]=[];expect(await signin(['--home',f.home],{stdout:text=>asked.push(text),stderr:()=>{}})).toBe(0);
+ expect(asked).toHaveLength(1);expect(asked[0]).toMatch(new RegExp('^'+url+'/login/[0-9a-f]{64}\n$'));
  const pushKey=JSON.parse(readFileSync(join(f.home,'push-vapid.json'),'utf8'));expect(pushKey.publicKey).toEqual(expect.any(String));expect(pushKey.privateKey).toEqual(expect.any(String));
- const bootstrap=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
+ const bootstrap=await fetch(asked[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
  const cookie=bootstrap.headers.get('set-cookie')!.split(';',1)[0];
  expect(await (await fetch(url+'/auth/session',{headers:{cookie}})).json()).toMatchObject({viewer:{kind:'member',id:'owner'}});
  const query=async(cookie:string)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({query:'{ deskTime { timezone } homeComms { agents } memoryKnowledge { pages { title } } memoryPeople { id } memoryProjects { id } memoryActivity { entries { title } } triggers { id } }'})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
@@ -78,6 +87,21 @@ it('refuses an old SQLite store before preparing Memory files and preserves its 
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('separate move');
  expect(readFileSync(old)).toEqual(before);expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
 });
+it('upgrades a household installed at an earlier schema number, and refuses an interim one at that number with its exact bytes',async()=>{
+ const first=readFileSync(new URL('./core/data/shipped-shapes/1.sql',import.meta.url),'utf8'),at='2026-11-15T12:00:00.000Z';
+ // One transaction: the installation SQL is some 1,300 statements, and committing each to disk on its own took most of this test's time.
+ const earlier=(file:string,extra='')=>{const client=new Database(file);client.exec('BEGIN;'+first+extra+';COMMIT');client.prepare('INSERT INTO migrations (number,applied_at) VALUES (1,?)').run(at);
+  client.prepare("INSERT INTO members (id,role,joined_at) VALUES ('owner','owner',?)").run(at);
+  client.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('fiction','','','','pebble','dot');INSERT INTO member_agents (member,agent) VALUES ('owner','fiction');INSERT INTO household (default_agent,timezone) VALUES ('fiction','Asia/Tokyo')");client.close();};
+ const f=await fixture(),interim=join(f.home,'interim.db');earlier(interim,'CREATE TABLE interim_notes (words text);');
+ const before=readFileSync(interim);writeFileSync(f.config,JSON.stringify({...f.program,database:interim}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('separate move');
+ expect(readFileSync(interim)).toEqual(before);expect(existsSync(interim+'-journal')).toBe(false);expect(existsSync(interim+'-wal')).toBe(false);expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+ const known=join(f.home,'earlier.db');earlier(known);writeFileSync(f.config,JSON.stringify({...f.program,database:known}),{mode:0o600});
+ const app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});await app.close();
+ const upgraded=new Database(known,{readonly:true});
+ try{expect(upgraded.prepare('SELECT max(number) AS number FROM migrations').get()).toEqual({number:dataSchemaNumber});expect(upgraded.prepare('SELECT id,removed_at FROM members').all()).toEqual([{id:'owner',removed_at:null}]);}finally{upgraded.close();}
+});
 it('releases the adapter, database, source listeners and home ownership after bind failure and on repeated close',async()=>{
  const f=await fixture(),module=join(f.home,'adapters.mjs');
  writeFileSync(module,"import {writeFileSync} from 'node:fs';import {join} from 'node:path';export let client,closed=0;export default ({db,home})=>{client=db.$client;return {close(){closed++;writeFileSync(join(home,'adapter-closed'),String(client.prepare('SELECT count(*) AS n FROM members').get().n));}}};",{mode:0o600});
@@ -93,31 +117,47 @@ it('releases the adapter, database, source listeners and home ownership after bi
  await Promise.all([app.close(),app.close()]);expect(adapter.client.open).toBe(false);expect(adapter.closed).toBe(2);
  const reopened=new Database(f.program.database,{readonly:true});expect(reopened.prepare('SELECT count(*) AS n FROM members').get()).toEqual({n:2});reopened.close();
 });
+it('preserves the startup and cleanup errors and releases the database and home lease', async () => {
+ const f = await fixture(), module = join(f.home, 'failing-close.mjs');
+ writeFileSync(module, "export let client; export default ({db}) => { client = db.$client; return {close() { throw Error('fixture adapter close'); }}; };", { mode: 0o600 });
+ writeFileSync(f.config, JSON.stringify({...f.program, adapters:module}), {mode:0o600});
+ const cause = Error('fixture late startup');
+ await expect(startSharedHome({home:f.home, port:0, stdout:() => { throw cause; }})).rejects.toMatchObject({
+  cause, errors:[cause, expect.objectContaining({message:'fixture adapter close'})],
+ });
+ const adapter = await import(pathToFileURL(module).href);
+ expect(adapter.client.open).toBe(false);
+ writeFileSync(f.config, JSON.stringify(f.program), {mode:0o600});
+ const restarted = await startSharedHome({home:f.home, port:0, stdout:() => {}});
+ await restarted.close();
+});
 it('refuses a public startup inventory without starting a listener',async()=>{
  const f=await fixture();chmodSync(f.config,0o644);
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
 });
-it('refuses public assets overlapping private files or a startup owner who is not an owner',async()=>{
+it('refuses public assets overlapping private files, or a household that has no owner',async()=>{
  const f=await fixture();
  writeFileSync(f.config,JSON.stringify({...f.program,webRoot:f.home}),{mode:0o600});
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
  const alias=join(f.home,'public-alias');symlinkSync(f.home,alias);
  writeFileSync(f.config,JSON.stringify({...f.program,webRoot:alias}),{mode:0o600});
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
- writeFileSync(f.config,JSON.stringify({...f.program,signinMember:'peer'}),{mode:0o600});
- await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('existing household owner');
+ // The program file names nobody for sign-in any more; a household with no owner at all is still refused.
+ writeFileSync(f.config,JSON.stringify(f.program),{mode:0o600});
+ const client=new Database(f.program.database);client.prepare("UPDATE members SET role='member'").run();client.close();
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('needs an owner');
  expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);
 });
-it('rechecks the configured startup owner after service adapters finish',async()=>{
+it('rechecks that the household has an owner after service adapters finish',async()=>{
  const f=await fixture(),module=join(f.home,'demote.mjs'),printed=vi.fn();
  writeFileSync(module,"export default ({db})=>{db.$client.prepare(\"UPDATE members SET role='member' WHERE id='owner'\").run();return {};};",{mode:0o600});
  writeFileSync(f.config,JSON.stringify({...f.program,adapters:module}),{mode:0o600});
- await expect(startSharedHome({home:f.home,port:0,stdout:printed})).rejects.toThrow('no longer allowed');expect(printed).not.toHaveBeenCalled();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+ await expect(startSharedHome({home:f.home,port:0,stdout:printed})).rejects.toThrow('needs an owner');expect(printed).not.toHaveBeenCalled();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
  const client=new Database(f.program.database,{readonly:true});expect(client.prepare('SELECT count(*) AS n FROM signin_links').get()).toEqual({n:0});client.close();
 });
 it('keeps existing precious source bytes unchanged through failed and complete startup',async()=>{
  const f=await fixture(),sources=f.program.memory.sources;mkdirSync(sources.commons.directory,{recursive:true});mkdirSync(sources.agents[0].directory,{recursive:true});
- const knowledge=new SqliteKnowledgeBackend({dbPath:sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'PRECIOUS FICTIONAL WORDS'});knowledge.close();
+ const knowledge=new KnowledgePages({dbPath:sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'PRECIOUS FICTIONAL WORDS'});knowledge.close();
  new PeopleStore({dbPath:sources.commons.people}).close();new PeopleStore({dbPath:sources.agents[0].memories}).close();new ProjectsStore({dbPath:sources.agents[0].memories}).close();
  const paths=[sources.commons.knowledge,sources.commons.people,sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
  const snapshots=()=>paths.map(path=>{const db=new Database(path,{readonly:true,fileMustExist:true});try{return db.serialize();}finally{db.close();}}),initial=snapshots();
@@ -149,7 +189,7 @@ it('runs file triggers, pauses, notices and recipient volume through the normal 
  });
  cleanups.push(async()=>{process.emit('SIGTERM');expect(await pending).toBe(0);});
  const url=await Promise.race([started,pending.then(code=>{throw Error(`CLI stopped (${code}): ${errors.join('')}`);})]);
- const login=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});
+ const login=await fetch(url+(await requestLocalLink(f.home,{request:'link'})).path,{method:'POST',redirect:'manual',headers:{origin:url}});
  expect(login.status).toBe(303);const cookie=login.headers.get('set-cookie')!.split(';',1)[0];
  const headers={cookie,origin:url,'content-type':'application/json'};
  const command=async(name:string,input:unknown,id:string)=>{
@@ -208,4 +248,55 @@ it('persists a narrow outside-program token and an empty grant marker through no
  await app.close();app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});expect((await read()).errors).toBeDefined();expect((await call('/api/tasks/command',command,headers)).status).toBe(403);cookie=await signedIn(f.home,app.url);
  const metadata=await(await call('/graphql',{query:'{ programSetup { tokens { fingerprint records operations } } }'},{cookie})).json();expect(metadata.data.programSetup.tokens).toContainEqual({fingerprint:value.fingerprint,records:[],operations:[]});
  expect((await call('/api/token/revoke',{id:'revoke-persistent-program',input:{fingerprint:value.fingerprint}},{cookie})).status).toBe(200);expect((await call('/graphql',{query:'{ tasks { id } }'},headers)).status).toBe(403);
+});
+it('makes no credential at start, and keeps one token row per member for every local sign-in the operator asks for',async()=>{
+ const f=await fixture(),printed:string[]=[];
+ const rows=()=>{const client=new Database(f.program.database,{readonly:true});try{return {tokens:client.prepare('SELECT label,kind,member,expires_at AS expiresAt,revoked_at AS revokedAt FROM tokens ORDER BY label').all(),links:(client.prepare('SELECT count(*) AS n FROM signin_links').get() as {n:number}).n,sessions:(client.prepare('SELECT count(*) AS n FROM sessions').get() as {n:number}).n};}finally{client.close();}};
+ let app=await startSharedHome({home:f.home,port:0,stdout:text=>printed.push(text)});cleanups.push(()=>app.close());
+ await app.close();app=await startSharedHome({home:f.home,port:0,stdout:text=>printed.push(text)});
+ // Two starts: two hints, no link, no token row.
+ expect(printed.join('')).not.toContain('/login/');expect(printed).toHaveLength(2);expect(rows()).toEqual({tokens:[],links:0,sessions:0});
+ // The operator asks, three times for the configured owner and once for another member.
+ const first=await requestLocalLink(f.home,{request:'link'});expect(first.url).toBe(app.url);
+ await requestLocalLink(f.home,{request:'link',label:'Second'});await signedIn(f.home,app.url);
+ const cookie=await signedIn(f.home,app.url,'peer');
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'peer'}});
+ expect(rows()).toEqual({links:2,sessions:2,tokens:[
+  {label:'Local sign-in: owner',kind:'owner',member:'owner',expiresAt:null,revokedAt:null},
+  {label:'Local sign-in: peer',kind:'owner',member:'peer',expiresAt:null,revokedAt:null}]});
+ // No link lasts longer than a link's own lifetime, and the operator cannot ask for more.
+ await expect(requestLocalLink(f.home,{request:'link',ttl:301})).rejects.toThrow();
+ const writable=()=>{const client=new Database(f.program.database);client.function('loom_now',()=>new Date().toISOString());return client;};
+ const client=writable();
+ try{
+  const ends=(client.prepare('SELECT expires_at AS at FROM signin_links ORDER BY expires_at').all() as {at:string}[]).map(row=>Date.parse(row.at)-Date.now());
+  for(const left of ends){expect(left).toBeGreaterThan(290_000);expect(left).toBeLessThanOrEqual(300_000);}
+  // Revoking the row ends what rode on it; the next local sign-in gets a new one.
+  client.prepare("UPDATE tokens SET revoked_at=? WHERE label='Local sign-in: peer'").run(new Date().toISOString());
+ }finally{client.close();}
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:null});
+ await signedIn(f.home,app.url,'peer');
+ expect(rows().tokens.filter(row=>(row as {member:string}).member==='peer')).toHaveLength(2);
+ // Nobody the household does not have, and no default once the configured owner is no longer one.
+ await expect(requestLocalLink(f.home,{request:'link',member:'nobody'})).rejects.toThrow('Local sign-in refused');
+ const demote=writable();demote.prepare("UPDATE members SET role='member' WHERE id='owner'").run();demote.close();
+ await expect(requestLocalLink(f.home,{request:'link'})).rejects.toThrow('Local sign-in refused');
+ await signedIn(f.home,app.url,'owner');
+});
+it('signs an automated browser in for hours when the operator says the link is for one, whatever it calls itself',async()=>{
+ const f=await fixture(),app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});cleanups.push(()=>app.close());
+ const link=await requestLocalLink(f.home,{request:'link',agent:true});
+ const login=await fetch(app.url+link.path,{method:'POST',redirect:'manual',headers:{origin:app.url,'user-agent':'Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0 Safari/537.36'}});
+ expect(login.status).toBe(303);expect(login.headers.get('set-cookie')).toContain('Max-Age=21600');
+ const cookie=login.headers.get('set-cookie')!.split(';',1)[0];
+ // It is that member's browser, and it can make no link of its own.
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'owner'}});
+ expect((await fetch(app.url+'/api/signin/link',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:'{}'})).status).toBe(403);
+});
+it('tells the operator plainly when there is no running program to ask for a sign-in link',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'loom-nothing-running-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));chmodSync(home,0o700);
+ const out:string[]=[],errors:string[]=[];
+ expect(await signin(['--home',home],{stdout:text=>out.push(text),stderr:text=>errors.push(text)})).toBe(1);
+ expect(out).toEqual([]);expect(errors.join('')).toContain('No sign-in link');
+ expect(await signin(['--bogus'],{stdout:text=>out.push(text),stderr:text=>errors.push(text)})).toBe(2);
 });

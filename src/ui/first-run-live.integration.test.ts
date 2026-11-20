@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { chromium } from 'playwright-core';
 
-import { run } from '../cli/serve.js';
+import {serve as run,signin} from '../index.js';
 import { FakeClock,clock as normalClock } from '../core/clock.js';
 // In-process private holder fixture; no real child or fake frontend.
 vi.mock('../shared-holder-process.js',async()=>({startSharedHolder:(await import('../../test/fixtures/shared-holder.js')).inProcessSharedHolder}));
@@ -30,7 +30,9 @@ it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('f
   const paths:string[]=[],frames:string[]=[],errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
   page.on('websocket',socket=>{paths.push(new URL(socket.url()).pathname);socket.on('framereceived',frame=>{if(new URL(socket.url()).pathname==='/graphql')frames.push(String(frame.payload));});});
-  await page.goto(printed.trim());
+  // Startup prints no credential; the operator asks the running program for a link.
+  expect(printed).not.toContain('/login/');let link='';expect(await signin(['--home',home],{stdout:text=>{link+=text;},stderr:()=>{}})).toBe(0);
+  await page.goto(link.trim());
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await expect.poll(()=>frames.some(frame=>frame.includes('connection_ack'))).toBe(true);
   await expect.poll(()=>frames.some(frame=>frame.includes('"next"')&&frame.includes('"revision":1'))).toBe(true);
