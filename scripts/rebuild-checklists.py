@@ -96,6 +96,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})
  if f.stem=='secrets':add('The owner can change the household default from Ask to Never in Settings and it persists after reload.','',{'kind':'action','action':'secretDefault'})
+ if f.stem=='approvals':
+  for row in rows:
+   if row['promise'].startswith('An open household approval card can show an advisory caution'):row['probe']={'kind':'action','action':'approvalCaution'}
  if f.stem in ['approvals','inbox']:
   for row in rows:
    if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
