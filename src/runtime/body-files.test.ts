@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { BodyFileRefused, bodyFileReader } from './body-files.js';
+import { BodyFileRefused, bodyFileReader, bodyNoteFileReader } from './body-files.js';
+import { MAX_FILE_BYTES } from '../notes.js';
 import { SEND_FILES, SEND_FILES_BYTES } from '../pieces/bridges/send-file-limit.js';
 
 const made: string[] = [];
@@ -77,4 +78,14 @@ it('holds a post to its count and its bytes', () => {
 it('has no area when its directories do not exist', () => {
   const read = bodyFileReader('/nonexistent-loom-cwd', ['/nonexistent-loom-cwd', undefined]);
   expect(() => read(['/etc/hostname'])).toThrow(BodyFileRefused);
+});
+
+it('reads one named note attachment, including empty and the full size limit',()=>{
+ const f=fixture(),read=bodyNoteFileReader(f.cwd,[f.cwd,f.scratch]);
+ const path=join(f.scratch,'sample file.bin');
+ writeFileSync(path,Buffer.alloc(0));expect(read(path).contents.length).toBe(0);
+ writeFileSync(path,Buffer.alloc(MAX_FILE_BYTES,0xfc));
+ const file=read(path);expect(file.name).toBe('sample file.bin');expect(file.contents.length).toBe(MAX_FILE_BYTES);
+ writeFileSync(path,Buffer.alloc(MAX_FILE_BYTES+1));expect(()=>read(path)).toThrow(BodyFileRefused);
+ expect(()=>read(join(f.outside,'secret.key'))).toThrow(BodyFileRefused);
 });

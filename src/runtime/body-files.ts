@@ -17,39 +17,69 @@
  */
 import { closeSync, constants, fstatSync, openSync, readSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, resolve, sep } from 'node:path';
+import { MAX_FILE_BYTES } from '../notes.js';
 import { SEND_FILES, SEND_FILES_BYTES, sendFileName } from '../pieces/bridges/send-file-limit.js';
 
 export class BodyFileRefused extends Error {}
 export type BodyFileReader = (paths: readonly string[]) => { name: string; contents: Buffer }[];
 
-/** A reader for one body. `areas` are the directories the body may send from; one that does not exist is no area. */
-export function bodyFileReader(cwd: string, areas: readonly (string | undefined)[]): BodyFileReader {
-  const roots = areas.flatMap(area => { try { return area ? [realpathSync(area)] : []; } catch { return []; } });
-  const inside = (path: string) => roots.some(root => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep));
-  return paths => {
-    if (!paths.length || paths.length > SEND_FILES) throw new BodyFileRefused(`A post carries at most ${SEND_FILES} files`);
-    const files: { name: string; contents: Buffer }[] = []; let total = 0;
+function workingFileReader(cwd:string,areas:readonly (string|undefined)[]){
+  const roots=areas.flatMap(area=>{try{return area?[realpathSync(area)]:[];}catch{return [];}});
+  const inside=(path:string)=>roots.some(root=>path===root||path.startsWith(root.endsWith(sep)?root:root+sep));
+  return (given:string,maxBytes:number,allowEmpty:boolean)=>{
+    if (typeof given !== 'string' || !given || given.includes('\0')) throw new BodyFileRefused('A file is named by its path');
+    let handle: number;
+    try { handle = openSync(isAbsolute(given) ? given : resolve(cwd, given), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch { throw new BodyFileRefused(`No such file, or a link: ${given}`); }
     try {
-      for (const given of paths) {
-        if (typeof given !== 'string' || !given || given.includes('\0')) throw new BodyFileRefused('A file is named by its path');
-        let handle: number;
-        try { handle = openSync(isAbsolute(given) ? given : resolve(cwd, given), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
-        catch { throw new BodyFileRefused(`No such file, or a link: ${given}`); }
-        try {
-          const stat = fstatSync(handle);
-          if (!stat.isFile()) throw new BodyFileRefused(`Not a file: ${given}`);
-          if (stat.nlink !== 1) throw new BodyFileRefused(`A file with more than one name is not posted: ${given}`);
-          let real: string;
-          try { real = readlinkSync(`/proc/self/fd/${handle}`); } catch { throw new BodyFileRefused('File not available'); }
-          if (!isAbsolute(real) || !inside(real)) throw new BodyFileRefused(`Not inside this body's working area: ${given}`);
-          if (!stat.size || total + stat.size > SEND_FILES_BYTES) throw new BodyFileRefused(`A post's files hold at most ${SEND_FILES_BYTES} bytes together, and none is empty: ${given}`);
-          const contents = Buffer.alloc(stat.size); let read = 0;
-          while (read < stat.size) { const n = readSync(handle, contents, read, stat.size - read, read); if (!n) break; read += n; }
-          if (read !== stat.size) throw new BodyFileRefused(`Could not read: ${given}`);
-          total += stat.size; files.push({ name: sendFileName(basename(real)), contents });
-        } finally { closeSync(handle); }
+      const stat = fstatSync(handle);
+      if (!stat.isFile()) throw new BodyFileRefused(`Not a file: ${given}`);
+      if (stat.nlink !== 1) throw new BodyFileRefused(`A file with more than one name is not posted: ${given}`);
+      let real: string;
+      try { real = readlinkSync(`/proc/self/fd/${handle}`); } catch { throw new BodyFileRefused('File not available'); }
+      if (!isAbsolute(real) || !inside(real)) throw new BodyFileRefused(`Not inside this body's working area: ${given}`);
+      if(stat.size>maxBytes||(!allowEmpty&&!stat.size)){
+        const reason=allowEmpty?'Attachment exceeds the note file size limit':`A post's files hold at most ${SEND_FILES_BYTES} bytes together, and none is empty`;
+        throw new BodyFileRefused(reason+': '+given);
+      }
+      const contents=Buffer.alloc(stat.size);
+      try{
+        let read=0;
+        while(read<contents.length){
+          const count=readSync(handle,contents,read,contents.length-read,read);
+          if(!count)throw new BodyFileRefused('File changed during read');
+          read+=count;
+        }
+        if(readSync(handle,Buffer.alloc(1),0,1,read))throw new BodyFileRefused('File changed during read');
+        return {name:basename(real),contents};
+      }catch(error){contents.fill(0);throw error;}
+    }finally{closeSync(handle);}
+  };
+}
+
+/** The one file named for a note, including a zero-byte attachment. */
+export function bodyNoteFileReader(cwd:string,areas:readonly (string|undefined)[]){
+  const read=workingFileReader(cwd,areas);
+  return (path:string)=>read(path,MAX_FILE_BYTES,true);
+}
+
+/** A reader for one body. Areas are its working and scratch directories. */
+export function bodyFileReader(cwd:string,areas:readonly (string|undefined)[]):BodyFileReader{
+  const read=workingFileReader(cwd,areas);
+  return paths=>{
+    if(!paths.length||paths.length>SEND_FILES)throw new BodyFileRefused(`A post carries at most ${SEND_FILES} files`);
+    const files:{name:string;contents:Buffer}[]=[];
+    let remaining=SEND_FILES_BYTES;
+    try{
+      for(const path of paths){
+        const file=read(path,remaining,false);
+        files.push({name:sendFileName(file.name),contents:file.contents});
+        remaining-=file.contents.length;
       }
       return files;
-    } catch (error) { for (const file of files) file.contents.fill(0); throw error instanceof BodyFileRefused ? error : new BodyFileRefused('File not available'); }
+    }catch(error){
+      for(const file of files)file.contents.fill(0);
+      throw error instanceof BodyFileRefused?error:new BodyFileRefused('File not available');
+    }
   };
 }
