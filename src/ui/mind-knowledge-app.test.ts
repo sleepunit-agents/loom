@@ -6,8 +6,9 @@ const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,detail:{rec
 vi.mock('../../web/src/memory/commands',()=>({memoryCall:f.call}));
 vi.mock('../../web/src/memory/query',()=>({useMemoryQuery:(s:any)=>s?.query.includes('HouseholdTimezone')?{status:'live',value:'America/Chicago'}:s?.query.includes('MemoryKnowledgeAccess')?{status:f.access.status,value:f.access.records[0]}:s?.query.includes('query MemoryKnowledge {')?{status:f.feed.status,value:{pages:f.feed.records}}:{status:f.detail.status,value:f.detail.records[0]??null}}));
 vi.mock('../../web/src/kit',()=>({
+  Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:'section',Facts:'dl',Fact:'dd',
   Markdown:(p:{text:string})=>h('div',null,p.text),
-  Split:(p:{list:unknown;reader:unknown;listTop:unknown})=>h('div',null,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;meta?:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title,p.meta),
+  Split:(p:{list:unknown;reader:unknown;listAction:unknown})=>h('div',null,p.listAction,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;meta?:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title,p.meta),
   Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',
 }));
 import Knowledge from '../../web/src/pieces/knowledge/index';
