@@ -71,7 +71,11 @@
     {
       "id": "memory-013",
       "promise": "A change saves the earlier version first. Loom keeps the newest ten versions of each memory, knowledge page and person card, and any of them can be restored.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "memoryRevisions"
+      }
     },
     {
       "id": "memory-014",

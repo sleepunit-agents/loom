@@ -242,6 +242,12 @@ export async function* walkthroughSteps(output) {
    report.actions.noteLifetimes=await noteLifetimeEvidence();
   } catch(error) { report.actions.noteLifetimes={ok:false,error:String(error)}; }
   save();yield {phase:'note-lifetimes',actions:safeReport(report.actions)};
+  phase='memory revisions';
+  try {
+   const {memoryRevisionEvidence}=await import('./rebuild-memory-revisions.mjs');
+   report.actions.memoryRevisions=await memoryRevisionEvidence();
+  } catch(error) { report.actions.memoryRevisions={ok:false,error:String(error)}; }
+  save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
   phase='migration measurements';
   try {
    const {migrationEvidence}=await import('./rebuild-migration-evidence.mjs');
