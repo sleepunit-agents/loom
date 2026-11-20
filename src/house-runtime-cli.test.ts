@@ -23,6 +23,14 @@ it('records a CLI update in its assigned Comms conversation and leaves the mail 
  const protectedWords='fixture-private-value';
  const tools=await bodySecretTools({...access,houseSend:{venue:'loom',denied:[],call:port.call},alsoSecret:()=>[Buffer.from(protectedWords)]});clean.push(tools.close);
  const env={LOOM_BODY_HOUSE_SEND:tools.houseSend};
+ const [portNumber,sendKey]=tools.houseSend!.split('.');
+ for(const route of ['/house/note','/mcp']){
+  const response=await fetch('http://127.0.0.1:'+portNumber+route,{method:'POST',headers:{authorization:'Bearer '+sendKey}});
+  expect(response.status).toBe(403);
+ }
+ const disabled=await bodySecretTools({...access,houseSend:{venue:'loom',denied:['mcp__loom_secrets__runtime_*'],call:port.call}});
+ clean.push(disabled.close);
+ expect(disabled.houseSend).toBeUndefined();
  const execute=async(text:string,ref=randomUUID(),conversation=cv)=>{
   let stdout='';
   const code=await houseRuntimeCli(['send','--conversation',conversation,'--text',text,'--id',ref],{stdout:s=>{stdout+=s;},stderr(){}},env);
