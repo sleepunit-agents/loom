@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { AgentFiles } from './sources.js';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
+import {batchPersonEvidence,batchPersonMerges,batchPersonReferences,followPersonMerge} from './people-list-rows.js';
 import {resolveCardReference} from './card-references.js';
 import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
 import {MAX_REVISIONS,fieldState,freshUntil} from '../../backends/cards.js';
@@ -45,70 +46,127 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   // sharing facts are a read of whole tables, and nothing in a listing writes, so a listing reads them once and
   // parses each agent's projects once (`held`). A single read outside a listing asks afresh every time.
   interface ProjectCard {slug:string;name:string;status:string;links:{aliases?:string[]}}
-  interface Held {sharing:Sharing;projects:Map<string,ProjectCard[]>}
+  interface ProjectSource {agent:string;cards:ProjectCard[];relationship:(slug:string)=>string|undefined}
+  interface Held {viewer:Viewer;sharing:Sharing;stores:Map<string,Database>;projectSources?:ProjectSource[];tables:Map<Database,Map<string,boolean>>}
   let held:Held|undefined;
   const sharing=()=>held?.sharing??options.sharing();
   const allowed = (v:Viewer,agent?:string)=>mayReadPerson(v,agent,sharing());
+  const stores=()=>held?.stores??sources;
+  function hasTable(db:Database,name:string){
+    if(!held)return has(db,name);
+    let tables=held.tables.get(db);
+    if(!tables){tables=new Map();held.tables.set(db,tables);}
+    let exists=tables.get(name);
+    if(exists===undefined){exists=has(db,name);tables.set(name,exists);}
+    return exists;
+  }
+  function projectSources(viewer:Viewer):ProjectSource[]{
+    const listing=held?.viewer===viewer?held:undefined;
+    if(listing?.projectSources)return listing.projectSources;
+    const result:ProjectSource[]=[];
+    for(const [agent,db] of stores()){
+      if(agent==='commons'||!allowed(viewer,agent)||!maySee(viewer,{type:'project',agent},sharing())||!hasTable(db,'projects'))continue;
+      const cards=(db.prepare('SELECT card_json FROM projects WHERE archived_at IS NULL').all() as {card_json:string}[]).map(row=>JSON.parse(row.card_json) as ProjectCard);
+      let relationship:ProjectSource['relationship']=()=>undefined;
+      if(hasTable(db,'people')){
+        if(listing){
+          const rows=db.prepare('SELECT slug,card_json FROM people WHERE archived_at IS NULL').all() as {slug:string;card_json:string}[];
+          const bySlug=new Map(rows.map(row=>[row.slug,row.card_json]));
+          relationship=slug=>bySlug.get(slug);
+        }else{
+          const statement=db.prepare('SELECT card_json FROM people WHERE slug=? AND archived_at IS NULL');
+          relationship=slug=>(statement.get(slug) as {card_json:string}|undefined)?.card_json;
+        }
+      }
+      result.push({agent,cards,relationship});
+    }
+    if(listing)listing.projectSources=result;
+    return result;
+  }
   const available=(source:string)=>{if(failed.has(source))throw Error('People source unavailable');};
   function resolve(db: Database, slug: string) {
-    if (!has(db,'person_merges')) return slug;
-    const seen = new Set<string>();
-    while (!seen.has(slug) && seen.size < 16) {
-      seen.add(slug);
-      const next = db.prepare('SELECT into_slug FROM person_merges WHERE from_slug=?').get(slug) as {into_slug:string} | undefined;
-      if (!next) break;
-      slug = next.into_slug;
-    }
-    return slug;
+    if (!hasTable(db,'person_merges')) return slug;
+    const statement=db.prepare('SELECT into_slug FROM person_merges WHERE from_slug=?');
+    return followPersonMerge(slug,s=>(statement.get(s) as {into_slug:string}|undefined)?.into_slug);
   }
   const read = (id: string, viewer: Viewer): PersonRecord | undefined => {
     const colon = id.indexOf(':'); if (colon < 1) return;
     const source = id.slice(0,colon), asked = id.slice(colon+1), agent = source === 'commons' ? undefined : source;
     if (!allowed(viewer,agent)) return;
     available(source);
-    const db = sources.get(source); if (!db || !has(db,'people')) return;
+    const db = stores().get(source); if (!db || !hasTable(db,'people')) return;
     return db.transaction(() => {
       // Directory redirects also select the corresponding authorized relationship.
       const reference=agent?resolveCardReference(db,'person',asked):asked;
       let slug=reference;
-      const directory=sources.get('commons');
+      const directory=stores().get('commons');
       try {
         available('commons');
         slug=directory?resolve(directory,reference):reference;
         if(agent)slug=resolve(db,slug);
-        if(agent&&directory&&has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at)return;}
+        if(agent&&directory&&hasTable(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at)return;}
       } catch(error) {if(allowed(viewer))throw error;slug=resolve(db,reference);}
       const row = db.prepare('SELECT slug,card_json,updated,synthesized_at,archived_at FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as Row | undefined;
       if (!row) return;
-      const card = JSON.parse(row.card_json) as PersonCard;
       const now = options.now(), nowIso = new Date(now).toISOString();
       let evidence: PersonEvidence[] = [], newer = 0;
-      if (agent && maySee(viewer,{type:'memory',agent},sharing()) && has(db,'memories')) {
-        evidence = db.prepare(`SELECT created,category,title,content FROM memories WHERE json_extract(metadata,'$.person')=? AND category IN ('user','feedback') AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) ORDER BY created DESC LIMIT 40`).all(slug,nowIso) as PersonEvidence[];
+      if (agent && maySee(viewer,{type:'memory',agent},sharing()) && hasTable(db,'memories')) {
+        evidence = db.prepare(`SELECT created,category,title,content FROM memories WHERE json_extract(metadata,'$.person')=? AND category IN ('user','feedback') AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) ORDER BY created DESC,title,category,content LIMIT 40`).all(slug,nowIso) as PersonEvidence[];
         newer = (db.prepare(`SELECT count(*) AS n FROM memories WHERE json_extract(metadata,'$.person')=? AND category='user' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) AND (? IS NULL OR julianday(created)>julianday(?))`).get(slug,nowIso,row.synthesized_at,row.synthesized_at) as {n:number}).n;
       }
-      const projects:PersonRecord['projects']=[];
-      for(const [agentId,store] of sources) {
-        if(agentId==='commons'||!allowed(viewer,agentId)||!maySee(viewer,{type:'project',agent:agentId},sharing())||!has(store,'projects')) continue;
-        const rel=has(store,'people') ? store.prepare('SELECT card_json FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as {card_json:string}|undefined : undefined;
-        const where={...card.where,...(rel?(JSON.parse(rel.card_json) as PersonCard).where:{})};
-        const parsed=()=>(store.prepare('SELECT card_json FROM projects WHERE archived_at IS NULL').all() as {card_json:string}[]).map(project=>JSON.parse(project.card_json) as ProjectCard);
-        let cards=held?.projects.get(agentId);
-        if(!cards){cards=parsed();held?.projects.set(agentId,cards);}
-        for(const p of cards) {
-          if(agentId===slug || [p.slug,...(p.links.aliases??[])].some(key=>Object.hasOwn(where,key.replace(/-/g,'_')))) projects.push({agent:agentId,slug:p.slug,name:p.name,status:p.status,...(options.projectHref?.(agentId,p.slug)?{href:options.projectHref(agentId,p.slug)}:{})});
-        }
-      }
-      const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: Array.isArray(field.value) ? field.value.join(', ') : String(field.value),...(field.label?{label:field.label}:{}),
-        ...(field.source ? {source:field.source} : {}), ...(field.verified_at ? {verifiedAt:field.verified_at} : {}),
-        state: ({ok:'fresh',stale:'stale',unverified:'unverified'} as const)[fieldState(field,now).kind] }));
-      return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,
-        projects,...(!agent && Object.hasOwn(sharing().members,slug) ? {ownership:sharing().members[slug]}:{}),
-        kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== reference ? {mergedFrom:reference} : {}) };
+      return personRecord(id,reference,agent,row,viewer,now,evidence,newer);
     })();
   };
+  function personRecord(id:string,reference:string,agent:string|undefined,row:Row,viewer:Viewer,now:number,evidence:PersonEvidence[],newer:number):PersonRecord {
+    const slug=row.slug, card=JSON.parse(row.card_json) as PersonCard;
+    const projects:PersonRecord['projects']=[];
+    for(const {agent:agentId,cards,relationship} of projectSources(viewer)) {
+      const rel=relationship(slug);
+      const where={...card.where,...(rel?(JSON.parse(rel) as PersonCard).where:{})};
+      for(const p of cards) {
+        if(agentId===slug || [p.slug,...(p.links.aliases??[])].some(key=>Object.hasOwn(where,key.replace(/-/g,'_')))) projects.push({agent:agentId,slug:p.slug,name:p.name,status:p.status,...(options.projectHref?.(agentId,p.slug)?{href:options.projectHref(agentId,p.slug)}:{})});
+      }
+    }
+    const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: Array.isArray(field.value) ? field.value.join(', ') : String(field.value),...(field.label?{label:field.label}:{}),
+      ...(field.source ? {source:field.source} : {}), ...(field.verified_at ? {verifiedAt:field.verified_at} : {}),
+      state: ({ok:'fresh',stale:'stale',unverified:'unverified'} as const)[fieldState(field,now).kind] }));
+    return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,
+      projects,...(!agent && Object.hasOwn(sharing().members,slug) ? {ownership:sharing().members[slug]}:{}),
+      kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== reference ? {mergedFrom:reference} : {}) };
+  }
+  function listSource(source:string,db:Database,viewer:Viewer,now:number):PersonRecord[]{
+    if(!hasTable(db,'people'))return [];
+    const rows=db.prepare('SELECT slug,card_json,updated,synthesized_at,archived_at FROM people WHERE archived_at IS NULL ORDER BY slug').all() as Row[];
+    if(!rows.length)return [];
+    const agent=source==='commons'?undefined:source;
+    const bySlug=new Map(rows.map(row=>[row.slug,row]));
+    const asked=rows.map(row=>row.slug);
+    const references=agent?batchPersonReferences(db,asked):asked;
+    const merged=(db:Database,slugs:string[])=>hasTable(db,'person_merges')?batchPersonMerges(db,slugs):slugs;
+    let slugs=references;
+    let archived=new Set<string>();
+    try {
+      available('commons');
+      const directory=stores().get('commons');
+      if(directory)slugs=merged(directory,slugs);
+      if(agent)slugs=merged(db,slugs);
+      if(agent&&directory&&hasTable(directory,'people')){
+        const retired=directory.prepare("SELECT slug FROM people WHERE archived_at IS NOT NULL AND archived_at<>'' AND slug IN (SELECT value FROM json_each(?))").all(JSON.stringify(slugs)) as {slug:string}[];
+        archived=new Set(retired.map(row=>row.slug));
+      }
+    }catch(error){if(allowed(viewer))throw error;slugs=merged(db,references);}
+    const visible=[...new Set(slugs.filter(slug=>bySlug.has(slug)&&!archived.has(slug)))];
+    if(!visible.length)return [];
+    const evidence=agent&&maySee(viewer,{type:'memory',agent},sharing())&&hasTable(db,'memories')?batchPersonEvidence(db,visible,now):undefined;
+    return rows.flatMap((asked,i)=>{
+      const slug=slugs[i]!,row=bySlug.get(slug);
+      if(!row||archived.has(slug))return [];
+      const group=evidence?.get(slug);
+      return [personRecord(source+':'+asked.slug,references[i]!,agent,row,viewer,now,group?.evidence??[],group?.newer??0)];
+    });
+  }
   function sourceIds(source:string,db:Database) {
-    return has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${source}:${r.slug}`):[];
+    return hasTable(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${source}:${r.slug}`):[];
   }
   function ids(scope?:string) {
     if(scope!==undefined)return scope?[scope]:[];
@@ -151,11 +209,12 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer,given?:Sharing) {
       // Synchronous from here to the end: no write of this program can fall inside it.
-      const outer=held;held={sharing:given??options.sharing(),projects:new Map()};
+      const outer=held;held={viewer,sharing:given??options.sharing(),stores:new Map(sources),tables:new Map()};
       try {
         for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);
-        return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source))
-          .flatMap(([source,db])=>sourceIds(source,db).flatMap(id=>{const row=read(id,viewer);return row?[row]:[];}));
+        const now=options.now();
+        return [...held.stores].filter(([source])=>allowed(viewer,source==='commons'?undefined:source))
+          .flatMap(([source,db])=>db.transaction(()=>listSource(source,db,viewer,now))());
       } finally {held=outer;}
     },
     history(id:string,viewer:Viewer) {
