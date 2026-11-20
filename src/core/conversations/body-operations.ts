@@ -53,7 +53,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  const heldMail=(viewer:Viewer,items:readonly string[])=>{const found=current(viewer);return !!found&&items.every(id=>{try{const item=conversationsService.item(id);return item.conversation===found.cv.id&&item.toKind==='agent'&&item.to===found.cv.agent&&item.job===found.job.id&&['taken','done'].includes(item.state)&&sameMailScope(item,found.cv);}catch{return false;}});};
  const mailReport={input:z.object({items:z.array(z.string().min(1)).min(1).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:(viewer:Viewer,input:{items:string[]})=>heldMail(viewer,input.items)};
  operations.register(operation({...common,...mailReport,name:'conversation.accept',
-  run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items)mail.accept(cv.id,job.id,id);ctx.changed('messages',cv.id);return {saved:true as const};},
+  run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.accept(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},
  }));
  operations.register(operation({...common,...mailReport,name:'conversation.confirm',
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.confirm(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},

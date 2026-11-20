@@ -5,7 +5,7 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, bridgeConnections, bridgeIncoming, conversations, household, inbox, inboxReads, memberAgents, members, messages, secrets, threads } from '../data/schema.js';
+import { actionResults, agents, bridgeConnections, bridgeIncoming, bridgeSends, conversations, household, inbox, inboxReads, memberAgents, members, messages, secrets, threads } from '../data/schema.js';
 import { talkVisibility } from '../data/conversation-visibility.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
@@ -544,4 +544,29 @@ it('gives a bridge direct message to the agent\'s owners and not to the agent\'s
   expect(await service.body(alice, dm.id)).toMatchObject({ words: 'dm words' });
   // The owner role alone does not own the agent.
   expect(service.item(owner, dm.id)).toBeNull(); expect(service.item(owner, room.id)?.id).toBe(room.id);
+});
+
+it('reports receipt and sent reply only for the latest visible bridge message from this viewer',async()=>{
+ const f=await fixture(),cv=f.thread.conversation;
+ f.db.insert(secrets).values({name:'TOKEN',description:'',changedAt:f.comms.now(),changedBy:'alice'}).run();
+ f.db.insert(bridgeConnections).values({id:'discord',platform:'discord',workspace:'ws',botUser:'bot',agent:'art',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:f.comms.now()}).run();
+ const send=(id:string,fromId:string)=>{
+  const at=f.comms.now();
+  f.db.insert(bridgeIncoming).values({id,connection:'discord',channel:'room',isDm:false,user:fromId,text:'Fictional words',postedAt:at,receivedAt:at,state:'delivered',conversation:cv}).run();
+  return f.comms.threads.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'discord',sourceId:id,fromKind:'person',fromId,words:'Fictional words',refs:[id]});
+ };
+ const first=send('one','alice');
+ const receipt=()=>f.service.latestBridgeReceipt(alice,cv);
+ expect(receipt()).toMatchObject({id:first.id,acceptedAt:null,replied:false});
+ const acceptedAt='2026-11-14T18:03:00.000Z';
+ f.db.update(inbox).set({firstAcceptedAt:acceptedAt}).where(eq(inbox.id,first.id)).run();
+ f.db.insert(bridgeSends).values({id:'reply',incoming:'one',connection:'discord',channel:'room',conversation:cv,text:'Fictional answer',state:'pending',createdAt:acceptedAt}).run();
+ expect(receipt()).toMatchObject({acceptedAt,replied:false});
+ f.db.update(bridgeSends).set({state:'sent'}).where(eq(bridgeSends.id,'reply')).run();
+ expect(receipt()).toMatchObject({acceptedAt,replied:true});
+ send('two','bob');
+ expect(receipt()?.id).toBe(first.id);
+ const latest=send('three','alice');
+ expect(receipt()).toMatchObject({id:latest.id,acceptedAt:null,replied:false});
+ f.revoke();expect(receipt()).toBeNull();
 });

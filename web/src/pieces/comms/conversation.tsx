@@ -22,10 +22,14 @@ export function ConversationActivity({conversation}:{conversation:string}){
  // so kept steps are never another conversation's.
  const result=useDataQuery<ConversationActivityData>(conversationActivityQuery,{id:conversation,before},{keep:true});
  const activity=result.status==='live'?result.data?.activity:undefined;
+ const receipt=activity&&result.data?.latestBridgeReceipt;
  const steps=activity?.turnsByConversation??[];
  const timezone=result.status==='live'?result.data?.deskTime?.timezone:undefined;
  return <article className="flex h-full min-h-0 flex-col">
-  <header className="grid gap-2 border-b p-4"><h1>Conversation activity</h1>{activity&&<p>{activity.label}</p>}</header>
+  <header className="grid gap-2 border-b p-4"><h1>Conversation activity</h1>{activity&&<p>{activity.label}</p>}
+   {receipt&&<p>Your message at {fullTime(receipt.receivedAt,timezone)} · {receipt.acceptedAt
+    ? receipt.agent+' received it at '+fullTime(receipt.acceptedAt,timezone) : 'No body acknowledgment recorded'}
+    {' · '}{receipt.replied?'Reply sent':'No sent reply recorded'}</p>}</header>
   <div className="min-h-0 flex-1 overflow-auto p-4" aria-label="Conversation activity" aria-busy={result.settling||undefined}>
    {result.status==='loading'?<Loading label="Opening conversation activity…"/>:result.status!=='live'?<Error text="Waiting for your signed-in connection."/>:!activity?<Empty title="Conversation unavailable"/>:<>
     <div className="flex gap-2"><Button variant="outline" onClick={()=>setBefore(steps.at(-1)!.seq)} disabled={steps.length<50||result.settling}>Load earlier activity</Button>{before!==2147483647&&<Button variant="outline" onClick={()=>setBefore(2147483647)}>Latest activity</Button>}</div>
