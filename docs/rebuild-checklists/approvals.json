@@ -2,7 +2,7 @@
   "page": "approvals",
   "title": "Approvals",
   "ownerTask": "t-2239",
-  "sourceSha256": "690ef82fdb78a05c35b3dfe96c266e089d788c91f9d26cb3c7651510217c9472",
+  "sourceSha256": "ebdaf89ab3196eb24ed7800ab73f41194402fc144638538ec87440f6279d248d",
   "promises": [
     {
       "id": "approvals-001",
@@ -159,6 +159,11 @@
     },
     {
       "id": "approvals-016",
+      "promise": "An open household approval card can show an advisory caution based on the proposal checks. Allow always checks again and can refuse for additional reasons. For example, Tempo can refuse a repeating schedule for today when its last scheduled time has passed. The caution can be up to 60 seconds stale while the card stays open. It refreshes on focus, on the timer, and after a refused Allow. Both answer buttons stay available.",
+      "source": "docs/how-it-works/site/approvals.html"
+    },
+    {
+      "id": "approvals-017",
       "promise": "a Three labels. An approval carries the agent asking, the project it concerns, and a member when it is private to them.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -167,7 +172,7 @@
       }
     },
     {
-      "id": "approvals-017",
+      "id": "approvals-018",
       "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees approvals in their projects and approvals of agents they own. Private to a member means that member plus household owners.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -176,7 +181,7 @@
       }
     },
     {
-      "id": "approvals-018",
+      "id": "approvals-019",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -185,7 +190,7 @@
       }
     },
     {
-      "id": "approvals-019",
+      "id": "approvals-020",
       "promise": "The pending request shows its question, reason, outcomes and exact target.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {
@@ -201,7 +206,7 @@
       }
     },
     {
-      "id": "approvals-020",
+      "id": "approvals-021",
       "promise": "The request offers Allow and Deny.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {
@@ -214,7 +219,7 @@
       }
     },
     {
-      "id": "approvals-021",
+      "id": "approvals-022",
       "promise": "The request shows its permanent request record.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {
