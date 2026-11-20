@@ -20,8 +20,7 @@ export async function inboxTaskSource({page,tile,app,example,out,approval,open})
   await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();
   await tile.locator('[data-split-row]:visible').filter({hasText:ask}).click();
   await tile.getByRole('heading',{name:ask,exact:true}).waitFor();
-  await tile.getByRole('region',{name:'Answer task question',exact:true}).waitFor();
-  const source=tile.getByRole('button',{name:'Open task',exact:true});let tasks;
+  const source=tile.getByRole('button',{name:'Open the task',exact:true});let tasks;
   if(await source.count()){
    await source.first().click();tasks=page.getByRole('region',{name:'Tasks tile',exact:true});await tasks.getByRole('heading',{name:title,exact:true}).waitFor();
    check(new URL(page.url()).pathname==='/p/tasks-preview/task/'+encodeURIComponent(task.id),'The source link opened a different task');
@@ -39,9 +38,9 @@ export async function inboxTaskSource({page,tile,app,example,out,approval,open})
   }
   stage='inboxTaskSettlement';
   await tasks.getByRole('button',{name:'Close',exact:true}).click();
-  const form=page.getByRole('dialog').getByRole('form');await form.waitFor();
+  const form=tasks.getByRole('form',{name:'Close task',exact:true});await form.waitFor();
   const reason='The fictional source task was completed.';
-  await form.getByLabel('Reason (cancelled marks it cancelled)',{exact:true}).fill(reason);
+  await form.getByLabel('Reason',{exact:true}).fill(reason);
   await form.getByRole('button',{name:'Close task',exact:true}).click();await form.waitFor({state:'hidden'});
   await tasks.getByText('Closed because',{exact:true}).waitFor();await tasks.getByText(reason,{exact:true}).waitFor();
   // The rendered outcome and actual stored task must agree before its linked
