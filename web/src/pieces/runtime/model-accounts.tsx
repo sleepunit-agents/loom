@@ -1,20 +1,33 @@
+import {memberOperation} from '../../data/operation';
 import {useState} from 'react';
 import {fullTime} from '../../kit/time';
 import {useDataQuery} from '../../data/graphql';
 import {liveAgents} from '../../data/live-agents';
-import {Search,Loading,Error as ErrorView} from '../../kit';
+import {Button,Search,Loading,Error as ErrorView} from '../../kit';
 import {runtimeAccountsQuery} from './model-query';
 export {runtimeAccountsQuery} from './model-query';
 type Summary={__typename:'RuntimeAccountSummary';label:string;level:string};
 type UsageWindow={window:string;usage:number|null;usageReadAt:string|null;resetsAt:string|null;reserve:number|null};
-type Login={box:{id:string;name:string};place:'host'|'containers';harness:string;state:'signed-in'|'signed-out';expiresAt:string|null;checkedAt:string};
+type Login={reporting:boolean;needsSignIn:boolean;canRequest:boolean;box:{id:string;name:string};place:'host'|'containers';harness:string;state:'signed-in'|'signed-out';expiresAt:string|null;checkedAt:string};
 type Detail={__typename:'RuntimeAccountDetail';label:string;level:string;id:string;owner:string;provider:string;usage:number|null;usageReadAt:string|null;resetsAt:string|null;hasRoom:boolean;windows:UsageWindow[];logins:Login[];signedInOn:{id:string;name:string}[]};
 export type RuntimeAccount=Summary|Detail;
 export type AgentModel={agent:string;model:string;position:number};
 const time=(value:string|null,zone?:string)=>value?fullTime(value,zone):'Not available';
 const percent=(n:number)=>Math.round(n*100)+'%';
 const windowName=(name:string)=>({week:'Week',weekly:'Week','five-hour':'Five hours','5h':'Five hours'}[name]??name);
-function AccountDetails({account,zone}:{account:Detail;zone?:string}){
+function SignInButton({account,box}:{account:string;box:string}){
+ const [state,setState]=useState<'ready'|'sending'|'sent'|'failed'>('ready');
+ async function ask(){
+  if(state==='sending'||state==='sent')return;
+  setState('sending');
+  try{await memberOperation('runtime.accountSignIn',{account,box});setState('sent');}
+  catch{setState('failed');}
+ }
+ return <div><Button disabled={state==='sending'||state==='sent'} onClick={()=>void ask()}>Sign in on this machine</Button>
+  {state==='sent'&&<p role="status">Sign-in requested. The subscription owner will receive the provider’s instructions in Inbox.</p>}
+  {state==='failed'&&<p role="status">Could not confirm the request. Check Inbox or retry.</p>}</div>;
+}
+function AccountDetails({account,zone,active}:{account:Detail;zone?:string;active:boolean}){
  return <div className="grid gap-4">
   <p>Owner: {account.owner} · Provider: {account.provider}</p>
   <section aria-label="Usage"><h4>Usage</h4>
@@ -30,8 +43,9 @@ function AccountDetails({account,zone}:{account:Detail;zone?:string}){
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
    {account.logins?.length?account.logins.map(login=><div key={JSON.stringify([login.box.id,login.place,login.harness])}>
     <strong>{login.box.name}</strong> · {login.harness} · {login.place==='host'?'On the machine':'In houses'}
-    <p>{login.state==='signed-in'?'Signed in':'Signed out'} · Checked {time(login.checkedAt,zone)}</p>
+    <p>{!login.reporting&&'Last known: '}{login.state==='signed-in'?'Signed in':'Signed out'} · Checked {time(login.checkedAt,zone)}</p>
     {login.expiresAt&&<p>Ends {time(login.expiresAt,zone)}</p>}
+    {active&&login.canRequest&&<SignInButton account={account.id} box={login.box.id}/>}
    </div>):<p>No sign-ins reported.</p>}
    <p>Configured machines: {account.signedInOn.map(box=>box.name).join(' · ')||'No machines'}</p>
   </section>
@@ -39,7 +53,7 @@ function AccountDetails({account,zone}:{account:Detail;zone?:string}){
 }
 /** Current query policy chooses account columns and visible agents.
  * No retained private details survive an unavailable selection. */
-export function RuntimeAccounts(){
+export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  const feed=useDataQuery<{modelAccounts:RuntimeAccount[];agentModels:AgentModel[];agents?:{id:string;removedAt:string|null}[]|null;deskTime:{timezone:string}|null}>(runtimeAccountsQuery);
  const [search,setSearch]=useState('');
  const rows=feed.status==='live'?feed.data?.modelAccounts:undefined;
@@ -62,10 +76,10 @@ export function RuntimeAccounts(){
    <Search label="Search subscriptions" value={search} onChange={setSearch}/>
    {!rows.length?<p>No model accounts yet.</p>:!services.size?<p>No matching subscriptions.</p>:[...services].map(([provider,accounts])=>{
     const level=accounts.some(a=>a.level==='almost full')?'almost full':accounts.some(a=>a.level==='getting full')?'getting full':accounts[0].level;
-    return <details open key={JSON.stringify(provider)} className="grid gap-2"><summary>{provider??'Shared summaries'} · {accounts.length} · {level}</summary>
+    return <details open key={JSON.stringify(provider)} className="grid gap-2"><summary>{provider??'Shared summaries'} · {accounts.length} · {level}{accounts.some(a=>a.__typename==='RuntimeAccountDetail'&&a.logins?.some(l=>l.needsSignIn))&&' · Sign-in needed'}</summary>
      {accounts.map((account,index)=>account.__typename==='RuntimeAccountSummary'?<p key={index}>{account.label} · {account.level}</p>:
       <details key={account.id} className="rounded-xl border p-4"><summary>{account.label} · {account.owner} · {account.level}</summary>
-       <AccountDetails account={account} zone={zone}/>
+       <AccountDetails account={account} zone={zone} active={active}/>
       </details>)}
     </details>;
    })}
