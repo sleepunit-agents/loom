@@ -1,6 +1,7 @@
 /** Home's current-job projection, and what each agent is doing. The outside composition supplies its current
  * SQL policy for jobs and for what a job is said by (conversations, machines, triggers, tasks); this module never invents sharing rules or reads credentials. */
 import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
+import { readCurrentJobs } from '../core/data/current-jobs-read.js';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
@@ -89,12 +90,7 @@ export class JobSummaries {
     const allowed = this.allowed();
     this.observed?.();
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
-    return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
-      kind: sql<string>`case when ${jobs.startedByKind} = 'terminal' then 'terminal' else 'job' end`,
-      state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates),
-        or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
-      .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
+    return readCurrentJobs(this.db,allowed,agent,cutoff);
   }
   private rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
     const rule = this.visibility()[name];
