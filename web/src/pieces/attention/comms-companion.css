@@ -1,6 +1,6 @@
 .desk-comms-screen{display:grid;justify-items:center;gap:6px;min-width:0;padding:8px 0}
 .desk-comms-glass{box-sizing:content-box;display:grid;place-items:center;width:192px;height:192px;overflow:hidden;background:var(--v-canvas);border:1px solid var(--v-edge)}
-.desk-comms-name{max-width:192px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:600}
+.desk-comms-name{height:auto;max-width:min(192px,100%);font-weight:600}
 .desk-comms-state{font:11px var(--loom-font-data,monospace);color:var(--v-text-2)}
 /* Without the rail: a small face beside the thread's title (the how-it-works site's .letter), never a screen over it. */
 .desk-comms-mini{display:inline-flex;flex:none}

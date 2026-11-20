@@ -44,13 +44,14 @@
 .next-tile[data-focused]{--tile-ring:var(--t)}
 .next-tile::after{content:"";position:absolute;inset:0;z-index:21;pointer-events:none;box-shadow:inset 0 0 0 1px var(--tile-ring);background:linear-gradient(135deg,transparent calc(50% - .75px),var(--tile-ring) calc(50% - .75px) calc(50% + .75px),transparent calc(50% + .75px)) right bottom/var(--next-cut) var(--next-cut) no-repeat}
 .next-tile[data-focused]::after{box-shadow:inset 0 0 0 1px var(--tile-ring),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
-.next-strip{min-height:32px;height:32px;padding:0 4px 0 0;gap:2px;user-select:none;background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)));border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border))}
+.next-strip{min-height:32px;height:auto;flex-wrap:wrap;padding:0 4px 0 0;gap:2px;user-select:none;background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)));border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border))}
 .next-tile[data-focused] .next-strip{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
 /* The key's right edge slopes in by 10px at the foot, so what shows is narrower than its box: the icon sits at the
    box's middle with no padding pushing it right (it had 6px on the left, and read as 3px off toward the slope). */
 .next-strip>.next-app-key{display:grid;place-items:center;align-self:stretch;flex:none;width:44px;padding-left:0;background:var(--t);color:var(--v-on-accent);clip-path:polygon(var(--next-cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--next-cut))}
-.next-strip>.next-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 11px var(--font-display);text-transform:uppercase;letter-spacing:.12em}
+.next-strip>.next-strip-title{min-width:0;font:700 11px var(--font-display);text-transform:uppercase;letter-spacing:.12em}
 .next-strip>button:not(.next-app-key){height:26px;min-width:26px;padding:0 5px;color:var(--v-text-2);border-radius:0}
+.next-strip>button.next-strip-title{height:auto;min-height:26px;max-width:calc(100% - 48px)}
 .next-strip>button:focus-visible{outline:2px solid var(--t);outline-offset:-2px}
 /* The three window controls, as the how-it-works site draws them (site.css .tile__acts): an outlined square (make big),
    a line (send to the dock), a cross (close). Small quiet shapes in a hit area a finger or a pointer can find. */
@@ -61,7 +62,7 @@
 .next-win[data-act=close]>i{border:0;background:linear-gradient(45deg,transparent 44%,currentColor 44% 56%,transparent 56%),linear-gradient(-45deg,transparent 44%,currentColor 44% 56%,transparent 56%)}
 .next-page{margin:0 1px 1px;scrollbar-gutter:stable}
 [data-shell=phone] .next-tile{clip-path:none}
-[data-shell=phone] .next-strip{min-height:40px;height:40px}
+[data-shell=phone] .next-strip{min-height:40px;height:auto}
 [data-shell=phone] .next-strip-title{max-width:60vw}
 [data-shell=phone] .next-strip>button.next-win{width:36px;height:36px}
 @media (prefers-contrast:more){.next-tile::after{box-shadow:inset 0 0 0 2px var(--v-text)} .next-strip>button.next-win{color:var(--v-text)}}
