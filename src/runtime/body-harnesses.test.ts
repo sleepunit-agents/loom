@@ -69,6 +69,7 @@ it('knows which harness would refuse a job, with or without knowing the machine'
   for (const name of ['house-runner', 'constructor']) {
     expect(harnessCannotRun(name, guest)).toBe(true);
     expect(harnessCannotRun(name, undefined)).toBe(true);
+    expect(harnessCannotRun(name, { people: [], deniedTools: [] })).toBe(true);
     expect(harnessCannotRun(name, policy([], [], 'owners'))).toBe(false);
     expect(harnessCannotRun(name, policy([], [], 'own'))).toBe(false);
   }

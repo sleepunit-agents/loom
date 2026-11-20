@@ -11,7 +11,7 @@ import { LOOM_EXIT } from './job-exit.js';
 import { harnessCannotRun } from './body-harnesses.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
-function fixture() {
+function fixture(harness = 'codex') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
@@ -27,7 +27,7 @@ function fixture() {
   db.insert(modelAccounts).values({ id: 'account', owner: 'owner', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
   db.insert(modelAccountWindows).values({ account: 'account', window: 'week', usage: 0.2, usageReadAt: at, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values([{ account: 'account', box: 'first' }, { account: 'account', box: 'second' }]).run();
-  const roles = [{ model: 'primary', provider: 'provider', harness: 'codex', series: 'series' }];
+  const roles = [{ model: 'primary', provider: 'provider', harness, series: 'series' }];
   const runtime = new Dispatcher(db, now, () => roles, harnessCannotRun), comms = new Conversations(db, now);
   const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'Reply', member: 'owner' });
   const mail = comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private brief' });
@@ -186,8 +186,7 @@ it('projects current agent capabilities and only its configured ports at claim',
 });
 
 it.each(['codex', 'house-runner'])('refuses guest placement on %s and hands the rules to a compatible runner', harness => {
-  const f = fixture();
-  f.roles[0].harness = harness;
+  const f = fixture(harness);
   f.db.update(agentRunSettings).set({ nestedContainers: true }).run();
   f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
   f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
