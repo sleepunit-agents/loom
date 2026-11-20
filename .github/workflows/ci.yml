@@ -157,6 +157,8 @@ jobs:
               # This one inventories which files touch the review key. On 2026-11-15 two new files
               # merged past it and next stayed red for two hours.
               [ ! -f src/audit.integration.test.ts ] || guards+=(src/audit.integration.test.ts)
+              # These contracts inspect implementation files without importing them.
+              guards+=(src/stored-data.contract.test.ts src/single-home.contract.test.ts)
               echo "Tree guards: ${guards[*]}"
               [ "${#guards[@]}" = 0 ] || npx vitest run "${guards[@]}" --passWithNoTests
             fi
