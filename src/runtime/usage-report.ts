@@ -19,6 +19,7 @@ export const usageReport = z.object({
   modelCalls: count.nullish(),
   toolCalls: count.nullish(),
   tools: toolCounts.nullish(),
+  firstContext: count.nullish(),
   largestContext: count.nullish(),
   wallMs: count.nullish(),
   harness: identifier.nullish(),

@@ -1505,6 +1505,7 @@ CREATE TABLE `job_usage` (
 	`model_calls` integer,
 	`tool_calls` integer,
 	`tools` text,
+	`first_context` integer,
 	`largest_context` integer,
 	`wall_ms` integer,
 	`harness` text,

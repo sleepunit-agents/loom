@@ -145,7 +145,7 @@ export class TerminalSessions {
     } else this.db.update(terminalRuns).set({revision:event.revision}).where(eq(terminalRuns.job,id)).run();
     const values = {source:report.source,tokensIn:report.tokensIn ?? null,tokensOut:report.tokensOut ?? null,
       cacheRead:report.cacheRead ?? null,cacheWritten:report.cacheWritten ?? null,modelCalls:report.modelCalls ?? null,
-      toolCalls:report.toolCalls ?? null,tools:report.tools ?? null,largestContext:report.largestContext ?? null,
+      toolCalls:report.toolCalls ?? null,tools:report.tools ?? null,firstContext:report.firstContext ?? null,largestContext:report.largestContext ?? null,
       wallMs:report.wallMs ?? null,harness:parent.harness,model:report.model ?? (prior?.model || null)};
     this.db.insert(jobUsage).values({job:id,...values}).onConflictDoUpdate({target:jobUsage.job,set:values}).run();
     if (id !== parent.id) {

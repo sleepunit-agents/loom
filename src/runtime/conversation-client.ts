@@ -6,7 +6,7 @@ import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus
  * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
  * an outstanding one is sent again before any new input. `confirm` settles it, and is sent by settle()
  * only once the answer is recorded: mail a body dies holding stays with its job for the next attempt. */
-import type { UsageReport } from './usage-report.js';
+import { usageReport, type UsageReport } from './usage-report.js';
 import {DAY} from '../core/day.js';
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import {BODY_REQUEST_MS,validBodyRequestMs} from './body-request-time.js';
@@ -18,6 +18,7 @@ import { privateOrigin } from '../core/private-origin.js';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
+class InvalidUsageReport extends Error {}
 class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
 const historyLine=z.object({sourceKey:z.string().optional(),seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
@@ -67,6 +68,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     response=await flight.catch(()=>{throw new BodyTransportFailure();});
     const structuredUnavailable=response.status===503&&/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'');
     if(!response.redirected&&temporaryStatus(response.status)&&!structuredUnavailable)throw new BodyTransportFailure();
+    if(valid() && !response.redirected && name==='usage' && response.status===400)throw new InvalidUsageReport();
     if(!valid()||response.redirected||(!response.ok&&response.status!==401&&response.status!==403&&!structuredUnavailable)||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
     const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     const available=responseAvailability(response);
@@ -81,7 +83,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     if(!response.ok)throw unavailable();
     const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(value);if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch(error){if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(response?.ok&&error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
+  }catch(error){if(error instanceof InvalidUsageReport)throw error;if(error instanceof BodyJobEnded){options.onJobEnded?.();throw error;}if(current()&&(clock.now()>=end||error instanceof BodyTransportFailure))throw new BodyTransportFailure();if(response?.ok&&error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}
@@ -144,7 +146,16 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   cardState(clientId:string,cardState:'running'|'done'|'failed',id=randomUUID()){return call('cardState',{clientId,cardState},messageResult,id);},
   status(input:{state:'working'|'waiting'|'idle'|'offline';work:string},id=randomUUID()){return call('status',input,z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),id);},
   turn(input:Turn&{kind:'reply'|'action'|'wake'|'note'|'refused'},id=randomUUID()){return call('turn',input,z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),id);},
-  usage(input:UsageReport,timeoutMs?:number){return call('usage',input,z.object({saved:z.boolean()}).strict(),randomUUID(),'conversation',timeoutMs);},
+  async usage(input:UsageReport,timeoutMs?:number){
+   const deadline=timeoutMs===undefined ? undefined : clock.now()+timeoutMs;
+   const send=(report:UsageReport)=>call('usage',report,z.object({saved:z.boolean()}).strict(),randomUUID(),'conversation',deadline===undefined ? undefined : deadline-clock.now());
+   try{return await send(input);}catch(error){
+    if(!(error instanceof InvalidUsageReport) || input.firstContext===undefined || !usageReport.safeParse(input).success)throw error;
+    // A coordinator predating first-call measurement validates the old report strictly.
+    const {firstContext:_,...legacy}=input;
+    return send(legacy);
+   }
+  },
   finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(DAY)}).strict(),id);},
   digest(input:BodyDigest,id=randomUUID()){return call('digest',input,z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),id);},
   close(){closed=true;lifetimeAbort.abort();for(const controller of controllers)controller.abort();},
