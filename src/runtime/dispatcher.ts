@@ -1,7 +1,8 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { reviewThread, reviewParent } from '../core/conversations/review-place.js';
+import { reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
 import { describePlace, jobRoom, othersMail } from '../shared-place-mail.js';
@@ -29,12 +30,18 @@ export class Dispatcher {
    * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
    * file imports may. */
   constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[],
-    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean) {
+    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean, private readonly workRoles:readonly WorkRole[] = [], private readonly nativeHarnesses:ReadonlySet<string> = new Set()) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
   }
-  canStartReview(agent:string) {
+  availableWorkRoles(agent:string,id?:string) {
+    return this.workRoles.filter(role=>role.agent===agent && (id===undefined || role.id===id)).map(role=>({
+      id:role.id,description:role.description,revision:roleRevision(role),
+      available:this.canStartReview(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
+    }));
+  }
+  canStartReview(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
     const settings=this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get();
-    return !!settings && !!decidePlacement(this.db,{agent,now:this.now(),roles:this.roles().filter(role=>role.harness==='codex'),
+    return !!settings && !!decidePlacement(this.db,{agent,now:this.now(),roles:models,
       eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]}).placement;
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
@@ -86,13 +93,19 @@ export class Dispatcher {
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
         const cv=job.conversation?this.db.select().from(conversations).where(eq(conversations.id,job.conversation)).get():undefined;
-        const review=!!cv && !!reviewParent(cv);
+        const review=cv && reviewRequest(cv);
+        const selected=review?.role;
+        const workRole=selected && this.workRoles.find(role=>role.agent===job.agent && role.id===selected.id && roleRevision(role)===selected.revision);
+        if(selected && !workRole){
+          if(this.jobs.unplaceable(job.id,'The requested work role changed or was removed.'))ended?.push(job.id);
+          continue;
+        }
         if(review && !reviewThread(this.db,cv!)){
           if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:

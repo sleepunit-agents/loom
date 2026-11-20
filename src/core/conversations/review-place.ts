@@ -3,16 +3,21 @@ import type { DataDatabase } from '../data/database.js';
 import { conversations, jobs, threads } from '../data/schema.js';
 
 /** A distinct child conversation for each request, including parallel requests from one job. */
-export function reviewPlace(parent: string, clientId: string) {
-  return JSON.stringify(['codex-review', parent, clientId]);
+export function reviewPlace(parent: string, clientId: string, role?:{id:string;revision:string}) {
+  return JSON.stringify(['codex-review', parent, clientId, ...(role?[role.id,role.revision]:[])]);
 }
 
-export function reviewParent(cv: {venue: string; place: string}) {
+export function reviewRequest(cv: {venue: string; place: string}) {
   if (cv.venue !== 'handoff' || !cv.place.startsWith('["codex-review",')) return;
   try {
     const parts: unknown = JSON.parse(cv.place);
-    if (Array.isArray(parts) && parts.length === 3 && parts.every(p => typeof p === 'string')) return parts[1] as string;
+    if (Array.isArray(parts) && (parts.length === 3 || parts.length === 5) && parts.every(p => typeof p === 'string'))
+      return {parent:parts[1] as string, clientId:parts[2] as string, role:parts.length===5?{id:parts[3] as string,revision:parts[4] as string}:undefined};
   } catch { /* An ordinary handoff place has no review destination. */ }
+}
+
+export function reviewParent(cv: {venue: string; place: string}) {
+  return reviewRequest(cv)?.parent;
 }
 
 export function reviewThread(db: DataDatabase, cv: typeof conversations.$inferSelect) {

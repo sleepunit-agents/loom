@@ -106,6 +106,7 @@ import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { applyProgramResult } from './shared-program-result.js';
+import {workRoleCatalog,type WorkRoleConfig} from './runtime/work-roles.js';
 import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { measuringSettingsService } from './core/measuring/settings.js';
@@ -147,11 +148,13 @@ export function sharedRoot(options: {
    * upgrade steps. It names what was done and how many rows, never their content. */
   startupNote?(line: string): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
+  workRoles?: WorkRoleConfig;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const roles = () => modelCatalog(options.modelRoles?.() ?? []);
+  const workRoles=workRoleCatalog.parse(options.workRoles??[]);
   roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
@@ -338,7 +341,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -390,7 +393,7 @@ export function sharedRoot(options: {
   };
   // Attachments are read here too (bridges.file). Only a daemon fetches them, so without one there is
   // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
-  const dispatcher=registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner,
+  const dispatcher=registerSharedRuntime(operations, db, { now, roles, workRoles, jobEnded, runner: credentials.runner,
     applyProgram: (job, result, changed) => applyProgramResult(db, services.conversations, bridgeDaemon, () => options.bridges?.effectsAllowed() ?? false, job, result, changed) });
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);

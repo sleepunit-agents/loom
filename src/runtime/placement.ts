@@ -64,7 +64,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     const silence = box?.lastSeenAt ? now - Date.parse(box.lastSeenAt) : NaN;
     if (!box || box.revokedAt || !Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS)
       return { box: id, reason: 'Machine is not live.' };
-    if (input.eligibleBoxes && !input.eligibleBoxes.has(id)) return {box:id,reason:'Worker has not advertised Codex result delivery.'};
+    if (input.eligibleBoxes && !input.eligibleBoxes.has(id)) return {box:id,reason:'Worker has not advertised delegated result delivery.'};
     if (box.reportOnly || !machineMayHost(box, listed.get(id), input.agent, sharing))
       return { box: id, reason: `Machine does not host ${input.agent}.` };
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, id)).all().map(row => row.fact);
