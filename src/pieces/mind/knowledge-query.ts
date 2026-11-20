@@ -8,7 +8,7 @@ import {
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
-import { knowledgeView, knowledgeAccess, AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './knowledge.js';
+import { knowledgeView, knowledgeAccess, retiredKnowledgePages, knowledgeSchedule, RECENT_DAYS } from './knowledge.js';
 import {knowledgeSweep} from './knowledge-sweep.js';
 import type {SweepPart} from '../../core/tempo/sweep.js';
 import {MAX_REVISIONS} from '../../backends/cards.js';
@@ -21,7 +21,8 @@ const freshness = new GraphQLEnumType({ name:'MemoryKnowledgeFreshness', values:
 const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
 const summaryFields = {
  slug:requiredText, title:requiredText, domain:requiredText, updated:requiredText,
- checked:{type:check}, verified_at:text, freshness_anchor:text, sla_class:text, fresh:{type:new GraphQLNonNull(freshness)}, by:text, recent:{type:GraphQLBoolean},
+ archiveCandidate:{type:new GraphQLNonNull(GraphQLBoolean),resolve:(row:{archiveCandidate?:boolean})=>row.archiveCandidate===true},
+ routineCheckDays:{type:new GraphQLNonNull(GraphQLInt),resolve:(row:{archiveCandidate?:boolean})=>knowledgeSchedule(row.archiveCandidate===true).checkDays}, checked:{type:check}, verified_at:text, freshness_anchor:text, sla_class:text, fresh:{type:new GraphQLNonNull(freshness)}, by:text, recent:{type:GraphQLBoolean},
 };
 const summary = new GraphQLObjectType({ name:'MemoryKnowledgeSummary', fields:summaryFields });
 const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text,excerpt:requiredText,retrievedAt:requiredText,createdAt:requiredText } });
@@ -60,7 +61,7 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   try{return knowledgeView(db,options.now(),slug,slug!==undefined);}
   catch{throw new GraphQLError('Knowledge is unavailable');}
  };
- const page = new GraphQLObjectType< {slug:string},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
+ const page = new GraphQLObjectType< {slug:string; archiveCandidate?:boolean},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
   ...summaryFields,body:requiredText,sourcing:text,
   sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
   citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},
@@ -122,10 +123,12 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
    if(!db||failed)return;
    try {
     const now=options.now();let next:number|undefined;
-    const rows=db.prepare("SELECT updated,verified_at FROM pages WHERE status='active'").all() as Array<{updated:string;verified_at:string|null}>;
+    const retired=retiredKnowledgePages(db);
+    const rows=db.prepare("SELECT id,updated,verified_at FROM pages WHERE status='active'").all() as Array<{id:number;updated:string;verified_at:string|null}>;
     for(const row of rows){
      const anchor=Date.parse(row.verified_at??row.updated);
-     const boundaries=[anchor+AGING_DAYS*DAY_MS,anchor+CHECK_DAYS*DAY_MS,
+     const {agingDays,checkDays}=knowledgeSchedule(retired.has(row.id));
+     const boundaries=[anchor+agingDays*DAY_MS,anchor+checkDays*DAY_MS,
       ...(row.verified_at?[Date.parse(row.verified_at)+RECENT_DAYS*DAY_MS]:[])];
      for(const at of boundaries)if(Number.isFinite(at)&&at>now&&(next===undefined||at<next))next=at;
     }

@@ -89,3 +89,21 @@ it('routes only due pages with three recent checks by their recorded author to t
   expect(part.open({kind:'agent',id:'other'})).toEqual([]);
   expect(part.open(who)).toHaveLength(4);
 });
+
+it('reschedules retired pages, while an explicit stale report stays immediately due', async () => {
+  const {store, db, part, clock} = fixture();
+  const old = new Date(clock.now() - 45 * 86_400_000).toISOString();
+  await store.writePage({slug:'device',title:'Device',domain:'devices',body:'Calibration',verified_at:old});
+  const mark = (kind: string) => db.prepare(`INSERT INTO page_annotations(page_id,kind,actor,words,evidence,created)
+    SELECT id,?,'owner','Device inventory','','2026-11-14' FROM pages WHERE slug='device'`).run(kind);
+  expect(part.open(who)).toHaveLength(1);
+  mark('no-longer-owned');
+  mark('note');
+  expect(part.open(who)).toEqual([]);
+  await store.verifyPages({slug:'device',outcome:'stale'});
+  expect(part.open(who)).toHaveLength(1);
+  await store.verifyPages({slug:'device',outcome:'confirmed',verified_at:old});
+  expect(part.open(who)).toEqual([]);
+  mark('in-use');
+  expect(part.open(who)).toHaveLength(1);
+});

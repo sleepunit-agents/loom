@@ -353,6 +353,8 @@ it('requires a recorded supersession for cross-author replacements and rejects s
   const annotated=await art.call('loom_command',annotation);
   expect(JSON.parse(annotated.text).ok).toBe(true);
   expect((await art.call('loom_command',annotation)).text).toBe(annotated.text);
+  const retirement={operation:'mind.knowledgeAnnotate',input:{slug,kind:'no-longer-owned',words:'Device retired'},id:'retire-once'};
+  expect(JSON.parse((await art.call('loom_command',retirement)).text).ok).toBe(true);
   const disputed=await read();
   expect(disputed).toContain('First measurement\n\nSecond observation');
   expect(disputed).toContain('dispute by mark');
@@ -364,6 +366,7 @@ it('requires a recorded supersession for cross-author replacements and rejects s
   const final=await read();
   expect(final).toContain('Corrected measurement');
   expect(final.match(/Calibration has changed/g)).toHaveLength(1);
+  expect(final).toContain('no-longer-owned by art');
   expect(final.match(/Check the calibration \(Instrument log\)/g)).toHaveLength(1);
   expect(final.match(/mark replaced revision/g)).toHaveLength(1);
   expect(final).toContain('Repeated the test (Bench log 17)');

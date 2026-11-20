@@ -186,6 +186,13 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect(await savedAnnotation.innerText()).toContain('outdated · owner');
     await expect.poll(()=>a.getByText(/Asked to be checked again/).count()).toBe(1);
     expect(await source.getVerifications('a-shared-new-fact')).toHaveLength(1);
+    await b.getByRole('button',{name:'Add another annotation'}).click();
+    await b.getByRole('combobox',{name:'Annotation type'}).selectOption('no-longer-owned');
+    await b.getByRole('textbox',{name:'Annotation',exact:true}).fill('Device returned');
+    await b.getByRole('button',{name:'Save annotation'}).click();
+    await expect.poll(()=>savedAnnotation.innerText()).toContain('Device returned');
+    await a.getByRole('button',{name:'Still true',exact:true}).click();
+    await expect.poll(()=>b.getByText(/Archive candidate/).count()).toBe(1);
     }catch(error){
       for(const [name,page] of [['desktop',a],['phone',b]] as const){
         // Inspect the actual shell and reader. Never serialize URLs, history

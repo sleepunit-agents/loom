@@ -54,7 +54,7 @@ import { LOG_TAIL_MAX, logTail } from './runtime/log-tail.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 import { LINE_NAME_MAX, hasControlCharacter, lineName, machineName } from './core/line-name.js';
 import { boxSettingsInput } from './shared-box-settings.js';
-import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './pieces/mind/knowledge.js';
+import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS, knowledgeSchedule } from './pieces/mind/knowledge.js';
 import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
 import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
@@ -599,11 +599,12 @@ it('states the rule for a one-line name, and for a machine\'s name, once', () =>
 
 it('works out when a Knowledge page changes state from the days that decide the state', () => {
   expect([CHECK_DAYS, AGING_DAYS, RECENT_DAYS]).toEqual([30, 20, 7]);
-  expect(AGING_DAYS).toBeLessThan(CHECK_DAYS);
+  expect(knowledgeSchedule(false)).toEqual({agingDays:AGING_DAYS,checkDays:CHECK_DAYS});
+  expect(knowledgeSchedule(true)).toEqual({agingDays:60,checkDays:90});
   // The view decides fresh, aging and due; whatever times a refresh reads the same three names. No file
   // of Memory's multiplies a number of days of its own for them.
   expect(sources('src/pieces/mind').filter(file => /\b(20|30|7)\s*\*\s*86_?400_?000/.test(text(file)))).toEqual([]);
-  expect(text('src/pieces/mind/knowledge-query.ts')).toMatch(/anchor\+AGING_DAYS\*[^,]+,anchor\+CHECK_DAYS\*[^,]+,[^;]*RECENT_DAYS\*/);
+  expect(text('src/pieces/mind/knowledge-query.ts')).toMatch(/anchor\+agingDays\*[^,]+,anchor\+checkDays\*[^,]+,[^;]*RECENT_DAYS\*/);
   expect(sources('src').filter(file => /\b(CHECK|AGING|RECENT)_DAYS\s*=\s*[\d(]/.test(text(file)))).toEqual(['src/pieces/mind/knowledge.ts']);
 });
 
