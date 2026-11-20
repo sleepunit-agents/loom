@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { secretValueSize } from '../pieces/secrets/input.js';
@@ -9,6 +10,7 @@ import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
 
 type Invocation = {
   runtime?:string;
+  podmanHelperSubid?:number;
   job:string;
   box:string;
   image:string;
@@ -73,12 +75,16 @@ async function stdout(socket: Duplex): Promise<Buffer> {
   return output.subarray(0, written);
 }
 
-type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'> & {
+type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'|'podmanHelperSubid'> & {
   runtime?:string;
   setupTimeoutMs?:number;
   cleanupTimeoutMs?:number;
 };
 type PrivateInput = Pick<Invocation,'argv'|'secrets'|'onStarted'> & {input?:object;timeoutMs:number};
+
+const ranges = z.array(z.object({ container_id:z.number().int(), host_id:z.number().int(), size:z.number().int() }));
+const rootlessInfo = z.object({ host:z.object({ security:z.object({ rootless:z.literal(true) }),
+  idMappings:z.object({ uidmap:ranges, gidmap:ranges }) }) });
 
 /** Both callers prepare a pinned, mount-free container, release private input once and reap it. */
 export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
@@ -98,7 +104,7 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
     remove=true;
     let created:unknown;
     try {
-      created=await engine.json('POST','/containers/create?name='+name,{
+      const spec = {
         Image:plan.image, User:'65534:65534', WorkingDir:HOUSE_REPOSITORY,
         Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path], Labels:{'loom.job':plan.job,'loom.box':plan.box},
         Healthcheck:{Test:['NONE']}, OpenStdin:true, AttachStdin:true, StdinOnce:true,
@@ -106,7 +112,29 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
         HostConfig:{ReadonlyRootfs:true, Privileged:false, Mounts:[], CapDrop:['ALL'],
           SecurityOpt:['no-new-privileges'], LogConfig:{Type:'none'}, PidsLimit:32, Memory:128*1024*1024,
           Runtime:plan.runtime, NanoCpus:500_000_000, PublishAllPorts:false, NetworkMode:'bridge'},
-      },setup);
+      };
+      if (plan.podmanHelperSubid === undefined) {
+        created = await engine.json('POST','/containers/create?name='+name,spec,setup);
+      } else {
+        const subid = plan.podmanHelperSubid;
+        const info = rootlessInfo.parse(await engine.json('GET', '/v5.0.0/libpod/info', undefined, setup));
+        const { uidmap, gidmap } = info.host.idMappings;
+        if (!Number.isSafeInteger(subid) || subid < 1 || subid >= 65534 ||
+            ![uidmap,gidmap].every(ranges => ranges.some(r => r.container_id === 1 && r.host_id > 0 && r.size >= subid)))
+          throw new Error('Helper subordinate ID is unavailable');
+        // Keep low image IDs in place. Only the helper's nobody ID uses the selected subordinate ID.
+        const maps = [{ container_id: 0, host_id: 0, size: subid }, { container_id: 65534, host_id: subid, size: 1 }];
+        const h = spec.HostConfig;
+        created = await engine.json('POST','/v5.0.0/libpod/containers/create',{
+          name, image:spec.Image, entrypoint:spec.Entrypoint, command:spec.Cmd, work_dir:spec.WorkingDir,
+          labels:spec.Labels, user:spec.User, stdin:spec.OpenStdin, terminal:spec.Tty, oci_runtime:h.Runtime,
+          env_host:false, httpproxy:false, systemd:'false', healthconfig:spec.Healthcheck, log_configuration:{ driver:h.LogConfig.Type },
+          privileged:h.Privileged, cap_drop:h.CapDrop, no_new_privileges:true, read_only_filesystem:h.ReadonlyRootfs,
+          read_write_tmpfs:false, netns:{ nsmode:h.NetworkMode }, publish_image_ports:h.PublishAllPorts,
+          userns:{ nsmode:'private' }, idmappings:{ HostUIDMapping:false, HostGIDMapping:false, UIDMap:maps, GIDMap:maps },
+          resource_limits:{ memory:{ limit:h.Memory }, pids:{ limit:h.PidsLimit }, cpu:{ period:100000, quota:h.NanoCpus / 10000 } },
+        },setup);
+      }
     } catch(error) {
       if(error instanceof DockerResponseError && error.status>=400 && error.status<500)remove=false;
       throw error;

@@ -45,6 +45,7 @@ export const CONTAINER_RUNTIMES = ['runc', 'crun'] as const;
 
 export interface ContainerConfig {
   socket: string;
+  podmanHelperSubid?: number;
   /** Retired configuration key. Its presence stops the worker. */
   nestedSocket?: string;
   protectedPaths?: readonly string[];
@@ -441,7 +442,7 @@ export function containerWorkerExecutor(config: {
         // Told to the body as it is: only an address the worker fetches, which holds no credential.
         if (!(source.fetches ?? houseRepository)(assignment.house.repository)) throw new Error('Invalid house repository');
         if (assignment.program) return scheduledContainer(engine, assignment, image, assignment.program, signal, {
-          runtime:fixed.container.runtime, setupTimeoutMs:setupMs, cleanupTimeoutMs:cleanupMs,
+          runtime:fixed.container.runtime, podmanHelperSubid:fixed.container.podmanHelperSubid, setupTimeoutMs:setupMs, cleanupTimeoutMs:cleanupMs,
         },letGo);
         prepareHouseCli(fixed.state ?? defaultWorkerState(fixed.box));
         mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
@@ -541,7 +542,7 @@ export function containerWorkerExecutor(config: {
             };
             if(kit&&pin){
               broker=kitBroker({...pin,denials:deniedTools(assignment.run?.policy),post,
-                run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box,runtime:fixed.container.runtime})});
+                run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box,runtime:fixed.container.runtime,podmanHelperSubid:fixed.container.podmanHelperSubid})});
             }else try {kitUnavailable=await reportKits(pin?'socket':'image',abort.signal);}
             catch {kitReportFailed=true;}
           }

@@ -83,7 +83,7 @@ const configSchema = z.object({
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
   container: z.object({ socket: z.string(), nestedSocket: z.string().optional(), protectedPaths: z.array(z.string()).optional(),
-    runtime: z.enum(CONTAINER_RUNTIMES).optional(),
+    runtime: z.enum(CONTAINER_RUNTIMES).optional(), podmanHelperSubid:z.number().int().min(1).max(65533).optional(),
     // By agent id. One list for every body is what this key used to be: read here so that the worker
     // can stop on it with its own line (WorkerStop 'retired') and not as a file that is not valid.
     mounts: z.union([z.array(z.unknown()), z.record(z.string().min(1), z.array(hostDirectory.extend({ readOnly: z.boolean().optional() }).strict()))]).optional(),

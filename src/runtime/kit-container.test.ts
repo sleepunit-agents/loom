@@ -73,3 +73,29 @@ it('accepts the full stdout allowance even when Docker frames each byte separate
   const {engine} = fixture(text, image, 1);
   expect((await runKitContainer(engine, input)).toString()).toBe(text);
 });
+
+it.each(['rootless','rootful','short mapping'] as const)('checks the %s engine before creating a mapped helper', async mode => {
+  const {engine,calls} = fixture('online');
+  const uidmap = [{container_id:1,host_id:20000,size:40000}];
+  const control = {...engine, json: async (...args:Parameters<DockerEngine['json']>) => args[1].endsWith('/libpod/info')
+    ? {host:{security:{rootless:mode !== 'rootful'},idMappings:{uidmap,gidmap:mode === 'short mapping' ? [] : uidmap}}}
+    : engine.json(...args)};
+  const run = runKitContainer(control,{...input,runtime:'crun',podmanHelperSubid:32767});
+  if (mode !== 'rootless') {
+    await expect(run).rejects.toThrow();
+    expect(calls.some(c=>c.path.includes('/create'))).toBe(false);
+    return;
+  }
+  expect((await run).toString()).toBe('online');
+  const maps = [{container_id:0,host_id:0,size:32767},{container_id:65534,host_id:32767,size:1}];
+  expect(calls.find(c=>c.path.includes('/create'))).toMatchObject({path:'/v5.0.0/libpod/containers/create',body:{
+    image,user:'65534:65534',oci_runtime:'crun',
+    idmappings:{HostUIDMapping:false,HostGIDMapping:false,UIDMap:maps,GIDMap:maps},userns:{nsmode:'private'},
+    privileged:false,netns:{nsmode:'bridge'},cap_drop:['ALL'],no_new_privileges:true,read_only_filesystem:true,
+    log_configuration:{driver:'none'},healthconfig:{Test:['NONE']},publish_image_ports:false,
+    resource_limits:{memory:{limit:134217728},pids:{limit:32},cpu:{period:100000,quota:50000}},
+  }});
+  expect(JSON.stringify(calls)).not.toContain('fixture-secret');
+  expect(JSON.stringify(calls)).not.toContain(input.argv[0]);
+  expect(calls.at(-1)?.method).toBe('DELETE');
+});

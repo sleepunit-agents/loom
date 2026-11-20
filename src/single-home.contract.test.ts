@@ -518,6 +518,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
       'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
+      'src/runtime/kit-container.ts': 'the CPU period for a Podman helper, in microseconds',
       'web/src/pieces/comms/composer.tsx': 'the message bar\'s hint, held to MESSAGE_WORDS_MAX below',
       'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
       'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },

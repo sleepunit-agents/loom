@@ -10,7 +10,7 @@ import type { WorkerAssignment, WorkerBody } from './worker.js';
 /** Prepare before requesting private inputs. The worker releases the invocation after the running acknowledgement. */
 export function scheduledContainer(
   engine: DockerEngine, job: WorkerAssignment, image: string, program: HouseProgram, signal: AbortSignal,
-  options: { runtime?: string; setupTimeoutMs: number; cleanupTimeoutMs: number }, releaseImage: () => void,
+  options: { runtime?: string; podmanHelperSubid?: number; setupTimeoutMs: number; cleanupTimeoutMs: number }, releaseImage: () => void,
 ): WorkerBody {
   const abort = new AbortController();
   const running = AbortSignal.any([signal, abort.signal]);
