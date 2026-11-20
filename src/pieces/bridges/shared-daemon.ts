@@ -37,6 +37,7 @@ export interface SharedBridgeOptions {
  db:DataDatabase;clock:Clock;writes:DataWrites;
  source:SecretValueSource&HolderGeneration;
  effectsAllowed():boolean;
+ progressAllowed?:SendTransport['progressAllowed'];
  directAllowed?:SendTransport['directAllowed'];
  changed():void;
  inboxCommitted?(ids:readonly string[]):void;
@@ -74,10 +75,10 @@ export class SharedBridges {
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
   const sender=(row:Connection)=>{const life=this.lives.get(row.id);return life&&this.current(life)&&configuration(row)===life.key?life:undefined;};
-  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),directAllowed:options.directAllowed,post:async(row,address,text,files,permitted)=>{
+  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),progressAllowed:options.progressAllowed,directAllowed:options.directAllowed,post:async(row,address,text,files,permitted)=>{
    // No lifetime to send through: nothing has left, so the reply waits for the next one.
    const life=sender(row);if(!life)throw new BridgeReplyNotSent(true);
-   return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life)&&(!permitted||permitted()),request:options.request}).post(address,text,files);
+   return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),permitted,request:options.request}).post(address,text,files);
   }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
    const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
   });

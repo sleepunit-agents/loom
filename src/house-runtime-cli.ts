@@ -23,7 +23,7 @@ async function pipedText():Promise<string>{
     if(size>MESSAGE_WORDS_MAX*4)throw Error('Text too long');
     chunks.push(chunk);
   }
-  return new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));
+  return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.concat(chunks));
 }
 
 export async function houseRuntimeCli(args:string[],io:ServeIo,env=process.env):Promise<number>{

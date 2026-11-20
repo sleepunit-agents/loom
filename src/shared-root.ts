@@ -346,7 +346,7 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const direct=directTargets(db,(viewer,person,platform)=>memory.people.outsideAccount(viewer,person,platform));
-  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,directAllowed:direct.allowed,db,clock,writes:data.writes,changed:data.changed,
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
     stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},

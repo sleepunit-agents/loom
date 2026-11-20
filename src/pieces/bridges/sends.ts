@@ -20,6 +20,7 @@ export interface SendTransport {
   /** Resolve the current connection. Suppress generated mentions in platform posts.
    * Throw BridgeReplyNotSent when refusing before any request is made. */
   post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string, files?: readonly SendFile[], permitted?:()=>boolean): Promise<{ id: string }>;
+  progressAllowed?(job:string,send:BridgeSend,files:boolean):boolean;
   directAllowed?(job:string,target:DirectSendTarget,connection:string,channel:string):boolean;
 }
 
@@ -174,13 +175,17 @@ export class BridgeSends {
           || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
         const last = files.length > 0 && part++ === parts - 1;
         const address = { channel: send.channel, thread: send.thread };
-        if(send.id.startsWith('dm:')){
+        const authored=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
+        if(authored||send.id.startsWith('dm:')){
           const permitted=()=>{
             const source=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
-            return send.thread===null&&source?.directTarget?.channel===send.channel&&this.transport.directAllowed?.(source.job,source.directTarget,send.connection,send.channel)===true;
+            if(!source||source.job!==authored?.job)return false;
+            if(send.id.startsWith('dm:'))return send.thread===null&&source.directTarget?.channel===send.channel&&
+              this.transport.directAllowed?.(source.job,source.directTarget,send.connection,send.channel)===true;
+            return !source.directTarget&&this.transport.progressAllowed?.(source.job,send,files.length>0)===true;
           };
           if(!permitted())throw new BridgeReplyNotSent(false);
-          return this.transport.post(current,address,text,undefined,permitted);
+          return this.transport.post(current,address,text,last?files:undefined,permitted);
         }
         return last ? this.transport.post(current, address, text, files) : this.transport.post(current, address, text);
       };

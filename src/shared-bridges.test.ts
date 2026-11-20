@@ -1904,7 +1904,7 @@ it.each([false,true])('rechecks the linked DM recipient after opening a channel 
  expect((await f.call('bridges','directStatus',address,token.other)).status).toBe(403);
 });
 
-it('holds an offline DM when the recipient is relinked before release',async()=>{
+it.each(['relinked','job stopped','machine revoked'])('holds an offline DM after %s before release',async change=>{
  let effects=true;
  const f=fixture(()=>effects);
  f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
@@ -1931,7 +1931,9 @@ it('holds an offline DM when the recipient is relinked before release',async()=>
  const send=f.db.select().from(bridgeSends).get()!;
  expect(send).toMatchObject({state:'held',channel:'DOWNER'});
  f.root.writes.run(()=>{
-  f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run();
+  if(change==='job stopped')f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  else if(change==='machine revoked')f.db.update(boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(boxes.id,'box')).run();
+  else f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run();
   reviewReply(f.db,send.id,'release');
  });
  effects=true;
@@ -1939,6 +1941,27 @@ it('holds an offline DM when the recipient is relinked before release',async()=>
  await daemon.idle();
  await daemon.sends.flush();
  expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
- expect((await f.call('bridges','directStatus',address)).status).toBe(403);
+ expect([401,403]).toContain((await f.call('bridges','directStatus',address)).status);
  expect(f.request.mock.calls.filter(([url])=>/conversations\.open|chat\.postMessage/.test(String(url)))).toHaveLength(0);
+});
+
+it('keeps the confirmed first part and holds the rest when its channel is filtered',async()=>{
+ const f=fixture(),incoming=await f.receive(),cv=incoming.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const provider=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>{
+  if(String(url).endsWith('chat.postMessage')){
+   f.root.writes.run(()=>f.db.insert(bridgeChannelFilters).values({connection:'connection',rule:'ignore',channel:'CROOM'}).run());
+  }
+  return provider(url,init);
+ });
+ const id=randomUUID();
+ expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)})).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
+ expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{part:0,postedId:'1794432000.000009'}]);
+ expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
 });

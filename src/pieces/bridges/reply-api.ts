@@ -23,7 +23,7 @@ export const postable=(platform:'discord'|'slack',address:{channel:string;thread
   &&(thread===null||(discord?thread===address.channel:/^\d{10,}\.\d{6}$/.test(thread)));
 };
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:string;secrets:SecretUse;clock:Clock;current():boolean;request?:typeof fetch}){
+export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:string;secrets:SecretUse;clock:Clock;current():boolean;permitted?():boolean;request?:typeof fetch}){
  return {async post(address:{channel:string;thread:string|null},text:string,files:readonly SendFile[]=[]):Promise<{id:string}>{
   const discord=input.platform==='discord';
   // Files are posted on Discord only (sends.ts refuses them for Slack when the post is queued).
@@ -42,7 +42,7 @@ export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:str
    files.forEach((file,id)=>form!.set(`files[${id}]`,new Blob([new Uint8Array(file.contents)]),file.name));
   }
   const send=()=>{if(!current())throw Error();return input.secrets.withValue(input.tokenSecret,async token=>{
-   if(!current())throw Error();
+   if(!current()||input.permitted?.()===false)throw Error();
    // From here the platform may have the post, whatever happens next.
    requested=true;
    const response=await (input.request??fetch)(discord?`https://discord.com/api/v10/channels/${address.channel}/messages`:'https://slack.com/api/chat.postMessage',{

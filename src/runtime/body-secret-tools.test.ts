@@ -92,6 +92,7 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
      let out='';
      expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text',reply],{stdout:s=>{out+=s;},stderr(){}},options.env)).toBe(0);
      expect(JSON.parse(out).recorded).toBe(true);
+     expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text','Separate progress update'],{stdout(){},stderr(){}},options.env)).toBe(0);
     }
     const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:reply}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:reply}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
    }finally{await protocol.close();}
@@ -106,7 +107,7 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
  }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
  expect(await running).toBe(decision.startsWith('leak-')?14:decision==='stop'?10:0);await actorDone;if(failure)throw failure;expect(errors).toHaveBeenCalledTimes(decision.startsWith('leak-')?1:0);expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
- if(decision==='allow')expect(f.db.select().from(s.messages).where(eq(s.messages.sender,'art')).all()).toHaveLength(1);
+ if(decision==='allow')expect(f.db.select().from(s.messages).where(eq(s.messages.sender,'art')).all()).toHaveLength(2);
  if(decision!=='stop'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject(decision.startsWith('leak-')?[]:[{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);
   // The body leaves the Stop for loom to take when the worker next reports this job.
   expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);}

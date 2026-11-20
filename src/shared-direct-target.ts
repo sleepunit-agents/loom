@@ -1,26 +1,44 @@
 import {and,eq,isNull} from 'drizzle-orm';
+import type {BridgeSend} from './pieces/bridges/sends.js';
 import type {Viewer} from './policy.js';
 import {inHousehold,mayRunPrivateWork} from './policy.js';
+import {machineCurrent} from './core/data/authentication.js';
+import {liveConversationJob} from './core/conversations/index.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agentPeople,bridgeConnections,bridgePeople,conversations,jobs,members,type DirectSendTarget} from './core/data/schema.js';
+import {agentPeople,bridgeIncoming,bridgeConnections,bridgePeople,conversations,jobs,members,type DirectSendTarget} from './core/data/schema.js';
 import {outsidePersonKey} from './pieces/bridges/keys.js';
 import {conversationPlace} from './pieces/bridges/place.js';
 import {deniedTools} from './runtime/harness-traits.js';
 import {mayUseHouseSend} from './runtime/house-send-request.js';
-import {kitRoom,placeClosed,privateRefusal,wordReach} from './shared-place-mail.js';
+import {kitRoom,placeAddress,placeClosed,privateRefusal,wordReach} from './shared-place-mail.js';
 import {sharedSharing} from './shared-sharing.js';
 
 type Platform=DirectSendTarget['platform'];
 type DirectoryAccount=(viewer:Viewer,person:string,platform:Platform)=>{workspace:string;user:string}|undefined;
 export function directTargets(db:DataDatabase,directory:DirectoryAccount){
- function resolve(jobId:string,origin:string,person:string,platform:Platform){
+ function sendScope(jobId:string,origin:string){
   const job=db.select().from(jobs).where(eq(jobs.id,jobId)).get();
   const cv=db.select().from(conversations).where(eq(conversations.id,origin)).get();
-  if(!job||!cv||job.conversation!==origin||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
+  if(!job||!liveConversationJob(job.state)||!job.box||!machineCurrent(db,job.box)||!cv||job.conversation!==origin||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
   const sharing=sharedSharing(db);
   if(!sharing.agents?.includes(job.agent)||job.member&&!mayRunPrivateWork({member:job.member,agent:job.agent,project:job.project??undefined},sharing))return;
   const {room,word}=kitRoom(db,job);
-  if(word.woke==='others'||!mayUseHouseSend(deniedTools(room)))return;
+  if(!mayUseHouseSend(deniedTools(room)))return;
+  return {job,cv,word,sharing};
+ }
+ function progressAllowed(jobId:string,send:BridgeSend,files:boolean){
+  const incoming=send.incoming?db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id,send.incoming)).get():undefined;
+  const origin=incoming?.conversation??send.conversation;
+  if(!origin||send.incoming&&(!incoming||incoming.state!=='delivered'))return false;
+  const scope=sendScope(jobId,origin);
+  if(!scope||files&&scope.word.woke==='others'||placeClosed(db,scope.cv))return false;
+  const address=incoming??placeAddress(db,scope.cv);
+  return !!address&&address.connection===send.connection&&address.channel===send.channel&&address.thread===send.thread;
+ }
+ function resolve(jobId:string,origin:string,person:string,platform:Platform){
+  const scope=sendScope(jobId,origin);
+  if(!scope||scope.word.woke==='others')return;
+  const {job,word,sharing}=scope;
   const member=db.select({id:members.id}).from(members).where(eq(members.id,person)).get();
   let user:string,workspace:string;
   if(member){
@@ -55,5 +73,5 @@ export function directTargets(db:DataDatabase,directory:DirectoryAccount){
   const place=conversationPlace(target.workspace,{channel,isDm:true},target.member);
   return !placeClosed(db,{id:'',agent:found.agent,venue:target.platform,place});
  }
- return {resolve,allowed};
+ return {resolve,allowed,progressAllowed};
 }

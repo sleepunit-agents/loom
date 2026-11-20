@@ -69,7 +69,7 @@ export async function bodyProgram(input: {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   // The stage the body is in, as the exit code a failure there reports (see job-exit.ts).
   let exit:number=BODY_EXIT.input;
-  let lastProgress:{id:string;digest:string}|undefined;
+  const progressReceipts=new Map<string,string>();
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
@@ -283,7 +283,7 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
-        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call,accepted(id,text){lastProgress={id,digest:keyOf(text)};}},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
+        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call,accepted(id,text){progressReceipts.set(keyOf(text),id);}},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
@@ -329,7 +329,7 @@ export async function bodyProgram(input: {
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    const repeated=lastProgress?.digest===keyOf(answer.text)?lastProgress.id:undefined;
+    const repeated=progressReceipts.get(keyOf(answer.text));
     const replyId=repeated??randomUUID();
     if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'},replyId,repeated?'final:'+replyId:replyId);
     else if(job.review)await client.reply({clientId:'review-result',words:answer.text,model:answer.model,outcome:'progressed'});

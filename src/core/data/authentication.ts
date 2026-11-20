@@ -60,7 +60,7 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 /** A machine that has not been revoked and whose owner is in the household now. A removed member is nobody
  * (policy.ts), so their machine's token, and a body running there, stop being current when they are
  * removed, and are current again if they are restored. */
-function machineCurrent(db: DataDatabase, box: string): boolean {
+export function machineCurrent(db: DataDatabase, box: string): boolean {
   return !!db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
     .where(and(eq(boxes.id, box), isNull(boxes.revokedAt), isNull(members.removedAt))).get();
 }
