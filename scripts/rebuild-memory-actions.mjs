@@ -43,3 +43,37 @@ export async function knowledgeActions({page,tile,out,connections}){
   return {ok:false,phase,error:String(error),screenshot:failed};
  }
 }
+
+/** Exercise source attribution and an actual subsequent check on the same page. */
+export async function knowledgeSourceCheck({page,tile,out}) {
+ const title='Example pump pressure', claim='The fictional pump operates at 20 psi.';
+ const source='https://example.invalid/manual/pump-pressure';
+ const screenshot='action-knowledge-source-check.png';
+ try {
+  const back=tile.locator('.loom-split__back');
+  if(await back.isVisible())await back.click();
+  await tile.getByRole('button',{name:'Add a fact',exact:true}).click();
+  const form=tile.getByRole('form',{name:'Add a fact',exact:true});
+  for(const [label,value] of [['Title',title],['Topic','household/garden'],['What it says',claim],['Where it came from',source]])
+   await form.getByLabel(label,{exact:true}).fill(value);
+  await form.getByRole('button',{name:'Add',exact:true}).click();
+  await form.getByRole('button',{name:'Open fact',exact:true}).click();
+  const reader=tile.locator('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
+  await reader.getByText(claim,{exact:true}).waitFor();
+  await reader.getByRole('button',{name:'Check again',exact:true}).click();
+  await reader.getByText(/Asked to be checked again/).waitFor();
+  await reader.getByRole('button',{name:'Still true',exact:true}).click();
+  await reader.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
+  await page.reload();
+  await reader.getByText(claim,{exact:true}).waitFor();
+  const citation=reader.getByRole('region',{name:'Sources'}).getByRole('link',{name:source,exact:true});
+  if(await citation.getAttribute('href')!==source)throw Error('The saved citation points elsewhere');
+  const checks=reader.getByRole('region',{name:'Recent checks'}).getByRole('listitem');
+  await checks.first().filter({hasText:/Still true/}).waitFor();
+  await checks.nth(1).filter({hasText:/Asked to check again/}).waitFor();
+  await reader.screenshot({path:join(out,screenshot)});
+  return {ok:true,screenshot,reason:'After reload the saved fact retained its source link and its check history showed the confirmation after the recheck request.'};
+ }catch(error){
+  return {ok:false,error:String(error)};
+ }
+}

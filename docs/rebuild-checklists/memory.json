@@ -31,7 +31,11 @@
     {
       "id": "memory-005",
       "promise": "Keeps knowledge pages with where each fact came from, and re-checks them.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "knowledgeSourceCheck"
+      }
     },
     {
       "id": "memory-006",
