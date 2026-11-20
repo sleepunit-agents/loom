@@ -111,7 +111,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   z.object({category,title:z.string().max(200),content:z.string().max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional()}).strict(),
   async input=>{const value=await run('memory.remember',input) as {ids:string[]};return 'Remembered "'+input.title+'" ('+value.ids.join(', ')+')';});
 
- tool('recall','Search your memories by meaning. Returns titles and content.',
+ tool('recall','Search your own memories by meaning for past experiences, decisions and preferences. For factual questions about how something works, search shared pages with knowledge_recall first.',
   z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
    const found=await run('memory.recall',input) as {ids:string[];matches?:{id:string;score:number}[]};
@@ -144,7 +144,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     +window.entries.map(entry=>'- **'+entry.at+'** ['+entry.where+'] '+entry.title+(entry.line?' — '+entry.line:'')).join('\n');
   });
 
- tool('knowledge_recall','Search shared knowledge pages. Every word must appear in the title, body or domain.',
+ tool('knowledge_recall','Look up facts and procedures in shared knowledge pages. Start here for factual questions. Use a few distinctive keywords because every word must appear in the title, body or domain.',
   z.object({query:z.string().min(1).max(400),domain:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
    const data=await read<{memoryKnowledgeSearch:Page[]|null}>(
