@@ -981,7 +981,11 @@ export const boxReadings = sqliteTable('box_readings', {
   kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
   thing: text('thing').notNull(),
   disk: text('disk'),
-  diskLine: text('disk_line', { enum: ['percent', 'floor', 'margin'] }),
+  device: text('device'),
+  generation: text('generation'),
+  occasion: integer('occasion').notNull().default(0),
+  urgentOccasion: integer('urgent_occasion').notNull().default(0),
+  lastLines: text('last_lines', { mode: 'json' }).$type<{ diskPercent: number; diskUrgentPercent: number; diskFreeMib: number; memoryFreeMib: number }>(),
   usedPercent: integer('used_percent'),
   sizeMib: integer('size_mib'),
   freeMib: integer('free_mib'),
@@ -991,12 +995,13 @@ export const boxReadings = sqliteTable('box_readings', {
   urgentSince: text('urgent_since'),
   readAt: text('read_at'),
   unknownSince: text('unknown_since'),
+  unknownObservation: text('unknown_observation'),
+  unknownConfirmed: integer('unknown_confirmed', { mode: 'boolean' }).notNull().default(false),
   stale: integer('stale', { mode: 'boolean' }).notNull().default(false),
 }, t => [
   primaryKey({ columns: [t.box, t.kind, t.thing] }),
   check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
   check('box_readings_level', sql`${t.level} in ('ok', 'raised', 'urgent')`),
-  check('box_readings_disk_line', sql`${t.diskLine} is null or (${t.disk} is not null and ${t.diskLine} in ('percent', 'floor', 'margin'))`),
   check('box_readings_disk', sql`(${t.kind} = 'disk') = (${t.disk} is not null)`),
   check('box_readings_used_percent_range', sql`${t.usedPercent} is null or ${t.usedPercent} between 0 and 100`),
   check('box_readings_answers_boolean', sql`${t.answers} is null or ${t.answers} in (0, 1)`),
@@ -1007,8 +1012,7 @@ export const boxReadings = sqliteTable('box_readings', {
   check('box_readings_stale_boolean', sql`${t.stale} in (0, 1)`),
 ]);
 
-/** The lines a machine's readings are held to, for the whole household: one row, and the columns' own
- * defaults until it is there (runtime/machine-conditions.ts reads both). */
+/** The household’s effective alert lines. Installation and upgrade seed the singleton with defaults. */
 export const boxAlertSettings = sqliteTable('box_alert_settings', {
   singleton: integer('singleton').primaryKey().default(1).notNull(),
   diskPercent: integer('disk_percent').notNull().default(85),
@@ -1018,10 +1022,10 @@ export const boxAlertSettings = sqliteTable('box_alert_settings', {
 }, t => [
   check('box_alert_settings_singleton', sql`${t.singleton} = 1`),
   // A line clears a few points under itself (machine-conditions.ts, CLEAR_POINTS): one too low could never clear.
-  check('box_alert_settings_disk_percent_range', sql`${t.diskPercent} between 10 and 99`),
-  check('box_alert_settings_disk_urgent_percent_range', sql`${t.diskUrgentPercent} > ${t.diskPercent} and ${t.diskUrgentPercent} <= 100`),
-  check('box_alert_settings_disk_free_mib_range', sql`${t.diskFreeMib} >= 0`),
-  check('box_alert_settings_memory_free_mib_range', sql`${t.memoryFreeMib} >= 0`),
+  check('box_alert_settings_disk_percent_range', sql`typeof(${t.diskPercent}) = 'integer' and ${t.diskPercent} between 10 and 99`),
+  check('box_alert_settings_disk_urgent_percent_range', sql`typeof(${t.diskUrgentPercent}) = 'integer' and ${t.diskUrgentPercent} > ${t.diskPercent} and ${t.diskUrgentPercent} <= 100`),
+  check('box_alert_settings_disk_free_mib_range', sql`typeof(${t.diskFreeMib}) = 'integer' and ${t.diskFreeMib} between 0 and 1000000000`),
+  check('box_alert_settings_memory_free_mib_range', sql`typeof(${t.memoryFreeMib}) = 'integer' and ${t.memoryFreeMib} between 0 and 1000000000`),
 ]);
 
 /** One row per run of an agent. */

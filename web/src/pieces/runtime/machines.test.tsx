@@ -68,6 +68,13 @@ it('shows what each machine last read on itself quietly, and an open condition p
  expect(text()).toEqual(['/srv is running out of room: 91% full, 18 GB free.',
   `Disk / 71% · 60 GB free · Disk /old 40% · 120 GB free (as of ${briefTime(old,undefined,now)}) · Disk /srv 91% · 18 GB free (as of ${briefTime(lost,undefined,now)}) · Disk /was 96% · 8 GB free (not read since ${briefTime(dead,undefined,now)})`]);
  expect(briefTime(dead,undefined,now)).not.toBe(briefTime(new Date(now).toISOString(),undefined,now));
+ f.feed={status:'live',data:{...before,boxReadings:[
+  {...reading,box:'box',kind:'disk',thing:'/never',readAt:null,unknownSince:lost},
+  {...reading,box:'box',kind:'memory',thing:'',readAt:null,unknownSince:lost},
+  {...reading,box:'box',kind:'containers',thing:'',readAt:null,unknownSince:lost},
+ ]}} as never;
+ await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
+ expect(text()).toEqual(['Disk /never not yet read · Memory not yet read · Container runtime not yet read']);
  // A machine with no reading yet (an older worker, or none reporting) shows no line at all.
  f.feed={status:'live',data:before} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));

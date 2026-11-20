@@ -153,8 +153,8 @@ export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: read
 }
 /** What this machine's worker read about the machine itself (machine-check.ts), everything it watches each time,
  * and how often it reads: loom counts "two readings in a row" by that. */
-export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[], everyMs?: number) {
-  return operationCaller(input)('machineReadings', { readings, everyMs }, z.object({ changed: z.boolean() }).strict());
+export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[]) {
+  return operationCaller(input)('machineReadings', { readings }, z.object({ changed: z.boolean() }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

@@ -17,11 +17,12 @@ function fixture() {
   const db = createDataSchema(client, now);
   db.insert(members).values([{ id: 'owner', role: 'member', joinedAt: now() }, { id: 'sam', role: 'member', joinedAt: now() }]).run();
   db.insert(boxes).values({ id: 'box-1', name: 'loom', owner: 'owner', sameMachineAsLoom: true, hostsAny: false, reportOnly: false, alwaysOn: true, enrolledAt: now(), lastSeenAt: now() }).run();
-  const service = new MachineConditions(db, now);
+  let elapsed = 0;
+  const service = new MachineConditions(db, now, () => elapsed);
   /** The next reading, five minutes on: a 200 GiB disk at `/` this full, unless the reading says otherwise. */
-  const read = (...readings: Parameters<MachineConditions['read']>[1]) => { time += 5 * MINUTES; return service.read('box-1', readings); };
+  const read = (...readings: Parameters<MachineConditions['read']>[1]) => { time += 5 * MINUTES; elapsed += 5 * MINUTES; return service.read('box-1', readings); };
   const mail = () => db.select().from(inbox).all().sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
-  return { db, now, service, read, mail, advance: (ms: number) => { time += ms; },
+  return { db, now, service, read, mail, advance: (ms: number) => { time += ms; elapsed += Math.max(ms, 0); }, stepClock: (ms: number) => { time += ms; },
     rows: () => db.select().from(boxReadings).all(),
     open: () => mail().filter(item => item.state === 'waiting').map(item => item.words),
     closed: () => mail().filter(item => item.state !== 'waiting').map(item => [item.words, item.resolution]) };
@@ -171,7 +172,7 @@ it('keeps what was last read of a thing named as unknown, raising and clearing n
   const since = f.now();
   expect(f.read({ kind: 'disk', thing: '/', unknown: true }, disk(92, '/srv/data'), { kind: 'memory', unknown: true }, { kind: 'disk', thing: '/never/read', unknown: true })).toEqual({ changed: false });
   // The numbers, the level and the time they were read stand; only that it is unknown, and since when, is added.
-  expect(f.rows().filter(row => row.thing !== '/srv/data' && row.thing !== '/never/read')).toEqual(before.filter(row => row.thing !== '/srv/data').map(row => ({ ...row, unknownSince: since })));
+  expect(f.rows().filter(row => row.thing !== '/srv/data' && row.thing !== '/never/read')).toMatchObject(before.filter(row => row.thing !== '/srv/data').map(row => ({ ...row, unknownSince: since, unknownObservation: expect.any(String) })));
   expect(f.rows().filter(row => row.thing !== '/never/read').map(row => row.readAt)).toEqual([readAt, f.now(), readAt]);
   expect(f.rows().find(row => row.thing === '/never/read')).toMatchObject({ level: 'ok', unknownSince: since, usedPercent: null, readAt: null });
   expect(f.open()).toHaveLength(2);
@@ -237,20 +238,72 @@ it('says a change in a state a person is shown, and not a drift in the numbers',
   expect(f.read(disk(84), memory(600), up)).toEqual({ changed: false });
 });
 
-it('counts two readings in a row only when the one before was read lately, by the worker\'s own interval', () => {
+it('counts only consecutive reports no more than 30 minutes apart, resetting on unknown or missing', () => {
   const f = fixture(), down = { kind: 'containers' as const, answers: false };
   f.read(memory(300), down);
-  // The worker was away for an hour (fixture readings are five minutes apart, and so is its interval).
-  f.advance(60 * MINUTES);
+  f.advance(26 * MINUTES);
   f.read(memory(300), down);
   expect(f.mail()).toEqual([]);
+  f.read({ kind: 'memory', unknown: true }, { kind: 'containers', unknown: true });
+  f.read(memory(300), down);
+  expect(f.mail()).toEqual([]);
+  f.read(disk(50));
+  f.read(memory(300), down);
+  expect(f.mail()).toEqual([]);
+  f.advance(25 * MINUTES);
   f.read(memory(300), down);
   expect(f.open()).toHaveLength(2);
-  // A worker that reads hourly: an hour apart is in a row.
-  const g = fixture();
-  g.service.read('box-1', [memory(300)], 60 * MINUTES); g.advance(60 * MINUTES);
-  g.service.read('box-1', [memory(300)], 60 * MINUTES);
-  expect(g.open()).toEqual(['loom: 300 MB of memory is available. Alerts under 512 MB.']);
+});
+
+it('assigns new ordinary and urgent occasions when the clock repeats a raise timestamp', () => {
+  const f = fixture();
+  f.read(disk(91));
+  const ordinary = f.now();
+  f.read(disk(96));
+  const urgent = f.now();
+  f.read(disk(50));
+  f.stepClock(Date.parse(ordinary) - Date.parse(f.now()));
+  f.service.read('box-1', [disk(91)]);
+  f.stepClock(Date.parse(urgent) - Date.parse(f.now()));
+  f.service.read('box-1', [disk(96)]);
+  expect(f.open()).toHaveLength(2);
+  expect(new Set(f.mail().map(item => item.sourceId)).size).toBe(4);
+  expect(f.rows()[0]).toMatchObject({ occasion: 2, urgentOccasion: 2 });
+});
+
+it.each([true, false])('expires confirmed unknown disks in a sweep only when the machine is still reporting (%s)', live => {
+  const f = fixture(), machine = new Machines(f.db, f.now);
+  f.read(disk(91));
+  f.read(unknown('/'));
+  f.advance(55 * MINUTES);
+  f.read(unknown('/'));
+  f.advance(STALE_MS - 60 * MINUTES);
+  if (live) machine.heartbeat('box-1');
+  else machine.sweep();
+  expect(f.service.sweep()).toBe(live);
+  expect(f.rows()[0].stale).toBe(live);
+  expect(f.closed()).toHaveLength(live ? 1 : 0);
+  expect(f.open()).toEqual(live ? [] : [
+    'loom: / is 91% full (18 GB free). Alerts at 85%.', 'Machine loom has stopped reporting.',
+  ]);
+});
+
+it('does not expire an unknown disk on a clock jump or with only one unknown report', () => {
+  const f = fixture(), machine = new Machines(f.db, f.now);
+  f.read(disk(91));
+  f.read(unknown('/'));
+  f.stepClock(STALE_MS);
+  machine.heartbeat('box-1');
+  expect(f.service.sweep()).toBe(false);
+  f.read(unknown('/'));
+  expect(f.rows()[0].stale).toBe(false);
+  expect(f.closed()).toEqual([]);
+  f.advance(55 * MINUTES);
+  f.read(unknown('/'));
+  expect(f.rows()[0].stale).toBe(true);
+  f.stepClock(-STALE_MS);
+  expect(f.read(unknown('/'))).toEqual({ changed: false });
+  expect(f.mail()).toHaveLength(1);
 });
 
 it('leaves the conditions of a machine that has stopped reporting, and their notices, as they were', () => {
@@ -280,7 +333,7 @@ it('takes its lines from the household\'s settings, and the defaults while there
   const f = fixture();
   expect(alertLines(f.db)).toEqual({ diskPercent: 85, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 });
   expect(alertLines(f.db)).toEqual(ALERT_LINE_DEFAULTS);
-  expect(f.db.select().from(boxAlertSettings).all()).toEqual([]);
+  expect(f.db.select().from(boxAlertSettings).all()).toEqual([{ singleton: 1, ...ALERT_LINE_DEFAULTS }]);
   f.read(disk(75));
   expect(f.mail()).toEqual([]);
   expect(setAlertLines(f.db, { ...ALERT_LINE_DEFAULTS, diskPercent: 70, diskUrgentPercent: 80 })).toMatchObject({ diskPercent: 70, diskUrgentPercent: 80 });
@@ -337,19 +390,19 @@ const unknown = (thing: string) => ({ kind: 'disk' as const, thing, unknown: tru
 const a = '/srv/a', b = '/srv/b', c = '/srv/c';
 const grouped = 'loom: the disk holding /srv/a and /srv/b is 91% full (18 GB free). Alerts at 85%.';
 
-it('shares one persisted occasion across paths, worker restarts, report order and device renumbering', () => {
+it('shares one persisted occasion across paths, worker restarts and report order', () => {
   const f = fixture();
   f.read(disk(91, a, 10), disk(91, b, 10));
   expect(f.open()).toEqual([grouped]);
   expect(f.rows().map(row => [row.thing, row.disk, row.since])).toEqual([[a, f.rows()[0].disk, f.now()], [b, f.rows()[0].disk, f.now()]]);
   const group = f.rows()[0].disk, since = f.now();
   f.advance(5 * MINUTES);
-  expect(new MachineConditions(f.db, f.now).read('box-1', [disk(91, b, 110), disk(91, a, 110)])).toEqual({ changed: false });
+  expect(new MachineConditions(f.db, f.now).read('box-1', [disk(91, b, 10), disk(91, a, 10)])).toEqual({ changed: false });
   expect(f.rows().every(row => row.disk === group && row.since === since)).toBe(true);
   expect(f.mail()).toHaveLength(1);
-  f.read(disk(96, a, 110), disk(96, b, 110));
+  f.read(disk(96, a, 10), disk(96, b, 10));
   expect(f.open()).toEqual([grouped, 'loom: the disk holding /srv/a and /srv/b is 96% full (8 GB free). Urgent at 95%.']);
-  f.read(disk(60, a, 110), disk(60, b, 110));
+  f.read(disk(60, a, 10), disk(60, b, 10));
   expect(f.closed().map(([, why]) => why)).toEqual([
     'the disk holding /srv/a and /srv/b is at 60% (80 GB free), under the 85% line.',
     'the disk holding /srv/a and /srv/b is at 60% (80 GB free), under the 95% line.',
@@ -375,21 +428,22 @@ it('keeps a partly unknown group readable and waits a day after the last path be
   const when = new Intl.DateTimeFormat('en-US', {timeZone:'UTC', month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(latest)).replace(/\u202f/g, ' ');
   expect(f.closed()).toEqual([[grouped, `the disk holding /srv/a and /srv/b can no longer be read; last read ${when} at 93%.`]]);
   expect(f.rows().every(row => row.stale && row.level === 'ok')).toBe(true);
-  f.read(unknown(a), disk(91, b, 11));
+  f.read(unknown(a), disk(91, b, 10));
   expect(f.open()).toEqual([grouped]);
   expect(f.mail()).toHaveLength(2);
 });
 
-it('keeps the occasion through a device renumbering while one member is unreadable', () => {
+it('keeps the old disk unknown when the only readable path has moved to a healthy disk', () => {
   const f = fixture();
   f.read(disk(91, a, 10), disk(91, b, 10));
   const group = f.rows()[0].disk;
-  f.read(unknown(a), unknown(b));
-  f.read(unknown(a), disk(91, b, 11));
-  f.read(disk(91, a, 11), disk(91, b, 11));
-  expect(f.rows().map(row => row.disk)).toEqual([group, group]);
+  f.read(disk(60, a, 11), unknown(b));
+  expect(f.rows().find(row => row.thing === a)).toMatchObject({ device: '11', level: 'ok' });
+  expect(f.rows().find(row => row.thing === b)).toMatchObject({ disk: group, device: '10', level: 'raised', unknownSince: f.now() });
   expect(f.open()).toEqual([grouped]);
-  expect(f.mail()).toHaveLength(1);
+  expect(f.closed()).toEqual([]);
+  f.read(disk(60, a, 11), disk(60, b, 10));
+  expect(f.closed()).toEqual([[grouped, '/srv/b is at 60% (80 GB free), under the 85% line.']]);
 });
 
 it('closes each wholly unreadable disk after a day without emitting a machine-wide notice', () => {
@@ -407,29 +461,29 @@ it('closes each wholly unreadable disk after a day without emitting a machine-wi
   expect(f.mail()).toHaveLength(2);
 });
 
-it('closes the old group when it splits and judges the new disks independently', () => {
+it('keeps the original occasion when a group drops and adds paths', () => {
   const f = fixture();
-  f.read(disk(91, a, 10), disk(91, b, 10), disk(91, c, 10));
-  f.read(disk(91, a, 10), disk(60, b, 11), unknown(c));
-  expect(f.closed()[0][1]).toBe('/srv/a and /srv/b are now on different disks.');
-  expect(f.open()).toEqual(['loom: /srv/a is 91% full (18 GB free). Alerts at 85%.']);
-  expect(f.rows().find(row => row.thing === c)).toMatchObject({ level: 'ok', unknownSince: f.now() });
-  f.read(disk(91, a, 10), disk(60, b, 11), disk(91, c, 10));
-  expect(f.open()).toEqual(['loom: the disk holding /srv/a and /srv/c is 91% full (18 GB free). Alerts at 85%.']);
-  expect(f.closed().at(-1)?.[1]).toBe('/srv/c and /srv/a are now read on the same disk.');
+  f.read(disk(91, a, 10), disk(91, b, 10));
+  const [notice] = f.mail(), [{ disk: group }] = f.rows();
+  f.read(disk(91, a, 10));
+  f.read(disk(91, a, 10), disk(91, c, 10));
+  expect(f.rows().map(row => [row.thing, row.disk, row.occasion])).toEqual([[a, group, 1], [c, group, 1]]);
+  expect(f.mail().map(row => [row.id, row.state])).toEqual([[notice.id, 'waiting']]);
+  f.read(disk(60, a, 10), disk(60, c, 10));
+  expect(f.closed()[0][1]).toBe('the disk holding /srv/a and /srv/c is at 60% (80 GB free), under the 85% line.');
 });
 
-it('resolves old occasions when two disks merge or a watched member is dropped', () => {
+it('keeps one occasion when two disjoint groups later prove they share a device', () => {
   const f = fixture();
-  f.read(disk(91, a, 10), disk(91, b, 11));
-  f.read(disk(91, a, 12), disk(91, b, 12));
-  expect(f.closed().map(([, why]) => why)).toEqual([
-    '/srv/b and /srv/a are now read on the same disk.', '/srv/a and /srv/b are now read on the same disk.',
-  ]);
-  expect(f.open()).toEqual([grouped]);
-  f.read(disk(91, a, 12));
-  expect(f.closed().at(-1)).toEqual([grouped, 'No longer watched: /srv/b.']);
-  expect(f.open()).toEqual(['loom: /srv/a is 91% full (18 GB free). Alerts at 85%.']);
+  f.read(disk(91, a, 10));
+  const [first] = f.mail();
+  f.read(unknown(a), disk(91, b, 10));
+  expect(f.open()).toHaveLength(2);
+  f.read(disk(91, a, 10), disk(91, b, 10));
+  expect(f.mail().map(row => row.state)).toEqual(['waiting', 'resolved']);
+  expect(f.mail()[0].id).toBe(first.id);
+  expect(f.closed()[0][1]).toBe('/srv/b and /srv/a are now read on the same disk.');
+  expect(new Set(f.rows().map(row => row.disk)).size).toBe(1);
 });
 
 it('publishes a fresh reading immediately when a machine returns with its previous level', () => {
@@ -447,10 +501,17 @@ it('publishes a fresh reading immediately when a machine returns with its previo
  * disk unless the row says, 16 GiB of memory. */
 const lined = (lines: Partial<typeof ALERT_LINE_DEFAULTS>) => ({ ...ALERT_LINE_DEFAULTS, ...lines });
 const sized = (sizeGib: number, freeMib: number) => ({ kind: 'disk' as const, thing: '/', device: 1, sizeBytes: sizeGib * GIB, freeBytes: freeMib * MIB });
-it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: string, then: { lines?: Partial<typeof ALERT_LINE_DEFAULTS>; reading: Parameters<MachineConditions['read']>[1][number] }, closed: string | null, said?: string]>([
+it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: string, then: { firstLines?: Partial<typeof ALERT_LINE_DEFAULTS>; lines?: Partial<typeof ALERT_LINE_DEFAULTS>; reading: Parameters<MachineConditions['read']>[1][number] }, closed: string | null, said?: string]>([
   // Opened by a reading, closed by a reading that recovered.
   ['over the percent line, then under it by the margin', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { reading: disk(71) }, '/ is at 71% (58 GB free), under the 85% line.'],
-  ['under the free-room floor and inside the percent margin, then clear of both', [sized(30, 5000)], 'loom: / has 4.8 GB free (84% full). Alerts under 5 GB free.', { reading: sized(30, 6144) }, '/ has 6 GB free (80% full), over the 5 GB floor.'],
+  ['under the free-room floor and inside the percent margin, then clear of both', [sized(30, 5000)], 'loom: / has 4.8 GB free (84% full). Alerts under 5 GB free.', { reading: sized(30, 6144) }, '/ is at 80% (6 GB free), clear of the alert lines (85%, 5 GB free).'],
+  ['a percent condition held open by the floor, then clear of that floor',
+    [sized(20, 1844), sized(20, 4096)], 'loom: / is 91% full (1.8 GB free). Alerts at 85% or under 5 GB free.',
+    { reading: sized(20, 6144) }, '/ has 6 GB free (70% full), over the 5 GB floor.'],
+  ['a floor clears at exactly 110 MiB',
+    [sized(1, 99)], 'loom: / has 99 MB free (91% full). Alerts under 100 MB free.',
+    { firstLines: { diskPercent: 98, diskUrgentPercent: 99, diskFreeMib: 100 }, reading: sized(1, 110) },
+    '/ has 110 MB free (90% full), over the 100 MB floor.'],
   ['over the urgent line, then under the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(60) }, '/ is at 60% (80 GB free), under the 95% line.'],
   ['over the urgent line, then under it and still raised', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(90) }, '/ is at 90% (20 GB free), under the 95% line.', 'loom: / is 90% full (20 GB free). Alerts at 85%.'],
   ['over the urgent line, then inside the margin of the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(83) }, '/ is at 83% (34 GB free), under the 95% line.', 'loom: / is 83% full (34 GB free). Not yet clear of the alert lines (85%, 5 GB free).'],
@@ -474,6 +535,7 @@ it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: 
   ['the free-room floor raised over a disk that was fine', [sized(100, 30_000), sized(100, 30_000)], '', { lines: { diskFreeMib: 40_000 }, reading: sized(100, 30_000) }, null, 'loom: / has 29.2 GB free (71% full). Alerts under 39 GB free.'],
 ])('says what is true when %s', (_cause, open, opened, then, closed, said) => {
   const f = fixture();
+  if (then.firstLines) setAlertLines(f.db, lined(then.firstLines));
   for (const reading of open) f.read(reading);
   expect(f.open()).toEqual(opened ? [opened] : []);
   if (then.lines) setAlertLines(f.db, lined(then.lines));

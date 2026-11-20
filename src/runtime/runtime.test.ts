@@ -11,7 +11,7 @@ import { Dispatcher } from './dispatcher.js';
 import { harnessCannotRun } from './body-harnesses.js';
 import { Jobs } from './jobs.js';
 import { Machines } from './machines.js';
-import { MachineConditions } from './machine-conditions.js';
+import { MachineConditions, STALE_MS } from './machine-conditions.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0).reverse()) close(); });
@@ -169,6 +169,23 @@ it('closes on its sweep what was said about the condition of a machine since rem
   f.clock.advance(30_000);
   expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.resolution])).toEqual([['resolved', 'No longer watched']]);
   expect(f.error).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('sweeps a disk unreadable for a day according to machine heartbeat (%s)', live => {
+  const f = fixture(), readings = new MachineConditions(f.db, f.now, () => f.clock.now());
+  readings.read('worker', [{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100 * 1024 ** 3, freeBytes: 9 * 1024 ** 3 }]);
+  const unknown = [{ kind: 'disk', thing: '/', unknown: true }] as const;
+  readings.read('worker', unknown);
+  f.clock.advance(3_600_000);
+  readings.read('worker', unknown);
+  f.clock.advance(STALE_MS - 3_600_000);
+  if (live) f.worker.machines.heartbeat('worker');
+  f.runtime.sweep();
+  const notices = f.db.select().from(inbox).all();
+  expect(notices.find(row => row.words.includes('91%'))).toMatchObject(live
+    ? { state: 'resolved', resolution: expect.stringContaining('can no longer be read') }
+    : { state: 'waiting', resolution: null });
+  expect(notices.some(row => row.words.includes('stopped reporting'))).toBe(!live);
 });
 
 it('tells the owner on its sweep about a sign-in found gone on a machine that is reporting', () => {

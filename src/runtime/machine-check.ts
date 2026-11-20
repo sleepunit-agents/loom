@@ -69,7 +69,7 @@ const SAID = {
 
 export function machineReader(input: {
   paths: readonly string[];
-  engine?: (signal: AbortSignal) => Promise<unknown>;
+  engine?: (signal: AbortSignal) => Promise<boolean>;
   timeoutMs?: number;
   signal?: AbortSignal;
   say?: (line: string) => void;
@@ -139,10 +139,12 @@ export function machineReader(input: {
     }));
     const readings: MachineReading[] = [];
     if (input.engine) {
-      let answers = true;
-      try { await input.engine(AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(input.signal ? [input.signal] : [])])); }
-      catch { answers = false; }
-      readings.push({ kind: 'containers', answers });
+      try {
+        const answers = await input.engine(AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(input.signal ? [input.signal] : [])]));
+        readings.push({ kind: 'containers', answers });
+      } catch {
+        readings.push({ kind: 'containers', unknown: true });
+      }
     }
     const sizeBytes = totalmem(), freeBytes = Math.min(freemem(), sizeBytes);
     return [...readings, ...await disks, diskNumbers(0, sizeBytes, freeBytes)

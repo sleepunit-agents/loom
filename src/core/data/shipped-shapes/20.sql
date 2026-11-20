@@ -886,7 +886,11 @@ CREATE TABLE `box_readings` (
 	`kind` text NOT NULL,
 	`thing` text NOT NULL,
 	`disk` text,
-	`disk_line` text,
+	`device` text,
+	`generation` text,
+	`occasion` integer DEFAULT 0 NOT NULL,
+	`urgent_occasion` integer DEFAULT 0 NOT NULL,
+	`last_lines` text,
 	`used_percent` integer,
 	`size_mib` integer,
 	`free_mib` integer,
@@ -896,12 +900,13 @@ CREATE TABLE `box_readings` (
 	`urgent_since` text,
 	`read_at` text,
 	`unknown_since` text,
+	`unknown_observation` text,
+	`unknown_confirmed` integer DEFAULT false NOT NULL,
 	`stale` integer DEFAULT false NOT NULL,
 	PRIMARY KEY(`box`, `kind`, `thing`),
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "box_readings_kind" CHECK("box_readings"."kind" in ('disk', 'memory', 'containers')),
 	CONSTRAINT "box_readings_level" CHECK("box_readings"."level" in ('ok', 'raised', 'urgent')),
-	CONSTRAINT "box_readings_disk_line" CHECK("box_readings"."disk_line" is null or ("box_readings"."disk" is not null and "box_readings"."disk_line" in ('percent', 'floor', 'margin'))),
 	CONSTRAINT "box_readings_disk" CHECK(("box_readings"."kind" = 'disk') = ("box_readings"."disk" is not null)),
 	CONSTRAINT "box_readings_used_percent_range" CHECK("box_readings"."used_percent" is null or "box_readings"."used_percent" between 0 and 100),
 	CONSTRAINT "box_readings_answers_boolean" CHECK("box_readings"."answers" is null or "box_readings"."answers" in (0, 1)),
@@ -919,10 +924,10 @@ CREATE TABLE `box_alert_settings` (
 	`disk_free_mib` integer DEFAULT 5120 NOT NULL,
 	`memory_free_mib` integer DEFAULT 512 NOT NULL,
 	CONSTRAINT "box_alert_settings_singleton" CHECK("box_alert_settings"."singleton" = 1),
-	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK("box_alert_settings"."disk_percent" between 10 and 99),
-	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK("box_alert_settings"."disk_urgent_percent" > "box_alert_settings"."disk_percent" and "box_alert_settings"."disk_urgent_percent" <= 100),
-	CONSTRAINT "box_alert_settings_disk_free_mib_range" CHECK("box_alert_settings"."disk_free_mib" >= 0),
-	CONSTRAINT "box_alert_settings_memory_free_mib_range" CHECK("box_alert_settings"."memory_free_mib" >= 0)
+	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK(typeof("box_alert_settings"."disk_percent") = 'integer' and "box_alert_settings"."disk_percent" between 10 and 99),
+	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK(typeof("box_alert_settings"."disk_urgent_percent") = 'integer' and "box_alert_settings"."disk_urgent_percent" > "box_alert_settings"."disk_percent" and "box_alert_settings"."disk_urgent_percent" <= 100),
+	CONSTRAINT "box_alert_settings_disk_free_mib_range" CHECK(typeof("box_alert_settings"."disk_free_mib") = 'integer' and "box_alert_settings"."disk_free_mib" between 0 and 1000000000),
+	CONSTRAINT "box_alert_settings_memory_free_mib_range" CHECK(typeof("box_alert_settings"."memory_free_mib") = 'integer' and "box_alert_settings"."memory_free_mib" between 0 and 1000000000)
 );
 
 CREATE TABLE `jobs` (
@@ -1779,3 +1784,4 @@ CREATE TRIGGER "tokens_live_key_update" BEFORE UPDATE ON "tokens" WHEN NEW."revo
 CREATE TRIGGER "threads_no_reuse" BEFORE INSERT ON "threads" WHEN EXISTS (SELECT 1 FROM "deleted_threads" WHERE "id" = NEW."id") BEGIN SELECT RAISE(ABORT, 'deleted id cannot be reused'); END;
 CREATE TRIGGER "threads_fixed_id" BEFORE UPDATE OF "id" ON "threads" WHEN NEW."id" <> OLD."id" BEGIN SELECT RAISE(ABORT, 'id cannot be changed'); END;
 CREATE TRIGGER "threads_mark_deleted" AFTER DELETE ON "threads" BEGIN INSERT OR IGNORE INTO "deleted_threads" ("id", "conversation", "at") VALUES (OLD."id", OLD."conversation", loom_now()); END;
+INSERT INTO box_alert_settings (singleton) VALUES (1);

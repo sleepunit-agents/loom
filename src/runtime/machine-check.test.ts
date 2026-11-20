@@ -75,6 +75,55 @@ it('runs the emitted helper with the configured path, rejecting links and extra 
     expect(await launch('/')).toMatch(/^\{"device":\d+,"sizeBytes":\d+,"freeBytes":\d+\}\n$/);
     expect(await launch('/', '/tmp')).toBe('{"unknown":true}\n');
     expect(await launch('/bad/../path')).toBe('{"unknown":true}\n');
+    // Substitute only filesystem calls. Any statfs by watched name, or after
+    // descriptor identity failed, exits with a distinct failing status.
+    writeFileSync(join(build, 'descriptor-fixture.mjs'), `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const { openSync, fstatSync, lstatSync, statfsSync } = fs;
+      const watched = '/descriptor-fixture';
+      const mode = process.env.LOOM_DISK_FIXTURE;
+      let walked = 0, opened;
+      fs.lstatSync = (path, options) => {
+        const fixture = typeof path === 'string' && path.endsWith(watched);
+        const stat = lstatSync(fixture ? '/' : path, options);
+        if (fixture) {
+          walked++;
+          if (mode === 'changed-after' && walked === 2) stat.ino++;
+        }
+        return stat;
+      };
+      fs.openSync = (path, flags) => {
+        if (typeof path !== 'string' || !path.endsWith(watched)) return openSync(path, flags);
+        if (!path.startsWith('/proc/self/fd/') ||
+            flags !== (fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)) process.exit(91);
+        opened = openSync('/', flags);
+        return opened;
+      };
+      fs.fstatSync = (fd, options) => {
+        const stat = fstatSync(fd, options);
+        if (fd === opened && mode === 'changed-before') stat.ino++;
+        return stat;
+      };
+      fs.statfsSync = (path, options) => {
+        if (!opened || path !== '/proc/self/fd/' + opened || mode === 'changed-before') process.exit(92);
+        return statfsSync(path, options);
+      };
+      syncBuiltinESMExports();
+    `);
+    const runFixture = async (mode: string) => {
+      const { spawn } = await import('node:child_process');
+      const child = spawn(process.execPath, [
+        '--import', join(build, 'descriptor-fixture.mjs'), join(build, 'machine-disk-helper.js'), '/descriptor-fixture',
+      ], { env: { ...process.env, LOOM_DISK_FIXTURE: mode } });
+      let output = '';
+      child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
+      expect(await once(child, 'close')).toEqual([0, null]);
+      return output;
+    };
+    expect(await runFixture('stable')).toMatch(/^\{"device":\d+/);
+    expect(await runFixture('changed-before')).toBe('{"unknown":true,"reason":"link"}\n');
+    expect(await runFixture('changed-after')).toBe('{"unknown":true,"reason":"link"}\n');
   } finally { rmSync(build, { recursive: true, force: true }); }
 });
 
@@ -166,11 +215,16 @@ it('logs start failures once, treats failed and malformed helpers as unknown, an
 
 it('reports every configured alias and asks only whether the engine answers, including after a restart', async () => {
   const { start } = starters(() => true);
-  const engine = vi.fn(async (_signal: AbortSignal) => ({ DockerRootDir: '/engine-controlled' }));
+  const engine = vi.fn(async (_signal: AbortSignal) => true);
   const config = { paths: ['/', '/var/lib/runtime'], engine, start };
   expect(await machineReader(config)()).toMatchObject([{ kind: 'containers', answers: true }, disk('/'), disk('/var/lib/runtime'), { kind: 'memory' }]);
-  engine.mockRejectedValue(new Error('engine down'));
+  engine.mockResolvedValueOnce(false);
   expect(await machineReader(config)()).toMatchObject([{ kind: 'containers', answers: false }, disk('/'), disk('/var/lib/runtime'), { kind: 'memory' }]);
-  expect(engine).toHaveBeenCalledWith(expect.any(AbortSignal));
-  expect(start.mock.calls).toEqual([['/'], ['/var/lib/runtime'], ['/'], ['/var/lib/runtime']]);
+  engine.mockRejectedValueOnce(new Error('transport interrupted'));
+  expect((await machineReader(config)())[0]).toEqual({ kind: 'containers', unknown: true });
+  engine.mockImplementationOnce(signal => new Promise((_resolve, reject) =>
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })));
+  expect((await machineReader({ ...config, timeoutMs: 10 })())[0]).toEqual({ kind: 'containers', unknown: true });
+  expect(engine).toHaveBeenCalledTimes(4);
+  expect(start.mock.calls).toEqual(Array.from({ length: 4 }, () => [['/'], ['/var/lib/runtime']]).flat());
 });

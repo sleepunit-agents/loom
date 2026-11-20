@@ -56,7 +56,7 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
     // machine notice pass fails, so a later tick need not rediscover them.
     // A sign-in notice is for a machine that is reporting, so it waits for the same judgement.
     // What was said about a machine since removed is closed whatever the clock did: that needs no judgement of silence.
-    try { try { try { try { if (judge) machines.sweep(); } finally { if (judge) logins.sweep(); } } finally { conditions.sweep(); } } finally { options.expire?.(); } }
+    try { try { try { try { if (judge) machines.sweep(); } finally { if (judge) logins.sweep(); } } finally { conditions.sweep(judge); } } finally { options.expire?.(); } }
     finally { ended(over.map(job => job.id)); }
   };
   const tick = () => {

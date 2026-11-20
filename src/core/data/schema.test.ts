@@ -52,7 +52,7 @@ describe('the approved data model', () => {
   it('keeps generated installation SQL exactly in step with the sole Drizzle definition', async () => {
     const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
     const checkedIn = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8');
-    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements()].join('\n') + '\n');
+    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements(), 'INSERT INTO box_alert_settings (singleton) VALUES (1);'].join('\n') + '\n');
   });
 
   it('refuses an existing database and leaves its records intact', () => {

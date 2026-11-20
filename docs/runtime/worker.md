@@ -1055,8 +1055,9 @@ in the worker, and one bounded request to the configured container socket.
   rounded up to a whole percent. Read-only filesystems are read normally.
 - **Memory.** The total and what is available to start something new with.
 - **The container runtime.** Whether the engine at `container.socket`
-  answers a version request within five seconds. Only workers with that
-  socket configured report this reading.
+  answers a version request within five seconds. A completed error response
+  counts as a refusal. A timeout or transport failure is unknown. Only workers
+  with that socket configured report this reading.
 
 For every watched path the worker starts this program's own
 `machine-disk-helper.js` at a fixed location beside the compiled reader,
@@ -1064,11 +1065,13 @@ using the worker's own Node binary (`process.execPath`) with no shell.
 The sole script argument is the configured path. Both the worker and helper
 validate it with `watchedPath`. The check runs no other program.
 
-The helper checks every directory from `/` down without following links,
-calls `statfs`, then checks the same devices and inodes again. If a directory
-such as `/var/lib/docker` is a symlink, configure the real directory.
-**Keep watched paths outside trees bodies can write.** A link swapped in and
-out within a single read can go undetected ([accepted trade-offs](../accepted-tradeoffs.md)).
+The helper checks every directory from `/` down, then opens each component
+relative to the previous descriptor with `O_DIRECTORY | O_NOFOLLOW`. It
+compares each descriptor's device and inode to the walk, calls `statfs` through
+the final descriptor in `/proc/self/fd`, then checks the walked names again.
+If a directory such as `/var/lib/docker` is a symlink, configure the real
+directory. **Keep watched paths outside trees bodies can write.**
+See [accepted trade-offs](../accepted-tradeoffs.md).
 A watched path is absolute and at most 120 characters. Each component starts
 with a letter, digit, dot or underscore and continues with those or `@ + -`.
 The special components `.` and `..` are disallowed. An invalid `watchPaths`
@@ -1084,7 +1087,7 @@ remain asleep until the mount responds or the machine restarts. A failed
 start produces an unknown reading and a fixed diagnostic logged once.
 
 Every report names each watched path with numbers and an integer device ID,
-or as unknown. loom records an unknown path even before its first successful
+or as unknown. loom records an unknown thing even before its first successful
 read, with no numbers or last-read time. Missing directories, links, memory-backed and kernel
 filesystems, and read-only images such as squashfs are reported as unknown.
 The worker keeps its filesystem readings independent of the engine's answer.
@@ -1096,7 +1099,7 @@ The worker keeps its filesystem readings independent of the engine's answer.
 
 Both are optional, so a worker's configuration needs no change. Left out, the
 worker reads every five minutes. `machineCheckMs` is between ten seconds and an
-hour, and is sent with each report. A worker that only reports (`reportOnly`)
+hour and controls the worker’s own polling only. A worker that only reports (`reportOnly`)
 watches its machine as well. A report loom does not take prints `Worker machine
 readings unavailable` and is tried again at the next interval.
 
@@ -1119,12 +1122,12 @@ them.
 A condition is raised at its line and cleared only under it by a margin, so a
 reading that hovers at the line raises once and stays raised: a percent line
 clears three points under it (85 clears at 82, 95 at 92), and a floor clears
-with a tenth more than the floor. The lowest line is 10 so that every line has
+at `floor + ceil(floor / 10)` whole MiB. The lowest line is 10 so that every line has
 a point it clears at. A disk is raised by the first reading over its line.
 Memory and the container runtime dip for a moment (a build, an engine being
-restarted), so they are raised only by two readings in a row; "in a row" means
-the one before was read no more than three of the worker's intervals ago, and
-an older one starts the count again. A floor is asked only of something at
+restarted), so they are raised only when two consecutive reports are both over
+the line. Loom uses its own receipt times, at most 30 minutes apart. An unknown
+or missing reading starts the count again. A floor is asked only of something at
 least twice its size: a smaller disk is held to the percent line alone, and its
 notices say nothing of the floor. A machine is held to changed lines by its
 next reading. Zero switches off either free-room floor. The percentage lines
@@ -1149,26 +1152,27 @@ free), under the 85% line.` A notice its reader closed by hand is not sent
 again for the same occasion; a condition that cleared and came back is a new
 occasion with a notice of its own.
 
-A recovery names the alert line or floor the notice was raised for. If the
+A recovery names the line the latest reading cleared. When a settings edit clears a condition, the closure names the relevant edit. If the
 owner switched off the memory floor, its notice closes with
 `The memory floor was switched off.`
 
 loom stores a reading per watched path. In each report, paths with the same
 device ID form one disk with one condition. The notice names the group, for
 example `loom: the disk holding /srv/a and /srv/b is 91% full (18 GB free).
-Alerts at 85%.` The same set of paths keeps its occasion if the device is
-renumbered. An unknown path keeps its last reading and remains with its
-group while the group can still be identified. A proven split or merge
-closes the old occasions with what was observed, for example
-`/srv/a and /srv/b are now on different disks.` The resulting disks are
-judged afresh. An unknown member of a split stays unresolved until it can
-be read. Removing a configured member closes the old occasion and names which
-paths are no longer watched. The remaining paths are judged as reported.
+Alerts at 85%.` A readable shared path that still reports the same device
+continues the occasion, even if other paths are added or removed. Unknown
+paths keep their previous association and supply no evidence about where a
+disk has moved. A path reporting a different device is evaluated with that
+device. The original disk can recover only on a reading from a retained path
+on its device. Notice IDs use stored occasion counters.
 
-Only after every path of a disk has been unknown for a day does loom close
-its notices with `/srv can no longer be read; last read Nov 19, 8:05 AM at
-91%.` (in the household's time). It keeps the last numbers and marks the
-group stale. A later reading over a line starts a new occasion.
+Loom closes an unreadable disk's notices once each retained path has been
+unknown for a day and has been observed unknown on two reports separated by
+at least an hour of elapsed time. Reports and the runtime sweep can close the
+notice. The sweep requires a machine that is still reporting. Loom keeps
+the last numbers, marks the group stale and says, for example,
+`/srv can no longer be read; last read Nov 19, 8:05 AM at 91%.` A later
+reading over a line starts a new occasion.
 
 A machine that stops reporting keeps its conditions and their notices as they
 were; its silence is its own notice. A machine taken out of the household has

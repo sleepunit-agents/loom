@@ -20,7 +20,10 @@ export function readingAge(reading:Reading,now:number,zone?:string):string {
 }
 /** One reading, quietly. A disk is named by its path only when the machine has more than one watched. */
 export function readingLine(reading:Reading,disks:number,now:number,zone?:string):string {
- if(!reading.readAt)return `Disk ${reading.thing} unreadable`;
+ if(!reading.readAt){
+  const label=reading.kind==='disk'?`Disk ${reading.thing}`:reading.kind==='memory'?'Memory':'Container runtime';
+  return `${label} not yet read`;
+ }
  const said=reading.kind==='containers'?(reading.answers?'Container runtime answering':'Container runtime not answering')
   :reading.kind==='memory'?`Memory ${room(reading.freeMib??0)} available`
   :`Disk${disks>1?' '+reading.thing:''} ${reading.usedPercent??0}% · ${room(reading.freeMib??0)} free`;

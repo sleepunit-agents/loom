@@ -591,27 +591,26 @@ On success the body sends its report alongside settlement. A body with validated
 - **What would change the answer.** Stamping reports with a count that only moves forward instead of a
   time, which is a schema change.
 
-### A watched path can be swapped under the worker for one read
+### A watched name can change while its directory is being read
 
-- **What.** A worker reads the room on each watched path (`src/runtime/machine-disk-helper.ts`). It looks at every
-  step from `/` down as it is and requires a real directory, asks for the room of the path, then looks at
-  every step again and requires the same directory (device and inode) at each. A step that is swapped for
-  a link after the first look and swapped back before the second is not seen, and the room reported under
-  the watched name is then the room of whatever the link pointed at.
-- **Why it cannot be closed.** The room of a filesystem can only be asked by path (`statfs`), and the
-  kernel follows links at every step of a path. Asking by an open directory (`fstatfs`) would close it,
-  and Node has no such call; opening the directory at all is something a worker may not be allowed where
-  the container runtime keeps its own.
-- **What it allows.** Somebody who can write in a parent of a watched directory, and who wins that race,
-  makes that machine's reading for that one path wrong for one round: a full disk shown as not full (its
-  notice closed, and raised again by the next honest reading), or the reverse.
-- **What bounds it.** Only the numbers of that one path, on that one machine, for as long as the race is
-  won again at every read. Nothing is read from or written to what the link points at. The paths every
-  worker watches without being told (`/` and its state directory) are
-  not writable by bodies.
-- **The rule.** Do not put a watched path (`watchPaths`) inside a tree bodies can write
-  (`docs/runtime/worker.md`).
-- **What would change the answer.** An `fstatfs` in Node, or a reason to watch a directory bodies write in.
+The disk helper compares a walk from the root with directories opened one
+component at a time through Linux procfs, using `O_DIRECTORY | O_NOFOLLOW`.
+It checks each opened device and inode and queries filesystem space through
+the final descriptor. It then compares the original walk again. A name can
+be moved away and restored between walks, or change immediately after the
+second walk. The resulting numbers belong to the directory the walk reached
+and the helper opened. The reading is a snapshot, and the helper needs
+read permission on the traversed directories and a usable `/proc/self/fd`.
+Keep watched paths outside trees bodies can write.
+
+### A worker can misstate its own machine readings
+
+A worker credential identifies one machine. The worker can supply false
+numbers, device IDs, or any path within the watch-path bound. For example,
+it can say a fabricated path shares the root filesystem. This affects the
+reading and notices for that machine in its owner's view. Loom decides the
+conditions, report timing and recipients. Revisit this if machine readings
+are used to make decisions about other machines or their owners.
 
 ### A hung mount can leave a sleeping disk helper
 

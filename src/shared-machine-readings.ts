@@ -40,15 +40,16 @@ export function registerSharedMachineReadings(operations: Operations, db: DataDa
   const conditions = new MachineConditions(db, now);
   // The worker names every thing it watches each time, so the record of its machine is replaced whole.
   // Which machine it speaks for comes from its credential alone.
+  // Older workers still send everyMs. It has no effect on admission or evaluation.
   operations.register({ name: 'runtime.machineReadings', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ readings: z.array(machineReading).max(WATCHED_PATHS_MAX + 2)
       .refine(readings => readings.filter(row => row.kind === 'disk').length <= WATCHED_PATHS_MAX &&
-        new Set(readings.map(row => JSON.stringify([row.kind, row.thing]))).size === readings.length, 'Report each watched thing once'), everyMs: z.number().int().min(10_000).max(3_600_000).optional() }).strict(), output: z.object({ changed: z.boolean() }).strict(),
+        new Set(readings.map(row => JSON.stringify([row.kind, row.thing]))).size === readings.length, 'Report each watched thing once'), everyMs: z.unknown().optional() }).strict(), output: z.object({ changed: z.boolean() }).strict(),
     may: viewer => !!liveWorker(db, viewer, runner(viewer)),
     run(ctx, input) {
       const box = liveWorker(db, ctx.viewer, runner(ctx.viewer));
       if (!box) throw new OperationError('denied', 'Worker required');
-      const { changed } = conditions.read(box, input.readings, input.everyMs);
+      const { changed } = conditions.read(box, input.readings);
       // The numbers move with every reading. A state a person is shown (a condition raised or cleared, the
       // container runtime answering or not, a thing unknown, readable again, stale, added or dropped) is an
       // ordinary change, told at once. Numbers alone are a stamp and reach an open window as a last-seen

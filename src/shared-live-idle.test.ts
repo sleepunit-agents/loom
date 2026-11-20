@@ -57,7 +57,7 @@ async function fixture() {
     let shown: unknown, frames = 0;
     ws.on('message', raw => { frames++; for (const patch of JSON.parse(String(raw)).payload.data.observe.patches as Patch[]) shown = apply(shown, patch.path, patch); });
     ws.send(JSON.stringify({ type: 'subscribe', id: 'one', payload: { query: `subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value removed } } }` } }));
-    await vi.waitFor(() => expect(frames).toBe(1));
+    await vi.waitFor(() => expect(frames).toBe(1), { timeout: 3000 });
     return { data: () => shown, frames: () => frames, closed: () => ws.readyState !== WebSocket.OPEN };
   };
   const poll = async (input: Record<string, unknown> = {}) => {

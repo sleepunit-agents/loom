@@ -14,7 +14,7 @@ import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccoun
 import { readLogin, watchesLogin } from './account-login-check.js';
 import { MACHINE_CHECK_MS } from './machine-reading-time.js';
 import { WATCHED_PATHS_MAX, machineReader, watchedPath } from './machine-check.js';
-import { dockerEngine } from './docker-engine.js';
+import { DockerResponseError, dockerEngine } from './docker-engine.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
@@ -238,10 +238,18 @@ export async function workerProgram(input: {
       const socket = config.container?.socket, everyMs = config.machineCheckMs ?? MACHINE_CHECK_MS;
       const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.reportOnly ? [] : [config.state ?? defaultWorkerState(config.box)]), ...(config.watchPaths ?? [])], signal: abort.signal,
         say: line => input.error(line),
-        ...(socket === undefined ? {} : { engine: (signal: AbortSignal) => dockerEngine(socket).json('GET', '/version', undefined, signal) }) });
+        ...(socket === undefined ? {} : { engine: async (signal: AbortSignal) => {
+          try {
+            await dockerEngine(socket).json('GET', '/version', undefined, signal);
+            return true;
+          } catch (error) {
+            if (error instanceof DockerResponseError) return false;
+            throw error;
+          }
+        } }) });
       return poll(everyMs, 'Worker machine readings unavailable\n', async () => {
         const readings = await read();
-        if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings, everyMs);
+        if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings);
       // A clock of its own: it shares no timing with the usage refresh or the sign-in check.
       }, input.machinePause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); }));
     };

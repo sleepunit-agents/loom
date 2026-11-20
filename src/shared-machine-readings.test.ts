@@ -81,11 +81,13 @@ it('refuses a reading with a path outside the bound, a judgement, a field loom d
   ]) expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
   expect((await f.report(Array.from({ length: 17 }, (_, index) => disk(50, `/d${index}`)))).status).toBe(400);
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
-  expect((await f.call('runtime.machineReadings', { readings: [disk(50)], everyMs: 5 }, keys.worker)).status).toBe(400);
   expect((await f.report([disk(50), disk(51)])).status).toBe(400);
   // What it could not read is named and carries nothing else.
   expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { changed: true } });
-  expect(f.db.select().from(boxReadings).all()).toMatchObject([{ thing: '/', readAt: null, unknownSince: expect.any(String), usedPercent: null }]);
+  expect(f.db.select().from(boxReadings).all()).toMatchObject([
+    { kind: 'disk', thing: '/', readAt: null, unknownSince: expect.any(String), usedPercent: null },
+    { kind: 'memory', thing: '', readAt: null, unknownSince: expect.any(String), freeMib: null },
+  ]);
 });
 
 it('takes a size up to the largest the read API can serve, and refuses one past it', async () => {
@@ -132,7 +134,7 @@ it('shows a machine\'s readings to whoever may see the machine, and to nobody el
 it('lets a household owner alone move the lines, and holds the next reading to them', async () => {
   const f = fixture();
   const lines = '{ boxAlertSettings { diskPercent diskUrgentPercent diskFreeMib memoryFreeMib } }';
-  expect(await f.query(lines, keys.owner)).toEqual({ data: { boxAlertSettings: [] } });
+  expect(await f.query(lines, keys.owner)).toEqual({ data: { boxAlertSettings: [{ diskPercent: 85, diskUrgentPercent: 95, diskFreeMib: 5120, memoryFreeMib: 512 }] } });
   expect((await f.call('machine.setAlertLines', { diskPercent: 70 }, keys.sam)).status).toBe(403);
   expect((await f.call('machine.setAlertLines', { diskPercent: 70 }, keys.worker)).status).toBe(403);
   expect((await f.call('machine.setAlertLines', {}, keys.owner)).status).toBe(400);
@@ -158,4 +160,21 @@ it('lets a household owner alone move the lines, and holds the next reading to t
   expect((await f.query(lines, 'f'.repeat(64))).data?.boxAlertSettings ?? []).toEqual([]);
   await f.report([disk(75)]);
   expect(f.db.select().from(inbox).all().map(item => item.words)).toEqual(['loom: / is 75% full (50 GB free). Alerts at 70%.']);
+});
+
+it('ignores legacy cadence and commits first unknown memory and container readings', async () => {
+  const f = fixture();
+  const low = { ...memory, freeBytes: 100 * 1024 ** 2 };
+  expect((await f.call('runtime.machineReadings', { readings: [disk(50), low], everyMs: 10_000 }, keys.worker)).status).toBe(200);
+  f.clock.advance(300_000);
+  expect((await f.call('runtime.machineReadings', { readings: [disk(50), low], everyMs: 10_000 }, keys.worker)).status).toBe(200);
+  expect(f.db.select().from(inbox).all()).toMatchObject([{ words: expect.stringContaining('100 MB of memory') }]);
+  await f.report([disk(50)]);
+  expect((await f.report([disk(50), { kind: 'memory', unknown: true }, { kind: 'containers', unknown: true }])).body)
+    .toEqual({ ok: true, value: { changed: true } });
+  expect(f.db.select().from(boxReadings).all().sort((a, b) => a.kind.localeCompare(b.kind))).toMatchObject([
+    { kind: 'containers', readAt: null, unknownSince: expect.any(String) },
+    { kind: 'disk', readAt: expect.any(String) },
+    { kind: 'memory', readAt: null, unknownSince: expect.any(String) },
+  ]);
 });
