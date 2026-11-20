@@ -11,10 +11,26 @@ export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowl
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null; freshness_anchor?: string | null; sla_class?: string | null }
 /** How long a check of a page stands. The page shows it as due after this, and the sweep raises it then. */
 export const CHECK_DAYS = 30;
+/** A device the household has retired needs only a quarterly routine check. */
+export const RETIRED_CHECK_DAYS = 90;
+export function retiredKnowledgePages(db: Database, slug?: string): Set<number> {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='page_annotations'").get()) return new Set();
+  const rows = db.prepare(`SELECT a.page_id FROM page_annotations a JOIN (
+    SELECT page_id, max(id) AS id FROM page_annotations
+    WHERE kind IN ('no-longer-owned','in-use')
+      AND (? IS NULL OR page_id=(SELECT id FROM pages WHERE slug=?)) GROUP BY page_id
+  ) latest ON latest.id=a.id WHERE a.kind='no-longer-owned'`).all(slug ?? null, slug ?? null) as {page_id:number}[];
+  return new Set(rows.map(row => row.page_id));
+}
 /** A page is shown as aging for the last third of that time. */
 export const AGING_DAYS = (CHECK_DAYS * 2) / 3;
+const activeSchedule = {agingDays: AGING_DAYS, checkDays: CHECK_DAYS};
+const retiredSchedule = {agingDays: RETIRED_CHECK_DAYS * 2 / 3, checkDays: RETIRED_CHECK_DAYS};
+export function knowledgeSchedule(retired: boolean) {
+  return retired ? retiredSchedule : activeSchedule;
+}
 export type Freshness = 'fresh' | 'aging' | 'due';
-export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; freshness_anchor?: string; sla_class?: string; fresh: Freshness; by?: string;
+export interface KnowledgeRow { archiveCandidate?: true; slug: string; title: string; domain: string; updated: string; verified_at?: string; freshness_anchor?: string; sla_class?: string; fresh: Freshness; by?: string;
   /** Its last check's outcome, when there was one. */
   checked?: { at: string; outcome: string; by?: string };
   /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
@@ -44,15 +60,17 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
     } catch { /* an older store: no verifications table */ }
     const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, freshness_anchor, sla_class, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC, slug`)
       .all(detailOnly ? open : null, detailOnly ? open : null) as Array<PageRow & { id: number }>;
+    const retired = retiredKnowledgePages(db, detailOnly ? open : undefined);
     const day = DAY_MS;
     const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {
       const at = Date.parse(r.verified_at ?? r.updated);
       const age = (nowMs - at) / day;
-      if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
-      return age >= AGING_DAYS ? 'aging' : 'fresh';
+      const {agingDays, checkDays} = knowledgeSchedule(retired.has(r.id));
+      if (last.get(r.id)?.outcome === 'stale' || !(age < checkDays)) return 'due';
+      return age >= agingDays ? 'aging' : 'fresh';
     };
     const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
-    const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
+    const line = (r: PageRow & { id: number }): KnowledgeRow => ({ ...(retired.has(r.id) ? {archiveCandidate:true as const} : {}), slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
       ...(r.verified_at ? { verified_at: r.verified_at } : {}), ...(r.freshness_anchor ? { freshness_anchor: r.freshness_anchor } : {}), ...(r.sla_class ? { sla_class: r.sla_class } : {}), ...(last.has(r.id) ? {checked: last.get(r.id)} : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
     const out: KnowledgeView = { total: (db.prepare("SELECT COUNT(*) AS n FROM pages WHERE status = 'active'").get() as { n: number }).n, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
     if (open) {

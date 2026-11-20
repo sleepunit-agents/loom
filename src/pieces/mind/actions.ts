@@ -201,7 +201,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   const dispute = z.object({slug, words, evidence: words}).strict()
     .transform(value => ({...value, kind: 'dispute' as const}));
   const annotation = z.object({
-    slug, words, kind: z.enum(['outdated', 'intent', 'note']),
+    slug, words, kind: z.enum(['outdated', 'intent', 'note', 'no-longer-owned', 'in-use']),
   }).strict().transform(value => ({...value, evidence: ''}));
   for (const [name, input] of [
     ['mind.knowledgeDispute', dispute],

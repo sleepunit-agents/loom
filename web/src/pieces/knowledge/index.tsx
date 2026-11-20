@@ -22,6 +22,7 @@ function AnnotationForm({request, save, reset}: {request?: Call; save(kind: stri
     <fieldset className="grid gap-2" disabled={frozen(answer)}>
       <label>Annotation type <NativeSelect value={kind} onChange={event => setKind(event.target.value)}>
         <option value="note">Note</option><option value="outdated">Out of date</option><option value="intent">Intent</option>
+        <option value="no-longer-owned">Household no longer owns this</option><option value="in-use">Household uses this again</option>
       </NativeSelect></label>
       <label>Annotation <Textarea required maxLength={4000} value={words} onChange={event => setWords(event.target.value)} /></label>
       <Button type="submit">Save annotation</Button>
@@ -36,7 +37,7 @@ function Reader({ page, zone, open, canVerify, canRecheck, request, act, annotat
   const body = useMemo(() => page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`), [page.body]);
   return <PageReader>
     <header><Meta>{page.domain}</Meta><Title as="h1">{page.title}</Title><Meta>{freshWord[page.fresh]} · {page.verified_at ? `verified ${date(page.verified_at, zone)}` : `written ${date(page.updated, zone)}, not verified yet`}</Meta>
-      <Meta>{page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at, zone)}` : 'Pages are re-checked every 30 days'}</Meta>
+      <Meta>{page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at, zone)}` : `${page.archiveCandidate ? 'Archive candidate · ' : ''}Routine check every ${page.routineCheckDays} days`}</Meta>
       {page.checked?.by && <Meta>Last check by {page.checked.by}</Meta>}</header>
     <div className="flex flex-wrap gap-2"><Button disabled={frozen(answer) || !canVerify} onClick={() => act('knowledgeVerify')}>Still true</Button><Button variant="outline" disabled={frozen(answer) || !canRecheck} onClick={() => act('knowledgeRecheck')}>Check again</Button></div>
     {answer.pending ? <Loading label={answer.status === 'offline' ? 'Waiting for connection…' : 'Saving check…'} /> : answer.result && (!answer.result.ok ? <div><Error title="Couldn’t save check" text={`${answer.result.code}: ${answer.result.message}`} />{answer.result.code==='unavailable'&&<Button onClick={()=>request?.retry?.()}>Retry this check</Button>}</div> : <p role="status">Check saved</p>)}

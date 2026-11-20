@@ -2,9 +2,9 @@ import { DAY_MS } from '../../core/day.js';
 import type { Database } from 'better-sqlite3';
 import type { Clock } from '../../core/clock.js';
 import type { OpenItem, SweepPart } from '../../core/tempo/sweep.js';
-import { CHECK_DAYS } from './knowledge.js';
+import { knowledgeSchedule, retiredKnowledgePages } from './knowledge.js';
 
-const CHECK_INTERVAL = CHECK_DAYS * DAY_MS;
+
 
 /** Trusted sweep contribution, routed to the explicitly configured checking agent.
  * Reads metadata only; delivering a reminder never counts as checking a page.
@@ -24,8 +24,9 @@ export function knowledgeSweep(db: Database | undefined, clock: Pick<Clock,'now'
       const rotate = attributed ? `p.author = @primary AND
         (SELECT count(*) FROM (SELECT verifier FROM verifications WHERE page_id=p.id ORDER BY id DESC LIMIT 3)
          WHERE verifier=@primary) = 3` : '0';
-      const rows = db.prepare(`SELECT (${rotate}) AS rotate, slug, title, updated, verified_at, ${latest} AS outcome, ${checkedAt} AS checked_at FROM pages p WHERE status = 'active' ORDER BY slug`).all(...(attributed ? [{primary: agent}] : [])) as Array<{
-        rotate: number | null; slug: string; title: string; updated: string; verified_at: string | null; outcome: string | null; checked_at: string | null;
+      const retired = retiredKnowledgePages(db);
+      const rows = db.prepare(`SELECT p.id, (${rotate}) AS rotate, slug, title, updated, verified_at, ${latest} AS outcome, ${checkedAt} AS checked_at FROM pages p WHERE status = 'active' ORDER BY slug`).all(...(attributed ? [{primary: agent}] : [])) as Array<{
+        id: number; rotate: number | null; slug: string; title: string; updated: string; verified_at: string | null; outcome: string | null; checked_at: string | null;
       }>;
       const now = clock.now();
       const items: OpenItem[] = [];
@@ -33,7 +34,7 @@ export function knowledgeSweep(db: Database | undefined, clock: Pick<Clock,'now'
         if (who.id !== (row.rotate ? alternate : agent)) continue;
         const anchor = Date.parse(row.verified_at ?? row.updated);
         const stale = row.outcome === 'stale';
-        const due = stale ? Date.parse(row.checked_at ?? '') : anchor + CHECK_INTERVAL;
+        const due = stale ? Date.parse(row.checked_at ?? '') : anchor + knowledgeSchedule(retired.has(row.id)).checkDays * DAY_MS;
         if (!stale && due > now) continue;
         // Malformed legacy timestamps must not hide a page needing attention.
         items.push({ id: row.slug, words: `Re-check knowledge page ${row.slug}: ${row.title}${row.rotate ? " (independent check after three checks by the author)" : ""}`,
