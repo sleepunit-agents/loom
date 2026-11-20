@@ -1,4 +1,4 @@
-import { closeThreadWakes } from '../tempo/wake-mail.js';
+import { closeThreadWakes } from './wake-delivery.js';
 import { threadTitle } from './title.js';
 /** Private Comms thread metadata over the same conversation and message tables.
  * This trusted service takes already authenticated inputs from its caller. */
@@ -79,8 +79,9 @@ export class Threads {
   archive(id: string, archived: boolean): Thread {
     return this.db.transaction(() => {
       const thread = this.thread(id), at = this.now();
-      if (archived) closeThreadWakes(this.db, thread, at);
-      return this.db.update(threads).set({ archivedAt: archived ? thread.archivedAt ?? at : null }).where(eq(threads.id, id)).returning().get()!;
+      const updated = this.db.update(threads).set({ archivedAt: archived ? thread.archivedAt ?? at : null }).where(eq(threads.id, id)).returning().get()!;
+      if (archived) closeThreadWakes(this.db, updated, at, 'archived');
+      return updated;
     });
   }
 

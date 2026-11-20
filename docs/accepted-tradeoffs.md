@@ -1408,6 +1408,8 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   - `inbox.volume`, `inbox.quiet_until`: `src/core/tempo/volume.ts`. Tempo owns how loudly an item is shown.
   - `jobs.title`: `src/core/conversations/threads.ts`, the one place a title changes (next entry). It
     changes `conversations.label` with it, in its own module.
+  - `src/core/conversations/wake-delivery.ts` writes `jobs` to stop queued jobs whose only input
+    was withdrawn wake mail. Ordinary mail keeps its existing closure behavior.
   - `inbox.words`, `bridge_sends.text`, `bridge_incoming.text`, and the rows of `bridge_file_messages` and
     `bridge_files`: `src/core/conversations/private-bridge-words.ts` erases the words of private direct
     messages when they expire, across the three tables that hold them, and removes their files with them.
@@ -1442,6 +1444,10 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   pattern: the second writer calls the first. Three were: the household's answer for secrets and the listing
   order of members and agents are now written by `src/apps/household.ts` alone, and which machines an
   account is signed in on by `src/runtime/account-boxes.ts` alone.
+
+### Pull request review wakes use decision and reviewer changes
+
+A `review` watch wakes when the review decision changes or a new reviewer reviews. Loom reads the decision and reviewer names from GitHub. A repeat review by the same reviewer with the same decision is invisible because the reader has no review IDs or submission times.
 
 ### One rewrite of stored rows runs at start, outside the upgrade steps
 - **What.** A household card filed by an older version kept the value it would replace in its `details`,

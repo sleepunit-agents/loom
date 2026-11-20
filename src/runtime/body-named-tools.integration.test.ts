@@ -21,7 +21,8 @@ const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 /** The most the named tools' definitions may add to a body's tool list, in bytes of JSON. A tool or a
  * description that takes the list past this is a decision about how lean a body's start is, not a slip. */
-const NAMED_TOOLS_BYTES=20_000;
+const NAMED_TOOLS_BYTES=20_000, WAKE_TOOLS_BYTES=1_600;
+const WAKE_TOOLS=['wake_me_when','waits','wake_cancel'];
 const ORIGIN='https://loom.invalid',GENERIC=['loom_commands','loom_command','loom_query'],SECRET=['request_secret','use_secret'];
 type Sent={path:string;bearer:string|null;input:unknown;answer:{ok?:boolean;code?:string;message?:string;errors?:{message:string}[];data?:unknown}};
 type Called={error:boolean;text:string;sent:Sent[]};
@@ -77,7 +78,7 @@ function asTheDoorAnswered(name:string,called:Called){
  expect(called.sent.length,name).toBeGreaterThan(0);
  for(const sent of called.sent){
   expect(sent.bearer,name).toBe('Bearer '+bodyCredentials.body);
-  expect(sent.path,name).toMatch(/^\/graphql$|^\/api\/(?:runtime\/commandCatalog|memory\/[A-Za-z]+|mind\/[A-Za-z]+|tasks\/command|machine\/read|household\/propose)$/);
+  expect(sent.path,name).toMatch(/^\/graphql$|^\/api\/(?:runtime\/commandCatalog|memory\/[A-Za-z]+|mind\/[A-Za-z]+|tasks\/command|machine\/read|household\/propose|tempo\/(?:wake|waits|wakeCancel))$/);
  }
  // A command goes out only after the catalogue was asked about it, as the generic tool does.
  called.sent.forEach((sent,index)=>{if(sent.path.startsWith('/api/')&&sent.path!=='/api/runtime/commandCatalog')expect(called.sent[index-1]?.path,name).toBe('/api/runtime/commandCatalog');});
@@ -120,6 +121,9 @@ it('lets a body call every named tool it is offered, each answered as the door a
  expect(b.fixture.db.select().from(schema.approvals).all()).toHaveLength(1);
  expect(JSON.parse((await b.call('loom_query',{query:'{approvals{id}}'})).text)).toEqual({data:{approvals:[]}});
  expect(await use('approvals')).toBe('No approvals.');await use('inbox');await use('episodes');
+ const wake=(await use('wake_me_when',{what:'in:1'})).split('ID: ')[1];
+ expect(await use('waits')).toContain(wake);
+ expect(await use('wake_cancel',{id:wake})).toBe('Cancelled.');
  expect([...called].sort()).toEqual([...bodyNamedToolNames()].sort());
  // In this household nothing above is refused to this body. Where a door does refuse, see the next test.
  expect(refused).toEqual([]);
@@ -164,10 +168,13 @@ it('serves no named tool to a body built without its agent\'s name',async()=>{
 it('adds to a body\'s start only the tools\' own definitions, within a stated size',async()=>{
  const b=await body(),offered=(await b.model.listTools()).tools;
  const size=(tools:typeof offered)=>Buffer.byteLength(JSON.stringify(tools.map(tool=>({name:tool.name,description:tool.description,input_schema:tool.inputSchema}))));
- const named=size(offered.filter(tool=>bodyNamedToolNames().includes(tool.name))),before=size(offered.filter(tool=>!bodyNamedToolNames().includes(tool.name)));
- // Measured 2026-11-17: the named tools 18,766 bytes, the five a body had 3,714. No harness was run to count
- // tokens; at 3.5 to 4 bytes a token for this kind of JSON that is about 4,700 to 5,400 tokens more.
- expect(named).toBeLessThanOrEqual(NAMED_TOOLS_BYTES);expect(named).toBeGreaterThan(before);
+ const named=offered.filter(tool=>bodyNamedToolNames().includes(tool.name));
+ const wake=named.filter(tool=>WAKE_TOOLS.includes(tool.name));
+ const existing=named.filter(tool=>!WAKE_TOOLS.includes(tool.name));
+ expect(size(existing)).toBeLessThanOrEqual(NAMED_TOOLS_BYTES);
+ expect(size(wake)).toBeLessThanOrEqual(WAKE_TOOLS_BYTES);
+ expect(size(named)).toBeLessThanOrEqual(NAMED_TOOLS_BYTES+WAKE_TOOLS_BYTES);
+ expect(size(existing)).toBeGreaterThan(size(offered.filter(tool=>!bodyNamedToolNames().includes(tool.name))));
 });
 
 it('gives a body told another agent\'s name nothing of that agent\'s: the door answers for the credential',async()=>{
@@ -191,7 +198,7 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
   memory_propose:[{category:'reference',title:'Fictional draft',content:'words'}],memory_ratify:[{id:'mark:proposal:00000000-0000-4000-8000-000000000000'}],memory_archive:[{id}],memory_restore:[{id}],memory_history:[{id}],
   task_ready:[{}],task:[{id:'t-1'}],task_edit:[{id:'t-1',priority:1}],task_move_to_project:[{ids:['t-1'],project:null}],task_claim:[{id:'t-1'}],task_close:[{id:'t-1',reason:'done'}],task_comment:[{id:'t-1',text:'words'}],
   machine_read:[{machine:'fictional',read:'memory',args:{}}],
-  propose:[{change:'settings',input:{commsDays:7},why:'Fictional'}],approvals:[{}],inbox:[{}],
+  propose:[{change:'settings',input:{commsDays:7},why:'Fictional'}],approvals:[{}],inbox:[{}],wake_me_when:[{what:'in:1'}],waits:[{}],wake_cancel:[{id:'fictional'}],
  };
  expect(Object.keys(every).sort()).toEqual([...bodyNamedToolNames()].sort());
  const answers:Record<string,Called[]>={};

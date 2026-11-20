@@ -1,3 +1,5 @@
+import { setAsideWakeMail } from '../conversations/wake-delivery.js';
+import { isWakeMail } from './wake-mail.js';
 /** Commands over the shared Tempo service. Current caller policy and proposal
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
@@ -120,7 +122,22 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       // Muted mail starts no job and joins none (runtime/jobs.ts): the same question.
       const refused = options.heldRefusal?.(ctx.viewer, 'volume'); if (refused) throw new OperationError('denied', refused);
       const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get()!;
-      tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, input.volume, input.until);
+      const at = tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, input.volume, input.until);
+      if (input.volume === 'mute' && ctx.viewer.kind === 'member') setAsideWakeMail(db, item, at, ctx.viewer.id);
+      ctx.changed('inbox', item.id); return { saved: true };
+    },
+  }));
+  operations.register(operation({ ...mailbox, name: 'inbox.dismissWake',
+    input: z.object({ item: z.string().min(1) }).strict(), output: saved,
+    may(viewer, input) {
+      const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get();
+      return viewer.kind === 'member' && !!item && isWakeMail(item) && options.authorize(viewer, { action: 'volume', item });
+    },
+    run(ctx, input) {
+      const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get()!;
+      if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'Only a member may dismiss a wake.');
+      const at = tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, 'mute');
+      setAsideWakeMail(db, item, at, ctx.viewer.id);
       ctx.changed('inbox', item.id); return { saved: true };
     },
   }));

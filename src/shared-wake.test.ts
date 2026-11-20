@@ -1,6 +1,7 @@
+import { Jobs } from './runtime/jobs.js';
 import { ConversationMail } from './core/conversations/mail.js';
 import { afterEach, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { bodyCredentials as keys, bodyFixture, credentialHash } from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
 import { WAKE_MS, WATCH_ENDED } from './core/tempo/wake.js';
@@ -35,7 +36,7 @@ async function fixture(options: Parameters<typeof bodyFixture>[1] = {}) {
     return (reply.value as { id: string }).id;
   };
   const row = (id: string) => f.db.select().from(s.wakes).where(eq(s.wakes.id, id)).get()!;
-  const mail = (id: string) => f.db.select().from(s.inbox).where(eq(s.inbox.sourceId, id)).all();
+  const mail = (id: string) => f.db.select().from(s.inbox).where(like(s.inbox.sourceId, id + '%')).all();
   const put = (value: Partial<Change> = {}) => {
     upstream = change(value);
     return f.root.services.changes.put(upstream);
@@ -109,7 +110,7 @@ it('delivers due mail once on the original word and waits behind the body', asyn
   f.clock.advance(59_999);
   expect(f.mail(id)).toEqual([]);
   f.clock.advance(1);
-  expect(f.row(id)).toMatchObject({ state: 'fired', onWord: { kind: 'member', id: 'alice' } });
+  expect(f.row(id)).toMatchObject({ state: 'delivering', onWord: { kind: 'member', id: 'alice' } });
   expect(f.mail(id)).toMatchObject([{ conversation: f.cv, thread: f.thread.id, job: null, onWordKind: 'member', onWord: 'alice', state: 'waiting' }]);
   expect(f.mail(id)[0].words).toContain('Resume fixture work.');
   const item = f.mail(id)[0].id;
@@ -119,9 +120,14 @@ it('delivers due mail once on the original word and waits behind the body', asyn
   const successor = f.db.select().from(s.jobs).where(eq(s.jobs.conversation, f.cv)).all().find(j => j.id !== 'job');
   expect(successor).toMatchObject({ member: 'alice', conversation: f.cv, state: 'queued' });
   expect(f.mail(id)[0].job).toBe(successor?.id);
-  f.db.update(s.jobs).set({ state: 'running', box: 'box' }).where(eq(s.jobs.id, successor!.id)).run();
+  const jobs = new Jobs(f.db, f.now);
+  expect(jobs.claim(successor!.id, 'box')).toBeTruthy();
+  expect(f.row(id).state).toBe('delivering');
+  jobs.started(successor!.id, 'box', 'fixture');
+  expect(f.row(id).state).toBe('delivering');
   const bodyMail = new ConversationMail(f.root.services.comms!);
   expect((await bodyMail.prepareTake(f.cv, successor!.id))()[0]?.words).toContain('Resume fixture work.');
+  expect(f.row(id).state).toBe('fired');
   f.clock.advance(120_000);
   expect(f.mail(id)).toHaveLength(1);
 });
@@ -162,7 +168,7 @@ it('evaluates all pull request conditions and ignores an unchanged poll', async 
   expect(f.mail(d)[0]?.words).toContain('was merged');
 });
 
-it('requires a new run for an already finished head and rejects an older head', async () => {
+it('remembers a finished head even after a rerun and rejects an older observation', async () => {
   const f = await fixture();
   const old = '2026-11-12T00:00:00Z', next = '2026-11-13T00:00:00Z';
   f.put({ checks: passed, updated: next, head: head('b') });
@@ -173,7 +179,9 @@ it('requires a new run for an already finished head and rejects an older head', 
   expect(f.row(id).state).toBe('waiting');
   expect(f.mail(id)).toEqual([]);
   f.put({ checks: failed, updated: next, head: head('b') });
-  expect(f.mail(id)[0]?.words).toContain('finished on bbbbbbb');
+  expect(f.mail(id)).toEqual([]);
+  f.put({ checks: passed, updated: next, head: head('c') });
+  expect(f.mail(id)[0]?.words).toContain('finished on ccccccc');
 });
 
 it('authorizes untracked repository reads up front and refuses a rename without storing the return', async () => {
@@ -222,7 +230,7 @@ it('rolls back a source, firing and mail together and handles both expiry orders
   const f = await fixture();
   f.put();
   const crash = await f.ask({ what: 'acme/app#3' });
-  f.db.$client.exec(`create temp trigger wake_test_failure before insert on inbox when new.source_id = '${crash}' begin select raise(abort, 'simulated interruption'); end`);
+  f.db.$client.exec(`create temp trigger wake_test_failure before insert on inbox when new.source_id like '${crash}%' begin select raise(abort, 'simulated interruption'); end`);
   expect(() => f.put({ title: 'New PR title' })).toThrow('simulated interruption');
   expect(f.root.services.changes.get('github:acme/app#3').title).toBe('A change');
   expect(f.row(crash).state).toBe('waiting');
@@ -277,11 +285,11 @@ it.each(['archived', 'deleted'] as const)('settles already-written wake mail whe
     else f.root.services.comms!.delete(f.thread.id);
   });
   expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
-  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The watch ended because its conversation closed.' });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: `The wake could not be delivered because its conversation was ${state}.` });
   expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
   f.clock.advance(10_000);
   expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
-  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The watch ended because its conversation closed.' });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: `The wake could not be delivered because its conversation was ${state}.` });
 });
 
 it('ignores a slow poll that began before the untracked baseline even when timestamps tie', async () => {
@@ -326,7 +334,7 @@ it('keeps the transactional observer attached while shutdown drains an in-flight
     const closing = f.root.close();
     release([change({ title: 'Changed during shutdown' })]);
     await Promise.all([closing, poll]);
-    expect(f.row(id).state).toBe('fired');
+    expect(f.row(id).state).toBe('delivering');
     expect(f.mail(id)).toHaveLength(1);
   } finally { release?.([]); }
 });
@@ -380,7 +388,7 @@ it.each(['agent access', 'project access', 'model', 'pause'] as const)('settles 
     f.root.services.tempo.triggers.resume('art');
     f.clock.advance(30_000);
   }
-  expect(f.row(id).state).toBe('ended');
+  expect(f.row(id).state).toBe(loss === 'pause' ? 'delivering' : loss === 'model' ? 'waiting' : 'ended');
   expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
 });
 
@@ -389,7 +397,7 @@ it('fires a due time first seen after day 14', async () => {
   const id = await f.ask({ what: 'in:1' });
   f.db.update(s.wakes).set({ askedAt: new Date(f.clock.now() - WAKE_MS).toISOString(), key: f.now() }).where(eq(s.wakes.id, id)).run();
   f.clock.advance(60_000);
-  expect(f.row(id).state).toBe('fired');
+  expect(f.row(id).state).toBe('delivering');
   expect(f.mail(id)).toHaveLength(1);
 });
 
@@ -432,6 +440,196 @@ it('fences wake words in MCP inbox and waits', async () => {
       expect(text).not.toContain('[link]');
       expect(JSON.stringify(JSON.parse(text))).toContain(JSON.stringify(note).slice(1, -1));
     }
-    if (name === 'waits') expect(text).toContain(id + ' · fired');
+    if (name === 'waits') expect(text).toContain(id + ' · delivering');
   }
+});
+
+async function queueWake(f: Awaited<ReturnType<typeof fixture>>, note = 'Wake input') {
+  const id = await f.ask({ what: 'in:1', note });
+  expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
+  f.clock.advance(70_000);
+  const job = f.mail(id)[0].job!;
+  const jobs = new Jobs(f.db, f.now);
+  expect(jobs.get(job).state).toBe('queued');
+  return { id, job, jobs };
+}
+
+it('replaces a queue-deadline occurrence and commits firing with the running job’s take', async () => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  const first = f.mail(id)[0];
+  expect(f.row(id).state).toBe('delivering');
+  expect(jobs.sweep(undefined, 1).map(row => row.id)).toContain(job);
+  f.clock.advance(20_000);
+  expect(f.row(id).state).toBe('waiting');
+  expect(f.mail(id)).toMatchObject([{ id: first.id, state: 'resolved', words: null }]);
+  f.clock.advance(40_000);
+  const second = f.mail(id)[1];
+  expect(second.sourceId).not.toBe(first.sourceId);
+  expect(second.job).toBeTruthy();
+  expect(jobs.claim(second.job!, 'box')).toBeTruthy();
+  jobs.started(second.job!, 'box', 'fixture');
+  const take = await new ConversationMail(f.root.services.comms!).prepareTake(f.cv, second.job!);
+  f.db.$client.exec("create temp trigger fail_wake_take before update of state on wakes when new.state = 'fired' begin select raise(abort, 'simulated interruption'); end");
+  expect(take).toThrow('simulated interruption');
+  expect(f.mail(id)[1].state).toBe('waiting');
+  expect(f.row(id).state).toBe('delivering');
+  f.db.$client.exec('drop trigger fail_wake_take');
+  expect(take().map(item => item.words)).toEqual([expect.stringContaining('Wake input')]);
+  expect(f.row(id).state).toBe('fired');
+  expect(jobs.finish(second.job!, 'box', 1).retry).toBeUndefined();
+  f.clock.advance(120_000);
+  expect(f.mail(id)).toHaveLength(2);
+});
+
+it.each(['volume', 'dismissWake'])('ends delivery deliberately when the thread member uses inbox.%s', async action => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  const { id: item } = f.mail(id)[0];
+  const input = action === 'volume' ? { item, volume: 'mute' } : { item };
+  expect(await f.post('inbox.' + action, input, keys.member, 'set-aside', keys.memberCookie)).toMatchObject({ ok: true });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The wake was set aside by alice.' });
+  expect(jobs.get(job).state).toBe('stopped');
+  f.clock.advance(120_000);
+  expect(f.mail(id)).toMatchObject([{ state: 'resolved', words: null }]);
+});
+
+it.each(['archive', 'delete'])('stops a queued wake-only job when members %s the thread', async action => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  f.root.writes.run(() => action === 'archive' ? f.root.services.comms!.threads.archive(f.thread.id, true) : f.root.services.comms!.delete(f.thread.id));
+  expect(jobs.get(job).state).toBe('stopped');
+  expect(jobs.claim(job, 'box')).toBeUndefined();
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: `The wake could not be delivered because its conversation was ${action}d.` });
+  expect(f.mail(id)).toMatchObject([{ state: 'resolved', words: null }]);
+});
+
+it.each(['taken', 'done'])('erases %s wake words on thread deletion', async finalState => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f, 'Delete these words');
+  expect(jobs.claim(job, 'box')).toBeTruthy();
+  jobs.started(job, 'box', 'fixture');
+  expect(f.root.services.conversations.take(f.cv, job)).toHaveLength(1);
+  if (finalState === 'done') f.root.services.conversations.confirm(f.mail(id)[0].id, job);
+  expect(f.mail(id)[0]).toMatchObject({ state: finalState, words: expect.stringContaining('Delete these words') });
+  f.root.services.comms!.delete(f.thread.id);
+  expect(f.mail(id)[0]).toMatchObject({ words: null, thread: null });
+});
+
+it('uses a newer registration head to reject a slow poll for every watch', async () => {
+  let release!: (rows: Change[]) => void;
+  const slow = new Promise<Change[]>(resolve => { release = resolve; });
+  const read = vi.fn(async () => [change({ head: head('c'), checks: running })])
+    .mockResolvedValueOnce([change({ head: head('a'), checks: running })]).mockReturnValueOnce(slow);
+  const f = await fixture({ changes: { read } });
+  const first = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
+  const poll = f.root.refreshChanges!();
+  try {
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    const second = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
+    release([change({ head: head('b'), checks: passed })]);
+    await poll;
+    for (const id of [first, second]) expect(f.mail(id)).toEqual([]);
+    f.put({ head: head('c'), checks: passed });
+    for (const id of [first, second]) expect(f.mail(id)[0]?.words).toContain('finished on ccccccc');
+  } finally { release([]); }
+});
+
+it('never delivers for a return to the finished registration head', async () => {
+  const f = await fixture();
+  f.put({ head: head('a'), checks: passed });
+  const id = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
+  f.put({ head: head('b'), checks: running });
+  f.put({ head: head('a'), checks: passed });
+  expect(f.mail(id)).toEqual([]);
+  f.put({ head: head('b'), checks: passed });
+  expect(f.mail(id)[0]?.words).toContain('finished on bbbbbbb');
+});
+
+it.each(['starting', 'running'])('retries with fresh mail if a %s worker dies before taking input', async phase => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  expect(jobs.claim(job, 'box')).toBeTruthy();
+  if (phase === 'running') jobs.started(job, 'box', 'fixture');
+  expect(jobs.finish(job, 'box', 1).retry).toBeUndefined();
+  f.clock.advance(60_000);
+  const [first, next] = f.mail(id);
+  expect(first).toMatchObject({ state: 'resolved', words: null });
+  expect(next).toMatchObject({ state: 'waiting', words: expect.stringContaining('Wake input') });
+  expect(next.sourceId).not.toBe(first.sourceId);
+  expect(f.row(id).state).toBe('delivering');
+});
+
+it('blocks a prepared take when the thread closes before input is released', async () => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  expect(jobs.claim(job, 'box')).toBeTruthy();
+  jobs.started(job, 'box', 'fixture');
+  const take = await new ConversationMail(f.root.services.comms!).prepareTake(f.cv, job);
+  f.root.services.comms!.threads.archive(f.thread.id, true);
+  expect(take).toThrow('Mail changed');
+  expect(f.root.services.conversations.take(f.cv, job)).toEqual([]);
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The wake could not be delivered because its conversation was archived.' });
+});
+
+it('describes review wakes as changes of decision or reviewer in waits', async () => {
+  const f = await fixture();
+  f.put();
+  const id = await f.ask({ what: 'acme/app#3', when: 'review' });
+  expect(await f.post('tempo.waits', {})).toMatchObject({ value: [{
+    id, what: expect.stringContaining('the review decision changes or a new reviewer reviews'),
+  }] });
+});
+
+it('refuses to release a queued wake after its asker loses the watched repository', async () => {
+  const f = await fixture();
+  f.put();
+  const id = await f.ask({ what: 'acme/app#3', note: 'Private pull request wake' });
+  f.put({ title: 'Changed title' });
+  expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
+  f.clock.advance(10_000);
+  const job = f.mail(id)[0].job!, jobs = new Jobs(f.db, f.now);
+  expect(jobs.claim(job, 'box')).toBeTruthy();
+  jobs.started(job, 'box', 'fixture');
+  const token = 'h'.repeat(64);
+  f.db.insert(s.tokens).values({ kind: 'agent', fingerprint: credentialHash(token), label: 'Successor body', agent: 'art', job, createdAt: f.now() }).run();
+  f.root.writes.run(() => f.db.delete(s.projectRepositories).run());
+  const response = await f.root.http.request('/api/conversation/take', {
+    method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+    body: JSON.stringify({ input: {} }),
+  });
+  expect(response.status).toBe(403);
+  expect(await response.text()).not.toContain('Private pull request wake');
+  expect(f.row(id).state).toBe('delivering');
+  f.clock.advance(30_000);
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: WATCH_ENDED, note: null, key: '' });
+  expect(f.mail(id)[0]).toMatchObject({ state: 'resolved', words: null });
+});
+
+
+it('ends an expired delivery and withdraws its queued input', async () => {
+  const f = await fixture();
+  const { id, job, jobs } = await queueWake(f);
+  f.db.update(s.wakes).set({ askedAt: new Date(f.clock.now() - WAKE_MS + 10_000).toISOString() }).where(eq(s.wakes.id, id)).run();
+  f.clock.advance(120_000);
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: expect.stringContaining('could not be delivered') });
+  expect(jobs.get(job).state).toBe('stopped');
+  expect(f.mail(id)).toMatchObject([{ state: 'resolved', words: null }]);
+});
+
+
+it('leaves an unmailed completion waiting when a newer direct read supersedes its head', async () => {
+  const read = vi.fn(async () => [change({ head: head('b'), checks: running })])
+    .mockResolvedValueOnce([change({ head: head('a'), checks: running })]);
+  const f = await fixture({ changes: { read } });
+  const first = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
+  f.root.services.tempo.triggers.pause('art');
+  f.put({ head: head('a'), checks: passed });
+  expect(f.mail(first)).toEqual([]);
+  await f.ask({ what: 'acme/app#3', when: 'review' });
+  f.root.services.tempo.triggers.resume('art');
+  f.clock.advance(30_000);
+  expect(f.mail(first)).toEqual([]);
+  f.put({ head: head('b'), checks: passed });
+  expect(f.mail(first)[0]?.words).toContain('finished on bbbbbbb');
 });

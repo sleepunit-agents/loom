@@ -140,10 +140,11 @@ operations (`docs/runtime/worker.md`, "Composing native tools").
 - **Which.** All of them: none of the named tools is about the terminal's own
   session. A body built without `loom_command` and `loom_query` gets none.
 - **Cost.** Nothing is added to the words a body starts with. The tools' own
-  definitions are about 19 KB of JSON in the harness's tool list (the five
-  tools a body had before are under 4 KB); no token count was taken from a
-  running harness. `body-named-tools.integration.test.ts` holds the definitions
-  under 20,000 bytes. A body is served at most 64 tools.
+  definitions take about 21 KB of JSON in the harness's tool list. The five
+  generic and secret tools add under 4 KB.
+  `body-named-tools.integration.test.ts` caps the existing named definitions at
+  20,000 bytes and the three wake definitions at 1,600 bytes. A body is served
+  at most 64 tools.
 
 Private query responses retain the original credential, sharing and selected-word
 retention lease through the outer MCP response, including delayed reads and

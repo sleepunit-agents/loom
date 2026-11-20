@@ -40,7 +40,7 @@ export class InboxVolume {
     return value;
   }
 
-  set(who: Recipient, item: string, volume: Volume, until?: string): void {
+  set(who: Recipient, item: string, volume: Volume, until?: string): string {
     if (!inbox.volume.enumValues.includes(volume)) throw new Error('Invalid volume');
     const now = this.clock.now();
     const settings = this.timings(who);
@@ -48,6 +48,7 @@ export class InboxVolume {
     if (end && (!Number.isFinite(end.getTime()) || end.getTime() <= now)) throw new Error('Quiet time must end in the future');
     const result = this.db.update(inbox).set({ volume, quietUntil: end?.toISOString() ?? null }).where(and(eq(inbox.id, item), eq(inbox.toKind, who.kind), eq(inbox.to, who.id))).run();
     if (!result.changes) throw new Error('Inbox item not found for recipient');
+    return new Date(now).toISOString();
   }
 
   /** Call alongside an actual content change, never a read or a volume edit.

@@ -1,4 +1,6 @@
-import { isWakeMail, settleWakeMail, WAKE_CLOSED, wakeBlocked, wakeConversationClosed, workSetup } from '../core/tempo/wake-mail.js';
+import { withdrawWakeMail } from '../core/conversations/wake-delivery.js';
+import { endWake, wakeForMail } from '../core/tempo/wake-store.js';
+import { isWakeMail, WAKE_CLOSED, wakeBlocked, wakeConversationClosed, workSetup } from '../core/tempo/wake-mail.js';
 import { WATCH_ENDED } from '../core/tempo/wake.js';
 import { wakeSource } from '../core/tempo/wake-sources.js';
 import {keepJobText} from './job-text.js';
@@ -8,7 +10,7 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns, wakes } from '../core/data/schema.js';
+import { agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
 import { OWNERS_KEY, askers, named, privateRefusal, stillKnown, wakeWordAllowed } from '../shared-place-mail.js';
@@ -187,12 +189,14 @@ export class Jobs {
       const recheckWakes = () => {
         waiting = waiting.filter(item => {
           if (!isWakeMail(item) || item.job === existing?.id) return true;
-          const wake = item.sourceId && this.db.select().from(wakes).where(eq(wakes.id, item.sourceId)).get();
+          const wake = wakeForMail(this.db, item.sourceId);
           const why = wakeConversationClosed(this.db, conversation) ? WAKE_CLOSED
             : !wake || !wakeWordAllowed(this.db, conversation, wake.onWord) ? WATCH_ENDED
             : wakeBlocked(this.db, conversation.agent, setup ??= workSetup(this.db, conversation.agent));
           if (!why) return true;
-          settleWakeMail(this.db, item, this.now(), why);
+          const at = this.now();
+          withdrawWakeMail(this.db, item, at, why);
+          if (wake?.state === 'delivering' && (why === WAKE_CLOSED || why === WATCH_ENDED)) endWake(this.db, wake, at, why);
           settledWake = true;
           return false;
         });
@@ -300,6 +304,26 @@ export class Jobs {
     return this.db.transaction(() => {
       const job = this.get(id), at = this.now();
       if (job.startedByKind === 'terminal' || job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
+      if (job.conversation) {
+        const held = this.db.select().from(inbox).where(eq(inbox.job, id)).all();
+        const wakeMail = held.filter(isWakeMail);
+        const cv = wakeMail.length ? this.mail.conversation(job.conversation) : undefined;
+        for (const item of wakeMail) {
+          if (!cv || item.state !== 'waiting' || item.volume === 'mute') continue;
+          const wake = wakeForMail(this.db, item.sourceId);
+          const why = wakeConversationClosed(this.db, cv) ? WAKE_CLOSED
+            : !wake || wake.state !== 'delivering' || !wakeWordAllowed(this.db, cv, wake.onWord) ? WATCH_ENDED
+            : wakeBlocked(this.db, job.agent);
+          if (!why) continue;
+          withdrawWakeMail(this.db, item, at, why);
+          if (wake?.state === 'delivering' && (why === WAKE_CLOSED || why === WATCH_ENDED)) endWake(this.db, wake, at, why);
+        }
+        if (wakeMail.length && held.every(isWakeMail) && !this.db.select({ id: inbox.id }).from(inbox)
+          .where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).get()) {
+          this.end(job, 'stopped', { endedAt: at, endedNote: 'The wake mail no longer starts this job.' });
+          return;
+        }
+      }
       const claimed = this.db.update(jobs).set({ box, state: 'starting', claimedAt: at, heardAt: at })
         .where(and(eq(jobs.id, id), eq(jobs.state, 'queued'))).returning().get();
       if(claimed)this.delivery(id,'sending');
@@ -408,7 +432,10 @@ export class Jobs {
     if (before.startedByKind === 'program') return undefined;
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
-    if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
+    if (!this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) {
+      const held = this.db.select().from(inbox).where(eq(inbox.job, before.id)).all();
+      if (before.state !== 'starting' || held.length && held.every(isWakeMail)) return undefined;
+    }
     let depth = 0, ancestor = before;
     const seen = new Set([before.id]);
     while (ancestor.retryOf) {

@@ -171,7 +171,7 @@ it('lets no second module write a household table unless it is listed here and i
     inbox: { owner: conversations, others: ['src/core/tempo/volume.ts', 'src/runtime/jobs.ts'] },
     inbox_refs: { owner: conversations, others: [] },
     job_usage: { owner: runtime, others: ['src/core/conversations/terminal-sessions.ts', 'src/shared-job-usage.ts'] },
-    jobs: { owner: runtime, others: ['src/core/conversations/terminal-sessions.ts', 'src/core/conversations/threads.ts'] },
+    jobs: { owner: runtime, others: ['src/core/conversations/terminal-sessions.ts', 'src/core/conversations/threads.ts', 'src/core/conversations/wake-delivery.ts'] },
     messages: { owner: conversations, others: ['src/runtime/jobs.ts'] },
     model_accounts: { owner: 'src/shared-model-account-admin.ts', others: ['src/runtime/account-usage.ts', 'src/runtime/account-windows.ts'] },
     notification_devices: { owner: signin, others: [] },
@@ -184,6 +184,7 @@ it('lets no second module write a household table unless it is listed here and i
     tokens: { owner: signin, others: ['src/shared-credentials.ts'] },
     trigger_log: { owner: 'src/core/tempo/', others: [] },
     turns: { owner: conversations, others: [] },
+    wakes: { owner: 'src/core/tempo/wake-store.ts', others: [] },
   };
   const writers = tableWriters();
   expect(writers.size).toBeGreaterThan(80);

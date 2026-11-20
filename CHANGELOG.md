@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Home fills the desk with a single live agent’s face, current work and conversations. Removed agents leave active rosters and choices while their history stays readable.
+- One-shot wakes retry failed delivery and fire when a running job takes their mail. A member can set the mail aside. Pull request wakes share the latest head and remember completed heads. The review condition wakes when the review decision changes or a new reviewer reviews.
 - One-shot wakes are limited to Loom conversations. They recheck access and readiness before delivery, use fresh GitHub baselines, and show recent outcomes in `waits`.
 - Runtime bodies can ask loom to wake them in the same conversation when a pull request changes, a job ends, an approval or question is answered, or a time arrives.
 

@@ -363,16 +363,17 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source sourceId state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
    return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words == null ? '(no words kept)' : isWakeMail(row) ? plainBlock(row.body.words) : row.body.words)+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
   });
- tool('wake_me_when', 'Ask loom to do the waiting. Only a runtime body in a Loom Comms or project conversation can ask. The next job receives the wake in this conversation, on the same asker’s word. The wait ends if the conversation closes or access is lost. Watch github:owner/repo#12 in this conversation’s project (when: '+wakeConditions.join(', ')+', default changed), job:<id> in this conversation or started by this body, approval:<id> or question:<id> filed here, or at:<time with offset> or in:<minutes> up to 14 days less an hour away. Event waits expire after 14 days. A due time can still fire after downtime. An optional plain-text note comes back with the wake.',
+ tool('wake_me_when', 'Only a Loom runtime body can ask. A running job takes the wake and optional note here, on the same asker’s word. Closure or lost access ends it. Watch github:owner/repo#12 in this project (when: '+wakeConditions.join(', ')+', default changed). Review wakes when the review decision changes or a new reviewer reviews. Also accepts job:<id> here or started by this body, approval:<id> or question:<id> here, at:<time with offset>, or in:<minutes>. Set times up to 14 days less an hour ahead. Event waits expire after 14 days. Due times recover after downtime.',
   wakeInput, async input => 'Waiting. ID: '+((await run('tempo.wake', input)) as {id:string}).id);
- tool('waits', 'List waiting wakes followed by wakes that fired or ended in the last 24 hours in this runtime body’s Loom conversation.', z.object({}).strict(), async input => {
+ tool('waits', 'List this Loom conversation’s active wakes and outcomes from the past 24 hours.', z.object({}).strict(), async input => {
   const rows = (await run('tempo.waits', input)) as {id:string;what:string|null;note:string|null;state:string;why:string|null}[];
   const format = (row: typeof rows[number]) => plainBlock([row.id+' · '+[row.state, row.what].filter(Boolean).join(' · '), row.why, row.note].filter(Boolean).join('\n'));
-  const waiting = rows.filter(row => row.state === 'waiting').map(format);
-  const recent = rows.filter(row => row.state !== 'waiting').map(format);
+  const active = (row: typeof rows[number]) => row.state === 'waiting' || row.state === 'delivering';
+  const waiting = rows.filter(active).map(format);
+  const recent = rows.filter(row => !active(row)).map(format);
   return [waiting.join('\n\n') || 'You are waiting on nothing.', ...(recent.length ? ['Recent outcomes\n\n'+recent.join('\n\n')] : [])].join('\n\n');
  });
- tool('wake_cancel', 'Cancel a waiting wake in this runtime body’s own conversation.', z.object({id:z.string().min(1).max(200)}).strict(),
+ tool('wake_cancel', 'Cancel a waiting wake in this Loom conversation.', z.object({id:z.string().min(1).max(200)}).strict(),
   async input => { await run('tempo.wakeCancel', input); return 'Cancelled.'; });
 }
 interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}

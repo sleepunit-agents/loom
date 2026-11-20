@@ -59,7 +59,7 @@ export function wakeClause(w: Watched, condition?: WakeCondition): string {
   switch (w.kind) {
     case 'change': { const name = changeName(w.id);
       return condition === 'checks-finished' ? `checks finish on ${name}` : condition === 'checks-failed' ? `a check fails on ${name}`
-        : condition === 'review' ? `the review of ${name} changes` : condition === 'merged-or-closed' ? `${name} is merged or closed` : `${name} changes`; }
+        : condition === 'review' ? `the review decision changes or a new reviewer reviews ${name}` : condition === 'merged-or-closed' ? `${name} is merged or closed` : `${name} changes`; }
     case 'job': return `job ${shown(w.id)} ends`;
     case 'approval': return `approval ${shown(w.id)} is answered`;
     case 'question': return `question ${shown(w.id)} is answered`;
@@ -71,7 +71,7 @@ export function waitingOn(w: Watched, condition?: WakeCondition): string {
   switch (w.kind) {
     case 'change': { const name = changeName(w.id);
       return condition === 'checks-finished' ? `checks on ${name}` : condition === 'checks-failed' ? `a failing check on ${name}`
-        : condition === 'review' ? `the review of ${name} to change` : condition === 'merged-or-closed' ? `${name} to merge or close` : `${name} to change`; }
+        : condition === 'review' ? `the review decision to change or a new reviewer to review ${name}` : condition === 'merged-or-closed' ? `${name} to merge or close` : `${name} to change`; }
     case 'job': return `job ${shown(w.id)}`;
     case 'approval': return `an answer to approval ${shown(w.id)}`;
     case 'question': return `an answer to question ${shown(w.id)}`;

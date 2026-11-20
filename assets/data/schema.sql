@@ -351,6 +351,8 @@ CREATE TABLE `wakes` (
 	`note` text,
 	`baseline` text,
 	`reading` text,
+	`newest` text,
+	`attempt` integer DEFAULT 0 NOT NULL,
 	`state` text NOT NULL,
 	`asked_at` text NOT NULL,
 	`ended_at` text,
@@ -359,7 +361,7 @@ CREATE TABLE `wakes` (
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "wakes_kind_choice" CHECK("wakes"."kind" in ('change', 'job', 'approval', 'question', 'time')),
-	CONSTRAINT "wakes_state_choice" CHECK("wakes"."state" in ('waiting', 'fired', 'ended')),
+	CONSTRAINT "wakes_state_choice" CHECK("wakes"."state" in ('waiting', 'delivering', 'fired', 'ended')),
 	CONSTRAINT "wakes_asked_at_utc" CHECK("wakes"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "wakes"."asked_at") = "wakes"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "wakes"."asked_at") = "wakes"."asked_at", 0)),
 	CONSTRAINT "wakes_ended_at_utc" CHECK("wakes"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "wakes"."ended_at") = "wakes"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "wakes"."ended_at") = "wakes"."ended_at", 0))
 );

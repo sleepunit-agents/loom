@@ -423,3 +423,7 @@ That replaces "may I merge" asks in words. It widens no write access.
 
 Before this doc merges, a context-stripped reviewer reviews it, and each finding is recorded in the PR thread as folded,
 accepted as a trade-off, or rejected with a quote.
+
+### One-shot pull request wakes
+
+A Loom conversation can ask for a wake when the review decision changes or a new reviewer reviews. A repeat review from the same reviewer with the same decision is indistinguishable in Loom’s GitHub reading. A `checks-finished` wake remembers up to 20 finished heads, including a finished head seen when the watch was requested. Returning to a remembered head leaves the watch waiting.

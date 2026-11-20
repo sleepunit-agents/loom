@@ -1,3 +1,6 @@
+import { isWakeMail, wakeConversationClosed } from '../tempo/wake-mail.js';
+import { changeWake, wakeForMail } from '../tempo/wake-store.js';
+import { withdrawWakeMail } from './wake-delivery.js';
 import { wakeSource } from '../tempo/wake-sources.js';
 import {handoffEnvelope} from './handoff-words.js';
 import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words.js';
@@ -161,7 +164,12 @@ export class Conversations {
     const joins = (item: Item) => !waitsForNextJob(item) && (judge ??= this.lateJoins({ id: jobId, agent: conversation.agent, conversation: conversationId }))(item);
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
       or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all()
-      .filter(item => !admitted || item.job === jobId || joins(item));
+      .filter(item => {
+        if (!isWakeMail(item)) return !admitted || item.job === jobId || joins(item);
+        if (item.job !== jobId || wakeConversationClosed(this.db, conversation)) return false;
+        const wake = wakeForMail(this.db, item.sourceId);
+        return wake?.state === 'delivering' || wake?.state === 'fired' && item.state === 'taken';
+      });
   }
 
   /** Only the current job can claim this conversation's waiting mail. An
@@ -177,7 +185,14 @@ export class Conversations {
       this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'), selected)).run();
       // Snapshot each actual publication, including a retry of an unconfirmed take.
       this.db.update(inbox).set({takenVolume:inbox.volume}).where(and(eq(inbox.conversation,conversationId),eq(inbox.job,jobId),eq(inbox.state,'taken'),ne(inbox.volume,'mute'),selected)).run();
-      return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'), selected)).orderBy(asc(inbox.seq)).all();
+      const taken = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'), selected)).orderBy(asc(inbox.seq)).all();
+      for (const item of taken) {
+        const wake = isWakeMail(item) && wakeForMail(this.db, item.sourceId);
+        if (wake && wake.state === 'delivering') {
+          changeWake(this.db, wake, { state: 'fired', endedAt: at, why: 'A running job took the wake.' });
+        }
+      }
+      return taken;
     });
   }
 
@@ -247,7 +262,11 @@ export class Conversations {
   /** The reverse of take: mail a job took and never confirmed waits again, still bound to that job,
    * so whoever ends the job decides whether a next attempt gets it. */
   returnTaken(jobId: string): void {
-    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() }).where(and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))).run();
+    const at = this.now();
+    for (const item of this.db.select().from(inbox).where(and(eq(inbox.job, jobId), inArray(inbox.state, ['waiting', 'taken']))).all()) {
+      if (isWakeMail(item)) withdrawWakeMail(this.db, item, at, 'The job ended.');
+    }
+    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: at }).where(and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))).run();
   }
 
   /** Replace the words of an answer that must not be kept (a one-time code) with a marker, in every record

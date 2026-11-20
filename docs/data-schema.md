@@ -8,7 +8,7 @@ definitions, person and project grants, outside project membership and use histo
 Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
 grants and request history. Schema 19 adds who made each terminal binding (`terminal_credentials.issued_by`); bindings from before have nobody recorded. Schema 18 adds `model_account_logins`: what loom last
 learned about each model account sign-in (account, machine, harness and place), never a
-credential. Schema 20 adds `wakes`, one-shot watches read under their conversation’s rule. Total: 109 tables. The programme
+credential. Schema 20 adds `wakes`, one-shot watches read under their conversation’s rule. A watch records each mail occurrence and fires when a running job takes its mail. Total: 109 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each
