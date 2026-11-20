@@ -94,16 +94,16 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
   if(!String(url).endsWith('chat.postMessage'))return provider(url,init);
   const index=++part;
   if(index===2)await second.promise;
-  return Response.json({ok:true,channel:'CROOM',ts:'1794432000.00000'+index});
+  return Response.json({ok:true,channel:'CROOM',ts:'1794432000.00000'+(9-index)});
  });
  const text='x'.repeat(3901);
  try{
   expect((await f.call('bridges','say',{id,text},token.body)).status).toBe(200);
   await vi.waitFor(()=>expect(part).toBe(2));
-  expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sending',postedIds:['1794432000.000001']}});
+  expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sending',postedIds:['1794432000.000008']}});
  }finally{second.resolve();}
  await f.root.services.bridges.daemon!.idle();
- expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000001','1794432000.000002']}});
+ expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000008','1794432000.000007']}});
  const legacy={id:randomUUID(),text:'Existing post'};
  f.root.services.bridges.daemon!.sends.queue({...legacy,incoming:incoming.id});
  await f.root.services.bridges.daemon!.idle();
@@ -113,6 +113,9 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  await f.root.services.bridges.daemon!.idle();
  expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('done');
  expect(part).toBe(3);
+ const finalId=randomUUID();
+ expect((await f.call('bridges','reply',{id:finalId,incoming:incoming.id,text:'Final',model:'observed'},token.body)).status).toBe(200);
+ expect((await status(token.body,finalId)).status).toBe(404);
  expect((await status(token.body,legacy.id)).status).toBe(404);
  expect((await status(token.owner)).status).not.toBe(200);
  f.root.writes.run(()=>{
