@@ -851,6 +851,9 @@ CREATE TABLE `boxes` (
 	`revoked_at` text,
 	`slots` integer,
 	`readers` text,
+	`reading_sequence` integer DEFAULT 0 NOT NULL,
+	`readings_left_out` integer DEFAULT 0 NOT NULL,
+	`reading_silence_sequence` integer DEFAULT 0 NOT NULL,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
 	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),
@@ -879,6 +882,57 @@ CREATE TABLE `box_facts` (
 	PRIMARY KEY(`box`, `fact`),
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "box_facts_from_owner_boolean" CHECK("box_facts"."from_owner" in (0, 1))
+);
+
+CREATE TABLE `box_readings` (
+	`box` text NOT NULL,
+	`kind` text NOT NULL,
+	`thing` text NOT NULL,
+	`generation` text NOT NULL,
+	`occasion` integer DEFAULT 0 NOT NULL,
+	`urgent_occasion` integer DEFAULT 0 NOT NULL,
+	`ordinary_line` text,
+	`ordinary_line_value` integer,
+	`urgent_line_value` integer,
+	`last_lines` text,
+	`used_percent` integer,
+	`size_mib` integer,
+	`free_mib` integer,
+	`engine_status` integer,
+	`level` text NOT NULL,
+	`since` text,
+	`urgent_since` text,
+	`read_at` text,
+	`unknown_since` text,
+	`observed_at` text,
+	`unknown_ms` integer DEFAULT 0 NOT NULL,
+	`absent_ms` integer,
+	`report_sequence` integer DEFAULT 0 NOT NULL,
+	`stale` integer DEFAULT false NOT NULL,
+	PRIMARY KEY(`box`, `kind`, `thing`),
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "box_readings_kind" CHECK("box_readings"."kind" in ('disk', 'memory', 'containers')),
+	CONSTRAINT "box_readings_level" CHECK("box_readings"."level" in ('ok', 'raised', 'urgent')),
+	CONSTRAINT "box_readings_used_percent_range" CHECK("box_readings"."used_percent" is null or "box_readings"."used_percent" between 0 and 100),
+	CONSTRAINT "box_readings_engine_status_range" CHECK("box_readings"."engine_status" is null or "box_readings"."engine_status" = 200 or "box_readings"."engine_status" between 300 and 599),
+	CONSTRAINT "box_readings_since_utc" CHECK("box_readings"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."since") = "box_readings"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."since") = "box_readings"."since", 0)),
+	CONSTRAINT "box_readings_urgent_since_utc" CHECK("box_readings"."urgent_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."urgent_since") = "box_readings"."urgent_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."urgent_since") = "box_readings"."urgent_since", 0)),
+	CONSTRAINT "box_readings_read_at_utc" CHECK("box_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."read_at") = "box_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."read_at") = "box_readings"."read_at", 0)),
+	CONSTRAINT "box_readings_unknown_since_utc" CHECK("box_readings"."unknown_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "box_readings"."unknown_since") = "box_readings"."unknown_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "box_readings"."unknown_since") = "box_readings"."unknown_since", 0)),
+	CONSTRAINT "box_readings_stale_boolean" CHECK("box_readings"."stale" in (0, 1))
+);
+
+CREATE TABLE `box_alert_settings` (
+	`singleton` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`disk_percent` integer DEFAULT 85 NOT NULL,
+	`disk_urgent_percent` integer DEFAULT 95 NOT NULL,
+	`disk_free_mib` integer DEFAULT 5120 NOT NULL,
+	`memory_free_mib` integer DEFAULT 512 NOT NULL,
+	CONSTRAINT "box_alert_settings_singleton" CHECK("box_alert_settings"."singleton" = 1),
+	CONSTRAINT "box_alert_settings_disk_percent_range" CHECK(typeof("box_alert_settings"."disk_percent") = 'integer' and "box_alert_settings"."disk_percent" between 10 and 99),
+	CONSTRAINT "box_alert_settings_disk_urgent_percent_range" CHECK(typeof("box_alert_settings"."disk_urgent_percent") = 'integer' and "box_alert_settings"."disk_urgent_percent" > "box_alert_settings"."disk_percent" and "box_alert_settings"."disk_urgent_percent" <= 100),
+	CONSTRAINT "box_alert_settings_disk_free_mib_range" CHECK(typeof("box_alert_settings"."disk_free_mib") = 'integer' and "box_alert_settings"."disk_free_mib" between 0 and 1000000000),
+	CONSTRAINT "box_alert_settings_memory_free_mib_range" CHECK(typeof("box_alert_settings"."memory_free_mib") = 'integer' and "box_alert_settings"."memory_free_mib" between 0 and 1000000000)
 );
 
 CREATE TABLE `jobs` (
@@ -1735,3 +1789,4 @@ CREATE TRIGGER "tokens_live_key_update" BEFORE UPDATE ON "tokens" WHEN NEW."revo
 CREATE TRIGGER "threads_no_reuse" BEFORE INSERT ON "threads" WHEN EXISTS (SELECT 1 FROM "deleted_threads" WHERE "id" = NEW."id") BEGIN SELECT RAISE(ABORT, 'deleted id cannot be reused'); END;
 CREATE TRIGGER "threads_fixed_id" BEFORE UPDATE OF "id" ON "threads" WHEN NEW."id" <> OLD."id" BEGIN SELECT RAISE(ABORT, 'id cannot be changed'); END;
 CREATE TRIGGER "threads_mark_deleted" AFTER DELETE ON "threads" BEGIN INSERT OR IGNORE INTO "deleted_threads" ("id", "conversation", "at") VALUES (OLD."id", OLD."conversation", loom_now()); END;
+INSERT INTO box_alert_settings (singleton) VALUES (1);

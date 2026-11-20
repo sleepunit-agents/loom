@@ -932,6 +932,9 @@ export const boxes = sqliteTable('boxes', {
   revokedAt: text('revoked_at'),
   slots: integer('slots'),
   readers: text('readers', { mode: 'json' }).$type<string[]>(),
+  readingSequence: integer('reading_sequence').notNull().default(0),
+  readingsLeftOut: integer('readings_left_out').notNull().default(0),
+  readingSilenceSequence: integer('reading_silence_sequence').notNull().default(0),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -961,6 +964,63 @@ export const boxFacts = sqliteTable('box_facts', {
 }, t => [
   primaryKey({ columns: [t.box, t.fact] }),
   check('box_facts_from_owner_boolean', sql`${t.fromOwner} in (0, 1)`),
+]);
+
+/** Latest reading and condition for each machine and watched thing. Each disk path has its own row.
+ * The last successful values stay on the row while it is unknown. Durations accrue between reports
+ * on Loom's process clock. The sequence records which report updated the row. */
+export const boxReadings = sqliteTable('box_readings', {
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
+  thing: text('thing').notNull(),
+  generation: text('generation').notNull(),
+  occasion: integer('occasion').notNull().default(0),
+  urgentOccasion: integer('urgent_occasion').notNull().default(0),
+  ordinaryLine: text('ordinary_line', { enum: ['percent', 'floor', 'engine'] }),
+  ordinaryLineValue: integer('ordinary_line_value'),
+  urgentLineValue: integer('urgent_line_value'),
+  lastLines: text('last_lines', { mode: 'json' }).$type<{ diskPercent: number; diskUrgentPercent: number; diskFreeMib: number; memoryFreeMib: number }>(),
+  usedPercent: integer('used_percent'),
+  sizeMib: integer('size_mib'),
+  freeMib: integer('free_mib'),
+  engineStatus: integer('engine_status'),
+  level: text('level', { enum: ["ok", "raised", "urgent"] }).notNull(),
+  since: text('since'),
+  urgentSince: text('urgent_since'),
+  readAt: text('read_at'),
+  unknownSince: text('unknown_since'),
+  observedAt: text('observed_at'),
+  unknownMs: integer('unknown_ms').notNull().default(0),
+  absentMs: integer('absent_ms'),
+  reportSequence: integer('report_sequence').notNull().default(0),
+  stale: integer('stale', { mode: 'boolean' }).notNull().default(false),
+}, t => [
+  primaryKey({ columns: [t.box, t.kind, t.thing] }),
+  check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
+  check('box_readings_level', sql`${t.level} in ('ok', 'raised', 'urgent')`),
+  check('box_readings_used_percent_range', sql`${t.usedPercent} is null or ${t.usedPercent} between 0 and 100`),
+  check('box_readings_engine_status_range', sql`${t.engineStatus} is null or ${t.engineStatus} = 200 or ${t.engineStatus} between 300 and 599`),
+  check('box_readings_since_utc', utc(t.since)),
+  check('box_readings_urgent_since_utc', utc(t.urgentSince)),
+  check('box_readings_read_at_utc', utc(t.readAt)),
+  check('box_readings_unknown_since_utc', utc(t.unknownSince)),
+  check('box_readings_stale_boolean', sql`${t.stale} in (0, 1)`),
+]);
+
+/** The household’s effective alert lines. Installation and upgrade seed the singleton with defaults. */
+export const boxAlertSettings = sqliteTable('box_alert_settings', {
+  singleton: integer('singleton').primaryKey().default(1).notNull(),
+  diskPercent: integer('disk_percent').notNull().default(85),
+  diskUrgentPercent: integer('disk_urgent_percent').notNull().default(95),
+  diskFreeMib: integer('disk_free_mib').notNull().default(5120),
+  memoryFreeMib: integer('memory_free_mib').notNull().default(512),
+}, t => [
+  check('box_alert_settings_singleton', sql`${t.singleton} = 1`),
+  // A line clears a few points under itself (machine-conditions.ts, CLEAR_POINTS): one too low could never clear.
+  check('box_alert_settings_disk_percent_range', sql`typeof(${t.diskPercent}) = 'integer' and ${t.diskPercent} between 10 and 99`),
+  check('box_alert_settings_disk_urgent_percent_range', sql`typeof(${t.diskUrgentPercent}) = 'integer' and ${t.diskUrgentPercent} > ${t.diskPercent} and ${t.diskUrgentPercent} <= 100`),
+  check('box_alert_settings_disk_free_mib_range', sql`typeof(${t.diskFreeMib}) = 'integer' and ${t.diskFreeMib} between 0 and 1000000000`),
+  check('box_alert_settings_memory_free_mib_range', sql`typeof(${t.memoryFreeMib}) = 'integer' and ${t.memoryFreeMib} between 0 and 1000000000`),
 ]);
 
 /** One row per run of an agent. */
@@ -1767,6 +1827,7 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   ownerRow: one(members, { fields: [boxes.owner], references: [members.id], relationName: 'boxes_owner' }),
   boxAgentsByBox: many(boxAgents, { relationName: 'box_agents_box' }),
   boxFactsByBox: many(boxFacts, { relationName: 'box_facts_box' }),
+  boxReadingsByBox: many(boxReadings, { relationName: 'box_readings_box' }),
   jobsByBox: many(jobs, { relationName: 'jobs_box' }),
   agentBoxesByBox: many(agentBoxes, { relationName: 'agent_boxes_box' }),
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
@@ -1781,6 +1842,10 @@ export const boxAgentsRelations = relations(boxAgents, ({ one }) => ({
 
 export const boxFactsRelations = relations(boxFacts, ({ one }) => ({
   boxRow: one(boxes, { fields: [boxFacts.box], references: [boxes.id], relationName: 'box_facts_box' }),
+}));
+
+export const boxReadingsRelations = relations(boxReadings, ({ one }) => ({
+  boxRow: one(boxes, { fields: [boxReadings.box], references: [boxes.id], relationName: 'box_readings_box' }),
 }));
 
 export const jobsRelations = relations(jobs, ({ one, many }) => ({
@@ -2225,6 +2290,8 @@ export const tables = {
   boxes,
   boxAgents,
   boxFacts,
+  boxReadings,
+  boxAlertSettings,
   jobs,
   jobNeeds,
   agentRunSettings,
@@ -2306,6 +2373,7 @@ export const schema = { ...tables, ...plumbing,
   boxesRelations,
   boxAgentsRelations,
   boxFactsRelations,
+  boxReadingsRelations,
   jobsRelations,
   jobNeedsRelations,
   agentRunSettingsRelations,

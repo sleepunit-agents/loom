@@ -58,7 +58,7 @@ export type TableWithRule = 'tasks' | 'taskComments' | 'taskLinks' | 'projects' 
   | 'conversations' | 'conversationPeople' | 'turns' | 'digests' | 'conversationDays' | 'findings' | 'digestItems' | 'jobs' | 'inbox'
   | 'bridgeConnections' | 'bridgeChannelFilters' | 'bridgeChannels' | 'bridgePeople' | 'bridgeIncoming' | 'bridgeSends'
   | 'secrets' | 'secretGrants' | 'secretRequests' | 'secretRules' | 'secretRuleAgents' | 'secretUses' | 'secretChanges'
-  | 'triggers' | 'triggerEdits' | 'triggerLog' | 'boxes' | 'boxAgents' | 'boxFacts' | 'timingDays' | 'measuringSettings';
+  | 'triggers' | 'triggerEdits' | 'triggerLog' | 'boxes' | 'boxAgents' | 'boxFacts' | 'boxReadings' | 'boxAlertSettings' | 'timingDays' | 'measuringSettings';
 /** The tables a child row can be seen with; each is keyed by `id`. */
 export type ParentTable = Extract<TableWithRule, 'tasks' | 'approvals' | 'changes' | 'conversations' | 'digests' | 'triggers' | 'boxes' | 'bridgeConnections' | 'bridgeIncoming' | 'secretRequests'>;
 /** One rule about one row. `field` names a column of the row by its schema key. */
@@ -356,6 +356,12 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   // can name a machine when it proposes a change, and nothing else about that machine.
   boxAgents: first([[viewerIs('agent'), ownsAgent('agent')]], seenWith('boxes', 'box')),
   boxFacts: seenWith('boxes', 'box'),
+  // What a machine's worker last read on it is seen with the machine. The lines those readings are held to are
+  // no secret: a machine's owner, who need not be a household owner, is told them in every notice
+  // ("Alerts at 85%."). Any member who is in the household now reads them; only a household owner changes
+  // them (machine.setAlertLines). No agent reads them: no rule lets an agent read household settings of this kind.
+  boxReadings: seenWith('boxes', 'box'),
+  boxAlertSettings: currentMember,
   timingDays: any(householdOwner, all(viewerIs('agent'), currentViewer)),
   measuringSettings: householdOwner,
 };

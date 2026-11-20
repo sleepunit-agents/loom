@@ -107,6 +107,18 @@ it('updates box enrollment, distinguishes live zero and clears retained counts i
  f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null}]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
  expect(boxes()).toBe('2 enrolled boxes');
+ // A machine with a condition open needs a look; nothing is said while none has, and a removed machine is not counted.
+ const part=()=>tree.root.findByType('ticker-test').props.parts.at(-1);
+ expect(part().tone).toBeUndefined();
+ f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null},{id:'gone',revokedAt:'2026-11-19T00:00:00Z'}],boxReadings:[{box:'a'},{box:'a'},{box:'gone'}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+ expect(part()).toEqual({text:'2 enrolled boxes · 1 needs a look',tone:'bad'});
+ f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null}],boxReadings:[{box:'a'},{box:'b'}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+ expect(boxes()).toBe('2 enrolled boxes · 2 need a look');
+ f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null}],boxReadings:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));
+ expect(boxes()).toBe('2 enrolled boxes');
  for(const status of ['loading','offline','denied']){
   f.boxes={...f.boxes,status};
   await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn()})));

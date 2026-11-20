@@ -16,7 +16,7 @@ import { GraphQLInt } from 'graphql/index.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, boxFacts, members, tokens } from './core/data/schema.js';
+import { boxes, boxFacts, boxReadings, inbox, members, tokens } from './core/data/schema.js';
 import { STAMP_WAKE_MS } from './next-data.js';
 import { SILENCE_MS } from './runtime/silence.js';
 import { sharedRoot } from './shared-root.js';
@@ -57,7 +57,7 @@ async function fixture() {
     let shown: unknown, frames = 0;
     ws.on('message', raw => { frames++; for (const patch of JSON.parse(String(raw)).payload.data.observe.patches as Patch[]) shown = apply(shown, patch.path, patch); });
     ws.send(JSON.stringify({ type: 'subscribe', id: 'one', payload: { query: `subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value removed } } }` } }));
-    await vi.waitFor(() => expect(frames).toBe(1));
+    await vi.waitFor(() => expect(frames).toBe(1), { timeout: 3000 });
     return { data: () => shown, frames: () => frames, closed: () => ws.readyState !== WebSocket.OPEN };
   };
   const poll = async (input: Record<string, unknown> = {}) => {
@@ -65,10 +65,17 @@ async function fixture() {
       body: JSON.stringify({ input: { execution: 'container', facts: ['os:linux'], slots: 2, ...input }, id: `poll-${clock.now()}-${Math.random()}` }) });
     expect(await response.json()).toEqual({ ok: true, value: null });
   };
+  /** What the worker read on its own machine: a 200 GiB disk this full, and its memory. */
+  const reading = async (percent: number | 'unknown', freeMemoryMib = 12_288, answers = true) => {
+    const response = await root.http.request('http://loom/api/runtime/machineReadings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys.worker },
+      body: JSON.stringify({ input: { readings: [percent === 'unknown' ? { kind: 'disk', thing: '/', unknown: true } : { kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) },
+        { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }, { kind: 'containers', engineStatus: answers ? 200 : 503 }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
+    expect(await response.json()).toEqual({ ok: true, value: { ok: true } });
+  };
   // Long enough for a selection that was woken to have been read again.
   const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
   const seen = () => db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.lastSeenAt;
-  return { root, db, clock, now, watch, poll, settle, seen, reads: () => reads };
+  return { root, db, clock, now, watch, poll, reading, settle, seen, reads: () => reads };
 }
 
 it('does not read an open selection again for a poll that found no work, and shows the last-seen time within a minute', async () => {
@@ -145,4 +152,79 @@ it('does not read an open selection again for a write that was refused before it
   expect(f.root.operations.call('http', { kind: 'member', id: 'owner' }, 'runtime.next', { execution: 'container' }, 'not-a-worker')).toMatchObject({ ok: false, code: 'denied' });
   await f.settle();
   expect(f.reads()).toBe(before); expect(window.closed()).toBe(false);
+});
+
+it('reads an open selection again at once for a machine reading that changes a state a person is shown, and for no drift in the numbers between', async () => {
+  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { kind usedPercent engineStatus level unknownSince readAt } }');
+  const shown = () => (window.data() as { boxReadings: { kind: string; usedPercent: number | null; engineStatus: number | null; level: string; unknownSince: string | null }[] }).boxReadings;
+  f.clock.advance(1000); await f.reading(71);
+  await vi.waitFor(() => expect(shown()).toHaveLength(3));
+  /** One reading that must be an ordinary change: read again and shown at once, with nothing waited for. */
+  const loud = async (percent: number | 'unknown', answers: boolean, check: () => void) => {
+    await f.settle(); const before = f.reads();
+    f.clock.advance(1000); await f.reading(percent, 12_288, answers);
+    await vi.waitFor(check);
+    expect(f.reads()).toBeGreaterThan(before);
+  };
+  /** Readings whose numbers alone move: each is kept, and none wakes the selection. */
+  const quiet = async (percents: number[], answers: boolean, unknown = false) => {
+    await f.settle(); const before = f.reads(), frames = window.frames();
+    for (const percent of percents) { f.clock.advance(1000); await f.reading(unknown ? 'unknown' : percent, 12_288 - percent, answers); await f.settle(); }
+    expect(f.reads()).toBe(before); expect(window.frames()).toBe(frames);
+  };
+  await quiet([72, 74, 80, 84, 71], true);
+  // One runtime error is shown immediately, before it raises a condition.
+  await loud(71, false, () => expect(shown()[0]).toMatchObject({ kind: 'containers', engineStatus: 503, level: 'ok' }));
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  // Answering again: at once too.
+  await loud(71, true, () => expect(shown()[0]).toMatchObject({ engineStatus: 200 }));
+  await quiet([73, 71], true);
+  // A thing the worker can no longer read, and one it can read again.
+  await loud('unknown', true, () => expect(shown()[1]).toMatchObject({ kind: 'disk', usedPercent: 71, unknownSince: f.now() }));
+  await quiet([0, 0], true, true);
+  await loud(72, true, () => expect(shown()[1]).toMatchObject({ kind: 'disk', usedPercent: 72, unknownSince: null }));
+  await quiet([75, 71], true);
+  // Pause the worker long enough for its last reading to wear an “as of” marker.
+  const elapsed = performance.now.bind(performance);
+  const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => elapsed() + 16 * 60_000);
+  try {
+    f.clock.advance(16 * 60_000);
+    await loud(71, true, () => expect(shown()[1]).toMatchObject({ usedPercent: 71, level: 'ok', readAt: f.now() }));
+  } finally { monotonic.mockRestore(); }
+});
+
+it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
+  const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
+  // The first reading is a thing watched for the first time: a change, shown at once.
+  f.clock.advance(1000); await f.reading(71);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 71, level: 'ok' }] }));
+  await f.settle();
+  const after = f.reads(), frames = window.frames();
+  // The same reading again and again, and readings whose numbers move under every line.
+  for (const percent of [71, 71, 71, 72, 74, 71, 80, 84, 71, 71]) { f.clock.advance(1000); await f.reading(percent, 12_288 - percent); await f.settle(); }
+  expect(f.db.select().from(boxReadings).all().map(row => [row.kind, row.usedPercent ?? row.freeMib ?? row.engineStatus, row.readAt])).toEqual([['disk', 71, f.now()], ['memory', 12_217, f.now()], ['containers', 200, f.now()]]);
+  expect(f.reads()).toBe(after); expect(window.frames()).toBe(frames); expect(window.closed()).toBe(false);
+  // Over the line is a condition: raised, told to the machine's owner and shown at once. Said again, it is nothing new.
+  const quiet = f.reads();
+  f.clock.advance(1000); await f.reading(91);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 91, level: 'raised' }] }));
+  expect(f.db.select().from(inbox).all().map(item => [item.to, item.words])).toEqual([['sam', 'worker: / is 91% full (18 GB free). Alerts at 85%.']]);
+  // Five seconds after a notice is filed loom reads every selection once more, whether or not anything is
+  // reported meanwhile. That is the notice's cost and not a reading's, and is let pass before the repeats are counted.
+  f.clock.advance(6000); await f.settle();
+  const raised = f.reads();
+  expect(raised).toBeGreaterThan(quiet);
+  for (let i = 0; i < 5; i++) { f.clock.advance(1000); await f.reading(91); await f.settle(); }
+  expect(f.reads()).toBe(raised);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  // Cleared is shown at once too.
+  f.clock.advance(1000); await f.reading(70);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 70, level: 'ok' }] }));
+  await f.settle();
+  // The numbers alone still reach the window, late: within a minute, as a last-seen time does. (This test keeps
+  // clear of a whole minute until here: the desk's clock has every selection read at each one.)
+  f.clock.advance(1000); await f.reading(80); await f.settle();
+  expect(window.data()).toMatchObject({ boxReadings: [{ usedPercent: 70 }] });
+  f.clock.advance(60_000);
+  await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 80, level: 'ok' }] }), { timeout: 3000 });
 });

@@ -471,3 +471,27 @@ it('adds the maker of a terminal binding as a column nobody is written into, so 
  const column=db.prepare("select \"notnull\" as required, dflt_value as fallback from pragma_table_info('terminal_credentials') where name='issued_by'").get();
  expect(column).toEqual({required:0,fallback:null});
 });
+
+it('starts upgraded households with no machine readings and the default lines for them',()=>{
+ const db=household(19);
+ db.prepare("insert into members(id,role,joined_at) values('sam','owner',?)").run(at);
+ db.prepare("insert into boxes(id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,enrolled_at) values('legacy','Legacy','sam',1,1,0,1,?)").run(at);
+ upgradeDataSchema(db);
+ expect(db.prepare('select * from box_readings').all()).toEqual([]);
+ expect(db.prepare('select * from box_alert_settings').all()).toEqual([{singleton:1,disk_percent:85,disk_urgent_percent:95,disk_free_mib:5120,memory_free_mib:512}]);
+ db.prepare("insert into box_readings(box,kind,thing,generation,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/','first',71,204800,59392,'ok',?)").run(at);
+ expect(db.prepare('select unknown_since, stale from box_readings').get()).toEqual({unknown_since:null,stale:0});
+ // A line that could never clear, and an urgent line not over the other, are refused by the table itself.
+ for (const column of ['disk_free_mib', 'memory_free_mib']) {
+   const update = db.prepare(`update box_alert_settings set ${column}=?`);
+   for (const valid of [0, 1_000_000_000]) expect(update.run(valid).changes).toBe(1);
+   for (const invalid of [-1, 0.5, 1_000_000_001, 2_147_483_648]) {
+     expect(() => update.run(invalid)).toThrow(/box_alert_settings_.*_range/);
+   }
+ }
+ expect(()=>db.prepare('update box_alert_settings set disk_percent=3').run()).toThrow(/box_alert_settings_disk_percent_range/);
+ expect(()=>db.prepare('update box_alert_settings set disk_urgent_percent=85').run()).toThrow(/box_alert_settings_disk_urgent_percent_range/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','load','','first','ok',?)").run(at)).toThrow(/box_readings_kind/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','memory','','first','worrying',?)").run(at)).toThrow(/box_readings_level/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('nobody','memory','','first','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
+});

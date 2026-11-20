@@ -20,9 +20,11 @@ export interface CommittedWrite<T> {
  *
  * A commit that wrote no row tells nobody: there is nothing to read again and no
  * access to refresh. A commit whose every run() said `stampOnly` (it wrote only
- * what loom keeps for itself and last-seen style times, and nothing that decides
+ * what loom keeps for itself, last-seen style times and numbers a machine reads
+ * about itself that changed no state a person is shown, and nothing that decides
  * who may read what) is told to `stamped` alone, which may wake readers late and
- * rarely. Every other commit is told to everyone, at once.
+ * rarely. Every other commit is told to everyone, at once. Each caller that says
+ * `stampOnly` is named in docs/accepted-tradeoffs.md.
  */
 export class DataWrites {
   private depth = 0;

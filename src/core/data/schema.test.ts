@@ -30,8 +30,9 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(85);
-    const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton');
+    expect(Object.keys(expected)).toHaveLength(87);
+    const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name)
+      .filter(n => n !== 'singleton' || getTableName(table) === 'box_alert_settings');
     const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), columnsOf(table)]));
     // The schema keeps these three with its plumbing; the approved model describes each column by column.
     const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
@@ -52,7 +53,7 @@ describe('the approved data model', () => {
   it('keeps generated installation SQL exactly in step with the sole Drizzle definition', async () => {
     const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
     const checkedIn = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8');
-    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements()].join('\n') + '\n');
+    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements(), 'INSERT INTO box_alert_settings (singleton) VALUES (1);'].join('\n') + '\n');
   });
 
   it('refuses an existing database and leaves its records intact', () => {

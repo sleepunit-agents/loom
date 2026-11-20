@@ -591,6 +591,50 @@ On success the body sends its report alongside settlement. A body with validated
 - **What would change the answer.** Stamping reports with a count that only moves forward instead of a
   time, which is a schema change.
 
+### A watched name can change while its directory is being read
+
+The disk helper compares a walk from the root with directories opened one
+component at a time through Linux procfs, using `O_DIRECTORY | O_NOFOLLOW`.
+It checks each opened device and inode and queries filesystem space through
+the final descriptor. It then compares the original walk again. A name can
+be moved away and restored between walks, or change immediately after the
+second walk. The resulting numbers belong to the directory the walk reached
+and the helper opened. The reading is a snapshot, and the helper needs
+read permission on the traversed directories and a usable `/proc/self/fd`.
+Keep watched paths outside trees bodies can write.
+
+### A worker can misstate its own machine readings
+
+A worker credential identifies one machine. The worker can supply false
+numbers, an HTTP status, or a printable path within the watch-path bound.
+It can also report that its state directory is outside the watched path
+bounds, using the fixed `state-path` reason. Loom tracks each reported path
+independently and decides the conditions, report timing and recipients.
+These claims affect the readings and notices for that worker's own machine.
+Revisit this if machine readings are used to make decisions about other
+machines or their owners.
+
+### Multiple watched paths on one filesystem can raise separate notices
+
+Loom uses the configured path as the identity of a disk reading. Two paths
+on the same filesystem each have their own condition and can each notify the
+owner. List one path per filesystem when configuring the worker. A worker can
+report printable path names of its choosing for its own machine. Notices use
+plain text, the web renders paths as text, and MCP encodes replies as JSON.
+Loom retains at most 24 things per machine. Already retained things are
+updated or marked absent. New ones take free places in report order. An
+omitted thing frees its place after a day of observed absence. The machine
+list tells the owner how many the last report left out, and the worker gets
+the usual acknowledgement.
+
+### A hung mount can leave a sleeping disk helper
+
+A kernel call on a hung mount can keep one helper asleep per watched path
+for each worker process that encounters it, until the mount responds or the
+machine restarts. The worker reports those paths as unknown, keeps reading
+the others, and exits normally on shutdown after signalling its helpers. A
+replacement worker can leave another asleep if the mount is still hung.
+
 ### A last-seen time reaches an open window up to a minute late
 
 - **What.** Three kinds of time are written far more often than anything a person does: a machine's last
@@ -598,12 +642,21 @@ On success the body sends its report alongside settlement. A body with validated
   request), and a timing row (every measured call). Open live selections are read again for these at most
   once in a minute (`STAMP_WAKE_MS` in `src/next-data.ts`), so a window shows such a time up to a minute
   after it was written. The rows themselves are written at once, and placement and the silence sweep
-  read them as before.
+  read them as before. The numbers a worker reads on its own machine every few minutes (how full a disk
+  is, how much memory is available) are kept back the same way while only the numbers move: 71% becoming
+  84% reaches an open window up to a minute late.
 - **What is enforced.** Only a write that has checked what it wrote may be kept back: a report that left
   the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
   a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and
   every change of who may see what, is told to every selection at once, as before
   (`DataWrites.run`). A machine heard from again after a silence is told at once.
+  A machine's reading of itself is kept back only when `MachineConditions.read` says no state a person
+  is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
+  once: a condition raised, made urgent or cleared; the container runtime going from answering to not
+  answering or back; a thing becoming unknown, readable again or stale; a thing watched for the first
+  time or no more; a change in how many things were left out; and a fresh reading when the stored read
+  time is more than fifteen minutes old or lies in the future on the server’s wall clock.
+  `src/shared-live-idle.test.ts` holds the stamp and ordinary-change paths.
 - **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
   was waiting is set again by the next such time written, a minute from then; with nothing more written it
   waits until the clock has caught up, as every other deadline of this program does.
@@ -1423,8 +1476,10 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
   - `boxes` has a writer for each fact about a machine. `src/shared-machine-registry.ts` makes the row
     when a machine is enrolled. `src/shared-box-settings.ts` writes what its owner chose (`boxes.name`,
-    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
-    machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
+    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` records `boxes.last_seen_at`,
+    capacity, and the reading sequence at a silence notice. `src/runtime/machine-conditions.ts` writes
+    `boxes.reading_sequence` and `readings_left_out` in the same transaction as the readings.
+    `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
   - `jobs` and `job_usage`: `src/core/conversations/terminal-sessions.ts` records observed runs and their cumulative measurements in the same transaction as the terminal event.

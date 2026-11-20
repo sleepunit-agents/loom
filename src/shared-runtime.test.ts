@@ -255,6 +255,8 @@ it('reports local worker facts through default HTTP and uses them in the same po
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => f.root.http.fetch(new Request(input, init))); cleanup.push(() => { fetcher.mockRestore(); });
   const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', slots: 1, container: { socket: '/fake/engine.sock' }, facts: ['gpu:5090', 'rack:attic'] };
   expect(await workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : credential, on: () => {}, off: () => {}, error: text => { throw Error(text); }, containerExecutor: () => ({} as never),
+    // What the disks of the machine running this test hold is no part of it.
+    machineReader: () => async () => [],
     run: async input => { expect(await input.control.next()).toMatchObject({ id: job.id, box: 'worker' }); },
   })).toBe(0);
   expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker' });
@@ -648,6 +650,7 @@ it('a live report-only worker returns a memory sample to an authorized body over
  let stop=()=>{},polled!:()=>void;
  const ready=new Promise<void>(resolve=>{polled=resolve;});
  const running=workerProgram({args:['config'],on:(_event,handler)=>{stop=handler;},off:()=>{},error:()=>{},
+  machineReader:()=>async()=>[],
   read:async path=>path==='config'?JSON.stringify({url,box:'other',tokenFile:'token',reportOnly:true,reads:['memory']}):otherCredential,
   pause:async()=>{polled();await new Promise(resolve=>setTimeout(resolve,30));}});
  try{

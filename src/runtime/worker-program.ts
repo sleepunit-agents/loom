@@ -10,8 +10,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider } from './worker-process.js';
-import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, type WorkerLoginCheck } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
 import { readLogin, watchesLogin } from './account-login-check.js';
+import { MACHINE_CHECK_MS } from './machine-reading-time.js';
+import { WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, machineReader, watchedPath } from './machine-check.js';
+import { DockerResponseError, dockerEngine } from './docker-engine.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
@@ -67,6 +70,12 @@ const configSchema = z.object({
   hostLogins: z.record(z.string().min(1).max(200), z.record(z.string().min(1), z.object({ source: z.string().startsWith('/') }).strict())).optional(),
   /** How often the worker reads the sign-in files on its machine. */
   loginCheckMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  /** How often the worker reads its own machine: the room on its disks, the memory available, and whether the
+   * container runtime answers (machine-check.ts). Left out, every five minutes. */
+  machineCheckMs: z.number().int().min(10_000).max(3_600_000).optional(),
+  /** More paths whose filesystem is watched, beside the ones every worker watches: `/`, its state directory
+   * when it takes jobs. Include the container runtime’s directory if it is on a separate filesystem. */
+  watchPaths: z.array(z.string().refine(watchedPath)).max(WATCHED_PATHS_MAX - 2).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
    * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests.
@@ -102,6 +111,11 @@ export async function workerProgram(input: {
   relaySignIn?: typeof relaySignIn;
   readLogin?: typeof readLogin;
   reportLogins?: typeof reportWorkerAccountLogins;
+  /** What reads this machine, given the paths and the container runtime the configuration names. */
+  machineReader?: typeof machineReader;
+  reportReadings?: typeof reportWorkerMachineReadings;
+  /** The wait between two reads of the machine. */
+  machinePause?: (ms: number, signal: AbortSignal) => Promise<void>;
   signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
   reportUsage?: typeof reportWorkerAccountUsage;
@@ -117,7 +131,7 @@ export async function workerProgram(input: {
   const abort = new AbortController();
   const stop = () => abort.abort();
   let executor: WorkerExecutor | undefined;
-  let diagnostics: Promise<void> | undefined, loginChecks: Promise<void> | undefined;
+  let diagnostics: Promise<void> | undefined, loginChecks: Promise<void> | undefined, machineChecks: Promise<void> | undefined;
   // The stage the worker is in: what a failure there is reported as (worker-stop.ts).
   let stage: WorkerStopStage = 'usage';
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
@@ -214,6 +228,41 @@ export async function workerProgram(input: {
       await (input.reportLogins ?? reportWorkerAccountLogins)(remote, logins);
       lastLogins = said; lastLoginsAt = performance.now();
     }, loginPause);
+    // What this machine says about itself, on a clock of its own, slower than any other and apart from the
+    // poll for work. Everything watched is said each time: loom keeps the latest reading, decides what is a
+    // condition and tells the machine's owner. A worker that only reports watches its machine as well; that
+    // is how the machine loom itself is on is watched when it hosts no bodies. A failed report is tried
+    // again at the next interval and never stops the worker. A container runtime is asked about only by a
+    // worker that has one configured (`container.socket`), whether or not it also only reports.
+    const watchMachine = (statePath?: string) => {
+      const socket = config.container?.socket, everyMs = config.machineCheckMs ?? MACHINE_CHECK_MS;
+      let saidLimit = false;
+      const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.watchPaths ?? [])],
+        ...(statePath === undefined ? {} : { statePath }), signal: abort.signal,
+        say: line => input.error(line),
+        ...(socket === undefined ? {} : { engine: async (signal: AbortSignal) => {
+          try {
+            await dockerEngine(socket).json('GET', '/version', undefined, signal);
+            return 200;
+          } catch (error) {
+            if (error instanceof DockerResponseError && error.status >= 300 && error.status <= 599) return error.status;
+            throw error;
+          }
+        } }) });
+      return poll(everyMs, 'Worker machine readings unavailable\n', async () => {
+        const readings = await read();
+        if (abort.signal.aborted) return;
+        try { await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings); }
+        catch (error) {
+          if (!(error instanceof WorkerWatchedThingLimit)) throw error;
+          if (!saidLimit) {
+            saidLimit = true;
+            if (!abort.signal.aborted) input.error(`Worker machine check: ${WATCHED_THING_LIMIT_ERROR}\n`);
+          }
+        }
+      // A clock of its own: it shares no timing with the usage refresh or the sign-in check.
+      }, input.machinePause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); }));
+    };
     if (config.reads?.length || config.reportOnly) {
       const reads = offeredMachineReads(config.reads ?? []);
       const reader = (input.readRemote ?? workerMachineReads)(remote);
@@ -231,7 +280,7 @@ export async function workerProgram(input: {
           : {ok: false, output: 'Machine read unavailable'};
         await reader.done({id: request.id, ...result});
       });
-      if (config.reportOnly) { loginChecks = watchLogins(); await diagnostics; return 0; }
+      if (config.reportOnly) { loginChecks = watchLogins(); machineChecks = watchMachine(config.state); await diagnostics; return 0; }
     }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
     const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
@@ -291,7 +340,7 @@ export async function workerProgram(input: {
       if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
       else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: signIn.timeoutMs });
     });
-    loginChecks = watchLogins();
+    loginChecks = watchLogins(); machineChecks = watchMachine(state);
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
@@ -316,5 +365,5 @@ export async function workerProgram(input: {
     const at = error instanceof WorkerStop ? error.stage : stage;
     input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
-  } finally { abort.abort(); await diagnostics; await loginChecks; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
+  } finally { abort.abort(); await diagnostics; await loginChecks; await machineChecks; executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

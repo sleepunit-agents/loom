@@ -160,7 +160,7 @@ it('lets no second module write a household table unless it is listed here and i
     agents: { owner: 'src/apps/household.ts', others: ['src/desk-sprites.ts'] },
     approvals: { owner: 'src/apps/approvals.ts', others: ['src/shared-household-proposals.ts', 'src/shared-work-lifetime.ts'] },
     box_facts: { owner: 'src/shared-box-settings.ts', others: ['src/runtime/machines.ts'] },
-    boxes: { owner: 'src/shared-machine-registry.ts', others: ['src/runtime/machines.ts', 'src/shared-box-settings.ts', 'src/shared-root.ts'] },
+    boxes: { owner: 'src/shared-machine-registry.ts', others: ['src/runtime/machine-conditions.ts', 'src/runtime/machines.ts', 'src/shared-box-settings.ts', 'src/shared-root.ts'] },
     bridge_connections: { owner: bridges, others: ['src/apps/household.ts'] },
     bridge_file_messages: { owner: bridges, others: [words] },
     bridge_files: { owner: bridges, others: [words] },

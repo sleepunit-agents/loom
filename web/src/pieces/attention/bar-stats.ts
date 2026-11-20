@@ -13,9 +13,10 @@ export interface DeskTempoData {
   triggerLog: { seq: number; event: string }[];
   agentPauses: { agent: string }[];
 }
-/** Enrollment is distinct from worker health; no machine names or owner details. */
-export const deskBoxesQuery = `query DeskBoxes { boxes { id revokedAt } }`;
-export interface DeskBoxesData { boxes: { id: string; revokedAt: string | null }[] }
+/** Enrollment, and which machines have a condition open (a disk over its line, the container runtime not
+ * answering): loom's own judgement of what each machine's worker read. No machine names, owner details or numbers. */
+export const deskBoxesQuery = `query DeskBoxes { boxes { id revokedAt } boxReadings(where: {level: {ne: ok}}) { box } }`;
+export interface DeskBoxesData { boxes: { id: string; revokedAt: string | null }[]; boxReadings?: { box: string }[] }
 /** Connection configuration only; enabled does not imply connected or healthy. */
 export const deskBridgesQuery = `query DeskBridges { bridgeConnections { id enabled } }`;
 export interface DeskBridgesData { bridgeConnections: { id: string; enabled: boolean }[] }
@@ -39,7 +40,11 @@ export function useDeskStats() {
   const bridgeData = bridges.status === 'live' ? bridges.data : undefined;
   const changes = useDataQuery<DeskChangesData>(deskChangesQuery);
   const changeData = changes.status === 'live' ? changes.data : undefined;
-  const enrolled = boxes.status === 'live' && boxes.data ? boxes.data.boxes.filter(b=>b.revokedAt===null).length : undefined;
+  const enrolledBoxes = boxes.status === 'live' && boxes.data ? boxes.data.boxes.filter(b=>b.revokedAt===null) : undefined;
+  const enrolled = enrolledBoxes?.length;
+  // Machines, not conditions: two full disks on one machine are one machine to look at.
+  const troubled = new Set((boxes.status === 'live' ? boxes.data?.boxReadings ?? [] : []).map(reading=>reading.box));
+  const needLook = enrolledBoxes?.filter(b=>troubled.has(b.id)).length ?? 0;
   const open = changeData?.changes ?? [];
   const failing = open.filter(c=>c.checks==='failing').length;
   const activeTriggers = tempoData?.triggers.filter(t=>t.enabled && ['standing','due','firing','held'].includes(t.state)).length ?? 0;
@@ -54,6 +59,6 @@ export function useDeskStats() {
   ];
   // Trouble first, preserving the normal order for equal tones.
   parts.sort((a,b)=>Number(b.tone==='bad')-Number(a.tone==='bad'));
-  parts.push({text:enrolled===undefined?'Boxes unavailable':`${enrolled} enrolled box${enrolled===1?'':'es'}`});
+  parts.push({text:enrolled===undefined?'Boxes unavailable':`${enrolled} enrolled box${enrolled===1?'':'es'}${needLook?` · ${needLook} need${needLook===1?'s':''} a look`:''}`,tone:needLook?'bad':undefined});
   return { parts, enrolled };
 }

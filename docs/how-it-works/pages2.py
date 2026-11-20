@@ -6,7 +6,7 @@ from site_build import (PATH, N, NUM, TINT, FILE, key, plink, tile, page, foot, 
 from model import PLUMBING
 
 e = html.escape
-WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen"]
 
 # ───────────────────────── pieces
 def split_mock(search, folders, list_title, count, top, rows, reader, chips=()):
@@ -532,7 +532,7 @@ def machines():
          ("Who sees it.", f"{OWNER} Anyone else sees jobs in their projects and jobs of agents they own. {PRIVATE}"),
          ("Boxes.", "A box belongs to the member who owns it, and lists the agents allowed to run there."),
          ("Checked at the door.", DOOR)],
-        [("Machines", ["boxes", "box_agents", "box_facts"]), ("Jobs", ["jobs", "job_needs", "job_usage"]),
+        [("Machines", ["boxes", "box_agents", "box_facts", "box_readings", "box_alert_settings"]), ("Jobs", ["jobs", "job_needs", "job_usage"]),
          ("How each agent runs", ["agent_run_settings", "agent_boxes", "agent_house_secrets", "agent_house_ports", "agent_people", "agent_denied_tools"])])
 
 # ───────────────────────── 8 Discord and Slack
