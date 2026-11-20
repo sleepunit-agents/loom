@@ -27,6 +27,7 @@ export interface HandoffToSelf{
   conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:OnWord;chain:string[];startedAt:string};
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
+ ownerWork?(work:{job:{id:string;agent:string;conversation:string|null}}):boolean;
  codexAvailable?(agent:string):boolean;
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
@@ -51,7 +52,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    if(input.harness){
     const person=self?.word(found);
     const thread=db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get();
-    return found.cv.venue==='loom' && !!thread && !thread.archivedAt && !!found.cv.member && person?.kind==='member' && person.id===found.cv.member;
+    return self?.ownerWork?.(found)===true && found.cv.venue==='loom' && !!thread && !thread.archivedAt && !!found.cv.member && person?.kind==='member' && person.id===found.cv.member;
    }
    if(input.to)return !!self;
    if(!input.agent||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;

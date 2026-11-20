@@ -2,12 +2,11 @@ import { DAY_MS } from '../day.js';
 import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
-import { sealHandoff } from './handoff-words.js';
 import type { CommsMessages } from './messages.js';
 import { reviewThread } from './review-place.js';
 import { exitStage } from '../../runtime/job-exit.js';
 
-/** Seal both deliveries before entering the operation transaction. Retries and concurrent
+/** Seal the thread reply before entering the operation transaction. Retries and concurrent
  * attempts use one result per child. Only the originating private thread can receive it. */
 export async function prepareReviewResult(service: CommsMessages, cv: typeof conversations.$inferSelect,
   run: string, words: string, model?: string) {
@@ -16,15 +15,14 @@ export async function prepareReviewResult(service: CommsMessages, cv: typeof con
   const clientId = 'review:' + cv.id;
   const message = await service.prepareSend({thread: thread.id, kind: 'reply', sender: cv.agent,
     run, clientId, words, turn: {model}});
-  const note = await sealHandoff(service.key, 'Your Codex subagent finished its assignment. Use this result to continue the originating request.\n\n'+words, service.now(), commsKeepDays(db));
   return () => {
     if (reviewThread(db, cv)?.id !== thread.id) throw Error('Review destination changed');
     const prior = db.select().from(messages).where(and(eq(messages.thread, thread.id), eq(messages.sender, cv.agent), eq(messages.clientId, clientId))).get();
     if (prior) return prior;
     const row = message();
-    service.threads.conversations.send({conversation:thread.conversation,toKind:'agent',to:cv.agent,
-      source:'handoff',sourceId:clientId,fromKind:'agent',fromId:cv.agent,onWordKind:'member',onWord:cv.member!,words:note});
-    return row;
+    const item=service.threads.conversations.send({conversation:thread.conversation,toKind:'agent',to:cv.agent,
+      source:'handoff',sourceId:clientId,fromKind:'agent',fromId:cv.agent,onWordKind:'member',onWord:cv.member!,thread:thread.id,messageSeq:row.seq});
+    return service.attach(row,item);
   };
 }
 

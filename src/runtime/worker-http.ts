@@ -40,7 +40,7 @@ export interface WorkerHttpOptions {
 export class WorkerWatchedThingLimit extends Error {}
 
 class WorkerOperationFailure extends Error {
-  constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false) {
+  constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false, readonly schemaRefusal = false) {
     super(`Worker ${name} failed; outcome may be uncertain`);
   }
 }
@@ -100,7 +100,10 @@ function operationCaller(input: WorkerHttpOptions) {
           throw new WorkerWatchedThingLimit(WATCHED_THING_LIMIT_ERROR);
         }
         const denied = z.object({ ok: z.literal(false), code: z.literal('denied'), message: z.string() }).strict().safeParse(data).success;
-        throw new WorkerOperationFailure(name, false, false, denied);
+        const schemaRefusal = name === 'next' && response.status === 400 && z.object({
+          ok:z.literal(false),code:z.literal('invalid'),message:z.literal('Input does not match operation schema')
+        }).strict().safeParse(data).success;
+        throw new WorkerOperationFailure(name, false, false, denied, schemaRefusal);
       }
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
     } catch (error) {
@@ -220,9 +223,14 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => (await call('next', {
-      execution: 'container', reviewResults:true, facts, slots: input.slots, programs: input.programs || undefined,
-    }, workerAssignment.nullable())) ?? undefined,
+    next: async () => {
+      const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
+      try {return (await call('next',{...poll,reviewResults:true},workerAssignment.nullable())) ?? undefined;}
+      catch(error){
+        if(!(error instanceof WorkerOperationFailure && error.schemaRefusal))throw error;
+        return (await call('next',poll,workerAssignment.nullable())) ?? undefined;
+      }
+    },
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
       const report = operationCaller(options);

@@ -306,6 +306,6 @@ it('keeps its container witness when an older server refuses the claim schema', 
    .mockResolvedValueOnce(new Response(JSON.stringify({ok:false,code:'invalid',message:'Input does not match operation schema'}),{status:400}))
    .mockResolvedValueOnce(response(assignment));
  const control=httpWorkerControl({url:'https://loom.example',token:'fixture',signal:new AbortController().signal,fetch:fetcher,programs:true});
- await expect(control.next()).rejects.toThrow('Worker next failed');
- expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{execution:'container',reviewResults:true,programs:true}]);
+ expect(await control.next()).toEqual(assignment);
+ expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{execution:'container',reviewResults:true,programs:true},{execution:'container',programs:true}]);
 });

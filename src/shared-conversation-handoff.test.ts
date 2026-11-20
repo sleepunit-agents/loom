@@ -247,7 +247,7 @@ it('keeps a handed-off direct message direct, so its words reach no wider audien
  const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });
 
-it.each(['success','failure','archive'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+it.each(['success','failure','archive','transient'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const f=await bodyFixture(clean,{modelRoles:()=>[
   {model:'first',provider:'claude',harness:'claude',series:'first'},
   {model:'reviewer',provider:'openai',harness:'codex',series:'reviewer'}]});
@@ -284,8 +284,15 @@ it.each(['success','failure','archive'] as const)('delivers an owner-requested C
   await expect(sdk.reply({clientId:'no',words:'withheld',model:'reviewer'})).rejects.toThrow();
   return;
  }
- if(mode==='failure'){
+ if(mode==='failure'||mode==='transient'){
+  let refused=false;
+  if(mode==='transient')f.gate(async()=>{if(!refused){refused=true;throw Error('Temporary key unavailability');}});
   root.services.runtime.stop(assignment.id,'alice','write-off');
+  if(mode==='transient'){
+   await vi.waitFor(()=>expect(refused).toBe(true));
+   await new Promise(resolve=>setImmediate(resolve));
+   f.clock.advance(30_001);
+  }
   await vi.waitFor(()=>expect(db.select().from(s.messages).where(eq(s.messages.kind,'reply')).all()).toHaveLength(1));
   const failure=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).get()!;
   expect(await f.key.open(failure.words!)).toContain('the job was stopped');return;
@@ -297,6 +304,19 @@ it.each(['success','failure','archive'] as const)('delivers an owner-requested C
  const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();
  expect(replies).toHaveLength(1);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
  const mail=db.select().from(s.inbox).where(and(eq(s.inbox.conversation,f.thread.conversation),eq(s.inbox.source,'handoff'))).all();
- expect(mail).toHaveLength(1);expect(mail[0].onWord).toBe('alice');
+ expect(mail).toHaveLength(1);expect(mail[0]).toMatchObject({onWord:'alice',thread:f.thread.id,messageSeq:replies[0].seq,words:null});
+ f.clock.advance(60_000);
+ const coordinator=db.select().from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),eq(s.jobs.state,'queued'))).get()!;
+ expect(coordinator).toBeDefined();
+ db.update(s.jobs).set({box:'box',state:'running',heardAt:now()}).where(eq(s.jobs.id,coordinator.id)).run();
+ const resumed='body_'+'e'.repeat(64);
+ db.insert(s.tokens).values({fingerprint:credentialHash(resumed),label:'Fictional coordinator',kind:'agent',agent:'art',job:coordinator.id,createdAt:now()}).run();
+ const receiver=bodyConversationClient({url:'https://loom.invalid',token:resumed,job:coordinator.id,conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
+ clean.push(()=>receiver.close());
+ const received:string[]=[];
+ await receiver.takeAndAccept(async item=>{if(item.words)received.push(item.words);});
+ expect(received).toContain(reply.words);
+ root.services.comms!.delete(f.thread.id);
+ expect(root.services.conversations.item(mail[0].id)).toMatchObject({state:'resolved',words:null,thread:null});
  expect(db.$client.serialize().includes(Buffer.from(reply.words))).toBe(false);
 });

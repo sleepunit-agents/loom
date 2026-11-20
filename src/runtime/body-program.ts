@@ -160,6 +160,9 @@ export async function bodyProgram(input: {
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
+        context.push('Your Codex subagent returned the following result. Continue the originating request using the findings.');
+      }
       const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
     });
     if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }

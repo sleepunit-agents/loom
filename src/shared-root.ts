@@ -91,7 +91,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobWord, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -246,11 +246,20 @@ export function sharedRoot(options: {
 
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   const reviewReports = new Set<Promise<void>>();
+  const reviewRetries = new Map<string,()=>void>();
   const deliverReview = (id:string) => {
     if(!comms)return;
     const delivery=reportReviewEnd(comms.service,id,
       (member,agent,project)=>mayRunPrivateWork({member,agent,project:project??undefined},sharedSharing(db)),
-      write=>data.writes.run(write)).catch(options.reportError);
+      write=>data.writes.run(write)).catch(error=>{
+        if(!closing && !reviewRetries.has(id)){
+          reviewRetries.set(id,clock.at(clock.now()+30_000,()=>{
+            reviewRetries.delete(id);
+            deliverReview(id);
+          }));
+        }
+        options.reportError(error);
+      });
     reviewReports.add(delivery);
     void delivery.finally(()=>reviewReports.delete(delivery));
   };
@@ -320,7 +329,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),codexAvailable:agent=>dispatcher.canStartReview(agent)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -502,6 +511,8 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      for(const cancel of reviewRetries.values())cancel();
+      reviewRetries.clear();
       stopMemoryWrites();stopHouseholdProposals();memorySignals?.close();
       stopMachineReads();
       accountReports.close();
