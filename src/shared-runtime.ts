@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
-import { OperationError, type Operations } from './core/operations/index.js';
+import { jobs, conversations, changeReviewRounds, jobUsage } from './core/data/schema.js';
+import { canonical as canonicalInput, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
 import { Dispatcher } from './runtime/dispatcher.js';
@@ -122,7 +122,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         // The findings belong only to the protected round. Check their stored value on replay.
         const report = input.coldReview;
         const evidence = report && [report.change, report.headCommit, report.before, report.after];
-        return createHash('sha256').update(JSON.stringify({ job: input.job, exit: input.exitCode, by: input.exitBy, evidence })).digest('hex');
+        const usage = report?.usage && canonicalInput(report.usage);
+        return createHash('sha256').update(JSON.stringify({ job: input.job, exit: input.exitCode, by: input.exitBy, evidence, usage })).digest('hex');
       }
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
       const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member, direct: conversations.direct }).from(conversations)
@@ -154,6 +155,9 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         if (job.startedByKind === 'program' || input.programResult !== undefined) throw new OperationError('invalid', 'Incompatible job result');
         const result = reviewOutcome(exitCode, input.coldReview, input.exitBy);
         if (result.verdict === 'NONE' && exitCode === 0) exitCode = 1;
+        const usage = input.coldReview?.usage;
+        if (usage) db.insert(jobUsage).values({ ...usage, job: job.id, harness: usage.harness ?? job.harness,
+          model: usage.model ?? job.model }).run();
         reviewStore.finish({ job: input.job, change: round.change, headCommit: round.headCommit, ...result });
         ctx.changed('change', round.change);
       } else if (job.startedByKind === 'program') {

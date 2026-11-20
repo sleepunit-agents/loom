@@ -681,7 +681,8 @@ it('files a worker review only on its assigned job, change and commit, atomicall
   const row = fixtureChange();
   f.root.services.changes.put(row);
   const review = changeReviewStore(f.db, f.now);
-  const report = { change, headCommit, before: tree, after: tree, reply: 'Original findings\nVERDICT: CLEAR' };
+  const usage = { source: 'report', tokensIn: 17, tokensOut: 5, toolCalls: 2, tools: { read: 1, list: 1 } };
+  const report = { change, headCommit, before: tree, after: tree, usage, reply: 'Original findings\nVERDICT: CLEAR' };
   const input = { job: queued.id, exitCode: 0, exitBy: 'runner', logTail: 'discard this output', coldReview: report };
   review.assign({ job: queued.id, change, headCommit, tier: 'high', round: 1 });
   expect(await f.control.next()).toBeUndefined();
@@ -704,9 +705,14 @@ it('files a worker review only on its assigned job, change and commit, atomicall
   expect((await f.call('finish', input, 'atomic')).status).toBe(503);
   expect(review.history(change)[0].verdict).toBeNull();
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  expect(f.db.select().from(jobUsage).where(eq(jobUsage.job, queued.id)).get()).toBeUndefined();
   f.client.exec('DROP TRIGGER review_receipt_failure');
   expect((await f.call('finish', input, 'atomic')).status).toBe(200);
   expect((await f.call('finish', input, 'atomic')).status).toBe(200);
+  const sameUsage = { ...usage, tools: { list: 1, read: 1 } };
+  expect((await f.call('finish', { ...input, coldReview: { ...report, usage: sameUsage } }, 'atomic')).status).toBe(200);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, usage: { ...usage, tokensOut: 6 } } }, 'atomic')).status).toBe(409);
+  expect(f.db.select().from(jobUsage).where(eq(jobUsage.job, queued.id)).get()).toMatchObject(usage);
   expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'Other findings\nVERDICT: CLEAR' } }, 'atomic')).status).toBe(409);
   for (const receipt of f.db.select().from(operationResults).all()) {
     expect(Buffer.from(receipt.result).toString()).not.toContain('Original findings');
@@ -736,7 +742,8 @@ it.each(['unchanged', 'changed', 'missing'] as const)('delivers the %s review fr
   const store = changeReviewStore(f.db, f.now);
   store.assign({ change: row.id, headCommit: row.head.id, job: job.id, round: 1, tier: 'high' });
   const tree = 'a'.repeat(64);
-  const report = { change: row.id, headCommit: row.head.id, before: tree, after: evidence === 'changed' ? 'b'.repeat(64) : tree,
+  const usage = { source: 'report' as const, tokensIn: 23, tokensOut: 7 };
+  const report = { change: row.id, headCommit: row.head.id, before: tree, usage, after: evidence === 'changed' ? 'b'.repeat(64) : tree,
     reply: '- MAJOR — unhandled case\nVERDICT: CLEAR' };
   expect(await f.control.next()).toBeUndefined();
   const finish = vi.spyOn(f.control, 'finish');
@@ -759,6 +766,8 @@ it.each(['unchanged', 'changed', 'missing'] as const)('delivers the %s review fr
   const valid = evidence === 'unchanged';
   expect(store.history(row.id)).toMatchObject([{ verdict: valid ? 'BLOCKING' : 'NONE', current: true }]);
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: valid ? 'done' : 'failed', logTail: null });
+  const measured = f.db.select().from(jobUsage).where(eq(jobUsage.job, job.id)).get();
+  expect(measured).toMatchObject(evidence === 'missing' ? { source: 'none', tokensIn: null } : usage);
   if (!valid) expect(store.history(row.id)[0].findings).not.toContain('unhandled case');
 });
 

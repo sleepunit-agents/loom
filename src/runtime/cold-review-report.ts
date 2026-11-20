@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { usageReport } from './usage-report.js';
 import type { WorkerExitBy } from './job-exit.js';
 import { MESSAGE_WORDS_MAX } from '../core/conversations/words.js';
 import { SHA256_HEX } from '../core/sha256-hex.js';
@@ -9,6 +10,7 @@ const fingerprint = z.string().length(64).regex(SHA256_HEX);
 export const coldReviewReport = z.object({
   change: z.string().min(1).max(512),
   headCommit: z.string().length(40).regex(COMMIT),
+  usage: usageReport.optional(),
   before: fingerprint,
   after: fingerprint,
   reply: z.string().max(MESSAGE_WORDS_MAX).refine(reply => !/\p{Surrogate}/u.test(reply), 'Invalid Unicode in reviewer reply'),
