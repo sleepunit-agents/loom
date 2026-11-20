@@ -92,7 +92,12 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     const pages:{alias:string;kind:string;name:string;heading:string}[]=[];
     const page=(kind:string,name:string|undefined,heading:string,names:(name:string)=>string[]=name=>[name])=>{if(name&&pageName.test(name))for(const candidate of names(name))pages.push({alias:'p'+pages.length,kind,name:candidate,heading});};
     if(core||all){page('role',args.role,'Mode: '+args.role);page('project',args.project,'Project: '+args.project);}
-    if(wants('harness')){page('harness',args.client,'Harness: '+args.client);page('client',args.client,'Client: '+args.client);}
+    if(wants('harness')){
+     // Workers identify the harness as codex. Older pages use the name sent by the MCP client.
+     const aliases=(name:string)=>name==='codex'?[name,'codex-mcp-client']:name==='codex-mcp-client'?[name,'codex']:[name];
+     page('harness',args.client,'Harness: '+args.client,aliases);
+     page('client',args.client,'Client: '+args.client,aliases);
+    }
     if(wants('model'))page('model',args.model,'Model: '+args.model,family);
     const fields=['agent',wants('creed')&&'creed',wants('preferences')&&'preferences',wants('top-of-mind')&&'topOfMind',wants('self-model')&&'selfModel',wants('last-24h')&&'recent',
      ...pages.map(entry=>entry.alias+':page(kind:'+JSON.stringify(entry.kind)+',name:'+JSON.stringify(entry.name)+')')].filter(Boolean).join(' ');

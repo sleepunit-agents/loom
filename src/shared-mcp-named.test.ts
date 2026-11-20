@@ -117,6 +117,11 @@ it('loads identity as a core with an index, and further pieces by name',async()=
   for(const absent of ['FICTIONAL_SELF_MODEL','FICTIONAL_HARNESS','FICTIONAL_MODEL_FAMILY','FICTIONAL_ROLE'])expect(core).not.toContain(absent);
   expect((await art.call('identity',{piece:'self-model'})).text).toBe('Agent: art\n\n# Self-Model\n\nFICTIONAL_SELF_MODEL');
   expect((await art.call('identity',{piece:'harness',client:'fictional-terminal'})).text).toContain('FICTIONAL_HARNESS');
+  writeFileSync(join(home,'harnesses','codex-mcp-client.md'),'EXISTING_CODEX_MANIFEST');
+  expect((await art.call('identity',{piece:'harness',client:'codex'})).text).toContain('EXISTING_CODEX_MANIFEST');
+  writeFileSync(join(home,'harnesses','codex.md'),'SHORT_CODEX_MANIFEST');
+  expect((await art.call('identity',{piece:'harness',client:'codex'})).text).toBe('Agent: art\n\n# Harness: codex\n\nSHORT_CODEX_MANIFEST');
+  expect((await art.call('identity',{piece:'harness',client:'codex-mcp-client'})).text).toContain('EXISTING_CODEX_MANIFEST');
   // A dated model name falls back to its family's page.
   expect((await art.call('identity',{piece:'model',model:'fictional-model-9-1'})).text).toContain('FICTIONAL_MODEL_FAMILY');
   expect((await art.call('identity',{role:'tend'})).text).toContain('# Mode: tend\n\nFICTIONAL_ROLE');
