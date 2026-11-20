@@ -7,6 +7,7 @@
  * worker starts: a configuration that breaks one stops the worker (WorkerStop 'mounts') before it takes
  * any work. The paths are machine-local, like `accountRunners`: no error made here carries one, and
  * nothing here writes a log. */
+import { BODY_OWN_HARNESS } from './body-harness.js';
 import { homedir } from 'node:os';
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
@@ -24,6 +25,19 @@ const SOCKET_PLACES = [NESTED_SOCKET_TARGET, '/run/docker.sock'] as const;
 export const BODY_PROGRAM_TARGET = '/opt/loom';
 /** The body program inside that directory, as a path in the container. */
 export const BODY_PROGRAM = `${BODY_PROGRAM_TARGET}/dist/body.js`;
+export const HOUSE_CLI_FILE = 'assets/house-bin/loom';
+export const HOUSE_CLI_TARGET = '/usr/local/bin/loom';
+/** A login shell may discard the PATH inherited from the body. Give it a tiny
+ * fixed forwarder. Its host file lives in worker-private state, which a house
+ * cannot mount. Only the shell inside the container resolves the package path. */
+export const houseCliSource = (state: string) => join(state,'house-cli-v1');
+/** The mounted house program puts its own launcher first. Keep the image's tools on PATH,
+ * and leave a host process body's environment alone. */
+export function bodyCommandEnvironment(program: string, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (program !== BODY_PROGRAM || !Object.hasOwn(environment,BODY_OWN_HARNESS)) return { ...environment };
+  const bin = posix.dirname(posix.join(BODY_PROGRAM_TARGET,HOUSE_CLI_FILE));
+  return { ...environment, PATH: environment.PATH ? bin + ':' + environment.PATH : bin };
+}
 /** What a stop names when the program directory itself is at fault: it has no configuration key. */
 const PROGRAM_KEY = 'the directory the worker is installed in';
 /** A configuration key's part as it is printed: as it is when it is an ordinary name, quoted otherwise. */
@@ -184,6 +198,12 @@ export function bodyMounts(config: {
   const extra = config.protectedPaths ?? [];
   for (const [index, path] of extra.entries())
     if (!plainPath(path)) stop(`container.protectedPaths[${index}]`);
+  if (program && config.state) {
+    const reserved = houseCliSource(config.state);
+    for (const path of [config.tokenFile, config.configFile, config.socket, ...extra]) {
+      if (path && protectedLocations(path).some(name=>overlap(name,reserved))) stop(PROGRAM_KEY);
+    }
+  }
   const kept = [...serverHomes, ...['loom', 'loom-new'].map(name => join(homedir(), '.local/share', name, 'home-backups')), join(localConfig, 'loom-secrets'), join(localConfig, 'loom-new-credentials'), join(localConfig, 'loom-worker'),
     join(localConfig, 'loom-new-worker'), process.env.LOOM_SECRETS_DIR || undefined, ...extra.flatMap(path => [path, path + '-wal', path + '-shm', path + '-journal']),
     config.socket, config.state, config.tokenFile, config.configFile].flatMap(path => path === undefined ? [] : protectedLocations(path));
@@ -194,7 +214,11 @@ export function bodyMounts(config: {
   return job => {
     const own: BodyMount[] = [];
     if (job.run?.nestedContainers) throw new Error('Nested containers unavailable');
-    if (program) own.push(program);
+    if (program) {
+      // Login shells may reset PATH. Both names point at the worker's shipped launcher.
+      own.push(program);
+      if (config.state) own.push({source:houseCliSource(config.state),target:HOUSE_CLI_TARGET,readOnly:true});
+    }
     if (present) {
       const login = logins.get(job.account)?.get(job.harness);
       // Never a fallback: not the other mounts alone, and never another account's directory.

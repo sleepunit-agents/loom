@@ -321,7 +321,9 @@ it('stops before any work is claimed when a path given to containers or an engin
   const engine = join(root, 'engine'), socket = join(engine, 'engine.sock'), workerState = join(root, 'state');
   mkdirSync(real); mkdirSync(other); mkdirSync(engine); symlinkSync(real, link);
   const program = join(root, 'install'); mkdirSync(join(program, 'dist'), { recursive: true }); mkdirSync(join(program, 'node_modules', 'zod'), { recursive: true });
-  writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{"zod":"^4"}}');
+  writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program,'dist','index.js'),''); writeFileSync(join(program, 'package.json'), '{"dependencies":{"zod":"^4"}}');
+  mkdirSync(join(program,'assets/house-bin'),{recursive:true});
+  writeFileSync(join(program,'assets/house-bin/loom'),'#!/bin/sh\n',{mode:0o755});
   mkdirSync(join(program, 'house', 'core'), { recursive: true }); writeFileSync(join(program, 'house', 'core', 'Housefile'), 'FROM scratch\n');
   const run = join(root, 'run'); symlinkSync(engine, run);
   // An engine with nothing left on it: the worker that starts lists its containers and finds none.

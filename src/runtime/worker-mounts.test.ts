@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
+import { bodyCommandEnvironment, bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
 import { UnservedJobError } from './worker.js';
 import { WORKER_STOP, WorkerStop, workerStopLine } from './worker-stop.js';
 import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './house-layout.js';
@@ -348,4 +348,14 @@ it('refuses an engine socket for own, owner, held, guest and older assignments',
     { ...room, word: 'owners' as const, people: [{ kind: 'outside' as const, person: 'guest', tier: 3 as const }] },
     { ...room, word: 'own' as const, people: [{ kind: 'unknown' as const, person: null, tier: null }] }])
     expect(() => mounts({ ...job, run: { ...job.run, policy } })).toThrow('Nested containers unavailable');
+});
+
+it('puts the mounted Loom CLI first in a house and preserves a process body’s tool lookup', () => {
+ const image = {PATH:'/custom/bin:/usr/bin', LANG:'C', LOOM_BODY_OWN_HARNESS:'0'};
+ const launcher = BODY_PROGRAM_TARGET + '/assets/house-bin';
+ expect(bodyCommandEnvironment(BODY_PROGRAM,image)).toEqual({...image,PATH:launcher+':'+image.PATH});
+ expect(bodyCommandEnvironment(BODY_PROGRAM,{LOOM_BODY_OWN_HARNESS:'1'}).PATH).toBe(launcher);
+ expect(bodyCommandEnvironment(BODY_PROGRAM,{PATH:'/host/bin'})).toEqual({PATH:'/host/bin'});
+ expect(bodyCommandEnvironment('/srv/worker/dist/body.js',image)).toEqual(image);
+ expect(image.PATH).toBe('/custom/bin:/usr/bin');
 });

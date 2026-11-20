@@ -604,6 +604,7 @@ the repository it was built from.
 | A harness's body file | `/etc/loom/body/<harness>.json` | the image (the core house, for `claude` and `codex`) |
 | The job's account's sign-in, for its harness | `/run/loom/login/<harness>` | the worker mounts it |
 | loom's own program | `/opt/loom` | the worker mounts it, read-only |
+| The Loom CLI for a model job | `/usr/local/bin/loom` | the worker mounts a read-only shell script from private worker state; it runs the CLI inside the mounted program |
 | An agent's mounted directories | under `/home/agent`, at the path the configuration gives | the worker mounts them |
 | Where a harness keeps its sessions | `/home/agent/.claude` for Claude Code; no place for another harness yet | the image makes it (the core house); the container's own, gone with the body |
 

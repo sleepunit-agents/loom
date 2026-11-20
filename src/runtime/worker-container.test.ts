@@ -1,6 +1,8 @@
+import {houseCliSource} from './worker-mounts.js';
+import {defaultWorkerState} from './worker-left.js';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
@@ -40,7 +42,7 @@ function fixture() {
   const json = vi.fn(async (_method: string, path: string, _body: unknown, signal: AbortSignal): Promise<unknown> => {
     if (signal.aborted) throw new Error('aborted');
     if (path.startsWith('/containers/create')) return { Id: id };
-    if (inspecting(path)) return { Mounts: [programReport()] };
+    if (inspecting(path)) return { Mounts: [...programReport()] };
     if (path.includes('/wait?')) {
       signal.addEventListener('abort', () => wait.reject(new Error('aborted')), { once: true }); return wait.promise;
     }
@@ -82,7 +84,7 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
     Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`, 'LOOM_BODY_OWN_HARNESS=0'], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
-    HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [programAsked()], DeviceRequests: [] } });
+    HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [...programAsked()], DeviceRequests: [] } });
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: built, bootstrap: handed });
   const bytes = Buffer.concat([frame('hello €'), frame(' error', 2)]);
   for (const byte of bytes) f.socket.push(Buffer.from([byte]));
@@ -99,7 +101,7 @@ it('applies only approved GPU, TCP listeners', async () => {
   expect(f.engine.json.mock.calls[0][2]).toMatchObject({ ExposedPorts: { '8080/tcp': {} }, HostConfig: {
     DeviceRequests: [{ Driver: '', Count: -1, Capabilities: [['gpu']] }],
     PortBindings: { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '8080' }, { HostIp: '::1', HostPort: '8080' }] },
-    Mounts: [programAsked()] } });
+    Mounts: [...programAsked()] } });
   await body.stop();
 });
 for (const run of [ { gpu: false, nestedContainers: true, ports: [] },
@@ -323,20 +325,29 @@ it('reports a container whose process a signal ended as killed, the same stage a
 
 // The three additions for houses: the runtime's name, an account's sign-in directory, the fixed mounts.
 const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
+beforeAll(()=>vi.stubEnv('TMPDIR',houseRoot));
+afterAll(()=>vi.unstubAllEnvs());
 afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
 const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
 /** A directory laid out as an install of the worker is: the body program, and every package it depends on in its own node_modules. */
 function install(name: string, change: (path: string) => void = () => {}) {
   const path = houseDirectory(name);
   writeFileSync(join(path, 'package.json'), JSON.stringify({ name: '@example/loom', dependencies: { zod: '^4', '@scope/package': '^1' } }));
-  mkdirSync(join(path, 'dist'), { recursive: true }); writeFileSync(join(path, 'dist', 'body.js'), '');
+  mkdirSync(join(path, 'dist'), { recursive: true }); writeFileSync(join(path, 'dist', 'body.js'), ''); writeFileSync(join(path,'dist','index.js'),'');
   mkdirSync(join(path, 'node_modules', 'zod'), { recursive: true }); mkdirSync(join(path, 'node_modules', '@scope', 'package'), { recursive: true });
+  mkdirSync(join(path,'assets/house-bin'),{recursive:true});
+  writeFileSync(join(path,'assets/house-bin/loom'),'#!/bin/sh\n',{mode:0o755});
   change(path); return path;
 }
 const programDirectory = install('install/loom');
 /** The worker's own directory, as every body's container must be reported to have it. */
-function programReport() { return reported(programDirectory, '/opt/loom', false); }
-const programAsked = () => ({ Type: 'bind', Source: programDirectory, Target: '/opt/loom', ReadOnly: true });
+function programReport(source=programDirectory,state=defaultWorkerState('box')) {
+  return [reported(source,'/opt/loom',false),reported(houseCliSource(state),'/usr/local/bin/loom',false)];
+}
+const programAsked = (source=programDirectory) => [
+  {Type:'bind',Source:source,Target:'/opt/loom',ReadOnly:true},
+  {Type:'bind',Source:houseCliSource(defaultWorkerState('box')),Target:'/usr/local/bin/loom',ReadOnly:true},
+];
 const loginA = houseDirectory('logins/a'), loginB = houseDirectory('logins/b'), stamps = houseDirectory('stamps'), mirror = houseDirectory('mirror');
 // The engine's own socket and its socket for nested containers must be real sockets (worker-mounts.ts).
 // Nothing connects to either: every test here gives the executor a fake engine.
@@ -351,7 +362,7 @@ function reported(Source: string, Destination: string, RW: boolean) { return { T
 const expectedReport = [reported(loginA, '/run/loom/login/harness', true), reported(stamps, '/home/agent/house/stamps', true), reported(mirror, '/home/agent/house/mirror', false)];
 function house(inspected: unknown = expectedReport, container: Record<string, unknown> = { mounts: { art: houseMounts } }, logins: typeof accountLogins | null = accountLogins) {
   const f = fixture(), original = f.engine.json.getMockImplementation()!;
-  f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: Array.isArray(inspected) ? [programReport(), ...inspected] : inspected }) : original(method, path, body, signal));
+  f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: Array.isArray(inspected) ? [...programReport(), ...inspected] : inspected }) : original(method, path, body, signal));
   const executor = containerWorkerExecutor({ ...f.config, ...(logins ? { accountLogins: logins } : {}), container: { ...f.config.container, ...container } }, { ...f.deps, name: () => 'house' });
   return { ...f, executor };
 }
@@ -393,7 +404,7 @@ it('asks the engine for runc unless the configuration names crun, and for nothin
 });
 it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and no other account\'s directory', async () => {
   const f = house(), body = f.executor.start(job, built, f.abort.signal); await body.spawned;
-  expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([programAsked(),
+  expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([...programAsked(),
     { Type: 'bind', Source: loginA, Target: '/run/loom/login/harness', ReadOnly: false },
     { Type: 'bind', Source: stamps, Target: '/home/agent/house/stamps', ReadOnly: false },
     { Type: 'bind', Source: mirror, Target: '/home/agent/house/mirror', ReadOnly: true }]);
@@ -402,14 +413,14 @@ it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and
   expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
   const other = house([reported(loginB, '/run/loom/login/harness', true), ...expectedReport.slice(1)]);
   const second = other.executor.start({ ...job, account: 'other' }, built, other.abort.signal); await second.spawned;
-  expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[1]).toEqual({ Type: 'bind', Source: loginB, Target: '/run/loom/login/harness', ReadOnly: false });
+  expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toContainEqual({ Type: 'bind', Source: loginB, Target: '/run/loom/login/harness', ReadOnly: false });
   expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
 });
 it('gives every body the fixed mounts when no sign-in map is configured', async () => {
   const f = house(expectedReport.slice(1), { mounts: { art: houseMounts } }, null);
   const body = f.executor.start({ ...job, account: 'anyone' }, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
-    programAsked(),
+    ...programAsked(),
     { Type: 'bind', Source: stamps, Target: '/home/agent/house/stamps', ReadOnly: false },
     { Type: 'bind', Source: mirror, Target: '/home/agent/house/mirror', ReadOnly: true }]);
   await body.stop();
@@ -562,12 +573,12 @@ it('builds one image once for two jobs that want it at the same moment', async (
 it('names the image by the house, its commit and the core house alone, so a new loom with the same core rebuilds nothing', async () => {
   const f = fixture(), newer = install('install/loom-next');
   const deployed = containerWorkerExecutor(f.config, { ...f.deps, program: newer, name: () => 'next' }), original = f.engine.json.getMockImplementation()!;
-  f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: [reported(newer, '/opt/loom', false)] }) : original(method, path, body, signal));
+  f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: programReport(newer) }) : original(method, path, body, signal));
   expect(await f.executor.build(job, f.abort.signal)).toBe(built); expect(await deployed.build(job, f.abort.signal)).toBe(built);
   expect(f.engine.build).not.toHaveBeenCalled();
   // The new program reaches the body as a mount of the same image.
   const body = deployed.start(job, built, f.abort.signal); await body.spawned;
-  expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Image: imageId, HostConfig: { Mounts: [{ Type: 'bind', Source: newer, Target: '/opt/loom', ReadOnly: true }] } });
+  expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Image: imageId, HostConfig: { Mounts: programAsked(newer) } });
   await body.stop();
 });
 it('gives the repository\'s secret to the fetch and to nothing the engine is told', async () => {
@@ -665,11 +676,11 @@ it('mounts an agent\'s own directories into its bodies and never another agent\'
   for (const [agent, own, others] of [['art', [stamps, mirror], [markState]], ['mark', [markState], [stamps, mirror]], ['someone-new', [], [stamps, mirror, markState]]] as const) {
     const f = fixture(), original = f.engine.json.getMockImplementation()!;
     f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path)
-      ? Promise.resolve({ Mounts: [programReport(), ...own.map(source => reported(source, source === mirror ? '/home/agent/house/mirror' : '/home/agent/house/stamps', source !== mirror))] }) : original(method, path, body, signal));
+      ? Promise.resolve({ Mounts: [...programReport(), ...own.map(source => reported(source, source === mirror ? '/home/agent/house/mirror' : '/home/agent/house/stamps', source !== mirror))] }) : original(method, path, body, signal));
     const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts } }, { ...f.deps, name: () => 'agent' });
     const body = executor.start({ ...job, agent }, built, f.abort.signal); await body.spawned;
     const asked = (f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts as { Source: string }[];
-    expect(asked.map(mount => mount.Source)).toEqual([programDirectory, ...own]);
+    expect(asked.map(mount => mount.Source)).toEqual([programDirectory,houseCliSource(defaultWorkerState('box')), ...own]);
     for (const other of others) expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(other);
     await body.stop();
   }
@@ -681,6 +692,12 @@ it.each([
   ['has a scoped package hoisted out of it', (path: string) => rmSync(join(path, 'node_modules', '@scope'), { recursive: true })],
   ['has its packages linked in from a store', (path: string) => { rmSync(join(path, 'node_modules', 'zod'), { recursive: true }); symlinkSync(houseDirectory('store/zod'), join(path, 'node_modules', 'zod')); }],
   ['has its whole node_modules linked in', (path: string) => { rmSync(join(path, 'node_modules'), { recursive: true }); symlinkSync(houseDirectory('store/modules/zod/..'), join(path, 'node_modules')); }],
+  ['has no CLI entry point', (path:string)=>rmSync(join(path,'dist/index.js'))],
+  ['has an unreadable CLI entry point', (path:string)=>chmodSync(join(path,'dist/index.js'),0o600)],
+  ['has an unreadable CLI script', (path:string)=>chmodSync(join(path,'assets/house-bin/loom'),0o111)],
+  ['has an untraversable launcher directory', (path:string)=>chmodSync(join(path,'assets/house-bin'),0o700)],
+  ['has no packaged house CLI', (path:string)=>rmSync(join(path,'assets/house-bin/loom'))],
+  ['has a non-executable house CLI', (path:string)=>chmodSync(join(path,'assets/house-bin/loom'),0o644)],
   ['has a package.json that is not one', (path: string) => writeFileSync(join(path, 'package.json'), '{"dependencies":["zod"]}')],
 ])('is not made when the directory it is installed in %s: the body program would not load in a container', (what, change) => {
   const f = fixture(), program = install(`broken/${what.replaceAll(' ', '-')}`, change);
@@ -1198,7 +1215,7 @@ it('mounts a job-only kit socket and gives the body no worker credential, even w
       const socket=mounts.find(m=>m.Target==='/run/loom/kit.sock');
       expect(socket?.ReadOnly).toBe(true);path=socket!.Source;
     }
-    if(inspecting(url))return {Mounts:[programReport(),reported(path,'/run/loom/kit.sock',false)]};
+    if(inspecting(url))return {Mounts:[...programReport(programDirectory,state),reported(path,'/run/loom/kit.sock',false)]};
     return original(method,url,body,signal);
   });
   const body=executor.start(job,built,f.abort.signal);
