@@ -649,7 +649,7 @@ replacement worker can leave another asleep if the mount is still hung.
   the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
   a machine that was already reporting (`Machines.report`, `Context.stampOnly`). A kit availability report that writes only its retry receipt also uses the quiet path. A change to an owner notice wakes readers immediately. Everything else, and
   every change of who may see what, is told to every selection at once, as before
-  (`DataWrites.run`). A machine heard from again after a silence is told at once.
+  (`DataWrites.run`). A machine heard from again after a silence is told at once. A running job's heartbeat and a worker's repeated sign-in check can also refresh timestamps quietly. A job returning from silence or a change in sign-in state, expiry, reason, or source wakes readers immediately.
   A machine's reading of itself is kept back only when `MachineConditions.read` says no state a person
   is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
   once: a condition raised, made urgent or cleared; the container runtime going from answering to not
