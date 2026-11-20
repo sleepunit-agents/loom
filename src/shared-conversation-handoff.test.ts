@@ -413,6 +413,7 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  const plan=mixed?{command:executable,cwd:dirname(executable)}:{command:'/fictional/codex',cwd:'/fictional'};
  const native:HarnessRun=async(_job,context)=>{
   expect(context).toContain(request.words);
+  expect(context).toContain('share its account quota');
   if(roleMode)expect(context).toContain('Compare the cited documents.');
   return {text:reply.words,model:'reviewer',actions:[]};
  };
