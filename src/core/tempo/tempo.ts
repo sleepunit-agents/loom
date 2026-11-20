@@ -1,4 +1,4 @@
-import { readJournal } from './journal.js';
+import { hasAgentJournal, readJournal } from './journal.js';
 import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 import type { OnWord } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -81,13 +81,13 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
       // A place is found, not made, when it exists. One that is somebody else's must not take this work.
       if (opened && (opened.member ?? undefined) !== member) throw new Error('The conversation at this trigger\'s place belongs to other work');
       const conversation = opened?.id;
-      if (conversation && member === undefined && !t.member && t.ownerKind === 'agent' && t.owner === t.to && t.lifespan === 'until-stopped') {
+      if (conversation && member === undefined && hasAgentJournal(t)) {
         const lessons = readJournal(db, t.id).lessons;
         if (lessons) {
           const carry = 'Lessons recorded by earlier runs of this trigger:\n' + lessons;
           if (words.length + 2 + carry.length <= MESSAGE_WORDS_MAX) words += '\n\n' + carry;
           else options.conversations.send({ toKind: 'agent', to: t.to!, conversation, source: 'notice', sourceId: 'trigger-lessons:' + occurrence,
-            fromKind: 'schedule', fromId: t.owner, words: carry, project: t.project, agent: t.to!, refs: [t.id] });
+            fromKind: 'schedule', fromId: t.owner ?? undefined, words: carry, project: t.project, agent: t.to!, refs: [t.id] });
         }
       }
       options.conversations.send({ toKind: t.toKind!, to: t.to!, conversation, source: 'trigger', sourceId: occurrence,

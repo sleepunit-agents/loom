@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
+const journalQuery = vi.hoisted(() => vi.fn((): unknown => ({status: 'loading'})));
+vi.mock('../../data/graphql', () => ({ useDataQuery: journalQuery }));
 vi.mock('../../kit', () => ({
   Split: (props: { list: ReactNode; reader: ReactNode }) => h('main', null, props.list, props.reader),
   ...Object.fromEntries(['List', 'Row', 'Empty', 'Error', 'Loading', 'Input', 'Button'].map(name => [name, (props: { children?: ReactNode }) => h(name, props, props.children)])),
@@ -131,4 +133,18 @@ it('shows the latest program decision in the trigger details', async () => {
   await act(async () => { tree=create(h(TempoCard,{snapshot:{...snapshot,events}, triggerId:'tr-1'})); });
   const values=tree.root.findAllByType('dd').map((node:{children:string[]})=>node.children.join(''));
   expect(values).toContain('Woke art · 2000 ms · Found gaps');
+});
+
+it('shows the saved lessons, state and local change time while the journal is visible', async () => {
+  journalQuery.mockReturnValue({status: 'live', data: {tempoJournal: {
+    lessons: 'Check both sources.', state: 'page 4', stateChangedAt: '2026-11-15T12:00:00Z',
+  }}});
+  try {
+    await act(async () => { tree = create(h(TempoCard, { snapshot, triggerId: 'tr-1' })); });
+    const shown = JSON.stringify(tree.toJSON());
+    for (const words of ['Check both sources.', 'page 4', 'Last changed', '6:00', 'America/Chicago']) expect(shown).toContain(words);
+    journalQuery.mockReturnValue({status:'live', data:{tempoJournal:null}});
+    await act(async () => tree.update(h(TempoCard, { snapshot, triggerId: 'tr-1' })));
+    expect(JSON.stringify(tree.toJSON())).not.toContain('page 4');
+  } finally { journalQuery.mockReturnValue({status:'loading'}); }
 });

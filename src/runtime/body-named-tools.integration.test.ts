@@ -226,3 +226,30 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
  expect(readFileSync(join(b.home,'agents','mark','IDENTITY.md'),'utf8')).toBe('MARK_SECRET_CREED');
  const marks=new ProjectsStore({dbPath:join(b.home,'agents','mark','memories.db')});try{expect(marks.rows(false)).toHaveLength(1);expect(JSON.stringify(marks.read('fictional-mark-shed'))).toContain('MARK_SECRET_PROJECT');}finally{marks.close();}
 });
+
+it('carries a journal between actual trigger deliveries and confines body commands to the accepted wake', async () => {
+ const b = await body(), {db,root,clock} = b.fixture;
+ const engine = root.services.tempo.triggers;
+ const t = engine.set({ ownerKind:'agent', owner:'art', project:'pond', sourceKind:'answer', watches:'approval:example',
+   lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'art', note:'Test journal', instructions:'Check both sources' });
+ engine.event('answer','approval:example','first');
+ const first = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':first')).get()!;
+ const cmd = (operation:string, input:Record<string,unknown>, id:string) => b.call('loom_command',{operation,input,id});
+ const read = () => cmd('tempo.readJournal',{},'read');
+ expect((await read()).text).toContain('denied');
+ db.update(schema.jobs).set({conversation:first.conversation, member:null}).where(eq(schema.jobs.id,'job')).run();
+ expect((await read()).text).toContain('denied');
+ db.update(schema.inbox).set({state:'taken', job:'job', firstAcceptedAt:new Date(clock.now()).toISOString()}).where(eq(schema.inbox.id,first.id)).run();
+ expect((await read()).text).toContain('"stateRevision":0');
+ const save = () => cmd('tempo.appendLesson',{lesson:'Count each source once.'},'lesson');
+ expect((await save()).text).toContain('"saved":true');
+ expect((await save()).text).toContain('"saved":true');
+ expect((await cmd('tempo.replaceJournalState',{revision:0,state:'page 2'},'state')).text).toContain('"revision":1');
+ expect((await cmd('tempo.replaceJournalState',{revision:0,state:'old'},'other-write')).text).toContain('changed since');
+ engine.event('answer','approval:example','second');
+ const second = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':second')).get()!;
+ expect(second.words?.split('Count each source once.')).toHaveLength(2);
+ expect((await read()).text).toContain('page 2');
+ db.update(schema.jobs).set({state:'done'}).where(eq(schema.jobs.id,'job')).run();
+ expect((await save()).text).toMatch(/denied|refused|unavailable/i);
+});

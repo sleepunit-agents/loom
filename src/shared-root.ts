@@ -77,6 +77,7 @@ import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
+import { registerTriggerJournal } from './shared-trigger-journal.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedNotices } from './shared-notices.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
@@ -503,6 +504,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  if(options.commsKey)registerTriggerJournal(operations, db, bodyScope, text => options.commsKey!.hash(text));
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession,held('approval'));
   registerSharedWorkCommands(operations,db,services.approvals, {
     now, bodyJob, isProgram: viewer => !!credentials.program(viewer), words: comms?.service.words.bind(comms.service),

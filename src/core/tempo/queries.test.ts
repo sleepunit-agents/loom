@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { expect,it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { household, members, agents, tempoSettings } from '../data/schema.js';
+import { household, members, agents, triggers, tempoSettings } from '../data/schema.js';
 import { tempoQueryFields } from './queries.js';
 it('projects only the timezone and the caller\'s own timings to member/agent schemas and gives no value to other callers',()=>{
  const client=new Database(':memory:'),db=createDataSchema(client);
@@ -19,7 +19,7 @@ it('projects only the timezone and the caller\'s own timings to member/agent sch
    expect(tempoQueryFields(db,viewer).tempoTimezone.resolve()).toBeNull();expect(tempoQueryFields(db,viewer).tempoTimings.resolve()).toBeNull();
   }
   for(const kind of ['runner','service'] as const)expect(tempoQueryFields(db,{kind,id:'caller'}).tempoTimezone.resolve()).toBeNull();
-  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoProgram','tempoTimezone','tempoTimings']);
+  expect(Object.keys(tempoQueryFields(db,{kind:'member',id:'sam'}))).toEqual(['tempoProgram','tempoJournal','tempoTimezone','tempoTimings']);
  } finally {client.close();}
 });
 it('reads the caller\'s own timings, with the defaults until it has changed one, and never another caller\'s',()=>{
@@ -32,5 +32,25 @@ it('reads the caller\'s own timings, with the defaults until it has changed one,
   expect(tempoQueryFields(db,{kind:'agent',id:'art'}).tempoTimings.resolve()).toEqual({settleSeconds:5,dimDays:1,muteDays:7});
   expect(tempoQueryFields(db,{kind:'agent',id:'sam'}).tempoTimings.resolve()).toBeNull();
   for(const kind of ['runner','service'] as const)expect(tempoQueryFields(db,{kind,id:'sam'}).tempoTimings.resolve()).toBeNull();
+ } finally {client.close();}
+});
+
+it('shows the journal of an agent-owned standing wake only to a current owner in Tempo', () => {
+ const client = new Database(':memory:'), db = createDataSchema(client);
+ const at = '2026-11-15T00:00:00.000Z';
+ try {
+  db.insert(members).values([{ id: 'pat', role: 'owner', joinedAt: at }, { id: 'sam', role: 'member', joinedAt: at }]).run();
+  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+  db.insert(triggers).values({id:'lane', ownerKind:'agent', owner:'art', toKind:'agent', to:'art', targetKind:'inbox',
+   lifespan:'until-stopped', sourceKind:'time', note:'Run', enabled:true, state:'standing', createdAt:at, changedAt:at}).run();
+  const owner = tempoQueryFields(db, {kind:'member', id:'pat'}).tempoJournal;
+  expect(owner.resolve(null, {id:'lane'})).toEqual({lessons:'', state:'', stateChangedAt:null});
+  for (const viewer of [{kind:'member',id:'sam'}, {kind:'agent',id:'art'}, {kind:'service',id:'pat'}] as const)
+   expect(tempoQueryFields(db,viewer).tempoJournal.resolve(null,{id:'lane'})).toBeNull();
+  db.update(triggers).set({member:'sam'}).where(eq(triggers.id,'lane')).run();
+  expect(owner.resolve(null,{id:'lane'})).toBeNull();
+  db.update(triggers).set({member:null}).where(eq(triggers.id,'lane')).run();
+  db.update(members).set({removedAt:at}).where(eq(members.id,'pat')).run();
+  expect(owner.resolve(null,{id:'lane'})).toBeNull();
  } finally {client.close();}
 });

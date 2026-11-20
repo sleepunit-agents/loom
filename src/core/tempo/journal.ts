@@ -2,6 +2,15 @@ import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { triggerJournals } from '../data/schema.js';
 
+import type { Trigger } from './triggers.js';
+
+/** An agent's own recurring wake has a private conversation dedicated to this trigger. */
+export function hasAgentJournal(trigger: Trigger) {
+  return trigger.lifespan === 'until-stopped' && trigger.targetKind === 'inbox' && trigger.toKind === 'agent'
+    && trigger.ownerKind === 'agent' && trigger.owner === trigger.to && !!trigger.to
+    && !trigger.member && !trigger.conversation && !trigger.program;
+}
+
 const journalBytes = 16_384;
 function bounded(text: string) {
   if (Buffer.byteLength(text) > journalBytes) throw new Error('Trigger journal text exceeds 16384 bytes');
