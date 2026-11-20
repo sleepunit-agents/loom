@@ -157,6 +157,16 @@ operations.register({...adding,doors:[...base.doors],name:'memory.remember',inpu
   const uuid=id.slice(viewer.id.length+1),row=db.prepare('SELECT ref FROM memories WHERE uuid=?').get(uuid) as {ref:string}|undefined;
   if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
  };
+ operations.register({...base,doors:[...base.doors],name:'memory.merge',
+  input:z.object({target:scopedId,sources:z.array(scopedId).min(1).max(50),note:z.string().trim().min(1).max(2000).optional()}).strict()
+   .refine(input=>!input.sources.includes(input.target) && new Set(input.sources).size===input.sources.length,'Choose distinct memories')
+   .describe('Consolidate your duplicate memories into one existing memory. The other records are archived.'),
+  output:z.object({ids}).strict(),
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
+   const target=ownTarget(db,viewer,input.target),sources=input.sources.map(id=>ownTarget(db,viewer,id));
+   await backend.mergeMemories({target_ref:target.ref,source_refs:sources.map(row=>row.ref),note:input.note});
+   return {ids:[target.uuid]};
+  })});
  operations.register({...base,doors:[...base.doors],name:'memory.update',
   input:target.extend({content:authored.max(MEMORY_CONTENT_MAX).optional(),metadata:remember.shape.metadata,observation:z.enum(OBSERVATIONS).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
