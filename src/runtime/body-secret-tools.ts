@@ -30,7 +30,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
  agent?:string;
- houseSend?:Pick<Parameters<typeof houseSendRequest>[0],'venue'|'denied'|'call'|'accepted'>;
+ houseSend?:Pick<Parameters<typeof houseSendRequest>[0],'venue'|'denied'|'call'|'attempted'>;
  houseNotes?:Pick<Parameters<typeof houseNoteRequest>[0],'denied'|'call'>;
  /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
  identityHanded?:boolean;

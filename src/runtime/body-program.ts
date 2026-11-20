@@ -283,7 +283,15 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
-        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call,accepted(id,text){progressReceipts.set(keyOf(text),id);}},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
+        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call,attempted(id,text){
+          const digest=keyOf(text),previous=progressReceipts.get(digest);
+          progressReceipts.set(digest,id);
+          return ()=>{
+            if(progressReceipts.get(digest)!==id)return;
+            if(previous)progressReceipts.set(digest,previous);
+            else progressReceipts.delete(digest);
+          };
+        }},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();

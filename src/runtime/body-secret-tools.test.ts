@@ -89,9 +89,19 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
     const reply=decision==='leak-text'?privateValue:decision==='leak-base64'?Buffer.from(privateValue).toString('base64'):'Used the credential privately';
     if(decision==='allow'){
      const {houseRuntimeCli}=await import('../house-runtime-cli.js');
-     let out='';
-     expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text',reply],{stdout:s=>{out+=s;},stderr(){}},options.env)).toBe(0);
-     expect(JSON.parse(out).recorded).toBe(true);
+     let out='',loseReply=true;
+     const deliver=f.fetcher.getMockImplementation()!;
+     f.fetcher.mockImplementation(async(url,init)=>{
+      const response=await deliver(url,init);
+      if(loseReply&&String(url).endsWith('/api/conversation/message')){
+       expect(response.status).toBe(200);
+       loseReply=false;
+       return Response.json({});
+      }
+      return response;
+     });
+     expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text',reply],{stdout:s=>{out+=s;},stderr(){}},options.env)).toBe(1);
+     expect(JSON.parse(out).unconfirmed).toBe(true);
      expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text','Separate progress update'],{stdout(){},stderr(){}},options.env)).toBe(0);
     }
     const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:reply}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:reply}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);

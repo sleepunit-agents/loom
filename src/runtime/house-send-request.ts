@@ -15,7 +15,7 @@ export function mayUseHouseSend(denied:readonly string[]):boolean{
 }
 type SendPort={
   conversation:string;venue:string;denied:readonly string[];
-  accepted?(id:string,text:string):void;
+  attempted?(id:string,text:string):()=>void;
   allowsCall(input:unknown):boolean;
   call(name:string,args:unknown,signal:AbortSignal):Promise<BodyProgramToolResult>;
 };
@@ -23,8 +23,14 @@ export async function houseSendRequest(port:SendPort,input:unknown,signal:AbortS
   const intent=request.parse(input);
   if(intent.conversation!==port.conversation||signal.aborted||!mayUseHouseSend(port.denied)||!port.allowsCall(intent))
     throw Error('House send unavailable');
-  const call=async(operation:string,body:unknown,id:string)=>{
+  const call=async(operation:string,body:unknown,id:string,refused?:()=>void)=>{
     const reply=await port.call('loom_command',{operation,input:body,id},signal);
+    if(reply.isError&&reply.content.length===1){
+      // A structured rejection proves the write was refused. A lost response leaves the attempt available for final reconciliation.
+      let error:unknown;
+      try{error=JSON.parse(reply.content[0].text);}catch{}
+      if(z.object({ok:z.literal(false),code:z.enum(['denied','invalid','not-found','conflict'])}).safeParse(error).success)refused?.();
+    }
     if(signal.aborted||reply.isError||reply.content.length!==1)throw Error('House send unavailable');
     const result=z.object({ok:z.literal(true),value:z.unknown()}).parse(JSON.parse(reply.content[0].text));
     if(!port.allowsCall(result))throw Error('House send unavailable');
@@ -40,16 +46,16 @@ export async function houseSendRequest(port:SendPort,input:unknown,signal:AbortS
     return call('bridges.directStatus',target,randomUUID());
   }
   if(port.venue==='loom'&&intent.operation==='send'){
-    const reply=await call('conversation.message',{kind:'progress',clientId:intent.id,words:intent.text},intent.id);
+    const refused=port.attempted?.(intent.id,intent.text);
+    const reply=await call('conversation.message',{kind:'progress',clientId:intent.id,words:intent.text},intent.id,refused);
     const {seq}=z.object({saved:z.literal(true),seq:z.number().int().positive()}).parse(reply);
-    port.accepted?.(intent.id,intent.text);
     return {state:'recorded',seq};
   }
   if(port.venue!=='slack'&&port.venue!=='discord')throw Error('No current bridge');
   if(intent.operation==='send'){
-    const queued=await call('bridges.say',{id:intent.id,text:intent.text},intent.id);
+    const refused=port.attempted?.(intent.id,intent.text);
+    const queued=await call('bridges.say',{id:intent.id,text:intent.text},intent.id,refused);
     z.object({saved:z.literal(true)}).parse(queued);
-    port.accepted?.(intent.id,intent.text);
   }
   return call('bridges.sendStatus',{id:intent.id},randomUUID());
 }

@@ -3,9 +3,9 @@ import type {BridgeSend} from './pieces/bridges/sends.js';
 import type {Viewer} from './policy.js';
 import {inHousehold,mayRunPrivateWork} from './policy.js';
 import {machineCurrent} from './core/data/authentication.js';
-import {liveConversationJob} from './core/conversations/index.js';
+import {assignedConversation} from './core/conversations/body-scope.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agentPeople,bridgeIncoming,bridgeConnections,bridgePeople,conversations,jobs,members,type DirectSendTarget} from './core/data/schema.js';
+import {agentPeople,bridgeIncoming,bridgeConnections,bridgePeople,members,type DirectSendTarget} from './core/data/schema.js';
 import {outsidePersonKey} from './pieces/bridges/keys.js';
 import {conversationPlace} from './pieces/bridges/place.js';
 import {deniedTools} from './runtime/harness-traits.js';
@@ -17,11 +17,10 @@ type Platform=DirectSendTarget['platform'];
 type DirectoryAccount=(viewer:Viewer,person:string,platform:Platform)=>{workspace:string;user:string}|undefined;
 export function directTargets(db:DataDatabase,directory:DirectoryAccount){
  function sendScope(jobId:string,origin:string){
-  const job=db.select().from(jobs).where(eq(jobs.id,jobId)).get();
-  const cv=db.select().from(conversations).where(eq(conversations.id,origin)).get();
-  if(!job||!liveConversationJob(job.state)||!job.box||!machineCurrent(db,job.box)||!cv||job.conversation!==origin||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
   const sharing=sharedSharing(db);
-  if(!sharing.agents?.includes(job.agent)||job.member&&!mayRunPrivateWork({member:job.member,agent:job.agent,project:job.project??undefined},sharing))return;
+  const work=assignedConversation(db,jobId,scope=>mayRunPrivateWork(scope,sharing));
+  if(!work||work.cv.id!==origin||!work.job.box||!machineCurrent(db,work.job.box)||!sharing.agents?.includes(work.job.agent))return;
+  const {job,cv}=work;
   const {room,word}=kitRoom(db,job);
   if(!mayUseHouseSend(deniedTools(room)))return;
   return {job,cv,word,sharing};

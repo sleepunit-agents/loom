@@ -1,3 +1,4 @@
+import {reviewPlace} from './core/conversations/review-place.js';
 import {reviewReply} from './pieces/bridges/sends.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodySecretTools} from './runtime/body-secret-tools.js';
@@ -1914,9 +1915,9 @@ it.each([false,true])('rechecks the linked DM recipient after opening a channel 
  expect(posts).toHaveLength(1);
 });
 
-it.each(['relinked','job stopped','machine revoked'])('holds an offline DM after %s before release',async change=>{
+it.each(['relinked','job stopped','machine revoked','parent archived'])('holds an offline DM after %s before release',async change=>{
  let effects=true;
- const f=fixture(()=>effects);
+ const f=fixture(()=>effects,true);
  f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();
  const origin=(await f.receive()).conversation!;
@@ -1930,7 +1931,14 @@ it.each(['relinked','job stopped','machine revoked'])('holds an offline DM after
    user:'UUSER',text:'Earlier DM',ts:'1794432000.000017'}}})));
  f.clock.advance(0);
  await daemon.idle();
+ const parent=f.root.services.comms!.threads.open({member:'owner',agent:'art',title:'Review parent'});
  f.root.writes.run(()=>{
+  if(change==='parent archived'){
+   const child=f.root.services.conversations.open({agent:'art',member:'owner',venue:'handoff',place:reviewPlace('other','review'),label:'Review',direct:f.root.services.conversations.conversation(parent.conversation).direct});
+   f.db.update(jobs).set({conversation:parent.conversation,member:'owner'}).where(eq(jobs.id,'other')).run();
+   f.db.update(jobs).set({conversation:child.id,member:'owner'}).where(eq(jobs.id,'body')).run();
+   return;
+  }
   f.db.update(jobs).set({conversation:origin}).where(eq(jobs.id,'body')).run();
   f.root.services.conversations.take(origin,'body');
  });
@@ -1941,7 +1949,8 @@ it.each(['relinked','job stopped','machine revoked'])('holds an offline DM after
  const send=f.db.select().from(bridgeSends).get()!;
  expect(send).toMatchObject({state:'held',channel:'DOWNER'});
  f.root.writes.run(()=>{
-  if(change==='job stopped')f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  if(change==='parent archived')f.root.services.comms!.threads.archive(parent.id,true);
+  else if(change==='job stopped')f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
   else if(change==='machine revoked')f.db.update(boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(boxes.id,'box')).run();
   else f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run();
   reviewReply(f.db,send.id,'release');

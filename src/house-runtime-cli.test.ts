@@ -42,6 +42,7 @@ it('records a CLI update in its assigned Comms conversation and leaves the mail 
  expect(JSON.parse(first.stdout)).toEqual({ok:true,recorded:true,ref,seq:2});
  expect(await execute(text,ref)).toMatchObject({code:0,result:{seq:2}});
  expect((await execute('Different',ref)).code).toBe(1);
+ expect((await f.call('message',{kind:'progress',clientId:ref,words:'Different'},randomUUID())).status).toBe(409);
  expect((await execute(protectedWords)).code).toBe(1);
  expect((await execute(text,randomUUID(),'different')).code).toBe(1);
  expect(f.db.select().from(inbox).get()?.state).toBe('taken');

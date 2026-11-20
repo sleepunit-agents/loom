@@ -42,13 +42,23 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   may:(viewer,input)=>common.may(viewer)&&(input.kind!=='progress'||maySendProgress?.(viewer)===true),
   async prepare(input,ctx){
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
-   if(kind==='reply'&&input.progressId){
-    if(before.cv.venue!=='loom'||clientId!==input.progressId)throw new OperationError('invalid','Invalid progress receipt');
+   if(kind==='progress'||kind==='reply'&&input.progressId){
+    if(before.cv.venue!=='loom'||kind==='reply'&&clientId!==input.progressId)throw new OperationError('invalid','Invalid progress receipt');
     const row=()=>db.select({seq:messages.seq,words:messages.words}).from(messages).where(and(
      eq(messages.thread,before.thread.id),eq(messages.run,before.job.id),eq(messages.sender,before.cv.agent),
      eq(messages.kind,'reply'),eq(messages.clientId,progressKey(before.job.id,clientId)))).get();
     const saved=row();
-    if(!saved?.words||await service.key.open(saved.words)!==words)throw new OperationError('conflict','Progress message changed');
+    if(!saved){
+     const append=await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:'reply',progress:kind==='progress',words,
+      clientId:progressKey(before.job.id,clientId),run:before.job.id,turn:{model,outcome,latencyMs}});
+     return ()=>{
+      const live=threadFor(ctx.viewer);
+      if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.place!==before.cv.place||
+         live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||row())throw new OperationError('conflict','Progress receipt changed during preparation');
+      return append();
+     };
+    }
+    if(!saved.words||await service.key.open(saved.words)!==words)throw new OperationError('conflict','Progress message changed');
     return ()=>{
      const live=threadFor(ctx.viewer),again=row();
      if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.place!==before.cv.place||
@@ -57,7 +67,7 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
      return {seq:saved.seq};
     };
    }
-   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:kind==='progress'?'reply':kind,progress:kind==='progress',words,clientId:kind==='progress'?progressKey(before.job.id,clientId):before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
+   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
    return ()=>{
     const live=replyTarget(ctx.viewer,input.kind);
     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.id!==before.cv.id||live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||live.cv.agent!==before.cv.agent||live.cv.place!==before.cv.place)throw new OperationError('denied','Conversation changed');
