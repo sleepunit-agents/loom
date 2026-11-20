@@ -1360,6 +1360,28 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `change_review_rounds` (
+	`job` text PRIMARY KEY NOT NULL,
+	`change` text NOT NULL,
+	`head_commit` text NOT NULL,
+	`tier` text NOT NULL,
+	`round` integer NOT NULL,
+	`requested_at` text NOT NULL,
+	`completed_at` text,
+	`verdict` text,
+	`findings` text,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`change`) REFERENCES `changes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "change_review_rounds_commit" CHECK(length(cast("change_review_rounds"."head_commit" as blob)) = 40 and length("change_review_rounds"."head_commit") = 40 and "change_review_rounds"."head_commit" not glob '*[^0-9a-f]*'),
+	CONSTRAINT "change_review_rounds_tier" CHECK("change_review_rounds"."tier" in ('medium','high')),
+	CONSTRAINT "change_review_rounds_round" CHECK(typeof("change_review_rounds"."round") = 'integer' and "change_review_rounds"."round" >= 1),
+	CONSTRAINT "change_review_rounds_requested_utc" CHECK("change_review_rounds"."requested_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "change_review_rounds"."requested_at") = "change_review_rounds"."requested_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "change_review_rounds"."requested_at") = "change_review_rounds"."requested_at", 0)),
+	CONSTRAINT "change_review_rounds_completed_utc" CHECK("change_review_rounds"."completed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "change_review_rounds"."completed_at") = "change_review_rounds"."completed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "change_review_rounds"."completed_at") = "change_review_rounds"."completed_at", 0)),
+	CONSTRAINT "change_review_rounds_result" CHECK(("change_review_rounds"."completed_at" is null and "change_review_rounds"."verdict" is null and "change_review_rounds"."findings" is null) or
+    ("change_review_rounds"."completed_at" is not null and "change_review_rounds"."verdict" is not null and "change_review_rounds"."verdict" in ('CLEAR','BLOCKING','NONE') and "change_review_rounds"."findings" is not null))
+);
+
+CREATE INDEX `change_review_rounds_history` ON `change_review_rounds` (`change`,`head_commit`,`requested_at`);
 CREATE TABLE `imported_task_sequence` (
 	`singleton` integer PRIMARY KEY NOT NULL,
 	`last_issued` integer NOT NULL,

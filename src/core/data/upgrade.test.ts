@@ -41,6 +41,15 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('adds empty review history to a populated schema 26 household', () => {
+    const old = household(26);
+    old.prepare('INSERT INTO imported_task_sequence (singleton, last_issued) VALUES (1, 2437)').run();
+    upgradeDataSchema(old);
+    expect(dataSchemaShape(old)).toEqual(dataSchemaShape(fresh()));
+    expect(old.prepare('SELECT last_issued FROM imported_task_sequence').get()).toEqual({ last_issued: 2437 });
+    expect(old.prepare('SELECT * FROM change_review_rounds').all()).toEqual([]);
+  });
+
   it('keeps existing rows, enforces the new rules on them, and does nothing the second time', () => {
     const old = household(1);
     expect(old.prepare("SELECT name FROM pragma_table_info('members')").all()).not.toContainEqual({ name: 'removed_at' });
