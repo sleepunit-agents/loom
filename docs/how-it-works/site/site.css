@@ -108,7 +108,7 @@ svg{display:block;max-width:100%}
 .theme{flex:none;min-height:32px;padding:0 10px;border:1px solid var(--bar-line);background:none;color:var(--bar-dim);font:12px var(--mono);cursor:pointer}
 .theme:hover{color:var(--bar-ink);border-color:var(--bar-dim)}
 @media(max-width:1180px){.path__dots{display:none}}
-@media(max-width:700px){.brand span,.path__where{display:none}.top__in{gap:10px}.path__go>a,.path__go>span{padding:0 10px}.path__go .pl{display:inline-block;max-width:8.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}.path__go a[rel=prev] .pl{display:none}.path{min-width:0}}
+@media(max-width:700px){.brand span,.path__where{display:none}.top__in{gap:10px}.path__go>a,.path__go>span{padding:0 10px}.path__go .pl{display:inline-block;max-width:8.5em;white-space:normal;overflow-wrap:anywhere;vertical-align:bottom}.path__go a[rel=prev] .pl{display:none}.path{min-width:0}}
 @media(max-width:460px){.path__go>span{display:none}}
 
 /* ---------- page frame ---------- */
@@ -380,7 +380,7 @@ p{max-width:68ch}
 .in:last-child{border-bottom:0;padding-bottom:14px}
 .in .n{font:12px var(--mono);color:var(--ink-3)}
 .src{justify-self:start;font:600 11px/1.7 var(--mono);padding:0 7px;background:var(--ts);color:var(--t);border:1px solid color-mix(in srgb,var(--t) 45%,transparent)}
-.in .who{font:12px var(--mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.in .who{font:12px var(--mono);color:var(--ink-2);overflow-wrap:anywhere}
 .in .st{font:11px var(--mono);color:var(--ink-3);text-align:right;white-space:nowrap}
 .in .st[data-s="done"],.in .st[data-s="answered"]{color:var(--ok)} .in .st[data-s="taken"]{color:var(--amber)}
 .inbox__out .node{align-items:center}
@@ -590,7 +590,7 @@ p{max-width:68ch}
 @media(min-width:1000px){.map--door{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.map--door .map__col .node__body{flex:0 1 240px}}
 .bars{display:grid;gap:7px;font-size:12.5px}
 .bars li{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) 54px 88px;gap:10px;align-items:center}
-.bars code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars code{min-width:0;overflow-wrap:anywhere}
 .bars i{display:block;height:10px;background:var(--t,var(--violet));width:var(--w);min-width:3px;box-shadow:0 0 var(--glow) var(--t,var(--violet))}
 .bars span{font:11px var(--mono);color:var(--ink-2);text-align:right;white-space:nowrap}
 .bars li[data-slow] i{background:var(--amber)} .bars li[data-slow] span{color:var(--amber)}

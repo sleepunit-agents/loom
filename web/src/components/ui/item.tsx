@@ -121,7 +121,7 @@ export function ItemContent({
 }
 
 const ItemTitleVariants = cva(
-  "v-item__title [font-size:var(--fs-reading)] [font-weight:var(--fw-semibold)] [line-height:1.25] [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] [overflow:hidden]",
+  "v-item__title [font-size:var(--fs-reading)] [font-weight:var(--fw-semibold)] [line-height:1.25] loom-wrap-label",
   {
     variants: { variant: { default: "" }, size: { default: "" } },
     defaultVariants: { variant: "default", size: "default" },

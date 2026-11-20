@@ -68,6 +68,10 @@
 @import "@/looks/looks.css";
 
 /* Human-readable labels can grow across lines in both the shell and app views. */
+.loom-wrap-label, .desk-need-open b, .loom-choice-trigger > span, .loom-side-fold__what,
+.loom-sheet-bar > span, .loom-pbar__name h1, .loom-pbar__title,
+.v-nav__label, .v-icon-studio__name code,
+.v-select.-block > span:first-child > :is([data-value],span:not(.v-disk)),
 .loom-kit-title, .loom-kit-meta, .loom-split__title, .loom-split__folder-name,
 .loom-lapp__nm, .loom-lapp__sub, .desk-home-talk-title, .desk-solo-about,
 .desk-comms-name, .next-strip > button.next-strip-title {
@@ -77,6 +81,7 @@
   text-wrap: pretty;
 }
 
+.loom-choice-trigger, .v-select.-block { height:auto; min-height:var(--ctl-lg,40px); }
 
 @theme inline {
     --font-heading: var(--font-sans);
@@ -590,7 +595,7 @@ img { -webkit-user-drag: none; }
 .loom-side-fold > summary::before { content: "›"; flex: none; display: inline-block; width: 10px; color: var(--v-text-3); transition: rotate .15s; }
 .loom-side-fold[open] > summary::before { rotate: 90deg; }
 .loom-side-fold__name { flex: none; font-weight: 600; }
-.loom-side-fold__what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--v-text-3); }
+.loom-side-fold__what { font-size: 13px; color: var(--v-text-3); }
 .loom-side-fold > .loom-side-col { padding: 0 8px 8px; }
 @media (prefers-reduced-motion: reduce) { .loom-side-fold > summary::before { transition: none; } }
 

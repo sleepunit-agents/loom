@@ -415,14 +415,16 @@
     padding-block-start: var(--s-3);
   }
   .v-dock:not([data-variant="rail"]) [data-part="lane"] {
-    block-size: calc(var(--dock-item-size) + 35px);
+    block-size: auto;
+    min-block-size: calc(var(--dock-item-size) + 35px);
   }
   .v-dock:not([data-variant="rail"]) [data-part="item"] {
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
     gap: var(--s-1);
-    block-size: calc(var(--dock-item-size) + 27px);
+    block-size: auto;
+    min-block-size: calc(var(--dock-item-size) + 27px);
   }
   .v-dock:not([data-variant="rail"]) [data-part="visual"] {
     flex: 0 0 var(--dock-item-size);
@@ -430,7 +432,7 @@
   }
   .v-dock:not([data-variant="rail"]) [data-part="label"] {
     position: static;
-    display: -webkit-box;
+    display: block;
     max-inline-size: var(--dock-item-size);
     padding: 0;
     background: transparent;
@@ -439,11 +441,10 @@
     font-size: var(--fs-caps);
     line-height: 1.15;
     opacity: 1;
-    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
     text-align: center;
     transform: none;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
   }
   .v-dock [data-part="glass-lens"] {
     block-size: 100%;

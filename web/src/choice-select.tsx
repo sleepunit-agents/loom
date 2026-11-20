@@ -13,7 +13,7 @@ export default function ChoiceSelect({ id, value, options, set }: { id: string; 
   );
   return (
     <Select value={value === '' ? '_' : value} onValueChange={(v) => set(v === '_' ? '' : v)}>
-      <SelectTrigger id={id} className="w-full min-w-0 [&>span]:truncate"><SelectValue /></SelectTrigger>
+      <SelectTrigger id={id} className="loom-choice-trigger w-full min-w-0"><SelectValue /></SelectTrigger>
       <SelectContent>{options.map((o) => <SelectItem key={o.value || '_'} value={o.value || '_'}>{o.label}</SelectItem>)}</SelectContent>
     </Select>
   );

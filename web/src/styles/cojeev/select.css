@@ -204,9 +204,6 @@
   > span:first-child
   > span:not(.v-disk) {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-align: left;
 }
 .v-select:where([data-slot="select"], [data-slot^="select-"]).-block .v-disk {

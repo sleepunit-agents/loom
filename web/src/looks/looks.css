@@ -154,9 +154,8 @@ color-scheme:dark;
 :root[data-look="neon"][data-mode]{--glow-sheet:0 -10px 40px -12px;--glow-find:0 10px 40px -10px;--glow-field:0 0 16px -6px;--glow-line:0 0 18px}
 :root[data-look] :is([data-slot="drawer-content"],[data-slot="dialog-content"]){border-top:1px solid var(--v-pink);box-shadow:var(--glow-sheet) color-mix(in srgb,var(--v-pink) 45%,transparent)}
 :root[data-look] .loom-sheet-bar{display:flex;align-items:center;gap:8px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--v-border);
-  font-family:var(--loom-font-data);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
+  font-family:var(--loom-font-data);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-2);flex-wrap:wrap}
 :root[data-look] .loom-sheet-bar b{color:var(--v-pink);font-weight:500}
-:root[data-look] .loom-sheet-bar>span{overflow:hidden;text-overflow:ellipsis}
 :root[data-look] .loom-sheet-bar>span::before{content:"·";margin-right:8px;color:var(--v-text-3)}
 
 /* ---- Find as a command bar: a prompt, a cyan field, the current row's cyan edge ---- */
@@ -192,12 +191,11 @@ color-scheme:dark;
    status icons), and a little narrower than the page, so the two bars read as one */
 html.loom-ios-app:root[data-look] .loom-top--bar{padding-top:max(0px,calc(env(safe-area-inset-top) - 8px))}
 html.loom-ios-app:root[data-look] .loom-top--bar .loom-pbar{padding-inline:10px}
-:root[data-look] .loom-pbar{display:flex;align-items:center;gap:8px;min-width:0;height:24px;font-size:11px;color:var(--v-text-2);white-space:nowrap}
+:root[data-look] .loom-pbar{display:flex;align-items:center;gap:8px;min-width:0;min-height:24px;font-size:11px;color:var(--v-text-2);white-space:nowrap}
 :root[data-look] .loom-pbar__name{display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0;max-width:38%}
-:root[data-look] .loom-pbar__name h1{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-display);font-weight:700;font-size:13px;line-height:24px;letter-spacing:.02em}
+:root[data-look] .loom-pbar__name h1{font-family:var(--font-display);font-weight:700;font-size:13px;line-height:24px;letter-spacing:.02em}
 /* its max-width counts the 8px its margin gives back (a plain 100% cut "Boxes" to "Bo…" next to its ⓘ) */
 :root[data-look] .loom-pbar__info{display:flex;align-items:flex-start;max-width:calc(100% + 8px);min-width:0;padding:10px 8px 10px 0;margin:-10px -8px -10px 0;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}
-:root[data-look] .loom-pbar__title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 :root[data-look] .loom-pbar__info::after{content:"ⓘ";content:"ⓘ"/"";flex:none;margin:1px 0 0 2px;font-family:var(--font-text);font-size:9.5px;font-weight:600;line-height:1;opacity:.9}
 :root[data-look] .loom-pbar__back{display:grid;place-items:center;width:24px;height:24px;margin-left:-6px;flex:none;color:inherit}
 :root[data-look] .loom-pbar__brand{flex:none}
