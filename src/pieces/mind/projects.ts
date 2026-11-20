@@ -23,6 +23,7 @@ const day=DAY_MS;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
+type ProjectRow = {slug:string; card_json:string; updated:string; archived_at:string|null};
 export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:{list(viewer:Viewer,sharing?:Sharing):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
@@ -67,8 +68,10 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const agent=id.slice(0,colon),reference=id.slice(colon+1),db=sources.get(agent);
   if(!allowed(viewer,agent)||!db||!has(db,'projects'))return;
   const asked=resolveCardReference(db,'project',reference);
-  const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as {slug:string;card_json:string;updated:string;archived_at:string|null}|undefined;
-  if(!row)return;
+  const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as ProjectRow|undefined;
+  return row && projectRecord(agent, db, row, viewer, readingHub);
+ }
+ function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean):ProjectRecord{
   const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
   const q:ProjectQuery={agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
   const sections:ProjectSection[]=[];
@@ -106,6 +109,15 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
+ const list = (viewer:Viewer) => once(viewer, () => {
+  const projects:ProjectRecord[] = [];
+  for (const [agent, db] of sources) {
+   if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
+   const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
+   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false));
+  }
+  return projects;
+ });
  const hub=(id:string,v:Viewer)=>once(v,()=>read(id,v,true));
  const expires=(r:ProjectRecord)=>{
   const db=sources.get(r.agent),now=clock.now(),deadlines=[projectDeadline(r,now)];
@@ -161,6 +173,6 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  };
  const access=(v:Viewer)=>once(v,()=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)}));
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:(id:string,v:Viewer)=>once(v,()=>read(id,v)),read:hub,memoryRead,memoryHistory,retained,memoryList,list:(v:Viewer)=>once(v,()=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];})),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:(id:string,v:Viewer)=>once(v,()=>read(id,v)),read:hub,memoryRead,memoryHistory,retained,memoryList,list,close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }
