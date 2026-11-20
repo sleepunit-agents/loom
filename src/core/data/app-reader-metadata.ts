@@ -7,9 +7,10 @@ import type {DataDatabase} from './database.js';
 export function readAppMember(db:DataDatabase,viewer:Viewer){
  const current=sqlRule(rules.currentMember,viewer,{});
  const owner=sqlRule(rules.householdOwner,viewer,{});
- return db.query.members.findFirst({
+ const row=db.query.members.findFirst({
   columns:{id:true},
   where:f=>and(eq(f.id,viewer.id),sql`${{getSQL:()=>current}}`),
-  extras:()=>({manage:sql`${{getSQL:()=>owner}}`.mapWith(Boolean).as('reader_manages')}),
+  extras:()=>({manage:sql<number>`${{getSQL:()=>owner}}`.as('reader_manages')}),
  }).sync();
+ return row&&{id:row.id,manage:Boolean(row.manage)};
 }
