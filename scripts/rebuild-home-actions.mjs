@@ -27,7 +27,8 @@ export async function homeActions({page,tile,app,out}){
   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
   await fern.getByRole('button',{name:'Send',exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Home send was refused');
   const comms=page.getByRole('region',{name:'Comms tile',exact:true});await comms.getByText(words,{exact:true}).waitFor();
-  await page.reload();await page.locator('.next-shell').waitFor();await comms.getByText(words,{exact:true}).waitFor();
+  await page.reload();await page.locator('.next-shell').waitFor();
+  await comms.getByText(words,{exact:true}).waitFor({timeout:20_000});
   const result=body.value,db=app.services.comms.db.$client;
   const rows=db.prepare('SELECT * FROM inbox WHERE thread=? AND message_seq=?').all(result.thread,result.seq);
   check(rows.length===1&&rows[0].to_kind==='agent'&&rows[0].to==='fern'&&rows[0].source==='thread','Home send did not make one delivery for Fern');

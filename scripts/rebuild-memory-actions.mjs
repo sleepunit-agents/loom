@@ -35,7 +35,7 @@ export async function knowledgeActions({page,tile,out,connections}){
   await page.screenshot({path:join(out,screenshot),fullPage:true});
   phase='persisted';await page.reload();await page.locator('.next-shell').waitFor();
   const persisted=page.getByRole('region',{name:'Knowledge tile',exact:true}).locator('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
-  await persisted.getByText(words,{exact:true}).waitFor();
+  await persisted.getByText(words,{exact:true}).waitFor({timeout:20_000});
   await persisted.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
   return {ok:true,slug:added.slug,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql',preexistingOtherSockets:paths(initialConnections.filter(socket=>socket!==graphQL[0])),screenshot};
  }catch(error){

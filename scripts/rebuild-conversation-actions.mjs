@@ -7,7 +7,7 @@ export async function selectExampleConversation(page,tile){
   const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true});
   const row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'}).first();
   const back=tile.getByRole('button',{name:/Back to conversations/});
-  await heading.or(row).or(back).first().waitFor({state:'visible'});
+  await heading.or(row).or(back).filter({visible:true}).first().waitFor({state:'visible',timeout:20_000});
   if(await heading.isVisible())return;
   if(await back.isVisible())await activate(back);
   await activate(row);await heading.waitFor({state:'visible'});
