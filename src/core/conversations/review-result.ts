@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
@@ -29,7 +30,7 @@ export async function prepareReviewResult(service: CommsMessages, cv: typeof con
 
 // Restart may interrupt result encryption after the terminal job transaction committed.
 export function recentReviewEnds(service: CommsMessages) {
-  const cutoff = new Date(Date.parse(service.now()) - commsKeepDays(service.db) * 86_400_000).toISOString();
+  const cutoff = new Date(Date.parse(service.now()) - commsKeepDays(service.db) * DAY_MS).toISOString();
   return service.db.select({id: jobs.id}).from(conversations)
     .innerJoin(jobs, eq(jobs.conversation, conversations.id))
     .where(and(eq(conversations.venue, 'handoff'), like(conversations.place, '["codex-review",%'),
@@ -42,7 +43,7 @@ export async function reportReviewEnd(service:CommsMessages, id:string, allowed:
   const ended=db.select({job:jobs,cv:conversations}).from(jobs).innerJoin(conversations,eq(jobs.conversation,conversations.id)).where(eq(jobs.id,id)).get();
   if(!ended || !ended.cv.member || !reviewThread(db,ended.cv))return;
   const {job,cv}=ended;
-  if(!job.endedAt || Date.parse(service.now())-Date.parse(job.endedAt)>=commsKeepDays(db)*86_400_000)return;
+  if(!job.endedAt || Date.parse(service.now())-Date.parse(job.endedAt)>=commsKeepDays(db)*DAY_MS)return;
   const pending=()=>db.select({id:jobs.id}).from(jobs).where(eq(jobs.retryOf,id)).get();
   const thread=reviewThread(db,cv)!;
   if(pending() || !allowed(cv.member!,cv.agent,cv.project) || db.select({seq:messages.seq}).from(messages).where(and(eq(messages.thread,thread.id),eq(messages.sender,cv.agent),eq(messages.clientId,'review:'+cv.id))).get())return;
