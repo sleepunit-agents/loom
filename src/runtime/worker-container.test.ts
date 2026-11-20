@@ -9,7 +9,7 @@ import { Duplex, PassThrough } from 'node:stream';
 import { containerWorkerExecutor } from './worker-container.js';
 import { BuildTimeError, workOnce, type WorkerAssignment } from './worker.js';
 import { coreImage, houseCommit, houseImage } from './house-image.js';
-import { coreDefinition, coreWeek, NO_HOUSEFILE } from './house-core.js';
+import { coreDefinition, coreWeek, noHousefile, NO_HOUSEFILE } from './house-core.js';
 import { turnsOf, workerTurns } from './worker-turns.js';
 import { DAY_MS } from '../core/day.js';
 import { holdAlone, type Alone } from './worker-alone.js';
@@ -1079,6 +1079,30 @@ it('holds the core house\'s build to the build limit, reports the job all the wh
   expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 32, 'Worker could not start the body: the build ran out of time', 'worker');
   expect(stuck.mock.calls[0][2].aborted).toBe(true);
   executor.close!(); expect(vi.getTimerCount()).toBe(0);
+});
+it('builds the pinned copy-only review source and keeps it out of the ordinary body launcher', async () => {
+  const f = fixture(), engine = bare(f), review = { ...job, coldReview: { change: 'github:org/house#7', headCommit: commit },
+    house: { ...job.house, file: '' } };
+  expect(() => f.executor.build({ ...review, coldReview: { ...review.coldReview, headCommit: '' } }, f.abort.signal)).toThrow();
+  expect(() => f.executor.build({ ...review, program: namedProgram }, f.abort.signal)).toThrow();
+  expect(() => f.executor.build({ ...review, house: job.house }, f.abort.signal)).toThrow();
+  expect(() => f.executor.build(review, f.abort.signal, Buffer.from('fixture'))).toThrow();
+  expect(f.source.fetch).not.toHaveBeenCalled();
+  f.source.fetch.mockResolvedValueOnce('d'.repeat(40));
+  await expect(f.executor.build(review, f.abort.signal)).rejects.toThrow('Worker build failed');
+  expect(f.engine.images).not.toHaveBeenCalled();
+  const image = await f.executor.build(review, f.abort.signal);
+  expect(f.source.fetch).toHaveBeenLastCalledWith(review.house, undefined, expect.any(AbortSignal), commit);
+  expect(image).toBe(houseImage(review.house, commit, core));
+  expect(engine.order).toEqual([core, image]);
+  expect(new URL(f.engine.build.mock.calls[1][0], 'http://engine').searchParams.get('dockerfile')).toBe(NO_HOUSEFILE);
+  expect(f.source.context).toHaveBeenCalledWith(review.house, commit, expect.any(AbortSignal), noHousefile());
+  const builds = f.engine.build.mock.calls.length;
+  f.source.fetch.mockResolvedValueOnce('d'.repeat(40));
+  await expect(f.executor.build(review, f.abort.signal)).rejects.toThrow('Worker build failed');
+  expect(f.engine.build).toHaveBeenCalledTimes(builds);
+  expect(() => f.executor.start(review, image, f.abort.signal)).toThrow('isolated reviewer');
+  expect(f.engine.json).not.toHaveBeenCalled();
 });
 it('gives an agent with no Housefile the core house with its repository copied in', async () => {
   const f = fixture(), engine = bare(f);
