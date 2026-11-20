@@ -35,7 +35,9 @@ it('files a late result on its assigned commit and preserves the original assign
     for (const mismatch of [{ job: nextAssignment.job }, { change: 'github:acme/app#4' }, { headCommit: nextAssignment.headCommit }]) {
       expect(() => store.finish({ ...receipt, ...mismatch })).toThrow('does not match');
     }
+    const completedAt = clock;
     const filed = store.finish(receipt);
+    expect(filed).toMatchObject({ findings: receipt.findings, completedAt });
     clock = '2026-11-20T14:00:00Z';
     expect(store.finish(receipt)).toEqual(filed);
     expect(() => store.finish({ ...receipt, findings: '' })).toThrow('already filed');
@@ -43,7 +45,7 @@ it('files a late result on its assigned commit and preserves the original assign
     cache.put(second);
     store.assign({ ...firstAssignment, change: second.id, job: 'job-C' });
     expect(store.history(first.id)).toMatchObject([
-      { job: nextAssignment.job, current: true, verdict: null }, { job: firstAssignment.job, current: false, verdict: 'CLEAR' },
+      { job: nextAssignment.job, current: true, verdict: null }, { job: firstAssignment.job, current: false, verdict: 'CLEAR', findings: receipt.findings, completedAt },
     ]);
     expect(store.history(second.id)).toMatchObject([{ job: 'job-C', current: true }]);
   } finally {
