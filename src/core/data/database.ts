@@ -369,6 +369,8 @@ const upgrades: readonly (readonly string[])[] = [
   ["CREATE TABLE `trigger_journals` (\n\t`trigger` text PRIMARY KEY NOT NULL,\n\t`lessons` text DEFAULT '' NOT NULL,\n\t`state` text DEFAULT '' NOT NULL,\n\t`state_revision` integer DEFAULT 0 NOT NULL,\n\t`state_changed_at` text,\n\tFOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE cascade\n);", "CREATE TABLE `trigger_acceptances` (\n\t`item` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\tFOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
   // 24: keep the authoring job of a body's intermediate bridge post for its delivery receipt.
   ["CREATE TABLE `bridge_send_jobs` (\n\t`send` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
+  // 25: remember the approved recipient of an addressed one-to-one post for delivery rechecks.
+  ['ALTER TABLE bridge_send_jobs ADD COLUMN direct_target text'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

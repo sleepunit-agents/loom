@@ -4,7 +4,7 @@ import {MESSAGE_WORDS_MAX} from '../core/conversations/words.js';
 import type {BodyProgramToolResult} from './body-program-tools.js';
 import {denialCoversTool} from './tool-denial.js';
 
-const address={conversation:z.string().min(1).max(200),id:z.uuid()};
+const address={conversation:z.string().min(1).max(200),id:z.uuid(),person:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),via:z.enum(['slack','discord']).optional()};
 const request=z.discriminatedUnion('operation',[
   z.object({...address,operation:z.literal('send'),text:z.string().min(1).max(MESSAGE_WORDS_MAX)}).strict(),
   z.object({...address,operation:z.literal('status')}).strict(),
@@ -30,6 +30,15 @@ export async function houseSendRequest(port:SendPort,input:unknown,signal:AbortS
     if(!port.allowsCall(result))throw Error('House send unavailable');
     return result.value;
   };
+  if(intent.person!==undefined||intent.via!==undefined){
+    if(!intent.person||!intent.via)throw Error('Incomplete direct recipient');
+    const target={id:intent.id,person:intent.person,via:intent.via};
+    if(intent.operation==='send'){
+      const queued=await call('bridges.direct',{...target,text:intent.text},intent.id);
+      z.object({saved:z.literal(true)}).parse(queued);
+    }
+    return call('bridges.directStatus',target,randomUUID());
+  }
   if(port.venue==='loom'&&intent.operation==='send'){
     const reply=await call('conversation.message',{kind:'progress',clientId:intent.id,words:intent.text},intent.id);
     const {seq}=z.object({saved:z.literal(true),seq:z.number().int().positive()}).parse(reply);

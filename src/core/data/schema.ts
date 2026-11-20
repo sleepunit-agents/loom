@@ -2055,10 +2055,14 @@ export const bridgeSendParts = sqliteTable('bridge_send_parts', {
   part: integer('part').notNull(),
   postedId: text('posted_id').notNull(),
 }, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
+export interface DirectSendTarget {
+  origin:string;person:string;platform:'slack'|'discord';workspace:string;user:string;member:string|null;
+}
 /** Private provenance for delivery receipts. Historical sends have no entry. */
 export const bridgeSendJobs = sqliteTable('bridge_send_jobs', {
   send: text('send').primaryKey().notNull().references(() => bridgeSends.id, { onDelete:'cascade' }),
   job: text('job').notNull().references(() => jobs.id, { onDelete:'cascade' }),
+  directTarget:text('direct_target',{mode:'json'}).$type<DirectSendTarget & {channel:string}>(),
 });
 /** Which messages carried a kept Slack or Discord file. The same file shared in a second message is listed under
  * both and its bytes are kept once; a file with no message left is removed. */

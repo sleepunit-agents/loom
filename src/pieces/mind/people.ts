@@ -18,6 +18,7 @@ export interface PeopleReaderOptions {
 /** Direct file projection used by GraphQL. */
 export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
+ outsideAccount(viewer:Viewer,slug:string,platform:AccountPlatform):{workspace:string;user:string}|undefined;
  outsideName(viewer:Viewer, platform:AccountPlatform, workspace:string, user:string):string|undefined;
  nextDeadline():number|undefined;
  read(id:string,viewer:Viewer):PersonRecord|undefined;
@@ -195,6 +196,24 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   return {
     access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
       agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
+    outsideAccount(viewer,slug,platform){
+      const [space,account]=accountColumns(platform);
+      const visible:string[]=[];
+      if(allowed(viewer))visible.push('commons');
+      if(viewer.kind==='agent'&&allowed(viewer,viewer.id))visible.push(viewer.id);
+      let result:{workspace:string;user:string}|undefined;
+      for(const source of visible){
+        const db=sources.get(source);if(!db||!hasTable(db,'people'))continue;
+        const row=db.prepare(`SELECT ${space} AS workspace, ${account} AS user FROM people WHERE slug=? AND archived_at IS NULL AND json_valid(card_json)`)
+          .get(resolve(db,slug)) as {workspace:unknown;user:unknown}|undefined;
+        if(!row||row.workspace===null&&row.user===null)continue;
+        if(typeof row.workspace!=='string'||typeof row.user!=='string')return;
+        const matches=db.prepare(`SELECT slug FROM people WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND ${account}=? LIMIT 2`).all(row.workspace,row.user);
+        if(matches.length!==1||result&&(result.workspace!==row.workspace||result.user!==row.user))return;
+        result={workspace:row.workspace,user:row.user};
+      }
+      return result;
+    },
     outsideName(viewer,platform,workspace,user) {
       if (!allowed(viewer)) return;
       const db=sources.get('commons');

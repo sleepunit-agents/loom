@@ -204,3 +204,18 @@ it('batches visible relationship cards, redirects, and the newest forty evidence
  sharing.members.member.agents=[];
  expect(reader.list(viewer)).toEqual([]);
 });
+
+it('resolves a unique workspace account from the agent’s visible relationship cards',()=>{
+ const h=home(),agent=store(join(h,'a.db')),directory=store(join(h,'directory.db'));
+ const sharing:Sharing={members:{owner:{owner:true,agents:['fiction']}},agents:['fiction'],projects:{}};
+ const reader=peopleReader({directory:directory.database.name,agents:[{agent:'fiction',memories:agent.database.name}],sharing:()=>sharing,now:()=>0});
+ closes.push(reader.close);
+ const where={slack:{value:'UFRIEND'},slack_workspace:{value:'TWORK'}};
+ agent.write({slug:'friend',name:'Friend',where});
+ const viewer:Viewer={kind:'agent',id:'fiction'};
+ expect(reader.outsideAccount(viewer,'friend','slack')).toEqual({workspace:'TWORK',user:'UFRIEND'});
+ expect(reader.outsideAccount(viewer,'friend','discord')).toBeUndefined();
+ agent.write({slug:'other',name:'Other',where});
+ expect(reader.outsideAccount(viewer,'friend','slack')).toBeUndefined();
+ expect(reader.outsideAccount({kind:'runner',id:'box'},'friend','slack')).toBeUndefined();
+});

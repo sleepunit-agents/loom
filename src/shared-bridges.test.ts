@@ -1,3 +1,7 @@
+import {reviewReply} from './pieces/bridges/sends.js';
+import {bodyProgramTools} from './runtime/body-program-tools.js';
+import {bodySecretTools} from './runtime/body-secret-tools.js';
+import {houseRuntimeCli} from './house-runtime-cli.js';
 import { kitAccess } from './shared-kit-access.js';
 import { agentKitMembers, agentKits } from './core/data/schema.js';
 import Database from 'better-sqlite3';
@@ -1848,4 +1852,93 @@ it('returns a peer acknowledgment for the body’s own posted message without ex
  expect(await receipt()).toEqual({acceptedAt:null,replied:false});
  expect((await f.call('bridges','peerReceipt',{send:randomUUID(),peer})).status).toBe(404);
  expect((await f.call('bridges','peerReceipt',{send,peer},token.other)).status).not.toBe(200);
+});
+
+it.each([false,true])('rechecks the linked DM recipient after opening a channel (relinked=%s)',async relink=>{
+ const f=fixture();
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();
+ const incoming=await f.receive();
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(incoming.conversation!,'body');
+ });
+ const provider=f.request.getMockImplementation()!;
+ const opens:string[]=[],posts:string[]=[];
+ f.request.mockImplementation(async(url,options)=>{
+  if(String(url).endsWith('conversations.open')){
+   opens.push(String(options?.body));
+   if(relink)f.root.writes.run(()=>f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run());
+   return Response.json({ok:true,channel:{id:'DOWNER',is_im:true,user:'UUSER'}});
+  }
+  if(String(url).endsWith('chat.postMessage')){
+   posts.push(String(options?.body));
+   return Response.json({ok:true,channel:'DOWNER',ts:'1794432000.000017'});
+  }
+  return provider(url,options);
+ });
+ const address={id:randomUUID(),person:'owner',via:'slack'},input={...address,text:'  Preserve these words.  '};
+ expect((await f.call('bridges','direct',input,token.other)).status).toBe(403);
+ const response=await f.call('bridges','direct',input);
+ expect(response.status,JSON.stringify(response.body)).toBe(relink?403:200);
+ expect(opens).toHaveLength(1);
+ await f.root.services.bridges.daemon!.idle();
+ if(relink){
+  expect(posts).toEqual([]);
+  expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+  return;
+ }
+ expect((await f.call('bridges','direct',input)).status).toBe(200);
+ const access={url:'https://loom.invalid',token:token.body,signal:new AbortController().signal,
+  agent:'art',job:'body',conversation:incoming.conversation!,clock:f.clock,fetch:async(url:RequestInfo|URL,init?:RequestInit)=>f.root.http.request(new Request(url,init))};
+ const port=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(port.close);
+ const tools=await bodySecretTools({...access,houseSend:{venue:'slack',denied:[],call:port.call}});clean.push(tools.close);
+ let stdout='';
+ const code=await houseRuntimeCli(['send','--conversation',incoming.conversation!,'--person','owner','--via','slack','--text',input.text,'--id',input.id],
+  {stdout:s=>{stdout+=s;},stderr(){}},{LOOM_BODY_HOUSE_SEND:tools.houseSend});
+ expect(code,stdout).toBe(0);
+ expect(stdout).toContain('1794432000.000017');
+ expect(posts).toHaveLength(1);
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',text:input.text,channel:'DOWNER',thread:null});
+ expect((await f.call('bridges','directStatus',address)).body).toMatchObject({value:{state:'sent',postedIds:['1794432000.000017']}});
+ expect((await f.call('bridges','directStatus',address,token.other)).status).toBe(403);
+});
+
+it('holds an offline DM when the recipient is relinked before release',async()=>{
+ let effects=true;
+ const f=fixture(()=>effects);
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();
+ const origin=(await f.receive()).conversation!;
+ const daemon=f.root.services.bridges.daemon!;
+ const provider=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('conversations.info')
+  ?Response.json({ok:true,channel:{id:'DOWNER',context_team_id:'TWORK',is_im:true}})
+  :provider(url,init));
+ await f.transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'dm',payload:{
+  type:'event_callback',event_id:'dm',team_id:'TWORK',event:{type:'message',channel:'DOWNER',channel_type:'im',
+   user:'UUSER',text:'Earlier DM',ts:'1794432000.000017'}}})));
+ f.clock.advance(0);
+ await daemon.idle();
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:origin}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(origin,'body');
+ });
+ effects=false;
+ const address={id:randomUUID(),person:'owner',via:'slack'};
+ const queued=await f.call('bridges','direct',{...address,text:'Queue while offline'});
+ expect(queued.status,JSON.stringify(queued.body)).toBe(200);
+ const send=f.db.select().from(bridgeSends).get()!;
+ expect(send).toMatchObject({state:'held',channel:'DOWNER'});
+ f.root.writes.run(()=>{
+  f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run();
+  reviewReply(f.db,send.id,'release');
+ });
+ effects=true;
+ await daemon.reconcile();
+ await daemon.idle();
+ await daemon.sends.flush();
+ expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
+ expect((await f.call('bridges','directStatus',address)).status).toBe(403);
+ expect(f.request.mock.calls.filter(([url])=>/conversations\.open|chat\.postMessage/.test(String(url)))).toHaveLength(0);
 });

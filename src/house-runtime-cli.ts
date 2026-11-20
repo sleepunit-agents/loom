@@ -70,7 +70,7 @@ export async function houseRuntimeCli(args:string[],io:ServeIo,env=process.env):
         print({ok:false,ref,state:result.state,postedIds,unconfirmed:true});return 1;
       }
       await delay(1000,undefined,{signal});
-      result=await post({operation:'status',conversation,id:ref});
+      result=await post({operation:'status',conversation,id:ref,person,via});
     }
   }catch{
     print({ok:false,ref,postedIds,unconfirmed:true,reason:'Delivery could not be confirmed. Reuse the same receipt for this message.'});
