@@ -63,6 +63,7 @@ export const clipProposalText = (text: string, limit: number): string =>
 const workspaceWords = (names: CardNames | undefined, platform: string, workspace: string): string => {
   if (!names) return str(workspace);
   const connection = names.workspace(platform, workspace);
+  if (platform === 'slack') return connection ? 'Slack connection ' + connection.name : 'Unnamed Slack workspace';
   return 'A workspace loom has no name for (' + workspace + ')' +
     (connection ? ', ' + connection.source + ' ' + connection.name : '');
 };
@@ -130,17 +131,20 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   const outside = (who: Outside) => {
     const platform = platformWord(who.platform), held = names?.person(who.platform, who.workspace, who.user) ?? null;
     const short = held ? held.name + ' (' + platform + ')'
+      : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
     const facts: CardFact[] = [
       { label: 'Who', value: held ? held.name + ', on ' + platform : names ? cap(short) : 'A ' + platform + ' account' },
       ...(held ? [{ label: 'Name from', value: held.source }] : []),
       { label: 'Workspace', value: workspaceWords(names, who.platform, who.workspace) },
+      ...(names && who.platform === 'slack' ? [{label: 'Workspace id', value: who.workspace, small: true}] : []),
     ];
     return { short, facts, id: { label: 'Account id', value: str(who.user), small: true } as CardFact };
   };
   const channel = (platform: string, workspace: string, id: string) => {
     const held = names?.channel(platform, workspace, id) ?? null;
+    if (platform === 'slack' && names && !held) return {short:'an unnamed Slack channel', held};
     return { short: (held ? held.name : names ? 'a channel loom has no name for (' + id + ')' : 'the channel ' + id) + ' on ' + platformWord(platform), held };
   };
   const tools = (value: unknown, label: string) => shownItems(arr(value).map(rec), label,

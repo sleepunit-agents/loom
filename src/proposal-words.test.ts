@@ -77,14 +77,14 @@ it('says who an outside account is for a household owner, and says so when loom 
   const state = { agentLive: true, tools: [tool], known: true, linked: null, on: false };
   const named = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, { names, before: { value: state } })!;
   expect(named.title).toBe('Let Gage Taylor (Slack) use Art’s pond-et-livonia kit');
-  expect(named.facts.map(fact => fact.label)).toEqual(['Who', 'Name from', 'Workspace', 'Kit', 'What the kit does', 'Applies', 'Now', 'Account id']);
-  expect(factLines(named.facts)).toContain('Who: Gage Taylor, on Slack\nName from: Art’s person card, which lists this account\nWorkspace: A workspace loom has no name for (T02AYL3QM), reached by the connection art-slack');
+  expect(named.facts.map(fact => fact.label)).toEqual(['Who', 'Name from', 'Workspace', 'Workspace id', 'Kit', 'What the kit does', 'Applies', 'Now', 'Account id']);
+  expect(factLines(named.facts)).toContain('Who: Gage Taylor, on Slack\nName from: Art’s person card, which lists this account\nWorkspace: Slack connection art-slack');
   expect(factLines(named.facts)).toContain('What the kit does: pond_status: Read station status in the Pond deployment.');
   // The raw account id is kept, small and last, for certainty.
   expect(named.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
   const nameless = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: { ...gage, user: 'U0STRANGER', workspace: 'T0OTHER' }, grant: true }, { names, before: { value: state } })!;
-  expect(nameless.title).toBe('Let a Slack account loom has no name for (U0STRANGER in workspace T0OTHER) use Art’s pond-et-livonia kit');
-  expect(factLines(nameless.facts)).toContain('Who: A Slack account loom has no name for (U0STRANGER in workspace T0OTHER)\nWorkspace: A workspace loom has no name for (T0OTHER)');
+  expect(nameless.title).toBe('Let an unnamed Slack account use Art’s pond-et-livonia kit');
+  expect(factLines(nameless.facts)).toContain('Who: An unnamed Slack account\nWorkspace: Unnamed Slack workspace');
   expect(proposalCard('bridge', { action: 'channel', platform: 'discord', workspace: 'G1', channel: 'C9', answers: 'art', botsMayTalk: false }, { names, before: { value: null } })!.title).toBe('Let Art answer in #pond on Discord');
   expect(proposalCard('bridge', { action: 'person', ...gage, member: 'gage' }, { names, before: { value: null } })!.title).toBe('Treat Gage Taylor (Slack) as the household member Gage');
   expect(proposalCard('bridge', { action: 'disconnect', id: 'mark-discord' }, { names, before: { value: { id: 'mark-discord', agent: 'mark', platform: 'discord', workspace: 'G1', enabled: true } } })!.title).toBe('Disconnect Mark’s Discord connection (mark-discord)');

@@ -11,6 +11,7 @@ vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Re
   // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
   if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   // The approvals an approval item's card is read from (data/work-views.ts): not one of the Inbox's own requests either.
+  if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:[{approval:'a-grant',title:'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit'}]}};
   if (query.includes('query ApprovalsView')) return { status: 'live', data: { approvals: f.approvals, approvalRules: [], approvalNotices: [], approvalRecord: [] } };
   if (/query (WorkAnswerOwner|WorkViewer)/.test(query)) return { status: 'live', data: { workAnswerOwner: false, workChangesRefresh: false, members: [], homeComms: null } };
   if (!variables) return { status: 'loading' };
@@ -244,7 +245,7 @@ it('says an approval item as its card says it: the plain sentence in the row and
     state: 'pending', details: JSON.stringify({ change: 'kitGrant', after, seal: { nonce: 'n', digest: 'd' } }), askedAt: item.at, decidedBy: null, expiresAt: null }];
   f.records.mockReturnValue({ status: 'loading', records: [] });
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1' })); });
-  const sentence = 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use art’s pond-et-livonia kit';
+  const sentence = 'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit';
   expect(tree.root.findByType('Row' as never).props.title).toBe(sentence);
   expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(sentence);
   const words = JSON.stringify(tree.toJSON());
