@@ -22,7 +22,7 @@ import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
-import {knowledgeActions} from './rebuild-memory-actions.mjs';
+import {knowledgeActions,knowledgeSourceCheck} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
@@ -183,6 +183,7 @@ export async function* walkthroughSteps(output) {
       report.actions.knowledgeSearchFolders={ok:true,screenshot};
      }catch(error){report.actions.knowledgeSearchFolders={ok:false,error:String(error)};}
      row.action=await knowledgeActions({page,tile,out,connections});
+     report.actions.knowledgeSourceCheck=await knowledgeSourceCheck({page,tile,out});
     }
     if(title==='Settings'){
      const savedDefault=await secretDefaultAction({page,tile,out,app,deferReload:true});
