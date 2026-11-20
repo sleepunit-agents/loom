@@ -1,10 +1,10 @@
-import {reviewPlace} from './review-place.js';
-import {memberAgents,threads} from '../data/schema.js';
+import {reviewPlace,reviewThread} from './review-place.js';
+import {conversations,jobs,memberAgents,threads} from '../data/schema.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
-import {and,eq} from 'drizzle-orm';
+import {and,desc,eq,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {OnWord} from '../../policy.js';
 import {inbox} from '../data/schema.js';
@@ -63,6 +63,22 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const assigned=db.select({agent:memberAgents.agent}).from(memberAgents).where(eq(memberAgents.member,work.cv.member)).all();
    const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
    return {agents,codexAvailable:self?.codexAvailable?.(work.cv.agent)===true};
+  },
+ }));
+ operations.register(operation({name:'conversation.handoffStatus',write:false,doors:['http'],
+  input:z.object({conversation:z.string().min(1).max(200)}).strict().describe('Check a Codex handoff using the child conversation returned by the original handoff.'),
+  output:z.object({jobState:z.enum(jobs.state.enumValues).nullable(),resultDelivered:z.boolean()}).strict(),
+  may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
+  run(ctx,input){
+   const work=requireCurrent(ctx.viewer);
+   const child=db.select().from(conversations).where(eq(conversations.id,input.conversation)).get();
+   const origin=child && reviewThread(db,child);
+   if(!ownerThread(work) || !origin || origin.conversation!==work.cv.id)throw new OperationError('denied','Handoff outside this conversation');
+   const latest=db.select({state:jobs.state}).from(jobs).where(eq(jobs.conversation,input.conversation))
+    .orderBy(desc(jobs.queuedAt),desc(sql`jobs.rowid`)).limit(1).get();
+   const delivery=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.conversation,work.cv.id),eq(inbox.thread,origin.id),
+    eq(inbox.source,'handoff'),eq(inbox.sourceId,'review:'+input.conversation),eq(inbox.toKind,'agent'),eq(inbox.to,work.cv.agent))).limit(1).get();
+   return {jobState:latest?.state??null,resultDelivered:!!delivery};
   },
  }));
  operations.register(operation({...common,name:'conversation.handoff',
