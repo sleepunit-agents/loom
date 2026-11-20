@@ -216,6 +216,15 @@ it('drafts, ratifies, archives and restores a memory, and reads its earlier vers
   const version=Number(/## Version (\d+)/.exec(history)?.[1]);
   expect((await art.call('memory_restore',{id,revision:version})).error).toBe(false);
   expect((await art.call('recall',{query:'Fictional draft'})).text).toContain('FICTIONAL_DRAFT_BODY');
+  const near=(await art.call('remember',{category:'reference',title:'Related',content:'Fictional related draft.'})).text;
+  const other=/\(([^)]+)\)$/.exec(near)?.[1];expect(other).toBeTruthy();
+  const merge=async(sources:(string|undefined)[],opId:string)=>JSON.parse((await art.call('loom_command',{operation:'memory.merge',input:{target:id,sources},id:opId})).text);
+  expect((await merge([other,other],'duplicate-sources')).ok).toBe(false);
+  expect((await merge(['mark:00000000-0000-4000-8000-000000000001'],'wrong-agent')).ok).toBe(false);
+  const merged=await merge([other],'merge-fixture');
+  expect(merged).toMatchObject({ok:true,value:{ids:[id]}});
+  expect(await merge([other],'merge-fixture')).toEqual(merged);
+  expect((await art.call('recall',{query:'Fictional related draft'})).text).not.toContain('Fictional related draft.');
   expect((await art.call('memory_archive',{id,note:'set aside'})).text).toBe('Archived '+id);
   expect((await art.call('recall',{query:'Fictional draft'})).text).toBe('No memories matched.');
   expect((await art.call('memory_restore',{id})).text).toBe('Restored '+id);
