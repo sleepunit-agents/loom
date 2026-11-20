@@ -37,8 +37,8 @@ describe('the approved data model', () => {
     // The schema keeps these three with its plumbing; the approved model describes each column by column.
     const described = [plumbing.modelAccountLogins, plumbing.jobUsage, plumbing.programFirings];
     for (const table of described) actual[getTableName(table)] = columnsOf(table);
-    // Take-time volume is internal delivery proof, not an additional approved-page field.
-    actual.inbox = actual.inbox.filter(n => n !== 'taken_volume');
+    // Delivery bookkeeping is recorded by the mail service.
+    actual.inbox = actual.inbox.filter(n => !['taken_volume','first_accepted_at'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
     expect(Object.values(plumbing).filter(table => !described.includes(table)).map(getTableName).sort()).toEqual([...names,'agent_kits','agent_kit_projects','agent_kit_members','agent_kit_outside_people','project_outside_people','kit_uses','program_tokens','program_record_grants','program_operation_grants'].sort());

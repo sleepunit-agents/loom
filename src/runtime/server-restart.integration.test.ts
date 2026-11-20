@@ -61,6 +61,8 @@ function leavePreviousVersion(file: string) {
         const table = quote(name);
         const columns = (old.pragma(`main.table_info(${table})`) as {name:string}[]).map(c => quote(c.name)).join(',');
         const where = name === 'migrations' ? ` WHERE number <= ${version}` : '';
+        // Replace bootstrap defaults with the running fixture's actual rows.
+        old.exec(`DELETE FROM main.${table}`);
         old.exec(`INSERT INTO main.${table} (${columns}) SELECT ${columns} FROM live.${table}${where}`);
       }
       for (const check of checks) old.exec(check.sql);

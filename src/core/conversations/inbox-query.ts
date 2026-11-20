@@ -66,7 +66,7 @@ export class InboxQueries {
       .from(inbox).where(and(this.allowed(viewer),eq(inbox.conversation,conversation),
         eq(inbox.toKind,'agent'),inArray(inbox.source,['slack','discord']),
         eq(inbox.fromKind,viewer.kind==='member'?'person':'agent'),eq(inbox.fromId,viewer.id)))
-      .orderBy(desc(sql`julianday(${inbox.at})`),desc(sql`inbox.rowid`)).limit(1).get();
+      .orderBy(desc(inbox.seq)).limit(1).get();
     if(!item)return null;
     const sent=this.db.select({id:bridgeSends.id}).from(inboxRefs)
       .innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))
