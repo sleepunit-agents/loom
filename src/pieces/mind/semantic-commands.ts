@@ -7,6 +7,7 @@ import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {OperationError,RecoveredWrite,type Operations,type Context,type WriteReceipt} from '../../core/operations/index.js';
 import type {Viewer} from '../../policy.js';
+import {memoryBandReport} from '../../backends/salience.js';
 import * as sqliteVec from 'sqlite-vec';
 import {SqliteVecBackend,auditMemories} from '../../backends/sqlite-vec.js';
 import {MEMORY_CONTENT_MAX,OBSERVATIONS,type EmbeddingProvider} from '../../backends/types.js';
@@ -127,6 +128,15 @@ operations.register({...adding,doors:[...base.doors],name:'memory.remember',inpu
    }finally{backend.close();options.committed();}
   },
   run(_ctx,_input,prepared){return prepared;}});
+ const count=z.number().int().nonnegative();
+ operations.register({name:'memory.bands',doors:['http'],recheckPolicy:true,may:viewer=>!!selected(viewer)&&!options.addsOnly?.(viewer),
+  input:z.object({}).strict().describe('Read current durable memory temperatures and skipped row counts without writing.'),
+  output:z.object({examined:count,bands:z.object({Hot:count,Warm:count,Cool:count}),skipped:z.object({archived:count,expired:count,episode:count}),writes:z.literal(0)}),
+  run(ctx){
+   const source=current(ctx.viewer);
+   if(!source)throw new OperationError('unavailable','Memory is not prepared for commands');
+   return memoryBandReport(source.db,ctx.now);
+  }});
  operations.register({name:'memory.duplicates',doors:['http'],recheckPolicy:true,
   may:viewer=>!!selected(viewer)&&!options.addsOnly?.(viewer),
   input:z.object({category:z.string().min(1).max(200).optional(),excludeCategories:z.array(z.string().min(1).max(200)).max(20).optional(),maxDuplicates:z.number().int().min(1).max(100).optional(),similarityThreshold:z.number().min(0).max(1).optional()}).strict(),

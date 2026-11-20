@@ -94,6 +94,18 @@ it('writes and searches knowledge by every word',async()=>{
  }finally{await art.client.close();await p.close();}
 });
 
+it('counts current bands and skips without writing during review',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  for(const category of ['reference','episode'])await art.call('remember',{category,title:'Fictional '+category,content:'An example for review.'});
+  const read=async()=>JSON.parse((await art.call('loom_command',{operation:'memory.bands',input:{},id:'fictional-dry-run'})).text).value;
+  const first=await read();
+  expect(first).toMatchObject({examined:2,skipped:{archived:0,expired:0,episode:1},writes:0});
+  expect(first.bands.Hot+first.bands.Warm+first.bands.Cool).toBe(1);
+  expect(await read()).toEqual(first);
+ }finally{await art.client.close();await p.close();}
+});
+
 it('reads filtered duplicate pairs through the signed-in agent tool',async()=>{
  const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
  try{

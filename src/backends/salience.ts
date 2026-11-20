@@ -157,6 +157,28 @@ export function heatColumns(db: Database): string {
   return `created, updated, ${authored}, ${have ? 'recall_heat, recall_heat_at' : 'NULL AS recall_heat, NULL AS recall_heat_at'}`;
 }
 
+/** Count the current temperature of each durable memory without reading its words or warming it. */
+export function memoryBandReport(db: Database, now: number) {
+  const bands = {Hot: 0, Warm: 0, Cool: 0};
+  const skipped = {archived: 0, expired: 0, episode: 0};
+  let examined = 0;
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get()) {
+    const expiry = hasColumn(db, 'memories', 'expires_at') ? 'expires_at' : 'NULL';
+    const archived = hasColumn(db, 'memories', 'archived') ? 'archived' : '0';
+    const rows = db.prepare(`SELECT category, ${heatColumns(db)}, ${archived} AS archived,
+      (${expiry} IS NOT NULL AND coalesce(julianday(${expiry}) > julianday(?), 0) = 0) AS expired FROM memories`);
+    for (const raw of rows.iterate(new Date(now).toISOString())) {
+      const row = raw as HeatInput & {archived: number; expired: number};
+      examined++;
+      if (row.archived) skipped.archived++;
+      else if (row.expired) skipped.expired++;
+      else if (row.category === EPISODE_CATEGORY) skipped.episode++;
+      else bands[tierOf(heatOf(row, now))]++;
+    }
+  }
+  return {examined, bands, skipped, writes: 0};
+}
+
 /**
  * The ids of the `limit` hottest memories a WHERE clause selects, hottest first (ties: newer first).
  * Heat is worked out now, from when each was written and how it has been recalled (heatOf). The
