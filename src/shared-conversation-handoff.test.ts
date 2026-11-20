@@ -247,7 +247,7 @@ it('keeps a handed-off direct message direct, so its words reach no wider audien
  const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });
 
-it.each(['success','failure','archive','transient'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+it.each(['success','failure','archive','transient','occupied'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const f=await bodyFixture(clean,{modelRoles:()=>[
   {model:'first',provider:'claude',harness:'claude',series:'first'},
   {model:'reviewer',provider:'openai',harness:'codex',series:'reviewer'}]});
@@ -297,6 +297,15 @@ it.each(['success','failure','archive','transient'] as const)('delivers an owner
   const failure=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).get()!;
   expect(await f.key.open(failure.words!)).toContain('the job was stopped');return;
  }
+ // The original requester is finished. A different body can already be holding its thread when the child replies.
+ let holding:string|undefined;
+ if(mode==='occupied'){
+  await f.send('Another question for the coordinator','while-reviewing');
+  f.clock.advance(60_000);
+  const queued=db.select().from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),eq(s.jobs.state,'queued'))).get()!;
+  expect(queued).toBeDefined();holding=queued.id;
+  db.update(s.jobs).set({state:'running',box:'box',heardAt:now()}).where(eq(s.jobs.id,holding)).run();
+ }
  const reply={clientId:'review-result',words:'PRIVATE REVIEW FINDINGS',model:'reviewer'};
  const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:assignment.id,token}}));
  expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
@@ -305,16 +314,27 @@ it.each(['success','failure','archive','transient'] as const)('delivers an owner
  expect(replies).toHaveLength(1);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
  const mail=db.select().from(s.inbox).where(and(eq(s.inbox.conversation,f.thread.conversation),eq(s.inbox.source,'handoff'))).all();
  expect(mail).toHaveLength(1);expect(mail[0]).toMatchObject({onWord:'alice',thread:f.thread.id,messageSeq:replies[0].seq,words:null});
+ const readAsCoordinator=async(id:string,token:string)=>{
+  db.update(s.jobs).set({box:'box',state:'running',heardAt:now()}).where(eq(s.jobs.id,id)).run();
+  db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional coordinator '+id,kind:'agent',agent:'art',job:id,createdAt:now()}).run();
+  const receiver=bodyConversationClient({url:'https://loom.invalid',token,job:id,conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
+  clean.push(()=>receiver.close());
+  const received:string[]=[];
+  await receiver.takeAndAccept(async item=>{if(item.words)received.push(item.words);});if(id===holding)await receiver.settle();
+  return received;
+ };
+ if(holding){
+  expect(replies[0].run).toBe(assignment.id);
+  expect(db.select().from(s.jobs).where(eq(s.jobs.id,holding)).get()?.state).toBe('running');
+  const earlier=await readAsCoordinator(holding,'body_'+'b'.repeat(64));
+  expect(earlier).toContain('Another question for the coordinator');
+  const finish=await root.http.request('/api/runtime/finish',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.runner},body:JSON.stringify({id:'finish-intervening-job',input:{job:holding,exitCode:0,logTail:''}})});
+  expect(finish.status).toBe(200);
+ }
  f.clock.advance(60_000);
  const coordinator=db.select().from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),eq(s.jobs.state,'queued'))).get()!;
  expect(coordinator).toBeDefined();
- db.update(s.jobs).set({box:'box',state:'running',heardAt:now()}).where(eq(s.jobs.id,coordinator.id)).run();
- const resumed='body_'+'e'.repeat(64);
- db.insert(s.tokens).values({fingerprint:credentialHash(resumed),label:'Fictional coordinator',kind:'agent',agent:'art',job:coordinator.id,createdAt:now()}).run();
- const receiver=bodyConversationClient({url:'https://loom.invalid',token:resumed,job:coordinator.id,conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
- clean.push(()=>receiver.close());
- const received:string[]=[];
- await receiver.takeAndAccept(async item=>{if(item.words)received.push(item.words);});
+ const received=await readAsCoordinator(coordinator.id,'body_'+'e'.repeat(64));
  expect(received).toContain(reply.words);
  root.services.comms!.delete(f.thread.id);
  expect(root.services.conversations.item(mail[0].id)).toMatchObject({state:'resolved',words:null,thread:null});
