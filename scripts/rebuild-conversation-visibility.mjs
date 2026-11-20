@@ -69,7 +69,7 @@ export async function conversationVisibilityActions({page,browser,app,home,out,v
   const first={owner:await inspect('alex',await browserRead(page,query)),member:await inspect('robin',await browserRead(memberPage,query))};
   write(()=>{s.household.setMember({id:robin.id,role:robin.role,fullOwner:robin.fullOwner,agents:[]});s.projects.save({...gardenInput,members:garden.members.filter(id=>id!=='robin')});});
   const revoked=await inspect('robin',await browserRead(memberPage,query));
-  await memberPage.screenshot({path:join(out,screenshot),fullPage:true});
+  await memberPage.screenshot({path:join(out,screenshot),fullPage:true,timeout:20000});
   const facts={ok:true,screenshot,reason:'Normal owner/member browser sign-ins saw exact labelled conversation and Comms IDs, scoped history and Inbox items, and only their own waiting mailbox; retained member sign-in lost revoked project and agent access.',first,revoked,isolation};
   outcome=Object.fromEntries(visibilityDomains.map(domain=>[domain,{...facts}]));return outcome;
  }catch(error){outcome=visibilityFailure(error);await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});for(const value of Object.values(outcome))value.screenshot=screenshot;return outcome;}
