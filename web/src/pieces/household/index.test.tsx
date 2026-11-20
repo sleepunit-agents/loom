@@ -4,7 +4,7 @@ import {createElement as h} from 'react';
 import {act,create} from 'react-test-renderer';
 const f=vi.hoisted(()=>({feed:{status:'live',data:{householdSetup:{defaultAgent:null,members:[{id:'sam',role:'owner',fullOwner:true,agents:[]}],agents:[],tokens:[{fingerprint:'f'.repeat(64),label:'Fixture token',kind:'owner',identity:'sam',createdAt:'2026-11-15T00:00:00Z',expiresAt:null,revokedAt:null,lastUsedAt:null}],sessions:[]},boxes:[]}} as {status:string;data?:unknown},operation:vi.fn(),programFeed:{status:'live',data:{programSetup:null}} as {status:string;data?:unknown}}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>query.includes('programSetup')?f.programFeed:f.feed}));vi.mock('../../data/operation',()=>({memberOperation:f.operation}));
-vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Textarea','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':name==='Textarea'?'textarea':'div',props)])));
+vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Textarea','Field','Fields','Section','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':name==='Textarea'?'textarea':'div',props)])));
 import Setup from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;const original=f.feed.data,privateBearer='loom_'+'p'.repeat(43);beforeEach(()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:{id:'sam'}})));f.feed.data=original;f.programFeed={status:'live',data:{programSetup:null}};vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
@@ -131,4 +131,23 @@ it('puts a removed agent under Removed and opens its restore request without sen
  await act(async()=>button.props.onClick());
  expect(removed.findByType('textarea').props.value).toBe('Please propose restoring the household agent mark.');
  expect(f.operation).not.toHaveBeenCalled();
+});
+
+it('shows the machine thresholds only in household setup and sends only changed values',async()=>{
+ const lines={diskPercent:85,diskUrgentPercent:95,diskFreeMib:5120,memoryFreeMib:512};
+ f.feed.data={...original as object,boxAlertSettings:[lines]};
+ const values={...lines,memoryFreeMib:1024};
+ vi.stubGlobal('FormData',class{get(key:keyof typeof lines){return String(values[key]);}});
+ await act(async()=>{tree=create(h(Setup));});
+ const form=()=>tree.root.findByProps({'aria-label':'Machine alert thresholds'});
+ const submit=()=>form().props.onSubmit({preventDefault(){},currentTarget:{}});
+ expect(tree.root.findByProps({name:'memoryFreeMib',type:'number'}).props.defaultValue).toBe(512);
+ values.diskUrgentPercent=85;
+ await act(async()=>submit());expect(f.operation).not.toHaveBeenCalled();
+ expect(JSON.stringify(tree.toJSON())).toContain('urgent disk threshold must be higher');
+ values.diskUrgentPercent=95;
+ await act(async()=>submit());expect(f.operation).toHaveBeenCalledWith('machine.setAlertLines',{memoryFreeMib:1024});
+ f.feed.data={householdSetup:null,boxAlertSettings:[lines],boxes:[]};
+ await act(async()=>tree.update(h(Setup)));
+ expect(tree.root.findAllByProps({'aria-label':'Machine alert thresholds'})).toHaveLength(0);
 });
