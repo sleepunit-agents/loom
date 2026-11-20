@@ -625,6 +625,10 @@ it('runs the house note CLI against a running job and refuses the same shell han
  expect(executable.stdout).toBe('first reading\n');
  const list=await run('list','field/','--json');expect(list.code).toBe(0);
  expect(JSON.parse(list.out)).toMatchObject([{path:'field/log',bytes:13,pinned:false}]);
+ for(const text of ['--help','-h']){
+   expect(await run('write','field/literal','--body',text,'--lifespan','short')).toMatchObject({code:0});
+   expect(await run('read','field/literal')).toMatchObject({code:0,out:text+'\n'});
+ }
  expect(await run('read','field/missing')).toMatchObject({code:3,out:''});
  f.db.update(s.jobs).set({state:'done'}).run();
  expect(await run('read','field/log')).toMatchObject({code:1,out:''});

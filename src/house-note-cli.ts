@@ -20,16 +20,25 @@ async function stdinBody() {
 }
 
 export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Promise<number>{
-  if(args.includes('--help')||args.includes('-h')){io.stdout(usage);return 0;}
+  if(args[0]==='--help'||args[0]==='-h'){io.stdout(usage);return 0;}
   const [operation,...rest]=args;
   if(!['list','read','write'].includes(operation)){io.stderr(usage);return 2;}
   let input:Record<string,unknown>, json=false;
   try{
-    const {positionals,values}=parseArgs({args:rest,allowPositionals:true,options:{
+    // parseArgs regards a dash-prefixed string after an option as ambiguous.
+    // A note's body is literal text, including option-looking words.
+    const options:string[]=[];
+    for(let i=0;i<rest.length;i++){
+      if(operation==='write'&&rest[i]==='--body'&&i+1<rest.length)options.push('--body='+rest[++i]);
+      else options.push(rest[i]);
+    }
+    const {positionals,values}=parseArgs({args:options,allowPositionals:true,options:{
+      help:{type:'boolean',short:'h'},
       json:{type:'boolean'},
       ...(operation==='list'?{limit:{type:'string' as const}}:{}),
       ...(operation==='write'?{body:{type:'string' as const},lifespan:{type:'string' as const},id:{type:'string' as const}}:{}),
     }});
+    if(values.help){io.stdout(usage);return 0;}
     const [path]=positionals;
     if(positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
     json=!!values.json;

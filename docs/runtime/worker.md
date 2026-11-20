@@ -608,6 +608,13 @@ the repository it was built from.
 | An agent's mounted directories | under `/home/agent`, at the path the configuration gives | the worker mounts them |
 | Where a harness keeps its sessions | `/home/agent/.claude` for Claude Code; no place for another harness yet | the image makes it (the core house); the container's own, gone with the body |
 
+A model job with full shell reach can use `loom note read <path>`,
+`loom note list [prefix]`, and `loom note write <path> --lifespan short`.
+A write reads text from standard input or `--body`. All three commands accept
+`--json`. For a retried write, pass the same `--id` and the same arguments.
+The body binds these commands to its agent and enforces the room's tool denials.
+The shell's local credential expires with the job.
+
 The home is fixed and the user is not: a body runs as the image's `USER`. **The
 core house has no `USER` line, so a body in it runs as the container's root.**
 With a rootless engine the container's root is the worker's own user outside
