@@ -93,13 +93,16 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
     get historyKeys(){return historyKeys;},
     get covered(){return covered;},
     async take() {
+      let reply;
       try {
-        let reply = await client.command('conversation.session', {historyKeys:true}, randomUUID());
+        reply = await client.command('conversation.session', {historyKeys:true}, randomUUID());
         if(!reply.ok && reply.code==='invalid'){
           historyKeys=false;
           reply=await client.command('conversation.session', {}, randomUUID());
         }
-        if (!reply.ok) return undefined;
+      } catch { return undefined; } // A lost response tells us nothing about the stored session.
+      if (!reply.ok) return undefined;
+      try {
         const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value).session;
         if (kept) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;return restored = kept.session; }
       } catch { /* handed something this body cannot use */ }
@@ -113,10 +116,10 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       let pack: string | undefined;
       try { if (session && SESSION_ID.test(session)) pack = packSession(layout, root, session); } catch { pack = undefined; }
       try {
-        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(historyKeys && knownKeys ? {covered:knownKeys} : {}), ...(since ? { since } : {}) }, randomUUID()).catch(() => undefined) : undefined;
+        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(historyKeys && knownKeys ? {covered:knownKeys} : {}), ...(since ? { since } : {}) }, randomUUID()) : undefined;
         // Nothing to hand on, or loom did not take it: what loom keeps is then behind this run, and it is told so.
         if (!sent?.ok) await client.command('conversation.sessionSave', { session: null }, randomUUID());
-      } catch { /* loom will see the session is behind the conversation's last answer */ }
+      } catch { /* A save may have committed. Leave the row for the next body's freshness check. */ }
       // The one this run left, and the one it was handed if it went on without it.
       finally { for (const id of new Set([session, restored])) if (id && SESSION_ID.test(id)) remove(id); }
     },
