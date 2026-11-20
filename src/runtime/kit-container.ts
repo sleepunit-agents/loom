@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import { secretValueSize } from '../pieces/secrets/input.js';
@@ -9,6 +10,7 @@ import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
 
 type Invocation = {
   runtime?:string;
+  podmanHelperSubid?:number;
   job:string;
   box:string;
   image:string;
@@ -73,12 +75,31 @@ async function stdout(socket: Duplex): Promise<Buffer> {
   return output.subarray(0, written);
 }
 
-type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'> & {
+type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'|'podmanHelperSubid'> & {
   runtime?:string;
   setupTimeoutMs?:number;
   cleanupTimeoutMs?:number;
 };
 type PrivateInput = Pick<Invocation,'argv'|'secrets'|'onStarted'> & {input?:object;timeoutMs:number};
+
+export const podmanHelperSubid = z.number().int().min(1).max(65533);
+const helperMemory = 128 * 1024 * 1024, helperPids = 32, helperNanoCpus = 500_000_000;
+const cpuPeriod = 100_000, cpuQuota = helperNanoCpus / 10_000;
+const mappedLimits = z.object({ HostConfig:z.object({ Memory:z.literal(helperMemory), PidsLimit:z.literal(helperPids),
+  CpuQuota:z.literal(cpuQuota), CpuPeriod:z.literal(cpuPeriod) }) });
+const ranges = z.array(z.object({ container_id:z.number().int().nonnegative(), host_id:z.number().int().positive(), size:z.number().int().positive() }));
+const rootlessInfo = z.object({ version:z.object({ APIVersion:z.string().regex(/^5\./) }),
+  host:z.object({ cgroupControllers:z.array(z.string()), security:z.object({ rootless:z.literal(true) }), idMappings:z.object({ uidmap:ranges, gidmap:ranges }) }) });
+
+function coversSubid(entries:z.infer<typeof ranges>, subid:number):boolean {
+  let next = 0;
+  for (const entry of [...entries].sort((a,b) => a.container_id - b.container_id)) {
+    if (entry.container_id !== next) return false;
+    next += entry.size;
+    if (next > subid) return true;
+  }
+  return false;
+}
 
 /** Both callers prepare a pinned, mount-free container, release private input once and reap it. */
 export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
@@ -95,18 +116,42 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
     const inspect = await engine.json('GET','/images/'+plan.image+'/json',undefined,setup) as {Id?:string;Config?:{Volumes?:object|null}};
     if (canonicalKitImage(inspect?.Id) !== plan.image || !inspect.Config || Object.keys(inspect.Config.Volumes ?? {}).length)
       throw new Error('Kit needs an immutable house image without volumes');
-    remove=true;
     let created:unknown;
     try {
-      created=await engine.json('POST','/containers/create?name='+name,{
+      const spec = {
         Image:plan.image, User:'65534:65534', WorkingDir:HOUSE_REPOSITORY,
         Entrypoint:[HOUSE_NODE,'-e',bootstrap,'--'], Cmd:[path], Labels:{'loom.job':plan.job,'loom.box':plan.box},
         Healthcheck:{Test:['NONE']}, OpenStdin:true, AttachStdin:true, StdinOnce:true,
         AttachStdout:true, AttachStderr:true, Tty:false,
         HostConfig:{ReadonlyRootfs:true, Privileged:false, Mounts:[], CapDrop:['ALL'],
-          SecurityOpt:['no-new-privileges'], LogConfig:{Type:'none'}, PidsLimit:32, Memory:128*1024*1024,
-          Runtime:plan.runtime, NanoCpus:500_000_000, PublishAllPorts:false, NetworkMode:'bridge'},
-      },setup);
+          SecurityOpt:['no-new-privileges'], LogConfig:{Type:'none'}, PidsLimit:helperPids, Memory:helperMemory,
+          Runtime:plan.runtime, NanoCpus:helperNanoCpus, PublishAllPorts:false, NetworkMode:'bridge'},
+      };
+      if (plan.podmanHelperSubid === undefined) {
+        remove = true;
+        created = await engine.json('POST','/containers/create?name='+name,spec,setup);
+      } else {
+        const subid = podmanHelperSubid.parse(plan.podmanHelperSubid);
+        const info = rootlessInfo.parse(await engine.json('GET', '/v5.0.0/libpod/info', undefined, setup));
+        if (!['cpu','memory','pids'].every(controller => info.host.cgroupControllers.includes(controller)))
+          throw new Error('Helper resource controllers are unavailable');
+        const { uidmap, gidmap } = info.host.idMappings;
+        if (!coversSubid(uidmap,subid) || !coversSubid(gidmap,subid))
+          throw new Error('Helper subordinate ID is unavailable');
+        // Keep low image IDs in place. Only the helper's nobody ID uses the selected subordinate ID.
+        const maps = [{ container_id: 0, host_id: 0, size: subid }, { container_id: 65534, host_id: subid, size: 1 }];
+        const hostConfig = spec.HostConfig;
+        remove = true;
+        created = await engine.json('POST','/v5.0.0/libpod/containers/create',{
+          name, image:spec.Image, entrypoint:spec.Entrypoint, command:spec.Cmd, work_dir:spec.WorkingDir,
+          labels:spec.Labels, user:spec.User, stdin:spec.OpenStdin, terminal:spec.Tty, oci_runtime:hostConfig.Runtime,
+          env_host:false, httpproxy:false, systemd:'false', healthconfig:spec.Healthcheck, log_configuration:{ driver:hostConfig.LogConfig.Type },
+          privileged:hostConfig.Privileged, cap_drop:hostConfig.CapDrop, no_new_privileges:true, read_only_filesystem:hostConfig.ReadonlyRootfs,
+          read_write_tmpfs:false, image_volume_mode:'ignore', netns:{ nsmode:hostConfig.NetworkMode }, publish_image_ports:hostConfig.PublishAllPorts,
+          userns:{ nsmode:'private' }, idmappings:{ HostUIDMapping:false, HostGIDMapping:false, UIDMap:maps, GIDMap:maps },
+          resource_limits:{ memory:{ limit:hostConfig.Memory }, pids:{ limit:hostConfig.PidsLimit }, cpu:{ period:cpuPeriod, quota:cpuQuota } },
+        },setup);
+      }
     } catch(error) {
       if(error instanceof DockerResponseError && error.status>=400 && error.status<500)remove=false;
       throw error;
@@ -116,6 +161,8 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
     id=identity;
     const actual=await engine.json('GET','/containers/'+id+'/json',undefined,setup) as {Mounts?:unknown[]};
     if(!Array.isArray(actual?.Mounts)||actual.Mounts.length)throw new Error('Unexpected container storage');
+    if (plan.podmanHelperSubid !== undefined && !mappedLimits.safeParse(actual).success)
+      throw new Error('Unexpected helper resource limits');
     socket=await engine.attach(id,setup);
     setup.throwIfAborted();
   })();
