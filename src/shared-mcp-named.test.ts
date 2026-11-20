@@ -164,6 +164,19 @@ it('loads identity as a core with an index, and further pieces by name',async()=
   // A dated model name falls back to its family's page.
   expect((await art.call('identity',{piece:'model',model:'fictional-model-9-1'})).text).toContain('FICTIONAL_MODEL_FAMILY');
   expect((await art.call('identity',{role:'tend'})).text).toContain('# Mode: tend\n\nFICTIONAL_ROLE');
+  const roleFile=join(home,'roles','tend.md');
+  const roleContract={inputs:[{name:'plan',io_type:'file',required:true,description:'The approved plan.'}],
+   outputs:[{name:'report',io_type:'json',required:false,description:'Results for the next helper.'}]};
+  expect(JSON.parse((await art.call('dossier',{role:'tend',format:'json'})).text)).toEqual({role:'tend',brief:'FICTIONAL_ROLE',contract:null});
+  const writeContract=(value:unknown)=>writeFileSync(roleFile,['```loom-contract',JSON.stringify(value),'```','FICTIONAL_ROLE'].join('\r\n'));
+  writeContract(roleContract);
+  expect((await art.call('dossier',{role:'tend'})).text).toContain('report (json, optional)');
+  expect(JSON.parse((await art.call('dossier',{role:'tend',format:'json'})).text).contract).toEqual(roleContract);
+  expect((await mark.call('dossier',{role:'tend'})).error).toBe(true);
+  expect((await art.call('dossier',{role:'../tend'})).error).toBe(true);
+  writeContract({...roleContract,inputs:[...roleContract.inputs,...roleContract.inputs]});
+  expect((await art.call('dossier',{role:'tend'})).error).toBe(true);
+  writeFileSync(roleFile,'FICTIONAL_ROLE');
   const all=(await art.call('identity',{piece:'all',client:'fictional-terminal',model:'fictional-model'})).text;
   for(const present of ['FICTIONAL_CREED','FICTIONAL_SELF_MODEL','FICTIONAL_HARNESS','FICTIONAL_MODEL_FAMILY'])expect(all).toContain(present);
   // No path leaves the declared folder, and no caller reads another agent's pages.

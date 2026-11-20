@@ -1,7 +1,7 @@
 /** A body's named tools against a started loom: the body's own tools server, its real generic tools, the
  * body's own credential, and loom's real doors. No harness: an MCP client stands where the model would. */
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {ProjectsStore} from '../backends/projects.js';
 import {PeopleStore} from '../backends/people.js';
 import {join} from 'node:path';
@@ -94,6 +94,9 @@ it('lets a body call every named tool it is offered, each answered as the door a
  const use=async(name:string,args:Record<string,unknown>={})=>{const result=await b.call(name,args);called.add(name);asTheDoorAnswered(name,result);if(result.error)refused.push(name);return result.text;};
  // The body in this fixture is handed no identity; the tool still answers for its own agent and no other.
  expect(await use('identity')).toContain('Agent: art');
+ const roles=join(b.home,'agents','art','roles');mkdirSync(roles,{recursive:true});
+ writeFileSync(join(roles,'review.md'),['```loom-contract','{"inputs":[],"outputs":[]}','```','Review the plan.'].join('\n'));
+ expect(JSON.parse(await use('dossier',{role:'review',format:'json'}))).toEqual({role:'review',brief:'Review the plan.',contract:{inputs:[],outputs:[]}});
  expect(await use('machine_read',{machine:'fictional',read:'memory',args:{}})).toContain('Machine read refused');
  const memory=/\((art:[a-f0-9-]{36})\)/.exec(await use('remember',{category:'reference',title:'Fictional pump lesson',content:'FICTIONAL_PUMP_WORDS'}))![1];
  expect(await use('recall',{query:'pump'})).toContain('FICTIONAL_PUMP_WORDS');
@@ -174,6 +177,7 @@ it('adds to a body\'s start only the tools\' own definitions, within a stated si
 it('gives a body told another agent\'s name nothing of that agent\'s: the door answers for the credential',async()=>{
  // The body's program is told it is mark. Its credential is art's. The member it works for has both agents.
  const b=await body({agent:'mark',seed:other=>{
+  mkdirSync(join(other.directory,'roles'),{recursive:true});writeFileSync(join(other.directory,'roles','review.md'),'MARK_SECRET_ROLE');
   writeFileSync(join(other.directory,'IDENTITY.md'),'MARK_SECRET_CREED');
   const projects=new ProjectsStore({dbPath:other.memories});projects.write({slug:'fictional-mark-shed',name:'MARK_SECRET_PROJECT'});projects.close();
   const people=new PeopleStore({dbPath:other.memories});people.write({slug:'fictional-mark-friend',name:'MARK_SECRET_PERSON'});people.close();
@@ -182,7 +186,7 @@ it('gives a body told another agent\'s name nothing of that agent\'s: the door a
  const id='mark:00000000-0000-4000-8000-000000000000';
  const every:Record<string,Record<string,unknown>[]>={
   // The tools that use the agent's name: in a read's variables, in a card's id, to pick their own rows, or as a task's owner.
-  identity:[{},{piece:'creed'},{piece:'all'}],note_read:[{path:'work/pump'}],note_list:[{}],memory_drafts:[{}],
+  identity:[{},{piece:'creed'},{piece:'all'}],dossier:[{role:'review',format:'json'}],note_read:[{path:'work/pump'}],note_list:[{}],memory_drafts:[{}],
   person:[{},{slug:'fictional-mark-friend'}],project:[{},{slug:'fictional-mark-shed'}],task_create:[{title:'Fictional',goal:'g',why:'w'}],
   // The rest never send the name: loom takes the agent from the credential.
   remember:[{category:'reference',title:'Fictional told-mark memory',content:'words'}],recall:[{query:'secret creed project person'}],update:[{id,content:'x'}],forget:[{id}],episodes:[{}],

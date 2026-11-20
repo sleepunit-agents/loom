@@ -291,3 +291,24 @@ history.
 - `scripts`: build, CI and acceptance scripts. Those that run the program import the build (`dist`), so `npx tsc -p .` comes first. Three import `src` instead, because they are run from source by `tsx` or `vitest`: `scripts/generate-data-schema.ts` (`npm run schema:generate`, which writes `assets/data/schema.sql`), `scripts/rebuild-access-actions.test.mjs` and `scripts/rebuild-work-visibility.test.mjs`. `scripts/ci-runners.test.ts` reads three test files under `src/ui` as text.
 - Test fixtures are named `*.fixture.ts` beside the tests that use them, or live in `test/fixtures`; neither is compiled into `dist`.
 - `docs/specs`: the designs each part was built from. Several describe the older program; where one disagrees with this page, the code decides.
+
+### Worker role briefs
+
+An agent reads its own `roles/<name>.md` with `dossier({role: "<name>"})`.
+To declare what a helper takes and returns, start the page with a fenced
+`loom-contract` JSON block and put the worker brief below it.
+
+````markdown
+```loom-contract
+{
+  "inputs": [{"name":"plan","io_type":"file","required":true,"description":"The plan to review."}],
+  "outputs": [{"name":"review","io_type":"file","required":true,"description":"The written review."}]
+}
+```
+Review the plan and write the findings to the review file.
+````
+
+Workflow scripts can request `format: "json"` and parse the returned text as
+`{role, brief, contract}`. Each direction accepts unique parameter names and
+the types `file`, `dir`, `text` and `json`. Older pages return their original
+brief with a null contract. A malformed declaration returns a tool error.
