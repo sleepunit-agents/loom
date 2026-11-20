@@ -3,6 +3,7 @@ import type { Viewer } from '../../policy.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
+import { slug as slugSchema } from '../../slug.js';
 import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
 import { snapshotKnowledgeRevision } from '../../backends/knowledge-revisions.js';
 import { MAX_PAGE_BODY_LENGTH } from '../../backends/knowledge-verification.js';
@@ -100,7 +101,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   // Imported documents keep their own address and provenance until somebody checks them.
   operations.register(operation({ name: 'mind.knowledgeImport', write: true, recover,
     input: z.object({
-      slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(128), title: z.string().trim().min(1).max(200),
+      slug: slugSchema(128), title: z.string().trim().min(1).max(200),
       domain: z.string().trim().toLowerCase().min(1).max(200), body: z.string().min(1).max(MAX_PAGE_BODY_LENGTH),
       provenance: z.string().trim().min(1).max(2000),
     }).strict(), output: z.unknown(), may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
