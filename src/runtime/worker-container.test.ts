@@ -1083,6 +1083,7 @@ it('holds the core house\'s build to the build limit, reports the job all the wh
 it('builds the pinned copy-only review source and keeps it out of the ordinary body launcher', async () => {
   const f = fixture(), engine = bare(f), review = { ...job, coldReview: { change: 'github:org/house#7', headCommit: commit },
     house: { ...job.house, file: '' } };
+  expect(() => f.executor.build({ ...review, coldReview: { ...review.coldReview, headCommit: '' } }, f.abort.signal)).toThrow();
   expect(() => f.executor.build({ ...review, program: namedProgram }, f.abort.signal)).toThrow();
   expect(() => f.executor.build({ ...review, house: job.house }, f.abort.signal)).toThrow();
   expect(() => f.executor.build(review, f.abort.signal, Buffer.from('fixture'))).toThrow();
@@ -1096,6 +1097,10 @@ it('builds the pinned copy-only review source and keeps it out of the ordinary b
   expect(engine.order).toEqual([core, image]);
   expect(new URL(f.engine.build.mock.calls[1][0], 'http://engine').searchParams.get('dockerfile')).toBe(NO_HOUSEFILE);
   expect(f.source.context).toHaveBeenCalledWith(review.house, commit, expect.any(AbortSignal), noHousefile());
+  const builds = f.engine.build.mock.calls.length;
+  f.source.fetch.mockResolvedValueOnce('d'.repeat(40));
+  await expect(f.executor.build(review, f.abort.signal)).rejects.toThrow('Worker build failed');
+  expect(f.engine.build).toHaveBeenCalledTimes(builds);
   expect(() => f.executor.start(review, image, f.abort.signal)).toThrow('isolated reviewer');
   expect(f.engine.json).not.toHaveBeenCalled();
 });
