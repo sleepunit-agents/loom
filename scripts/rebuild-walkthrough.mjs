@@ -4,6 +4,7 @@ import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
+import {approvalCaution} from './rebuild-approval-caution.mjs';
 import {approvalRulesAndExpiry,approvalPreparedChanges} from './rebuild-approval-settings.mjs';
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
@@ -204,6 +205,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  report.actions.approvalCaution=await approvalCaution({page,app,example:report.example,out});
+  save();yield {phase:'approval-caution',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await approvalPreparedChanges({page,tile,app,example:report.example,out,clock}));}
   save();yield {phase:'prepared-changes',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}

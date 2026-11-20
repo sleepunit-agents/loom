@@ -160,7 +160,11 @@
     {
       "id": "approvals-016",
       "promise": "An open household approval card can show an advisory caution based on the proposal checks. Allow always checks again and can refuse for additional reasons. For example, Tempo can refuse a repeating schedule for today when its last scheduled time has passed. The caution can be up to 60 seconds stale while the card stays open. It refreshes on focus, on the timer, and after a refused Allow. Both answer buttons stay available.",
-      "source": "docs/how-it-works/site/approvals.html"
+      "source": "docs/how-it-works/site/approvals.html",
+      "probe": {
+        "kind": "action",
+        "action": "approvalCaution"
+      }
     },
     {
       "id": "approvals-017",
