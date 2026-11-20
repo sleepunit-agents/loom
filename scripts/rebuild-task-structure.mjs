@@ -14,8 +14,9 @@ export async function taskStructure({page,tile,app,example,out}){
   const titles=await tile.locator('[data-split-row]:visible').allTextContents();
   check(titles.length===2&&titles[0].includes(urgent.title)&&titles[1].includes(later.title),'Ready is not urgent-first or includes epic/blocked work');
   await tile.getByText(urgent.title,{exact:true}).click();
-  const reader=tile.getByRole('region',{name:'Tasks: the open item',exact:true});
-  await reader.getByText(epic.title,{exact:true}).waitFor();await reader.getByText(example.conversation,{exact:true}).waitFor();
+  const reader=tile.getByRole('article',{name:'Task',exact:true});
+  await reader.getByRole('button',{name:`Open ${epic.title}, ${epic.id}`,exact:true}).waitFor();await reader.getByText('From a conversation',{exact:true}).waitFor();
+  check(s.get(urgent.id).sourceId===example.conversation,'Task source was lost');
   let refused=false;try{write(()=>s.link(urgent.id,later.id,'parent-child'));}catch{refused=true;}
   check(refused&&s.get(urgent.id).links.filter(l=>l.type==='parent-child').length===1,'A second parent was accepted');
   write(()=>{s.close(urgent.id,'Inspected.');});
@@ -24,17 +25,23 @@ export async function taskStructure({page,tile,app,example,out}){
   await tile.getByText(blocked.title,{exact:true}).waitFor();
   check(s.ready().some(t=>t.id===blocked.id),'Closing both blockers did not release work');
   await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(blocked.title,{exact:true})}).click();
-  await reader.getByText(epic.title,{exact:true}).waitFor();
+  await reader.getByRole('button',{name:`Open ${epic.title}, ${epic.id}`,exact:true}).waitFor();
  });
  await attempt('taskComments',async()=>{
   check(evidence.taskStructure?.ok,'Structure action did not complete');
   write(()=>{s.claim(blocked.id,actor);s.comment(blocked.id,'Fern checked the hose.',actor);s.comment(blocked.id,'Alex confirmed the hose.',{kind:'member',id:'alex'});});
-  const reader=tile.getByRole('region',{name:'Tasks: the open item',exact:true});
+  const reader=tile.getByRole('article',{name:'Task',exact:true});
   await reader.getByText('Alex confirmed the hose.',{exact:true}).waitFor();
-  const comments=reader.locator('section').filter({has:page.getByRole('heading',{name:'Comments',exact:true})});
-  const text=await comments.innerText();
-  check(text.indexOf('Fern checked the hose.')<text.indexOf('Alex confirmed the hose.')&&text.includes('agent fern')&&text.includes('member alex'),'Comment order/actors missing');
-  check(await comments.locator('time[datetime]').count()===2,'Comment times missing');
+  const comments=reader.getByRole('region',{name:'Comments',exact:true});
+  const entries=comments.getByRole('listitem');
+  check(await entries.count()===2,'Expected two task comments');
+  for(const [index,author,words] of [[0,'Fern','Fern checked the hose.'],[1,'Alex','Alex confirmed the hose.']]){
+   const entry=entries.nth(index);
+   await entry.getByText(words,{exact:true}).waitFor();
+   check((await entry.locator('strong').innerText()).startsWith(author),'Comment author differs');
+   check(!!await entry.locator('time').getAttribute('datetime'),'Comment time missing');
+  }
+  check(s.get(blocked.id).comments.map(c=>c.actorKind+':'+c.actor).join(',')==='agent:fern,member:alex','Stored comment actors differ');
   check(s.get(blocked.id).assignee==='fern','Agent claim missing');
  });
  // Leave no new ready work to disturb subsequent app visits.
