@@ -1,29 +1,8 @@
-import { useEffect,useRef,useState,type FormEvent } from 'react';
+import { useRef,useState,type FormEvent } from 'react';
 import { Button,Input } from '../../kit';
 import { newId } from '../../data/id';
 import type { BridgeConnectionRow,BridgeChannelRow,BridgePersonRow,BridgeSendRow,BridgesSnapshot } from '../bridges-view';
-import {useDataQuery} from '../../data/graphql';
-import {HomeMessageComposer} from '../attention/home-composer';
-import {threadPath} from '../attention/home-comms-data';
-
-type Navigation={go:(path:string)=>void};
-function useSettingRequest({go}:Navigation){
- const feed=useDataQuery<{homeComms:{member:string;agents:string[]}|null;householdSetup:{defaultAgent:string|null}|null}>('{ homeComms { member agents } householdSetup { defaultAgent } }');
- const mailbox=feed.status==='live'?feed.data?.homeComms:null;
- const agent=mailbox?.agents.find(id=>id===feed.data?.householdSetup?.defaultAgent)??mailbox?.agents[0];
- const member=mailbox?.member;
- const [draft,setDraft]=useState<{member:string;agent:string;words:string}>();
- useEffect(()=>{setDraft(undefined);},[member,agent]);
- const prepare=(input:object)=>{
-  if(member&&agent)setDraft({member,agent,words:'Please propose this bridge setting change.\n'+JSON.stringify(input,null,2)});
- };
- const reader=!member||!agent?<p>Connect to your agent in Comms to request a bridge change.</p>:
-  draft&&draft.member===member&&draft.agent===agent&&<section aria-label="Bridge change request">
-   <p>Review the message to {agent}. You can answer the proposed change in Inbox.</p>
-   <HomeMessageComposer key={draft.words} member={member} agent={agent} suggestedText={draft.words} onOpened={id=>{setDraft(undefined);go(threadPath(id));}}/>
-  </section>;
- return {prepare,clear:()=>setDraft(undefined),disabled:!member||!agent,reader};
-}
+import {useSettingRequest,type Navigation} from '../attention/setting-request';
 export async function bridgeCommand(input:object,request:typeof fetch=fetch){
  try{
   const response=await request('/api/bridges/command',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({id:newId(),input})});
@@ -45,7 +24,7 @@ function AgentChoice({name, agents, current}: {name:string;agents?:ReadonlySet<s
  </select>;
 }
 export function ConnectionControl({go,row,filters=[],agents}:Navigation&{row?:BridgeConnectionRow;filters?:BridgesSnapshot['filters'];agents?:ReadonlySet<string>}){
- const request=useSettingRequest({go});
+ const request=useSettingRequest({go},'bridge setting change','Bridge change request');
  const save=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);request.prepare({action:'connection',id:row?.id??newId(),platform:row?.platform??field(data,'platform'),workspace:row?.workspace??field(data,'workspace'),agent:row?.agent??field(data,'agent'),botUser:row?.botUser??field(data,'botUser'),tokenSecret:field(data,'tokenSecret'),appSecret:field(data,'appSecret')||null,enabled:data.has('enabled'),only:lines(data,'only'),ignore:lines(data,'ignore')});};
  return <><form onChange={request.clear} onSubmit={save} className="grid gap-3"><Address row={row} fixed={!!row}/><label>Agent ID{row?<Input name="agent" readOnly defaultValue={row.agent}/>:<AgentChoice name="agent" agents={agents}/> }</label><label>Bot user ID<Input name="botUser" readOnly={!!row} defaultValue={row?.botUser} required maxLength={200}/></label>
   <label>Bot token secret name<Input name="tokenSecret" defaultValue={row?.tokenSecret} required maxLength={200}/></label><label>Slack app token secret name<Input name="appSecret" defaultValue={row?.appSecret??''} maxLength={200}/></label>
@@ -55,13 +34,13 @@ export function ConnectionControl({go,row,filters=[],agents}:Navigation&{row?:Br
  </form>{request.reader}</>;
 }
 export function ChannelControl({go,row,agents}:Navigation&{row?:BridgeChannelRow;agents?:ReadonlySet<string>}){
- const request=useSettingRequest({go});return <><form onChange={request.clear} className="grid gap-3" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);request.prepare({action:'channel',platform:row?.platform??field(data,'platform'),workspace:row?.workspace??field(data,'workspace'),channel:row?.channel??field(data,'channel'),answers:field(data,'answers'),botsMayTalk:data.has('botsMayTalk')});}}>
+ const request=useSettingRequest({go},'bridge setting change','Bridge change request');return <><form onChange={request.clear} className="grid gap-3" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);request.prepare({action:'channel',platform:row?.platform??field(data,'platform'),workspace:row?.workspace??field(data,'workspace'),channel:row?.channel??field(data,'channel'),answers:field(data,'answers'),botsMayTalk:data.has('botsMayTalk')});}}>
   <Address row={row} fixed={!!row}/><label>Channel ID<Input name="channel" readOnly={!!row} defaultValue={row?.channel} required maxLength={200}/></label><label>Agent answering when nobody is addressed<AgentChoice name="answers" agents={agents} current={row?.answers}/></label><label><input name="botsMayTalk" type="checkbox" defaultChecked={row?.botsMayTalk}/>Bots may talk</label><Button type="submit" disabled={request.disabled}>Review channel rule</Button>
   {row&&<Button type="button" variant="danger-quiet" disabled={request.disabled} onClick={()=>request.prepare({action:'removeChannel',platform:row.platform,workspace:row.workspace,channel:row.channel})}>Remove channel rule</Button>}
  </form>{request.reader}</>;
 }
 export function PersonControl({go,row}:Navigation&{row?:BridgePersonRow}){
- const request=useSettingRequest({go});return <><form onChange={request.clear} className="grid gap-3" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);request.prepare({action:'person',platform:row?.platform??field(data,'platform'),workspace:row?.workspace??field(data,'workspace'),user:row?.user??field(data,'user'),member:field(data,'member')});}}>
+ const request=useSettingRequest({go},'bridge setting change','Bridge change request');return <><form onChange={request.clear} className="grid gap-3" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);request.prepare({action:'person',platform:row?.platform??field(data,'platform'),workspace:row?.workspace??field(data,'workspace'),user:row?.user??field(data,'user'),member:field(data,'member')});}}>
   <Address row={row} fixed={!!row}/><label>Outside user ID<Input name="user" readOnly={!!row} defaultValue={row?.user} required maxLength={200}/></label><label>Household member ID<Input name="member" defaultValue={row?.member} required maxLength={200}/></label><Button type="submit" disabled={request.disabled}>Review person link</Button>
   {row&&<Button type="button" variant="danger-quiet" disabled={request.disabled} onClick={()=>request.prepare({action:'removePerson',platform:row.platform,workspace:row.workspace,user:row.user})}>Remove person link</Button>}
  </form>{request.reader}</>;

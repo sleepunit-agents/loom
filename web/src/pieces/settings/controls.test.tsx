@@ -3,6 +3,9 @@ import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer lacks declarations.
 import { act, create } from 'react-test-renderer';
 import { ValueControl, RequestControl, RevokeControl, DefaultControl, RuleControl } from './controls';
+vi.mock('../attention/home-composer',()=>({HomeMessageComposer:(props:{suggestedText:string})=>h('textarea',{value:props.suggestedText,readOnly:true})}));
+const requestedInput=()=>JSON.parse(tree.root.findByType('textarea').props.value.split('\n').slice(1).join('\n'));
+vi.mock('../../data/graphql',()=>({useDataQuery:()=>({status:'live',data:{homeComms:{member:'alex',agents:['fern']},householdSetup:{defaultAgent:'fern'}}})}));
 vi.mock('../../kit',()=>({Button:(p:any)=>h('button',p),Input:(p:any)=>h('input',p)}));
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:any;
@@ -33,9 +36,10 @@ it('submits allow, deny, always and cancel from the actual request controls',asy
 });
 it('submits revoke, default and both rule timings from their actual controls',async()=>{
  transport();await draw(RevokeControl,{id:'grant'});await click('Revoke grant');await act(async()=>tree.unmount());
- await draw(DefaultControl,{answer:'ask'});formData({answer:'never'});await submit();await act(async()=>tree.unmount());
+ await draw(DefaultControl,{answer:'ask'});formData({answer:'never'});await submit();expect(requestedInput()).toEqual({answer:'never'});await act(async()=>tree.unmount());
  await draw(RuleControl,{secret:'TOKEN',snapshot:{rules:[],ruleAgents:[]}});formData({answer:'auto',minutes:'10',on_request:'art, mark',at_start:'art'});await submit();
- expect(payloads).toEqual([{url:'/api/secrets/command',input:{action:'revoke',id:'grant'}},{url:'/api/secrets/command',input:{action:'default',answer:'never'}},{url:'/api/secrets/command',input:{action:'rule',secret:'TOKEN',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'},{agent:'mark',when:'on_request'},{agent:'art',when:'at_start'}]}}]);
+ expect(payloads).toEqual([{url:'/api/secrets/command',input:{action:'revoke',id:'grant'}}]);
+ expect(requestedInput()).toEqual({secret:'TOKEN',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'},{agent:'mark',when:'on_request'},{agent:'art',when:'at_start'}]});
 });
 it('keeps the password uncontrolled and absent from rendered state through submission and rerender',async()=>{
  const field={value:'synthetic-render-secret'};transport();await draw(ValueControl,{name:'TOKEN'},field);
