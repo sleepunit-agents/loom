@@ -26,6 +26,12 @@ const summary = new GraphQLObjectType({ name:'MemoryKnowledgeSummary', fields:su
 const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text,excerpt:requiredText,retrievedAt:requiredText,createdAt:requiredText } });
 const reference = new GraphQLObjectType({ name:'MemoryKnowledgeReference', fields:{ slug:requiredText,title:requiredText } });
 const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
+const annotation = new GraphQLObjectType({name:'MemoryKnowledgeAnnotation',fields:{
+ id:{type:new GraphQLNonNull(GraphQLInt)},kind:requiredText,actor:requiredText,words:requiredText,evidence:requiredText,created:requiredText,
+}});
+const supersession = new GraphQLObjectType({name:'MemoryKnowledgeSupersession',fields:{
+ revision:{type:new GraphQLNonNull(GraphQLInt)},actor:requiredText,reason:requiredText,evidence:requiredText,created:requiredText,
+}});
 const revision = new GraphQLObjectType({ name:'MemoryKnowledgeRevision', fields:{
  id:{type:new GraphQLNonNull(GraphQLInt)},slug:requiredText,body:requiredText,op:requiredText,replacedAt:requiredText,actor:text,
 } });
@@ -67,6 +73,18 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
      FROM verifications v JOIN pages p ON p.id=v.page_id
      WHERE p.slug=? AND p.status='active' ORDER BY v.id DESC LIMIT 30`).all(source.slug);
    } catch { throw new GraphQLError('Verification history is unavailable'); }
+  }},
+  annotations:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(annotation))),resolve:(source,_args,context)=>{
+   if(!allowed(context) || !db)return [];
+   if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='page_annotations'").get())return [];
+   return db.prepare(`SELECT a.id,a.kind,a.actor,a.words,a.evidence,a.created FROM page_annotations a
+    JOIN pages p ON p.id=a.page_id WHERE p.slug=? AND p.status='active' ORDER BY a.id DESC LIMIT 30`).all(source.slug);
+  }},
+  supersessions:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(supersession))),resolve:(source,_args,context)=>{
+   if(!allowed(context) || !db)return [];
+   if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='page_supersessions'").get())return [];
+   return db.prepare(`SELECT s.revision,s.actor,s.reason,s.evidence,s.created FROM page_supersessions s
+    JOIN pages p ON p.id=s.page_id WHERE p.slug=? AND p.status='active' ORDER BY s.revision DESC LIMIT 30`).all(source.slug);
   }},
   history:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(revision))),resolve:(source,_args,context)=>{
    if(!allowed(context))return [];

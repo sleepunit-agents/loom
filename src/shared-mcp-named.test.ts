@@ -317,6 +317,42 @@ it('appends contributions from two terminals to the current page and records the
  }finally{await art.client.close();await mark.client.close();await p.close();}
 });
 
+it('requires a recorded supersession for cross-author replacements and rejects stale reads',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ const slug='shared-account';
+ const supersede=(expectedBody:string,id:string)=>mark.call('loom_command',{operation:'mind.knowledgeSupersede',
+  input:{slug,expectedBody,body:'Corrected measurement',reason:'Repeated the test',evidence:'Bench log 17'},id});
+ try{
+  await art.call('knowledge_write',{title:'Shared account',domain:'tools',body:'First measurement'});
+  await mark.call('knowledge_write',{mode:'append',slug,body:'Second observation'});
+  const read=async()=>(await mark.call('knowledge_read',{slug})).text;
+  const before=await read(),revision=Number(/^- (\d+) \(append/m.exec(before)?.[1]);
+  expect(revision).toBeGreaterThan(0);
+  expect((await mark.call('knowledge_edit',{slug,body:'Erase the original'})).error).toBe(true);
+  expect((await mark.call('knowledge_restore',{slug,revision})).error).toBe(true);
+  expect(JSON.parse((await supersede('First measurement','stale')).text).code).toBe('conflict');
+  expect(await read()).toBe(before);
+  const dispute={operation:'mind.knowledgeDispute',input:{slug,words:'Check the calibration',evidence:'Instrument log'},id:'dispute-once'};
+  const posted=await mark.call('loom_command',dispute);
+  expect(JSON.parse(posted.text).ok).toBe(true);
+  expect((await mark.call('loom_command',dispute)).text).toBe(posted.text);
+  const disputed=await read();
+  expect(disputed).toContain('First measurement\n\nSecond observation');
+  expect(disputed).toContain('dispute by mark');
+  const current='First measurement\n\nSecond observation';
+  const saved=await supersede(current,'supersede-once');
+  expect(JSON.parse(saved.text).ok).toBe(true);
+  expect((await supersede(current,'supersede-once')).text).toBe(saved.text);
+  for(let n=0;n<11;n++)expect((await art.call('knowledge_write',{mode:'append',slug,body:'Follow-up '+n})).error).toBe(false);
+  const final=await read();
+  expect(final).toContain('Corrected measurement');
+  expect(final.match(/Check the calibration \(Instrument log\)/g)).toHaveLength(1);
+  expect(final.match(/mark replaced revision/g)).toHaveLength(1);
+  expect(final).toContain('Repeated the test (Bench log 17)');
+  expect(final).not.toContain('(supersede, replaced');
+ }finally{await art.client.close();await mark.client.close();await p.close();}
+});
+
 it('lists the current attributed approval answer after an owner answers through MCP',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  const owner=new Client({name:'fictional-owner-terminal',version:'1'});

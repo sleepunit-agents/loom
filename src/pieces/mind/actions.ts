@@ -99,7 +99,8 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   }));
   // Edit and restore both replace a page's body. Either saves the displaced
   // body as a version first, in the same transaction, and keeps the newest ten.
-  const replace = (name: string, op: string, input: z.ZodType<{ slug: string }>, next: (page: { id: number; body: string }, value: never) => string, source: (value: never) => string = () => '') =>
+  type PageChange = { slug: string; reason?: string; evidence?: string };
+  const replace = <T extends PageChange>(name: string, op: string, input: z.ZodType<T>, next: (page: { id: number; body: string }, value: T) => string, source: (value: T) => string = () => '') =>
     operations.register(operation({ name, write: true, input, output: z.unknown(), recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, value) {
@@ -111,16 +112,23 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         const answer = db.transaction(() => {
           mindReceipts.expire(db, ctx.now);
           const replay = recover(ctx); if (replay) return replay;
-          const page = db.prepare('SELECT id, body, status FROM pages WHERE slug = ?').get(value.slug) as { id: number; body: string; status: string } | undefined;
+          const page = db.prepare('SELECT id, body, status, author FROM pages WHERE slug = ?').get(value.slug) as { id: number; body: string; status: string; author: string | null } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before changing it');
-          const body = next(page, value as never), from = source(value as never);
+          const body = next(page, value), from = source(value);
           if (from && !/^https?:\/\//.test(from)) throw new OperationError('invalid', 'The source must be an http or https link, or empty');
           if (from && db.prepare('SELECT 1 FROM citations WHERE page_id = ? AND source_locator = ?').get(page.id, from)) throw new OperationError('conflict', 'The page already names that source');
           // A source alone is a change too: the words stay and no version is kept.
           if (body === page.body && !from) throw new OperationError('conflict', 'The page already says that');
           const at = new Date(ctx.now).toISOString();
+          if (body !== page.body && page.author && page.author !== ctx.viewer.id && (op === 'edit' || op === 'restore')) {
+            throw new OperationError('conflict', 'Use mind.knowledgeSupersede to replace another author’s page, or append a finding');
+          }
           const revision = body === page.body ? null : snapshotKnowledgeRevision(db, page.id, value.slug, page.body, op, at, ctx.viewer.id);
+          if (op === 'supersede') {
+            db.prepare('INSERT INTO page_supersessions (revision,page_id,actor,reason,evidence,created) VALUES (?,?,?,?,?,?)')
+              .run(revision, page.id, ctx.viewer.id, value.reason, value.evidence, at);
+          }
           setKnowledgePageBody(db, page.id, body, at);
           if (from) {
             const title = (db.prepare('SELECT title FROM pages WHERE id = ?').get(page.id) as { title: string }).title;
@@ -138,20 +146,48 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   const slug = pageSlug;
   replace('mind.knowledgeAppend', 'append', z.object({
     slug, body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH), source: z.string().trim().max(4000).default(''),
-  }).strict(), (page, value: { body: string }) => {
+  }).strict(), (page, value) => {
     const combined = page.body + '\n\n' + value.body;
     if (combined.length > MAX_PAGE_BODY_LENGTH) throw new OperationError('invalid', 'The combined page exceeds the body limit');
     return combined;
-  }, (value: { source: string }) => value.source);
+  }, (value) => value.source);
+  replace('mind.knowledgeSupersede', 'supersede', z.object({
+    slug, expectedBody: z.string().max(MAX_PAGE_BODY_LENGTH), body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH),
+    reason: z.string().trim().min(1).max(2000), evidence: z.string().trim().min(1).max(4000),
+  }).strict(), (page, value) => {
+    if (page.body !== value.expectedBody) throw new OperationError('conflict', 'The page changed. Read it again before replacing it');
+    return value.body;
+  });
   // Edit: new words, a source to add, or both.
   replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH).optional(), source: z.string().trim().max(4000).default('') }).strict()
     .refine(value => value.body !== undefined || value.source !== '', 'Give new words, a source, or both'),
-    (page, value: { body?: string }) => value.body ?? page.body, (value: { source: string }) => value.source);
+    (page, value) => value.body ?? page.body, (value) => value.source);
   replace('mind.knowledgeRestore', 'restore', z.object({ slug, revision: z.number().int().positive() }).strict(),
-    (page, value: { revision: number }) => {
+    (page, value) => {
       const kept = db!.prepare('SELECT body FROM page_revisions WHERE id = ? AND page_id = ?').get(value.revision, page.id) as { body: string } | undefined;
       if (!kept) throw new OperationError('not-found', 'That version of the page is not kept');
       return kept.body;
     });
+  operations.register(operation({name:'mind.knowledgeDispute',write:true,recover,
+    input:z.object({slug,words:z.string().trim().min(1).max(4000),evidence:z.string().trim().min(1).max(4000)}).strict(),
+    output:z.unknown(),may:viewer=>mayAct(viewer,{type:'knowledge'},options.sharing(),'act'),
+    run(ctx,input){
+      refuse(ctx.viewer);
+      if(!db || !mindReceiptsReady(db))throw new OperationError('unavailable','Knowledge is not prepared for changes');
+      const receipt=ctx.receipt!;
+      const result=db.transaction(()=>{
+        mindReceipts.expire(db,ctx.now);
+        const replay=recover(ctx);if(replay)return replay;
+        const page=db.prepare("SELECT id FROM pages WHERE slug=? AND status='active'").get(input.slug) as {id:number}|undefined;
+        if(!page)throw new OperationError('not-found','Active knowledge page not found');
+        const row=db.prepare("INSERT INTO page_annotations (page_id,kind,actor,words,evidence,created) VALUES (?,'dispute',?,?,?,?)")
+          .run(page.id,ctx.viewer.id,input.words,input.evidence,new Date(ctx.now).toISOString());
+        const result={annotation:Number(row.lastInsertRowid),slugs:[input.slug]};
+        mindReceipts.save(db,receipt,result,receipt.expires);return result;
+      }).immediate();
+      if(!(result instanceof RecoveredWrite))ctx.changed('knowledge',input.slug);
+      return result;
+    },
+  }));
   return { close() { db?.close(); } };
 }

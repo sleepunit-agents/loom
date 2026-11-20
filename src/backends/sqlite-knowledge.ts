@@ -63,6 +63,23 @@ function createAndUpgrade(db: Database): void {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_supersessions_old ON supersessions(old_slug)`,
     `CREATE INDEX IF NOT EXISTS idx_supersessions_new ON supersessions(new_slug)`,
+    `CREATE TABLE IF NOT EXISTS page_annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, actor TEXT NOT NULL, words TEXT NOT NULL,
+      evidence TEXT NOT NULL, created TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_page_annotations_page ON page_annotations(page_id,id)`,
+    // Same-page replacements retain their rationale after ordinary revision bodies age out.
+    `CREATE TABLE IF NOT EXISTS page_supersessions (
+      revision INTEGER PRIMARY KEY,
+      page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      actor TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence TEXT NOT NULL,
+      created TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_page_supersessions_page ON page_supersessions(page_id,revision)`,
     `CREATE TABLE IF NOT EXISTS page_revisions (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
