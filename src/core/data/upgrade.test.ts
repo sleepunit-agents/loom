@@ -419,24 +419,26 @@ describe('upgrading a household database', () => {
     expect(old.prepare('SELECT * FROM migrations ORDER BY number').all()).toEqual(marks);
   });
 
-  it('gives a household that reached a number by steps exactly the pinned shape of that number', () => {
-    // Recognition holds a database to the pinned shape of its own number. A household installed earlier and
-    // upgraded since got there by the steps, so every step from every start must land on the pinned shape.
-    // applyUpgrades runs the numbered SQL steps in order. After checking one destination, each
-    // household is already the exact starting state for its next step. Keep each origin's own
-    // database: recognition rehearses its actual DDL, including differences the shape ignores.
-    const households = new Map<number, Database.Database>();
-    for (const to of numbers.slice(1)) {
-      const installed = household(to - 1);
-      installed.pragma('foreign_keys = OFF');
-      households.set(to - 1, installed);
-      const pinned = open(); pinned.exec(shipped(to));
-      const expected = dataSchemaShape(pinned);
-      for (const [from, old] of households) {
-        applyUpgrades(old, to - 1, () => at, to);
-        expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(expected);
-        if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
-      }
+  // Shipped shapes are immutable. Read each expected shape once across installation origins.
+  const expectedShapes = new Map<number, unknown[]>();
+  function expectedShape(number: number) {
+    const cached = expectedShapes.get(number);
+    if (cached) return cached;
+    const pinned = open();
+    pinned.exec(shipped(number));
+    const shape = dataSchemaShape(pinned);
+    expectedShapes.set(number, shape);
+    return shape;
+  }
+
+  it.each(numbers.slice(0, -1))('upgrades a household installed at schema %i through every later pinned shape', from => {
+    // Keep the origin's actual DDL through every step, including differences the shape ignores.
+    const old = household(from);
+    old.pragma('foreign_keys = OFF');
+    for (let to = from + 1; to <= dataSchemaNumber; to++) {
+      applyUpgrades(old, to - 1, () => at, to);
+      expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(expectedShape(to));
+      if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
     }
   });
 
