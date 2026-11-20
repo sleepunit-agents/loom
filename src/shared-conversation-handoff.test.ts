@@ -280,8 +280,8 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
  if(mode==='success'){
   const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
   clean.push(()=>tools.close());
-  const options=await tools.call('loom_command',{operation:'conversation.handoffOptions',input:{}});
-  expect(options.isError).not.toBe(true);
+  const options=await tools.call('loom_command',{operation:'conversation.handoffOptions',input:{},id:'options'});
+  expect(options.isError,options.content[0].text).not.toBe(true);
   expect(JSON.parse(options.content[0].text).value).toMatchObject({codexAvailable:true});
  }
  const response=await f.call('handoff',request,'launch');
