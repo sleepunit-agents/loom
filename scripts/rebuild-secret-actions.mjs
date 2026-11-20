@@ -10,12 +10,11 @@ export async function secretDefaultAction({page,tile,out,app,deferReload=false})
   await answer.waitFor();
   if(await answer.inputValue()!=='ask')throw Error('The example household did not start with Ask');
   phase='save';await answer.selectOption('never');
-  const originalUrl=page.url();
   await tile.getByRole('button',{name:'Review household default',exact:true}).click();
   await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Secret default request'}),change:'secretDefault',input:{answer:'never'},
    expectedWords:words=>words.endsWith(JSON.stringify({answer:'never'},null,2)),
    exists:()=>app.services.comms.db.$client.prepare('SELECT secrets_default FROM household').get()?.secrets_default==='never'});
-  await page.goto(originalUrl);await answer.waitFor();
+  await page.goto(new URL('/p/settings-preview/item/pieces/secret-default',app.url).href);await answer.waitFor();
   if(await answer.inputValue()!=='never')throw Error('The approved household default was not stored');
   if(deferReload)return {ok:true,before:'ask',after:'never',persistedAfterReload:false};
   phase='reload';await page.reload();await page.locator('.next-shell').waitFor();

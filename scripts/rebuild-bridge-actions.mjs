@@ -7,12 +7,12 @@ export async function bridgeSettingsAction({page,tile,out,app}){
  try{
   const db=app.services.comms.db.$client;
   const submit=async(form,label,input,exists)=>{
-   const originalUrl=page.url();
    const button=form.getByRole('button',{name:label,exact:true});
    await button.focus();await button.press('Enter');
    await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Bridge change request'}),change:'bridge',input,exists,
     expectedWords:words=>isDeepStrictEqual(JSON.parse(words.slice(words.indexOf('{'))),input)});
-   await page.goto(originalUrl);
+   const folder=input.action==='channel'?'channels':'people';
+   await page.goto(new URL('/p/bridges-preview/'+folder,app.url).href);
    await tile.waitFor();
   };
   await tile.getByRole('button',{name:/^Channel rules/}).click();

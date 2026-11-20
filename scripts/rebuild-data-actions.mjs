@@ -2,7 +2,7 @@
 import {parse} from 'graphql';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {join} from 'node:path';
-const signatures={Tasks:'query\\s+Tasks\\b',Approvals:'query\\s+ApprovalsView\\b',Sharing:'\\bhouseholdSharing\\b',Changes:'query\\s+ChangesView\\b',Inbox:'query\\s+Inbox\\b',Tempo:'query\\s+Tempo\\b',Home:'query\\s+DeskLastAnswer\\b',Projects:'query\\s+MemoryProjects\\b',Activity:'query\\s+MemoryActivity\\b',Comms:'query\\s+Comms\\b',Agents:'query\\s+DeskAgentProfiles\\b',People:'query\\s+MemoryPeople\\b',Knowledge:'query\\s+MemoryKnowledge\\b',Bridges:'query\\s+Bridges\\b',Settings:'query\\s+SettingsSecrets\\b','Household setup':'\\bhouseholdSetup\\b','Your account':'\\baccount\\s*\\{',Appearance:'query\\s+DeskPreferences\\b'};
+const signatures={Tasks:'query\\s+Tasks\\b',Approvals:'query\\s+ApprovalsView\\b',Sharing:'\\bhouseholdSharing\\b',Changes:'query\\s+ChangesView\\b',Inbox:'query\\s+Inbox\\b',Tempo:'query\\s+Tempo\\b',Home:'query\\s+DeskCardTalk\\b',Projects:'query\\s+MemoryProjects\\b',Activity:'query\\s+MemoryActivity\\b',Comms:'query\\s+Comms\\b',Agents:'query\\s+DeskAgentProfiles\\b',People:'query\\s+MemoryPeople\\b',Knowledge:'query\\s+MemoryKnowledge\\b',Bridges:'query\\s+Bridges\\b','Job usage':'query\\s+UsageConversations\\b','Machines and jobs':'query\\s+OwnerMachines\\b',Subscriptions:'\\bsubscriptionSetup\\b',Settings:'query\\s+SettingsSecrets\\b','Household setup':'\\bhouseholdSetup\\b','Your account':'\\baccount\\s*\\{',Appearance:'query\\s+DeskPreferences\\b'};
 export async function installDataProbe(page){
  await page.addInitScript(()=>{
   const Native=globalThis.WebSocket,state={sockets:[],entries:new WeakMap()};globalThis.__loomDataProbe=state;
