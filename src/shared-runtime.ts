@@ -9,6 +9,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { jobs, conversations } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
+import type { WorkRole } from './runtime/work-roles.js';
 import { Dispatcher } from './runtime/dispatcher.js';
 import { harnessCannotRun } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
@@ -23,13 +24,13 @@ import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
 export function registerSharedRuntime(operations: Operations, db: DataDatabase, options: {
-  now(): string; roles(): readonly ModelRole[];
+  now(): string; roles(): readonly ModelRole[]; workRoles?:readonly WorkRole[];
   runner(viewer: Viewer): Readonly<{ box: string }> | undefined;
   /** Called after the effect AND receipt commit, including successful replay. */
   jobEnded(id: string): void;
   applyProgram(job: Job, result: ProgramResult, changed: (table: string, id: string) => void): void;
 }) {
-  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun);
+  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun, options.workRoles);
   const stopped=new WeakSet<object>();
   /** The jobs a poll ended as ones no harness can hold, by the poll's input: told of once the write is committed. */
   const unplaced=new WeakMap<object,string[]>();

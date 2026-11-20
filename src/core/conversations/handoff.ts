@@ -1,4 +1,5 @@
-import {reviewPlace,reviewThread} from './review-place.js';
+import {slug} from '../../slug.js';
+import {reviewRequest,reviewPlace,reviewThread} from './review-place.js';
 import {conversations,jobs,memberAgents,threads} from '../data/schema.js';
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 import {MESSAGE_WORDS_MAX} from './words.js';
@@ -29,6 +30,7 @@ export interface HandoffToSelf{
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  ownerWork?(work:{job:{id:string;agent:string;conversation:string|null}}):boolean;
  codexAvailable?(agent:string):boolean;
+ workRoles?(agent:string):readonly {id:string;description:string;revision:string;available:boolean}[];
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Why this job hands nothing on at all, to its own body elsewhere or to a peer agent, or nothing. */
  hop(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
@@ -54,15 +56,16 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   return cv.member!==null && cv.project===null || handoffPeersAssigned(db,cv.agent,agent,cv.project);
  };
  operations.register(operation({name:'conversation.handoffOptions',write:false,doors:['http'],
-  input:z.object({}).strict().describe('List peer agents assigned to this private conversation and whether a Codex worker can take a new brief now.'),
-  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean()}).strict(),
+  input:z.object({}).strict().describe('List assigned peers, enabled work roles and current worker availability.'),
+  output:z.object({agents:z.array(z.string()),codexAvailable:z.boolean(),roles:z.array(z.object({id:z.string(),description:z.string(),available:z.boolean()})).optional()}).strict(),
   may(viewer){const work=current(viewer);return !!work && ownerThread(work);},
   run(ctx){
    const work=requireCurrent(ctx.viewer);
    if(!work.cv.member || !ownerThread(work))throw new OperationError('denied','Private owner conversation required');
    const assigned=db.select({agent:memberAgents.agent}).from(memberAgents).where(eq(memberAgents.member,work.cv.member)).all();
    const agents=assigned.map(row=>row.agent).filter(agent=>peerAllowed(work,agent)).sort();
-   return {agents,codexAvailable:self?.codexAvailable?.(work.cv.agent)===true};
+   const roles=self?.workRoles?.(work.cv.agent).map(({id,description,available})=>({id,description,available}))??[];
+   return {agents,...(roles.length?{roles}:{}),codexAvailable:self?.codexAvailable?.(work.cv.agent)===true};
   },
  }));
  operations.register(operation({name:'conversation.handoffStatus',write:false,doors:['http'],
@@ -84,13 +87,13 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  operations.register(operation({...common,name:'conversation.handoff',
   // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
   // another conversation (`to`), as mail there that starts its job like any message.
-  input:z.object({harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
-   .refine(value=>[value.agent,value.to,value.harness].filter(v=>v!==undefined).length===1),
+  input:z.object({role:slug(64).optional(),harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
+   .refine(value=>[value.agent,value.to,value.harness,value.role].filter(v=>v!==undefined).length===1),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
    const found=current(viewer);if(!found)return false;
    // To itself: the rule is the composition's and is asked in full when the note is prepared and written.
-   if(input.harness)return ownerThread(found);
+   if(input.harness || input.role)return ownerThread(found);
    if(input.to)return !!self;
    return !!input.agent && peerAllowed(found,input.agent);
   },
@@ -98,7 +101,10 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   async prepare(input,context){
    const work=input.to?current(context.viewer):undefined;
    const resolved=work&&self?self.target(work,input.to!):undefined;
-   const sealed=await sealHandoff(service.key,resolved?`${resolved.told}\n\n${input.words}`:input.words,service.now(),commsKeepDays(db));
+   const agent=input.role?current(context.viewer)?.cv.agent:undefined;
+   const role=agent?self?.workRoles?.(agent).find(role=>role.id===input.role):undefined;
+   const words=role?`Assigned work role: ${role.id}\n${role.description}\n\n${input.words}`:input.words;
+   const sealed=await sealHandoff(service.key,resolved?`${resolved.told}\n\n${input.words}`:words,service.now(),commsKeepDays(db));
    return resolved?{sealed,resolved}:sealed;},
   run(ctx,input,prepared){
    const {job,cv}=requireCurrent(ctx.viewer),sourceId=JSON.stringify([job.id,input.clientId]);
@@ -119,13 +125,15 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     ctx.changed('conversations',target);ctx.changed('inbox',item.id);ctx.changed('turns',target);
     return {conversation:target,item:item.id};
    }
-   const recipient=input.harness?cv.agent:input.agent;
-   const place=input.harness?reviewPlace(job.id,input.clientId):job.id;
+   const delegated=!!(input.harness || input.role);
+   const recipient=delegated?cv.agent:input.agent;
    if(!recipient)throw new OperationError('invalid','A hand-off names an agent or a place');
    const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,recipient),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
-    if(!target||target.venue!=='handoff'||target.place!==place||target.agent!==recipient||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
+    const request=target && reviewRequest(target);
+    const same=delegated?request?.parent===job.id && request.clientId===input.clientId && request.role?.id===input.role:target?.place===job.id;
+    if(!target||target.venue!=='handoff'||!same||target.agent!==recipient||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
     return {conversation:target.id,item:existing.id};
    }
    // The handoff carries every label that says who may read the words it came from: the project, the member,
@@ -133,6 +141,10 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    // The composition's rule for a hand-off of any kind: one hop on anybody else's word.
    const hop=self?.hop({job});if(hop)throw new OperationError('denied',hop);
    if(input.harness && !self?.codexAvailable?.(recipient))throw new OperationError('unavailable','No eligible Codex worker with a signed-in account and free capacity is available for this job.');
+   const role=input.role?self?.workRoles?.(recipient).find(role=>role.id===input.role):undefined;
+   if(input.role && !role)throw new OperationError('invalid','Unknown work role for this agent');
+   if(role && !role.available)throw new OperationError('unavailable','No eligible worker is available for this work role');
+   const place=delegated?reviewPlace(job.id,input.clientId,role):job.id;
    const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
    if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const word=self?.word({job});

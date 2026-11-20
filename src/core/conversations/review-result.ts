@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
-import { reviewThread } from './review-place.js';
+import { reviewRequest,reviewThread } from './review-place.js';
 import { exitStage } from '../../runtime/job-exit.js';
 
 /** Seal the thread reply before entering the operation transaction. Retries and concurrent
@@ -47,6 +47,7 @@ export async function reportReviewEnd(service:CommsMessages, id:string, allowed:
   if(pending() || !allowed(cv.member!,cv.agent,cv.project) || db.select({seq:messages.seq}).from(messages).where(and(eq(messages.thread,thread.id),eq(messages.sender,cv.agent),eq(messages.clientId,'review:'+cv.id))).get())return;
   const stage=exitStage(job.exitCode,job.exitBy);
   const reason=job.state==='lost'?'worker contact was lost':job.state==='stopped'?'the job was stopped':stage??'the job ended without returning findings';
-  const deliver=await prepareReviewResult(service,cv,id,'Codex returned no result for “'+cv.label+'” ('+reason+').');
+  const worker=reviewRequest(cv)?.role?.id??'Codex';
+  const deliver=await prepareReviewResult(service,cv,id,worker+' returned no result for “'+cv.label+'” ('+reason+').');
   commit(()=>{if(!pending() && allowed(cv.member!,cv.agent,cv.project) && reviewThread(db,cv)?.id===thread.id)deliver();});
 }

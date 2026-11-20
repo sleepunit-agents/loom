@@ -261,17 +261,19 @@ it('keeps a handed-off direct message direct, so its words reach no wider audien
  const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
 });
 
-it.each(['success','failure','archive','transient','occupied'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
- const f=await bodyFixture(clean,{modelRoles:()=>[
+it.each(['success','failure','archive','transient','occupied','work-role'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+ const roleMode=mode==='work-role';
+ const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
+  {agent:'mark',id:'editing',description:'Check prose.',providers:['openai']}],modelRoles:()=>[
   {model:'first',provider:'claude',harness:'claude',series:'first'},
-  {model:'reviewer',provider:'openai',harness:'codex',series:'reviewer'}]});
+  {model:'reviewer',provider:'openai',harness:roleMode?'claude':'codex',series:'reviewer'}]});
  const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
  await f.send('Please get a cold review','start-review');
  db.insert(s.agentModels).values([{agent:'art',model:'first',position:0},{agent:'art',model:'reviewer',position:1}]).run();
  db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
  db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();
  db.update(s.boxes).set({hostsAny:true,lastSeenAt:now()}).run();
- const request={harness:'codex',label:'Review pull request',clientId:'review-one',words:'Read commit abc.'};
+ const request={...(roleMode?{role:'research'}:{harness:'codex'}),label:'Review pull request',clientId:'review-one',words:'Read commit abc.'};
  expect((await f.call('handoff',request,'unavailable')).status).toBe(503);
  db.insert(s.modelAccounts).values({id:'paid',owner:'alice',provider:'openai',label:'Subscription',hasRoom:true}).run();
  db.insert(s.modelAccountWindows).values({account:'paid',window:'week',usage:0.1,usageReadAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000}).run();
@@ -285,9 +287,15 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
   expect(options.isError,options.content[0].text).not.toBe(true);
   expect(JSON.parse(options.content[0].text).value).toMatchObject({codexAvailable:true});
  }
+ if(roleMode){
+  const discovery=await f.call('handoffOptions',{},'discover');
+  expect((await discovery.json()).value).toMatchObject({codexAvailable:false,roles:[{id:'research',available:true,description:'Compare the cited documents.'}]});
+  expect((await f.call('handoff',{...request,role:'editing'},'other-role')).status).toBe(400);
+ }
  const response=await f.call('handoff',request,'launch');
  expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
  const child=(await response.json()).value.conversation;
+ if(roleMode)expect((await (await f.call('handoff',request,'retry-role')).json()).value.conversation).toBe(child);
  const status=(conversation:string,token=bodyCredentials.body)=>f.call('handoffStatus',{conversation},'status',token);
  if(mode==='success'){
   expect((await (await status(child)).json()).value).toEqual({jobState:null,resultDelivered:false});
@@ -306,7 +314,7 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
  expect((await (await next('legacy',false)).json()).value).toBeNull();
  const poll=await next('poll',true);
  const assignment=(await poll.json()).value;
- expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:'codex',model:'reviewer'});
+ expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:roleMode?'claude':'codex',model:'reviewer'});
  const token='body_'+'c'.repeat(64);
  db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
  db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:now()}).run();
@@ -341,7 +349,7 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
  }
  const reply={clientId:'review-result',words:'PRIVATE REVIEW FINDINGS',model:'reviewer'};
  const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:assignment.id,token}}));
- expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
+ expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);if(roleMode)expect(context).toContain('Compare the cited documents.');return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
  await sdk.reply(reply);
  const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();
  expect(replies).toHaveLength(1);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
