@@ -6,7 +6,8 @@ import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
 import { describePlace, jobRoom, othersMail } from '../shared-place-mail.js';
-import { loomToolsOnly } from '../policy.js';
+import { loomToolsOnly, mayRunPrivateWork } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -106,6 +107,10 @@ export class Dispatcher {
         }
         if(review && !reviewThread(this.db,cv!)){
           if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
+          continue;
+        }
+        if (review && !mayRunPrivateWork({member: cv!.member ?? undefined, agent: job.agent, project: cv!.project ?? undefined}, sharedSharing(this.db))) {
+          if (this.jobs.unplaceable(job.id, 'The assignment for the private handoff ended.')) ended?.push(job.id);
           continue;
         }
         const policy = jobRoom(this.db, job);
