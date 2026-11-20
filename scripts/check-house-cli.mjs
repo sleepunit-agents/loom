@@ -91,7 +91,7 @@ const probe = `
   }finally{await tools.close();}
 
 `;
-execFileSync('podman',['run','--rm','--pull=never','--network=none','--read-only','--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=1m,mode=1777','--cap-drop=ALL',
+execFileSync('podman',['run','--rm','--pull=never','--network=none','--read-only','--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777','--cap-drop=ALL',
   '--user',user+':'+user,'--env','LOOM_BODY_OWN_HARNESS=0',
   ...mounts.flatMap(({source,target,readOnly})=>{
     if (!readOnly) throw Error('Expected a read-only program mount');
