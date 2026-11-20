@@ -36,7 +36,7 @@ export function bodyMailContext(item:BodyMail):string|null{
  return item.history.length?JSON.stringify({history:item.history.map(({sourceKey:_key,...line})=>line),input}):typeof input==='string'?input:JSON.stringify(input);
 }
 type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none';latencyMs?:number};
-type Reply=Turn&{clientId:string;words:string};
+type Reply=Turn&{clientId:string;words:string;progressId?:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
 export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number;onJobEnded?:()=>void}){
@@ -139,7 +139,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   },
   requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
   secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},
-  bridgeReply(input:{incoming?:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
+  bridgeReply(input:{incoming?:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id:string=randomUUID(),receipt:string=id){return call('reply',{...input,id},saved,receipt,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
   title(title:string,id=randomUUID()){return call('title',{title},z.object({saved:z.literal(true),renamed:z.boolean()}).strict(),id);},

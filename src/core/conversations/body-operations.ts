@@ -22,11 +22,11 @@ export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent
  *  - `summary`: loom's line for the head of every digest summary such a body writes, question or none: a summary is on
  *    the tape every later body of the agent is started with.
  *  - `quiet`: such a body's status report is answered and writes nothing to the agent's one status row. */
-export interface OnWord{question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):{line:string;outside?:string}|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean}
+export interface OnWord{question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):{line:string;outside?:string}|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean;maySendProgress?(viewer:Viewer):boolean}
 type BodyWork=NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,onWord?:OnWord): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
- registerConversationBodyOutput(operations,service,proof,privateAssignment,onWord?.quiet);
+ registerConversationBodyOutput(operations,service,proof,privateAssignment,onWord?.quiet,onWord?.maySendProgress);
  registerConversationHandoff(operations,service,proof,privateAssignment,selfHandoff);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);

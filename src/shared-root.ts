@@ -1,5 +1,6 @@
 import {NOTE_UPLOAD_REQUEST_BYTES,noteUploadEnvelope} from './note-upload.js';
 import {deniedTools,hasGuest} from './runtime/harness-traits.js';
+import {mayUseHouseSend} from './runtime/house-send-request.js';
 import {mayAttachNoteFile,mayReadNoteFile} from './runtime/house-note-request.js';
 import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
@@ -39,6 +40,8 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { boxes, jobs as jobRows, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
+import {directTargets} from './shared-direct-target.js';
+import {registerBridgeDirect} from './shared-bridge-direct.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { kitBroker } from './shared-kit-broker.js';
 import { registerKitReads } from './shared-kit-reads.js';
@@ -249,6 +252,10 @@ export function sharedRoot(options: {
     const room=jobRoom(db,work.job);
     return !hasGuest(room)&&allowed(deniedTools(room));
   };
+  const maySendProgress=(viewer:Viewer)=>{
+    const work=bodyJob(viewer);
+    return !!work&&mayUseHouseSend(deniedTools(jobRoom(db,work.job)));
+  };
   const mayAttachFile=(viewer:Viewer)=>{
     const work=bodyJob(viewer);if(!work)return false;
     const room=jobRoom(db,work.job);
@@ -338,7 +345,8 @@ export function sharedRoot(options: {
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
-  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
+  const direct=directTargets(db,(viewer,person,platform)=>memory.people.outsideAccount(viewer,person,platform));
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
     stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},
@@ -357,7 +365,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job)});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -411,7 +419,8 @@ export function sharedRoot(options: {
   // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
   const dispatcher=registerSharedRuntime(operations, db, { now, roles, workRoles, jobEnded, runner: credentials.runner,
     applyProgram: (job, result, changed) => applyProgramResult(db, services.conversations, bridgeDaemon, () => options.bridges?.effectsAllowed() ?? false, job, result, changed) });
-  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed);
+  if(bridgeDaemon)registerBridgeDirect(operations,db,services.conversations,bodyScope,direct,bridgeDaemon,options.bridges!.effectsAllowed);
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon,services.conversations,bodyScope,options.bridges!.effectsAllowed,maySendProgress);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);

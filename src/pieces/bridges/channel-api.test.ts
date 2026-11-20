@@ -215,3 +215,19 @@ it('reads the guild\'s roles as a list, and nothing else as one', async () => {
   f.request.mockImplementationOnce(async () => Response.json({ roles }));
   expect(await f.api.roles()).toBeUndefined();
 });
+
+it.each(['discord','slack'] as const)('opens only a verified one-to-one %s DM',async platform=>{
+ const f=fixture(platform),discord=platform==='discord',user=discord?'789':'UTARGET',channel=discord?'123':'DTARGET';
+ const room=discord?{id:channel,type:1,recipients:[{id:user}]}:{id:channel,is_im:true,user};
+ const reply=(room:object)=>Response.json(discord?room:{ok:true,channel:room});
+ f.request.mockResolvedValue(reply(room));
+ expect(await f.api.directChannel(user)).toBe(channel);
+ expect(f.request.mock.calls[0][0]).toBe(discord?'https://discord.com/api/v10/users/@me/channels':'https://slack.com/api/conversations.open');
+ expect(f.request.mock.calls[0][1]?.method).toBe('POST');
+ expect(String(f.request.mock.calls[0][1]?.body)).toBe(discord?'{"recipient_id":"789"}':'users=UTARGET&return_im=true');
+ for(const fields of discord?[{type:3},{recipients:[{id:'111'}]},{recipients:[{id:user},{id:'111'}]}]:
+     [{is_im:false},{is_mpim:true},{user:'UOTHER'},{id:'CROOM'}]){
+   f.request.mockResolvedValue(reply({...room,...fields}));
+   expect(await f.api.directChannel(user)).toBeUndefined();
+ }
+});

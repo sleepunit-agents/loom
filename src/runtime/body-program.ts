@@ -69,6 +69,7 @@ export async function bodyProgram(input: {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   // The stage the body is in, as the exit code a failure there reports (see job-exit.ts).
   let exit:number=BODY_EXIT.input;
+  const progressReceipts=new Map<string,string>();
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
@@ -282,13 +283,23 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
-        ...(houseShell?{houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
+        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call,attempted(id,text){
+          const digest=keyOf(text),previous=progressReceipts.get(digest);
+          progressReceipts.set(digest,id);
+          return ()=>{
+            if(progressReceipts.get(digest)!==id)return;
+            if(previous)progressReceipts.set(digest,previous);
+            else progressReceipts.delete(digest);
+          };
+        }},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
     let failureReport:UsageReport|undefined;
     const shellEnv={...input.env};
+    delete shellEnv.LOOM_BODY_HOUSE_SEND;
+    if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
     const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
@@ -326,13 +337,14 @@ export async function bodyProgram(input: {
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    const replyId=randomUUID();
-    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'},replyId);
+    const repeated=progressReceipts.get(keyOf(answer.text));
+    const replyId=repeated??randomUUID();
+    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'},replyId,repeated?'final:'+replyId:replyId);
     else if(job.review)await client.reply({clientId:'review-result',words:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }
-    else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
+    else await client.reply({ clientId: repeated??randomUUID(), ...(repeated?{progressId:repeated}:{}), words: answer.text, model: answer.model, outcome: 'progressed' });
     // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
     // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
     await client.settle();

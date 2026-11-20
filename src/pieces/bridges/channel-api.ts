@@ -22,7 +22,7 @@ export function bridgeChannelApi(input: {
   const discord = platform === 'discord';
   /** One bounded read of one JSON answer, with the connection's credential. Undefined for anything but a
    * whole, current, well-formed answer that `pick` accepts. */
-  async function read<T>(valid: boolean, url: string, body: URLSearchParams | undefined, pick: (answer: unknown) => T | undefined, timeoutMs = BRIDGE_READ_MS): Promise<T | undefined> {
+  async function read<T>(valid: boolean, url: string, body: URLSearchParams | {recipient_id:string} | undefined, pick: (answer: unknown) => T | undefined, timeoutMs = BRIDGE_READ_MS): Promise<T | undefined> {
       if (!valid) return undefined;
       let expired = false, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       const abort = new AbortController();
@@ -38,11 +38,11 @@ export function bridgeChannelApi(input: {
       const readResponse = async (token: string): Promise<T | undefined> => {
           if (!current()) return undefined;
           const response = await request(url, {
-            method: discord ? 'GET' : 'POST', redirect: 'error', signal: abort.signal,
-            headers: discord ? { Authorization: `Bot ${token}` } : {
+            method: discord && !body ? 'GET' : 'POST', redirect: 'error', signal: abort.signal,
+            headers: discord ? { Authorization: `Bot ${token}`, ...(body?{'Content-Type':'application/json'}:{}) } : {
               Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded',
             },
-            ...(discord ? {} : { body }),
+            body:body instanceof URLSearchParams?body:body?JSON.stringify(body):undefined,
           });
           try {
             reader = response.body?.getReader();
@@ -75,6 +75,23 @@ export function bridgeChannelApi(input: {
       finally { expired = true; cancel(); abort.abort(); cancelBody(); }
   }
   return {
+    /** Open or resume the one-to-one conversation for this account. Check who the
+     * provider actually put in it before giving the channel to the send queue. */
+    directChannel(user:string):Promise<string|undefined> {
+      const valid=discord?isDiscordId(user)&&isDiscordId(workspace):/^[UW][A-Z0-9]{1,199}$/.test(user)&&/^T[A-Z0-9]{1,199}$/.test(workspace);
+      const url=discord?'https://discord.com/api/v10/users/@me/channels':'https://slack.com/api/conversations.open';
+      return read(valid,url,discord?{recipient_id:user}:new URLSearchParams({users:user,return_im:'true'}),answer=>{
+        if(!object(answer))return;
+        if(discord){
+          const recipients=answer.recipients;
+          if(answer.type===1&&isDiscordId(answer.id)&&Array.isArray(recipients)&&recipients.length===1&&object(recipients[0])&&recipients[0].id===user)return answer.id;
+        }else{
+          const channel=answer.channel;
+          if(answer.ok===true&&object(channel)&&channel.is_im===true&&channel.is_mpim!==true&&channel.user===user&&
+             typeof channel.id==='string'&&/^D[A-Z0-9]{1,199}$/.test(channel.id))return channel.id;
+        }
+      });
+    },
     channel(id: string): Promise<Json | undefined> {
       const valid = discord ? isDiscordId(id) && isDiscordId(workspace)
         : /^[A-Z][A-Z0-9]{1,199}$/.test(id) && /^T[A-Z0-9]{1,199}$/.test(workspace);

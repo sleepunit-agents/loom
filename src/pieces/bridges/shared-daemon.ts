@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
-import { BridgeSends, STOPPED_LINE } from './sends.js';
+import { BridgeSends, STOPPED_LINE, type SendTransport } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
 import { BridgeReplyNotSent } from './outbound.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
@@ -37,6 +37,8 @@ export interface SharedBridgeOptions {
  db:DataDatabase;clock:Clock;writes:DataWrites;
  source:SecretValueSource&HolderGeneration;
  effectsAllowed():boolean;
+ progressAllowed?:SendTransport['progressAllowed'];
+ directAllowed?:SendTransport['directAllowed'];
  changed():void;
  inboxCommitted?(ids:readonly string[]):void;
  /** The runtime's Stop, for the stop word (incoming.ts): ends the job, on that member's word, in the
@@ -73,10 +75,10 @@ export class SharedBridges {
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
   const sender=(row:Connection)=>{const life=this.lives.get(row.id);return life&&this.current(life)&&configuration(row)===life.key?life:undefined;};
-  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),post:async(row,address,text,files)=>{
+  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),progressAllowed:options.progressAllowed,directAllowed:options.directAllowed,post:async(row,address,text,files,permitted)=>{
    // No lifetime to send through: nothing has left, so the reply waits for the next one.
    const life=sender(row);if(!life)throw new BridgeReplyNotSent(true);
-   return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),request:options.request}).post(address,text,files);
+   return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),permitted,request:options.request}).post(address,text,files);
   }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
    const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
   });
@@ -228,6 +230,17 @@ export class SharedBridges {
    if(!current()){await life.transport.close();return;}
    this.pump(life);
   }catch{const owned=this.lives.get(row.id)===life;this.retire(life);if(owned&&!this.closed){try{this.state(row.id,'backoff');}catch{ /* report fixed error below */ }this.report();}}
+ }
+ /** The caller supplies a server-resolved recipient and rechecks the job and link
+  * while the provider resolves the one-to-one channel. No message is posted here. */
+ openDirect(connection:string,user:string,permitted:()=>boolean):Promise<string|undefined>{
+  const life=this.lives.get(connection);
+  if(!life?.authenticated)return Promise.resolve(undefined);
+  const current=()=>this.current(life)&&permitted();
+  if(!current())return Promise.resolve(undefined);
+  const api=bridgeChannelApi({platform:life.connection.platform,workspace:life.connection.workspace,
+   tokenSecret:life.connection.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request});
+  return this.track(api.directChannel(user));
  }
  /** Called only while the job that took this message may use files. Read the exact message again for
   * fresh signed URLs. Nothing in the text (including a pasted attachment line) supplies a descriptor. */

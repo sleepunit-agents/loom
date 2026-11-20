@@ -1,3 +1,8 @@
+import {reviewPlace} from './core/conversations/review-place.js';
+import {reviewReply} from './pieces/bridges/sends.js';
+import {bodyProgramTools} from './runtime/body-program-tools.js';
+import {bodySecretTools} from './runtime/body-secret-tools.js';
+import {houseRuntimeCli} from './house-runtime-cli.js';
 import { kitAccess } from './shared-kit-access.js';
 import { agentKitMembers, agentKits } from './core/data/schema.js';
 import Database from 'better-sqlite3';
@@ -113,6 +118,7 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  await f.root.services.bridges.daemon!.idle();
  expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('done');
  expect(part).toBe(3);
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{run:'body',model:'observed'}]);
  const finalId=randomUUID();
  expect((await f.call('bridges','reply',{id:finalId,incoming:incoming.id,text:'Final',model:'observed'},token.body)).status).toBe(200);
  expect((await status(token.body,finalId)).status).toBe(404);
@@ -129,6 +135,33 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  expect((await status(token.other,next)).status).toBe(200);
  expect((await status(token.other)).status).toBe(404);
  expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)},token.other)).status).not.toBe(200);
+});
+it('reports the bridge provider confirmation through the running job’s shell send command',async()=>{
+ const {bodyProgramTools}=await import('./runtime/body-program-tools.js');
+ const {bodySecretTools}=await import('./runtime/body-secret-tools.js');
+ const {houseRuntimeCli}=await import('./house-runtime-cli.js');
+ let allowed=true;
+ const f=fixture(()=>allowed),message=await f.receive(),cv=message.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const access={url:'https://loom.invalid',token:token.body,job:'body',agent:'art',conversation:cv,
+   signal:new AbortController().signal,clock:f.clock,fetch:async(url:RequestInfo|URL,init?:RequestInit)=>f.root.http.request(new Request(url,init))};
+ const port=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(port.close);
+ const local=await bodySecretTools({...access,houseSend:{venue:'slack',denied:[],call:port.call}});clean.push(local.close);
+ const run=async(id:string,text:string)=>{
+  let out='';
+  const code=await houseRuntimeCli(['send','--id',id,'--text',text,'--conversation',cv],
+   {stdout:s=>{out+=s;},stderr(){}},{LOOM_BODY_HOUSE_SEND:local.houseSend});
+  return {code,reply:JSON.parse(out)};
+ };
+ const id=randomUUID();
+ for(let attempt=0;attempt<2;attempt++)expect(await run(id,'Working')).toMatchObject({code:0,reply:{ok:true,posted:true,ref:id,postedIds:['1794432000.000009']}});
+ expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+ allowed=false;
+ expect(await run(randomUUID(),'Awaiting review')).toMatchObject({code:1,reply:{ok:false,state:'held',postedIds:[]}});
+ expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('taken');
 });
 it('retires actual sockets after committed owner disconnect and drains on root close',async()=>{
  const f=fixture();await f.receive();expect((await f.call('bridges','command',{action:'disconnect',id:'connection'},token.owner)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.closed).toHaveBeenCalledOnce();await expect(f.transports[0].receive({},Buffer.from('{}'))).rejects.toThrow();await f.root.close();expect((await f.call('bridges','reply',{id:randomUUID(),incoming:'in',text:'Late'})).status).toBe(503);
@@ -1820,4 +1853,159 @@ it('returns a peer acknowledgment for the body’s own posted message without ex
  expect(await receipt()).toEqual({acceptedAt:null,replied:false});
  expect((await f.call('bridges','peerReceipt',{send:randomUUID(),peer})).status).toBe(404);
  expect((await f.call('bridges','peerReceipt',{send,peer},token.other)).status).not.toBe(200);
+});
+
+it.each([false,true])('rechecks the linked DM recipient after opening a channel (relinked=%s)',async relink=>{
+ const f=fixture();
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();
+ const incoming=await f.receive();
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(incoming.conversation!,'body');
+ });
+ const provider=f.request.getMockImplementation()!;
+ const opens:string[]=[],posts:string[]=[];
+ f.request.mockImplementation(async(url,options)=>{
+  if(String(url).endsWith('conversations.open')){
+   opens.push(String(options?.body));
+   if(relink)f.root.writes.run(()=>f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run());
+   return Response.json({ok:true,channel:{id:'DOWNER',is_im:true,user:'UUSER'}});
+  }
+  if(String(url).endsWith('chat.postMessage')){
+   posts.push(String(options?.body));
+   return Response.json({ok:true,channel:'DOWNER',ts:'1794432000.000017'});
+  }
+  return provider(url,options);
+ });
+ const address={id:randomUUID(),person:'owner',via:'slack'},input={...address,text:'  Preserve these words.  '};
+ expect((await f.call('bridges','direct',input,token.other)).status).toBe(403);
+ const response=await f.call('bridges','direct',input);
+ expect(response.status,JSON.stringify(response.body)).toBe(relink?403:200);
+ expect(opens).toHaveLength(1);
+ await f.root.services.bridges.daemon!.idle();
+ if(relink){
+  expect(posts).toEqual([]);
+  expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+  return;
+ }
+ expect((await f.call('bridges','direct',input)).status).toBe(200);
+ const access={url:'https://loom.invalid',token:token.body,signal:new AbortController().signal,
+  agent:'art',job:'body',conversation:incoming.conversation!,clock:f.clock,fetch:async(url:RequestInfo|URL,init?:RequestInit)=>f.root.http.request(new Request(url,init))};
+ const port=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(port.close);
+ const tools=await bodySecretTools({...access,houseSend:{venue:'slack',denied:[],call:port.call}});clean.push(tools.close);
+ let stdout='';
+ const code=await houseRuntimeCli(['send','--conversation',incoming.conversation!,'--person','owner','--via','slack','--text',input.text,'--id',input.id],
+  {stdout:s=>{stdout+=s;},stderr(){}},{LOOM_BODY_HOUSE_SEND:tools.houseSend});
+ expect(code,stdout).toBe(0);
+ expect(stdout).toContain('1794432000.000017');
+ expect(posts).toHaveLength(1);
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',text:input.text,channel:'DOWNER',thread:null});
+ expect((await f.call('bridges','directStatus',address)).body).toMatchObject({value:{state:'sent',postedIds:['1794432000.000017']}});
+ expect((await f.call('bridges','directStatus',address,token.other)).status).toBe(403);
+ const fresh={...input,id:randomUUID()};
+ expect((await f.call('bridges','direct',fresh)).status).toBe(409);
+ const previous=f.db.select().from(bridgeConnections).get()!;
+ f.root.writes.run(()=>{
+  f.db.update(bridgeConnections).set({enabled:false,removedAt:new Date(f.clock.now()).toISOString()}).where(eq(bridgeConnections.id,previous.id)).run();
+  f.db.insert(bridgeConnections).values({...previous,id:'reconnected'}).run();
+ });
+ const duplicate=await f.call('bridges','direct',fresh);
+ expect(duplicate.status,JSON.stringify(duplicate.body)).toBe(409);
+ expect(posts).toHaveLength(1);
+});
+
+it.each(['relinked','job stopped','machine revoked','parent archived'])('holds an offline DM after %s before release',async change=>{
+ let effects=true;
+ const f=fixture(()=>effects,true);
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();
+ const origin=(await f.receive()).conversation!;
+ const daemon=f.root.services.bridges.daemon!;
+ const provider=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('conversations.info')
+  ?Response.json({ok:true,channel:{id:'DOWNER',context_team_id:'TWORK',is_im:true}})
+  :provider(url,init));
+ await f.transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'dm',payload:{
+  type:'event_callback',event_id:'dm',team_id:'TWORK',event:{type:'message',channel:'DOWNER',channel_type:'im',
+   user:'UUSER',text:'Earlier DM',ts:'1794432000.000017'}}})));
+ f.clock.advance(0);
+ await daemon.idle();
+ const parent=f.root.services.comms!.threads.open({member:'owner',agent:'art',title:'Review parent'});
+ f.root.writes.run(()=>{
+  if(change==='parent archived'){
+   const child=f.root.services.conversations.open({agent:'art',member:'owner',venue:'handoff',place:reviewPlace('other','review'),label:'Review',direct:f.root.services.conversations.conversation(parent.conversation).direct});
+   f.db.update(jobs).set({conversation:parent.conversation,member:'owner'}).where(eq(jobs.id,'other')).run();
+   f.db.update(jobs).set({conversation:child.id,member:'owner'}).where(eq(jobs.id,'body')).run();
+   return;
+  }
+  f.db.update(jobs).set({conversation:origin}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(origin,'body');
+ });
+ effects=false;
+ const address={id:randomUUID(),person:'owner',via:'slack'};
+ const queued=await f.call('bridges','direct',{...address,text:'Queue while offline'});
+ expect(queued.status,JSON.stringify(queued.body)).toBe(200);
+ const send=f.db.select().from(bridgeSends).get()!;
+ expect(send).toMatchObject({state:'held',channel:'DOWNER'});
+ f.root.writes.run(()=>{
+  if(change==='parent archived')f.root.services.comms!.threads.archive(parent.id,true);
+  else if(change==='job stopped')f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  else if(change==='machine revoked')f.db.update(boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(boxes.id,'box')).run();
+  else f.db.update(bridgePeople).set({user:'UNEW'}).where(eq(bridgePeople.member,'owner')).run();
+  reviewReply(f.db,send.id,'release');
+ });
+ effects=true;
+ await daemon.reconcile();
+ await daemon.idle();
+ await daemon.sends.flush();
+ expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
+ expect([401,403]).toContain((await f.call('bridges','directStatus',address)).status);
+ expect(f.request.mock.calls.filter(([url])=>/conversations\.open|chat\.postMessage/.test(String(url)))).toHaveLength(0);
+});
+
+it('keeps the confirmed first part and holds the rest when its channel is filtered',async()=>{
+ const f=fixture(),incoming=await f.receive(),cv=incoming.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const provider=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>{
+  if(String(url).endsWith('chat.postMessage')){
+   f.root.writes.run(()=>f.db.insert(bridgeChannelFilters).values({connection:'connection',rule:'ignore',channel:'CROOM'}).run());
+  }
+  return provider(url,init);
+ });
+ const id=randomUUID();
+ expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)})).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
+ expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{part:0,postedId:'1794432000.000009'}]);
+ expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+});
+
+it('delivers a held progress message promoted to the final answer once after the job ends',async()=>{
+ let effects=true;
+ const f=fixture(()=>effects),incoming=await f.receive(),cv=incoming.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const input={id:randomUUID(),text:'Final answer'};
+ effects=false;
+ expect((await f.call('bridges','say',input)).status).toBe(200);
+ expect((await f.call('bridges','reply',{...input,incoming:incoming.id,model:'observed'})).status).toBe(200);
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  reviewReply(f.db,input.id,'release');
+ });
+ effects=true;
+ const daemon=f.root.services.bridges.daemon!;
+ await daemon.reconcile();
+ await daemon.idle();
+ await daemon.sends.flush();
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{id:input.id,state:'sent'}]);
+ expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{send:input.id,part:0,postedId:'1794432000.000009'}]);
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed',run:'body'}]);
 });

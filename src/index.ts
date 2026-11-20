@@ -28,6 +28,7 @@ const USAGE = `Usage:
   loom signin --home <dir> [--member <id>] [--agent]
   loom mcp --url <origin> --token-file <file> [--agent <id>]
   loom note read|list|write|attach|file|pin|unpin|delete [options]
+  loom runtime send --conversation <id> --text <text|-> [options]
   loom --version
 `;
 
@@ -97,6 +98,7 @@ async function main(): Promise<number | undefined> {
   const args = process.argv.slice(2), first = args[0];
   if (first === '--version' || first === '-V') { process.stdout.write(`loom v${version()}\n`); return 0; }
   if (first === undefined || first === '--help' || first === '-h') { process.stdout.write(USAGE); return first === undefined ? 2 : 0; }
+  if (first === 'runtime') return (await import('./house-runtime-cli.js')).houseRuntimeCli(args.slice(1), processIo);
   if (first === 'note') return (await import('./house-note-cli.js')).houseNoteCli(args.slice(1), processIo);
   if (first === 'serve') return serve(args.slice(1));
   if (first === 'signin') return signin(args.slice(1));

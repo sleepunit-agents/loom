@@ -1,3 +1,4 @@
+import {houseSendRequest,mayUseHouseSend} from './house-send-request.js';
 import {houseNoteRequest} from './house-note-request.js';
 import {BodyContactExpired} from './body-contact.js';
 /** The receiving body's private model tools. Root credentials never leave this
@@ -29,6 +30,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
  agent?:string;
+ houseSend?:Pick<Parameters<typeof houseSendRequest>[0],'venue'|'denied'|'call'|'attempted'>;
  houseNotes?:Pick<Parameters<typeof houseNoteRequest>[0],'denied'|'call'>;
  /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
  identityHanded?:boolean;
@@ -48,7 +50,9 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  let authority:string|undefined,closed=false,waiting=0,retained=0,closing:Promise<void>|undefined,config:Buffer|undefined;
  const noteKey=input.houseNotes&&input.agent?Buffer.from(randomBytes(32).toString('hex')):undefined;
  const noteExpected=noteKey?Buffer.from('Bearer '+noteKey.toString()):undefined;
- const exposed:Buffer[]=noteKey?[noteKey]:[];
+ const sendKey=input.houseSend&&mayUseHouseSend(input.houseSend.denied)?Buffer.from(randomBytes(32).toString('hex')):undefined;
+ const sendExpected=sendKey?Buffer.from('Bearer '+sendKey.toString()):undefined;
+ const exposed=[noteKey,sendKey].filter((key):key is NonNullable<typeof key>=>!!key) as Buffer[];
  // No secret this body was handed is said by it: not in its answer (the body program asks allowsReply), and
  // not in anything it sends through a tool, which is how a post (bridges.say, bridges.post) and a reply of its
  // own making (bridges.reply) leave. Every text in a tool call is looked at, whatever the tool: the reason given
@@ -69,13 +73,23 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  async function request(request:Request):Promise<Response>{
   const supplied=Buffer.from(request.headers.get('authorization')??'');
   const noteRoute=new URL(request.url).pathname==='/house/note';
-  const credential=noteRoute?noteExpected:expected;
+  const sendRoute=new URL(request.url).pathname==='/house/send';
+  const credential=sendRoute?sendExpected:noteRoute?noteExpected:expected;
   let authenticated=false;try{authenticated=!closed&&!signal.aborted&&!!credential&&supplied.length===credential.length&&timingSafeEqual(supplied,credential)&&!request.headers.has('origin')&&new URL(request.url).host===authority&&request.headers.get('host')===authority;}finally{supplied.fill(0);}
   if(!authenticated)return new Response(null,{status:403});
   if(active.size>=16)return new Response(null,{status:429});
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
   const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>TOOL_REQUEST_BYTES)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
+  if(sendRoute){
+   try{
+    if(!input.houseSend)return new Response(null,{status:403});
+    const current=AbortSignal.any([signal,request.signal]);
+    const result=await houseSendRequest({...input.houseSend,conversation:input.conversation,allowsCall},await bounded.json(),current);
+    if(current.aborted||closed)throw unavailable();
+    return Response.json(result,{headers:{'cache-control':'no-store'}});
+   }catch{return new Response(null,{status:403});}
+  }
   if(noteRoute){
    try{
     if(!input.agent||!input.houseNotes)return new Response(null,{status:403});
@@ -132,7 +146,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }));
  const onAbort=()=>{void close().catch(()=>{});};
  function close(){
-  if(closing)return closing;closed=true;stop.abort();expected.fill(0);noteExpected?.fill(0);config?.fill(0);for(const value of exposed)value.fill(0);exposed.length=0;input.signal.removeEventListener('abort',onAbort);
+  if(closing)return closing;closed=true;stop.abort();expected.fill(0);noteExpected?.fill(0);sendExpected?.fill(0);config?.fill(0);for(const value of exposed)value.fill(0);exposed.length=0;input.signal.removeEventListener('abort',onAbort);
   const stopped=new Promise<void>(resolve=>listener.close(()=>resolve()));listener.closeAllConnections();
   return closing=Promise.allSettled([...active]).then(async()=>{await stopped;});
  }
@@ -142,6 +156,6 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
   authority=`127.0.0.1:${address.port}`;
   config=Buffer.from(JSON.stringify({mcpServers:{[BODY_TOOLS_SERVER]:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
-  return{config,close,allowsBytes,allowsReply,allowedTools,houseNote:noteKey?address.port+'.'+noteKey.toString():undefined};
+  return{config,close,allowsBytes,allowsReply,allowedTools,houseSend:sendKey?address.port+'.'+sendKey.toString():undefined,houseNote:noteKey?address.port+'.'+noteKey.toString():undefined};
  }catch{await close();throw unavailable();}
 }

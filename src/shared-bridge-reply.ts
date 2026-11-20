@@ -45,7 +45,7 @@ export function queueAgentPost(db: DataDatabase, conversations: Conversations, s
    changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
 }
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,daemon:Pick<SharedBridges,'sends'|'prepareDiscordFile'|'files'>,
- conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
+ conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean,maySendProgress:(viewer:Viewer)=>boolean){
  const sends=daemon.sends;
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
  /** The current body's own conversation holds this delivered message. */
@@ -91,7 +91,8 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    for(const item of db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.conversation,bound.conversation),eq(inbox.job,bound.job),eq(inbox.state,'taken'))).all()){
     conversations.confirm(item.id,bound.job);ctx.changed('inbox',item.id);
    }
-   if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
+   const completesProgress=existing&&sends.adoptFinalReply(bound.job,input.id);
+   if(!existing||completesProgress){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
    if(current(ctx.viewer)?.cv.venue==='discord')replyJobs.set(input,bound.job);
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
@@ -187,7 +188,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  operations.register({name:'bridges.sendStatus',write:false,doors:['http'],recheckPolicy:true,
   input:z.object({id:z.uuid()}).strict(),
   output:z.object({state:z.enum(bridgeSends.state.enumValues),postedIds:z.array(z.string())}).strict(),
-  may:viewer=>!!speaking(viewer),
+  may:viewer=>maySendProgress(viewer)&&!!speaking(viewer),
   run(ctx,input){
    const scope=current(ctx.viewer);
    if(!scope)throw new OperationError('denied','Current bridge body required');
@@ -206,7 +207,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  // what arrives here is a name and bytes, bounded by SEND_FILES and SEND_FILES_BYTES.
  operations.register({name:'bridges.say',input:z.object({id:z.uuid(),text:z.string().min(1).max(MESSAGE_WORDS_MAX),
    files:z.array(z.object({name:z.string().min(1).max(200),contents:z.base64().min(1)}).strict()).min(1).max(SEND_FILES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
-  may:viewer=>!!speaking(viewer),
+  may:viewer=>maySendProgress(viewer)&&!!speaking(viewer),
   inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-say-receipt-v1\0').update(JSON.stringify([speaking(actor)?.job??null,canonical])).digest('hex'),
   run(ctx,input){
    const bound=speaking(ctx.viewer);if(!bound)throw new OperationError('denied','Current bridge body required');
