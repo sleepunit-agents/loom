@@ -38,6 +38,16 @@ it('says an empty state in plain lines and a row\'s status in plain text', () =>
   expect(draw(h(Empty, { title: 'No items here', text: 'New ones arrive on their own.' }))).toBe('<div class="loom-kit-empty" data-slot="empty"><p class="loom-kit-empty__title">No items here</p><p class="loom-kit-empty__text">New ones arrive on their own.</p></div>');
   expect(draw(h(Row, { title: 'A', status: 'Art · open' }))).toContain('<span class="loom-kit-status">Art · open</span>');
 });
+it('keeps shared row labels, metadata and folder names readable at their full height', () => {
+  const inbox = readFileSync(new URL('../pieces/inbox-view/index.tsx', import.meta.url), 'utf8');
+  expect(inbox).not.toMatch(/loom-kit-title[^'"]*line-clamp/);
+  const sheets = ['./app.css', './split.css', '../pieces/attention/rail.css', '../pieces/comms-view/comms.css'];
+  for (const file of sheets) {
+    const css = readFileSync(new URL(file, import.meta.url), 'utf8');
+    const rules = css.match(/[^{}]*(?:loom-kit-title|loom-kit-meta|loom-split__folder-name|loom-split__title)[^{}]*\{[^{}]*\}/g) ?? [];
+    for (const rule of rules) expect(rule).not.toMatch(/line-clamp|text-overflow:\s*ellipsis|white-space:\s*nowrap/);
+  }
+});
 it('keeps the page-wide control rules to the tile page, compact at a desk and a full target on the phone', () => {
   const css = readFileSync(new URL('./controls.css', import.meta.url), 'utf8'), rows = readFileSync(new URL('./split.css', import.meta.url), 'utf8'), app = readFileSync(new URL('./app.css', import.meta.url), 'utf8');
   // Every rule that restyles a library control is scoped to an app's page, so sign-in, the launcher, the dock and the bar keep theirs.

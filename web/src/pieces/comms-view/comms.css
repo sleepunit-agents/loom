@@ -101,7 +101,7 @@ section.comms__strip { display: flex; flex-wrap: wrap; align-items: center; gap:
 .comms-work__toggle:focus-visible { outline: 2px solid var(--comms-tint); outline-offset: 2px; }
 .comms-work__body { display: none; grid-template-columns: minmax(0, 1fr); min-width: 0; max-height: min(40vh, 320px); overflow-y: auto; overscroll-behavior: contain; }
 .comms-work[data-open] > .comms-work__body { display: grid; }
-.comms-work .loom-kit-title { display: block; overflow: visible; -webkit-line-clamp: unset; font-size: 13px; }
+.comms-work .loom-kit-title { font-size: 13px; }
 .comms-work__rest { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; padding: 10px 14px; }
 .comms-work__rest:empty { display: none; }
 /* Wide enough: Work is a column on the right, always open, under its own small heading. */

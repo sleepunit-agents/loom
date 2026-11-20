@@ -15,7 +15,7 @@
 
 .desk-rail-compact{min-width:0}
 .desk-rail-compact>[data-split-row]{padding:7px 4px;gap:8px;align-items:center;grid-template-columns:24px minmax(0,1fr) auto}
-.desk-rail-compact .loom-kit-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--font-display)}
+.desk-rail-compact .loom-kit-title{font:600 13px var(--font-display)}
 .desk-rail-flags{display:flex;align-items:center;gap:8px}
 .desk-rail-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--v-text-3)}
 .desk-rail-dot[data-state=working]{background:var(--v-blue)}

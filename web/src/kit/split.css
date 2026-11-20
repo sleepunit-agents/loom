@@ -47,7 +47,7 @@
 .loom-split__folder[data-sub] { padding-left: 28px; font-size: 13.5px; }
 .loom-split__folder:hover { background: var(--sp-hover); color: var(--v-text); }
 .loom-split__folder[aria-current="true"], .loom-split__folder[aria-pressed="true"] { background: var(--sp-current); color: var(--v-text); border-color: color-mix(in srgb, var(--sp-tint) 55%, transparent); }
-.loom-split__folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-split__folder-name { flex: 1; }
 .loom-split__count { font-family: var(--loom-font-data); font-size: 11px; color: var(--v-text-3); }
 .loom-split__count[data-loud] { min-width: 20px; padding: 1px 6px; border-radius: 99px; text-align: center; background: var(--sp-tint); color: var(--v-on-accent); font-weight: 600; }
 
@@ -102,7 +102,7 @@
 
 /* ---- shared by the apps on it (the Inbox, Knowledge): a search field, a row's words, chips that link, a note ---- */
 .loom-split__words { display: grid; gap: 2px; min-width: 0; }
-.loom-split__title { font-size: 14.5px; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.loom-split__title { font-size: 14.5px; font-weight: 500; line-height: 1.3; display: block; }
 .loom-split__empty { padding: 16px 12px; }
 .loom-split__head { font-size: 24px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .loom-split[data-mode="one"] .loom-split__head { font-size: 20px; }
