@@ -44,6 +44,9 @@ it('provides only live scoped conversation commands to the scripted native provi
  const result=await nativeProtocolSmoke({...context,native:async({job,call})=>{
   retired.push(call);await expect(call('token.revoke',{})).rejects.toThrow('unavailable');
   await call('digest',{summary:'Authored fictional protocol digest',items:[{kind:'decision',text:'Keep the fictional inspection plan'}]});
+  await call('status',{state:'waiting',work:'Fictional provider waiting'});expect(context.db.prepare('SELECT state FROM agent_status WHERE agent=?').get('moss').state).toBe('waiting');
+  const note=await call('turn',{kind:'note',model:'fixture-provider-note',outcome:'progressed'});expect(context.db.prepare('SELECT kind,from_kind,from_id FROM turns WHERE conversation=? AND seq=?').get(job.conversation,note.seq)).toEqual({kind:'note',from_kind:'agent',from_id:'moss'});
+  await call('status',{state:'working',work:'Fictional provider working'});expect(context.db.prepare('SELECT state FROM agent_status WHERE agent=?').get('moss').state).toBe('working');
   return{text:'Fictional native response',model:'fixture-actually-used-model',actions:[]};
  }});
  for(const row of result.runs){
@@ -135,4 +138,32 @@ for(const mode of ['bootstrap-envelope','body-capability'] as const)it(`refuses 
  try{await expect(nativeProtocolSmoke(context)).rejects.toThrow();expect(held.size).toBeGreaterThan(0);}
  finally{Buffer.prototype.fill=fill;for(const bytes of held)Reflect.apply(fill,bytes,[0]);held.clear();}
  restored(context.db,context.example.runtime.box);
+}));
+
+it('pins Tasks commands to the normal body-authenticated door and preserves actor, scope and retirement',{timeout:20_000},()=>household(async context=>{
+ const setup=context.app.writes.run(()=>context.app.services.signin.issue({kind:'owner',member:'alex',label:'Native task capability setup',expiresAt:new Date(context.clock.now()+60000).toISOString()})).value;
+ const create=async input=>{const response=await fetch(context.app.url+'/api/tasks/command',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),input:{action:'create',input}})});expect(response.status).toBe(200);return(await response.json()).value.id;};
+ let task,hidden;
+ try{
+  task=await create({title:'Fictional body task',goal:'Exercise the normal command door',why:'Prove the worker capability',owner:{kind:'agent',id:'moss'},project:'garden'});
+  hidden=await create({title:'Other member private task',goal:'Stay open',why:'Check the ordinary Root scope',owner:{kind:'member',id:'robin'}});
+ }finally{context.app.writes.run(()=>context.app.services.signin.revoke(setup.fingerprint));}
+ let worked=false,retired;
+ await nativeProtocolSmoke({...context,native:async({call})=>{
+  retired=call;
+  if(!worked){
+   await expect(call('tasks.command/../signin/revoke',{})).rejects.toThrow('unavailable');
+   await expect(call('tasks.command',{action:'close',id:hidden,reason:'Forbidden'})).rejects.toThrow('refused');
+   await call('tasks.command',{action:'claim',id:task});
+   expect(context.app.services.tasks.get(task)).toMatchObject({status:'in_progress',assigneeKind:'agent',assignee:'moss'});
+   await call('tasks.command',{action:'comment',id:task,text:'Fictional enrolled body comment'});
+   await expect(call('tasks.command',{action:'comment',id:task,text:'FORGED',actor:{kind:'member',id:'alex'}})).rejects.toThrow('refused');
+   await call('tasks.command',{action:'close',id:task,reason:'Completed by the enrolled body'});worked=true;
+  }
+  return{text:'Fictional task work completed',model:'fixture-task-model',actions:[]};
+ }});
+ expect(worked).toBe(true);expect(context.app.services.tasks.get(task)).toMatchObject({status:'closed',closeReason:'Completed by the enrolled body'});
+ expect(context.app.services.tasks.get(hidden).status).toBe('open');
+ expect(context.db.prepare('SELECT actor_kind,actor,text FROM task_comments WHERE task=?').all(task)).toEqual([{actor_kind:'agent',actor:'moss',text:'Fictional enrolled body comment'}]);
+ await expect(retired('tasks.command',{action:'reopen',id:task})).rejects.toThrow('unavailable');restored(context.db,context.example.runtime.box);
 }));
