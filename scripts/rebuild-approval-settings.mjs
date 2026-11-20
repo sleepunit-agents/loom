@@ -88,28 +88,28 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
  const check=(v,m)=>{if(!v)throw Error(m);};
  try{
   const context={agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',why:'Requested in the fictitious conversation.'};
-  const answer=async(card,button)=>{
-   const active=tile.getByRole('article',{name:card.ask,exact:true}).filter({has:page.getByRole('button',{name:button,exact:true})}).last();
-   await active.getByRole('heading',{name:card.ask,exact:true}).first().waitFor({timeout:4000});
-   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-   await activate(active.getByRole('button',{name:button,exact:true}));
-   // A dangerous action takes a second, explicit yes before anything is sent.
-   if(button==='Allow'&&card.kind==='dangerous')await activate(tile.getByRole('button',{name:'Yes, allow it',exact:true}));
-   const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
+  const pendingCard=(name,button)=>tile.getByRole('article',{name,exact:true}).filter({has:page.getByRole('button',{name:button,exact:true})});
+  const answer=async(card,active,button)=>{
+   const danger=button==='Allow'&&card.kind==='dangerous';
+   if(danger)await activate(active.getByRole('button',{name:button,exact:true}));
+   const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.method()==='POST',
+    ()=>activate(danger?tile.getByRole('button',{name:'Yes, allow it',exact:true}):active.getByRole('button',{name:button,exact:true})));
+   check(response.ok()&&(await response.json()).ok===true,'Prepared operation answer refused');
   };
   const before=s.tempo.volume.timings(who).settleSeconds;
   check(before===example.preparedSettingBefore&&s.approvals.get(example.deniedSettingApproval).state==='denied','The tile setting Deny was not preserved before inline Allow');clock.advance(1);
   const setting=write(()=>s.setup.propose('fern',{change:'tempoTimings',input:{who,settleSeconds:before+1},why:context.why},{conversation:context.conversation,member:context.member,project:null}));
-  const change=tile.getByRole('region',{name:'Tempo settings change',exact:true}).last();
-  await change.getByRole('region',{name:'Before',exact:true}).getByText(`${before} seconds`,{exact:true}).waitFor({timeout:4000});
-  await change.getByRole('region',{name:'After',exact:true}).getByText(`${before+1} seconds`,{exact:true}).waitFor();
+  const settingCard=pendingCard(/^Change Tempo’s timings for Alex$/i,'Allow');
+  await activate(settingCard.getByRole('button',{name:'Details',exact:true}));
+  const timing=settingCard.getByText('Inbox settle time',{exact:true}).locator('xpath=following-sibling::dd[1]');
+  await timing.getByText(`${before} seconds → ${before+1} seconds`,{exact:true}).waitFor();
   check(s.tempo.volume.timings(who).settleSeconds===before,'Proposing settings applied them early');
-  await answer(setting,'Allow');
+  await answer(setting,settingCard,'Allow');
   check(s.tempo.volume.timings(who).settleSeconds===before+1&&s.approvals.get(setting.id).state==='used','Allow did not apply the prepared settings itself');
   check(s.approvals.record(setting.id).map(row=>row.event).join(',')==='request,allow,use','Prepared settings record incomplete');
   const draft=s.tasks.get(example.preparedDraft);check(draft.status==='open'&&s.approvals.get(example.deniedDraftApproval).state==='denied','The tile Deny was not preserved before inline Allow');
   const propose=()=>{clock.advance(1);return write(()=>s.approvals.request({...context,kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,what:'Discard the fictitious order draft',ask:'Discard the fictitious order draft?',ifYes:'Loom cancels this draft.',ifNo:'Loom keeps the draft.'}));};
-  const allowed=propose();await tile.getByText(`Draft ${draft.id}: open → cancelled`,{exact:true}).first().waitFor();await answer(allowed,'Allow');
+  const allowed=propose();await tile.getByText(`Draft ${draft.id}: open → cancelled`,{exact:true}).first().waitFor();await answer(allowed,pendingCard(allowed.ask,'Allow'),'Allow');
   check(s.tasks.get(draft.id).status==='closed'&&s.tasks.get(draft.id).closeReason==='cancelled'&&s.approvals.get(allowed.id).state==='used','Allow did not perform the exact dangerous action');
   const merge=write(()=>s.approvals.request({...context,kind:'merge',target:`${example.change}@${s.changes.get(example.change).headCommit}`,what:'Fictitious exact-head merge',ask:'Merge the fictitious head?',ifYes:'Fern merges it.',ifNo:'Leave it open.'}));
   check(['command','merge','setting','dangerous'].every(kind=>s.approvals.list().some(card=>card.kind===kind)),'Not all four approval kinds were represented');
