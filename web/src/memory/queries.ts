@@ -29,7 +29,7 @@ export interface KnowledgeAccess {allowed:boolean;canAdd:boolean;canVerify:boole
 export interface PeopleAccess {allowed:boolean;directory:boolean;canAdd:boolean;agents:string[]}
 export interface ProjectsAccess {allowed:boolean;agents:string[]}
 export interface ActivityAccess {allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[];expires:number}
-export interface KnowledgeIndex { total:number;checkDays:number;recentDays:number;pages:KnowledgeRow[] }
+export interface KnowledgeIndex { timezone?:string;total:number;checkDays:number;recentDays:number;pages:KnowledgeRow[] }
 export interface KnowledgePage extends KnowledgeOpen { history:Array<{id:number;slug:string;body:string;op:string;replacedAt:string;actor?:string}> }
 const knowledgeRow = 'slug title domain updated verified_at fresh by recent';
 const knowledgePage = `${knowledgeRow} body sourcing sources { claim kind locator href excerpt retrievedAt createdAt } citedBy { slug title } checked { at outcome by } history { id slug body op replacedAt actor }`;
@@ -77,7 +77,7 @@ export const memoryQueries = {
   projectsAccess:()=>selection<ProjectsAccess|null>('memoryProjectsAccess','query MemoryProjectsAccess { memoryProjectsAccess { allowed agents } }',{},nullable(portable<ProjectsAccess>)),
   activityAccess:()=>selection<ActivityAccess|null>('memoryActivityAccess','query MemoryActivityAccess { memoryActivityAccess { allowed agents owner timezone today windows expires } }',{},nullable(portable<ActivityAccess>)),
   knowledgeAccess:()=>selection<KnowledgeAccess|null>('memoryKnowledgeAccess','query MemoryKnowledgeAccess { memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } }',{},nullable(portable<KnowledgeAccess>)),
-  knowledge: () => selection<KnowledgeIndex | null>('memoryKnowledge', `query MemoryKnowledge { memoryKnowledge { total checkDays recentDays pages { ${knowledgeRow} } } }`, {}, nullable(portable<KnowledgeIndex>)),
+  knowledge: () => selection<KnowledgeIndex | null>('memoryKnowledge', `query MemoryKnowledge { memoryKnowledge { timezone total checkDays recentDays pages { ${knowledgeRow} } } }`, {}, nullable(portable<KnowledgeIndex>)),
   page: (slug:string) => selection<KnowledgePage | null>('memoryKnowledgePage', `query MemoryKnowledgePage($slug:String!) { memoryKnowledgePage(slug:$slug) { ${knowledgePage} } }`, {slug}, nullable(portable<KnowledgePage>)),
   people: () => selection<PersonRecord[]>('memoryPeople', `query MemoryPeople { memoryPeople(includeRemovedAgents:false) { ${personFields} } }`, {}, raw => raw.map(person)),
   person: (id:string) => selection<PersonOpen | null>('memoryPerson', `query MemoryPerson($id:String!) { memoryPerson(id:$id) { ${personFields} conversations { available rows { id title href } } history { id op replacedAt actor card { ${personCard} } } } }`, {id}, nullable(person<PersonOpen>)),

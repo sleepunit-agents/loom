@@ -60,7 +60,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await row(a,'Six voices').click();await row(b,'Six voices').click();
     await expect.poll(()=>b.locator('article strong').textContent()).toBe('six voices');
     await expect.poll(()=>b.locator('article a').filter({hasText:'https://example.com/voices'}).getAttribute('href')).toBe('https://example.com/voices');
-    expect(await b.locator('article dd').textContent()).toContain('Six voices');
+    expect(await b.getByRole('region',{name:'Sources'}).locator('dd').textContent()).toContain('Six voices');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     await b.reload({waitUntil:'domcontentloaded'});await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createDataSchema } from '../../../src/core/data/database.js';
 import { dataHttp } from '../../../src/core/data/http.js';
-import { agents, members, tasks, conversationPeople } from '../../../src/core/data/schema.js';
+import { agents, members, tasks, conversationPeople, household } from '../../../src/core/data/schema.js';
 import { FakeClock, type Sharing } from '../../../src/core/index.js';
 import { Conversations } from '../../../src/core/conversations/index.js';
 import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
@@ -21,6 +21,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   const home = mkdtempSync(join(tmpdir(), 'memory-door-')); cleanup.push(() => rmSync(home, {recursive: true, force: true}));
   const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now);
   const client = new Database(':memory:'); cleanup.push(() => client.close()); const db = createDataSchema(client);
+  db.insert(household).values({singleton:1,timezone:'America/Chicago'}).run();
   db.insert(members).values(['owner','peer'].map(id => ({id, role: id === 'owner' ? 'owner' as const : 'member' as const, joinedAt: new Date(now).toISOString()}))).run();
   db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
   db.insert(tasks).values({id:'work',title:'Fictional task',ownerKind:'household',createdByKind:'member',createdBy:'owner',createdAt:new Date(now).toISOString(),changedAt:new Date(now).toISOString()}).run();
@@ -71,7 +72,7 @@ it('executes every browser selection against the real generated HTTP schema and 
   expect(await c.read(memoryQueries.peopleAccess())).toEqual({allowed:true,directory:true,canAdd:true,agents:['fiction']});
   expect(await c.read(memoryQueries.projectsAccess())).toEqual({allowed:true,agents:['fiction']});
   expect(await c.read(memoryQueries.activityAccess())).toMatchObject({allowed:true,agents:['fiction'],today:'2026-11-14',windows:expect.any(Array),expires:expect.any(Number)});
-  expect(await c.read(memoryQueries.knowledge())).toMatchObject({total:1,checkDays:30,recentDays:7,pages:[{slug:'pump',title:'Fictional pump'}]});
+  expect(await c.read(memoryQueries.knowledge())).toMatchObject({timezone:'America/Chicago',total:1,checkDays:30,recentDays:7,pages:[{slug:'pump',title:'Fictional pump'}]});
   const page = await c.read(memoryQueries.page('pump'));
   expect(page).toMatchObject({slug:'pump',body:'The fictional pump takes a hose.',sources:[],citedBy:[]});
   expect(page).not.toHaveProperty('checked');
