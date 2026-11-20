@@ -44,6 +44,7 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
     return value;
   };
   return {
+    validate:canonical,
     set(input:RuleInput,by:string){
       return db.transaction(()=>{
         if(!owner(by))throw new OperationError('denied','A household owner is required');

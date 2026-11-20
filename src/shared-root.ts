@@ -61,6 +61,7 @@ import {installMemorySignals} from './transport/memory-signals.js';
 import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
+import { outsideNames } from './shared-outside-names.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { Jobs } from './runtime/jobs.js';
 import { ConversationSessions } from './core/conversations/sessions.js';
@@ -174,6 +175,8 @@ export function sharedRoot(options: {
       tempo: () => late.tempo!(),
       schedule: ask => late.schedule!(ask),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
+      // Proposal names come from owner-readable bridge records.
+      names: viewer => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));

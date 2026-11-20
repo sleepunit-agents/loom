@@ -67,11 +67,13 @@ export const projectJoinInput=z.object({project:id,agent:householdId}).strict();
 export const alreadyOnProject=(value:{project:string;agent:string})=>new OperationError('invalid',value.agent+' is already on project '+value.project);
 export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toISOString()){
  const validate=(value:z.infer<typeof projectInput>)=>{
-  for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new OperationError('invalid','Choose existing members');
-  for(const agent of value.agents)if(!db.select().from(agents).where(eq(agents.id,agent)).get())throw new OperationError('invalid','Choose existing agents');
-  for(const repository of value.repositories){const bound=db.select().from(projectRepositories).all().find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
+  if(db.select({id:members.id}).from(members).where(inArray(members.id,value.members)).all().length!==value.members.length)throw new OperationError('invalid','Choose existing members');
+  if(db.select({id:agents.id}).from(agents).where(inArray(agents.id,value.agents)).all().length!==value.agents.length)throw new OperationError('invalid','Choose existing agents');
+  const repositories=value.repositories.length?db.select().from(projectRepositories).all():[];
+  for(const repository of value.repositories){const bound=repositories.find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
  };
  return {
+  validate,
   save(raw:z.input<typeof projectInput>){const value=projectInput.parse(raw);return db.transaction(()=>{
    validate(value);db.insert(projects).values({id:value.id,name:value.name}).onConflictDoUpdate({target:projects.id,set:{name:value.name}}).run();
    db.delete(projectMembers).where(eq(projectMembers.project,value.id)).run();db.delete(projectAgents).where(eq(projectAgents.project,value.id)).run();db.delete(projectRepositories).where(eq(projectRepositories.project,value.id)).run();

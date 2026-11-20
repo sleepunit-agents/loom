@@ -1,24 +1,32 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PeopleStore } from './backends/people.js';
+import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { agents, agentKits, agentKitMembers, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { OperationError } from './core/operations/index.js';
+import { applyKitChange, kitBefore } from './shared-kit-cards.js';
+import type { DataDatabase } from './core/data/database.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
-function fixture() {
+function fixture(memory?: SharedMemoryOptions) {
   const client = new Database(':memory:'); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
   for (const member of ['sam', 'lee'] as const) db.insert(tokens).values({ fingerprint: hash(credentials[member]), label: member, kind: 'owner', member, createdAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(credentials.art), label: 'Art', kind: 'agent', agent: 'art', createdAt: at }).run();
-  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
+  const root = sharedRoot({ db, clock, memory, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
   let seq = 0;
   const call = async (path: string, input: unknown, actor: keyof typeof credentials, id = 'r'+(++seq)) => {
     const response = await root.http.request('http://loom/api/'+path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ input, id }) });
@@ -500,6 +508,7 @@ it('merges one project into another only when an owner allows the card, and the 
   const filed = await ask({ from: 'pond', into: 'garden' });
   expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
   const id = filed.body.value!.id;
+  expect((await preview(f, id)).card?.ifYes).toContain('Member-scoped approvals keep their member scope.');
   // The card says what is asked, in words that name both projects. Nothing has moved.
   expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'dangerous', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge project pond into garden?',
     changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.', why: 'The first sort put pond work in two places', decidedBy: null });
@@ -860,4 +869,339 @@ it('shows an agent-proposed change to explicit readers on the machine owner’s 
  expect((await f.call('machine/readerCards',{machine:'work'},'lee')).body.value).toEqual([{id,ask:'Grant machine reads to mark.'}]);
  expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
  expect(f.db.select().from(boxes).get()?.readers).toEqual(['mark']);
+});
+
+const preview = async (f: Fixture, id: string) => (await f.call('household/proposalPreview', { id }, 'sam')).body.value as unknown as {
+  summary: string; exact?: string; blocked: string | null; card: { title: string; facts: { label: string; value: string; small?: boolean }[]; exact: string; ifYes?: string } | null;
+};
+
+it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const gage = { platform: 'slack', workspace: 'T02AYL3QM', user: 'U07V8CZUC1J' };
+  await f.call('household/propose', { change: 'kit', input: { agent: 'art', kit: 'pond-et-livonia', tools: [] }, why: 'Field scope' }, 'art').then(filed => f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam'));
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify([gage.platform, gage.workspace, gage.user]), tier: 2 }).run();
+  const id = (await f.call('household/propose', { change: 'kitGrant', input: { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, why: 'Restore the recorded Pond field scope.' }, 'art')).body.value!.id;
+  // The card itself, which the asking agent and others read, says only what was asked: the id, and no name.
+  const stored = f.db.select().from(approvals).where(eq(approvals.id, id)).get()!;
+  expect(stored).toMatchObject({
+    ask: 'Grant art kit pond-et-livonia to slack user U07V8CZUC1J in T02AYL3QM?',
+    ifYes: 'Grant art kit pond-et-livonia to slack user U07V8CZUC1J in T02AYL3QM.',
+    ifNo: 'Keep the current access.',
+  });
+  // loom holds no name yet: the owner is told so in words.
+  expect((await preview(f, id)).card).toMatchObject({ title: 'Let a Slack account loom has no name for (U07V8CZUC1J in workspace T02AYL3QM) use Art’s pond-et-livonia kit' });
+  // A person link names the account for the owner. It is read when the card is read, so the same card now says it.
+  f.db.insert(members).values({ id: 'gage', role: 'member', joinedAt: at }).run();
+  f.db.insert(bridgePeople).values({ ...gage, workspace: 'T0OTHER', member: 'gage' }).run();
+  expect((await preview(f, id)).card!.title).toContain('loom has no name for');
+  f.db.delete(bridgePeople).run();
+  f.db.insert(secrets).values({ name: 'slack-token', description: 'Bot token', changedAt: at, changedBy: 'sam' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'art-slack', platform: 'slack', agent: 'art', workspace: gage.workspace, botUser: 'UBOT', tokenSecret: 'slack-token', enabled: true, state: 'connected', stateAt: at }).run();
+  const told = await preview(f, id);
+  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'A workspace loom has no name for (T02AYL3QM), reached by the connection art-slack' });
+  expect(told.card!.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
+  expect(told.summary).not.toContain('{"');
+  expect(JSON.parse(told.card!.exact)).toMatchObject({ to: gage });
+  expect(told.blocked).toBeNull();
+  // Neither the asking agent nor a member who is not an owner may ask for the owner's reading, and the card
+  // they do read through the data door still holds no name and nothing of what is there now.
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposalPreview', { id }, actor)).status).toBe(403);
+  f.db.insert(memberAgents).values({ member: 'lee', agent: 'art' }).run();
+  f.db.insert(bridgePeople).values({ ...gage, member: 'gage' }).run();
+  expect((await preview(f, id)).card!.title).toContain('gage (Slack)');
+  for (const actor of ['lee', 'art'] as const) {
+    const response = await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + credentials[actor] }, body: JSON.stringify({ query: '{ approvals { id what ask changeSummary ifYes ifNo details } }' }) });
+    const read = JSON.stringify(await response.json());
+    expect(read).toContain(id);
+    expect(read).toContain('slack user U07V8CZUC1J in T02AYL3QM');
+    expect(read).not.toMatch(/gage|art-slack|loom has no name/i);
+  }
+});
+
+it('names an outside account from its exact directory record only for the owner', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'approval-people-'));
+  clean.push(() => rmSync(directory, { recursive: true, force: true }));
+  const people = join(directory, 'people.db'), knowledge = join(directory, 'knowledge.db');
+  const store = new PeopleStore({ dbPath: people });
+  try {
+    store.write({ slug: 'field-contact', name: 'Casey Field', where: {
+      slack: { value: 'UCASEY' }, slack_workspace: { value: 'TFIELD' },
+    } });
+    store.write({ slug: 'bare-handle', name: 'Unscoped Name', where: { slack: { value: 'UCASEY' } } });
+  } finally { store.close(); }
+  const f = fixture({ checkingAgent: 'art', sources: { commons: { directory, people, knowledge }, agents: [] } });
+  const file = async (platform: string, workspace: string, user: string) => {
+    const input = { agent: 'art', kit: 'field', to: { platform, workspace, user }, grant: true };
+    return (await f.call('household/propose', { change: 'kitGrant', input, why: 'Set field access' }, 'art')).body.value!.id;
+  };
+  const id = await file('slack', 'TFIELD', 'UCASEY');
+  const named = await preview(f, id);
+  expect(named.card!.title).toContain('Casey Field (Slack)');
+  expect(named.card!.facts).toContainEqual({ label: 'Name from', value: 'People directory record for this account' });
+  for (const [platform, workspace, user] of [['slack', 'TOTHER', 'UCASEY'], ['discord', 'TFIELD', 'UCASEY'], ['slack', 'TFIELD', 'UOTHER']]) {
+    expect((await preview(f, await file(platform, workspace, user))).card!.title).toContain('loom has no name for');
+  }
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposalPreview', { id }, actor)).status).toBe(403);
+});
+
+it('says on the card, before anyone presses Allow, why it cannot be allowed and what would fix it; Allow refuses the same', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const outside = { platform: 'slack', workspace: 'T1', user: 'U1' };
+  const file = async (change: string, input: unknown, by: 'art' | 'sam' = 'art') => { const filed = await f.call('household/propose', { change, input, why: 'Asked' }, by); expect(filed.body, change + ' ' + JSON.stringify(input)).toMatchObject({ ok: true }); return filed.body.value!.id; };
+  const allow = (id: string) => f.call('approvals/answer', { id, answer: 'allow', confirm: true }, 'sam');
+  const blocked = async (id: string) => (await preview(f, id)).blocked;
+  /** Blocked on the card in these words, refused by Allow, and still there to deny. */
+  const stands = async (id: string, words: RegExp) => {
+    expect(await blocked(id)).toMatch(words);
+    expect((await allow(id)).body.ok).toBe(false);
+    expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ state: 'pending' });
+  };
+  const deny = async (id: string) => expect((await f.call('approvals/answer', { id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  expect((await allow(await file('project', pond))).body.ok).toBe(true);
+  expect((await allow(await file('kit', { agent: 'art', kit: 'tools', tools: [] }))).body.ok).toBe(true);
+  const grant = { agent: 'art', kit: 'tools', to: outside, grant: true };
+
+  // The account is not placed with the agent: no owner has given it a tier.
+  const unplaced = await file('kitGrant', grant);
+  await stands(unplaced, /^This cannot be allowed yet: Art does not know this account as an outside contact\./);
+  expect((await allow(unplaced)).body.message).toBe('Choose an outside account already known to the agent or household');
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'U1']), tier: 2 }).run();
+  expect(await blocked(unplaced)).toMatch(/changed since the card was filed/);
+  expect((await allow(unplaced)).body.message).toMatch(/changed since the card was filed/);
+  await deny(unplaced);
+  const fresh = await file('kitGrant', grant);
+  expect(await blocked(fresh)).toBeNull();
+  expect((await allow(fresh)).body.ok).toBe(true);
+  expect((await allow(await file('kitGrant', { ...grant, grant: false }))).body.ok).toBe(true);
+
+  // The account is linked to a member: the member should be named instead. With the link gone a fresh card is clear.
+  f.db.insert(bridgePeople).values({ ...outside, member: 'lee' }).run();
+  const linked = await file('kitGrant', grant);
+  await stands(linked, /^This cannot be allowed: this account is linked to the household member lee\. Deny this card, and ask for the kit to be granted to the member lee instead\.$/);
+  await deny(linked);
+  const roster = await file('projectOutsidePerson', { project: 'pond', ...outside, on: true });
+  await stands(roster, /linked to the household member lee\. Deny this card, and ask for lee to be put on the project as a member instead\.$/);
+  await deny(roster);
+  f.db.delete(bridgePeople).run();
+  const clear = await file('kitGrant', grant);
+  expect(await blocked(clear)).toBeNull();
+  expect((await allow(clear)).body.ok).toBe(true);
+
+  // Already so.
+  await stands(await file('kitGrant', grant), /^This cannot be allowed: it is already so, and nothing would change\. Deny it\.$/);
+  // No such kit, a project that is not in use, a person who is no member, an agent that is removed.
+  await stands(await file('kitGrant', { agent: 'art', kit: 'missing', to: { member: 'lee' }, grant: true }), /Art has no kit called missing\. The kit would have to be defined first\./);
+  await stands(await file('kitGrant', { agent: 'art', kit: 'tools', to: { project: 'nowhere' }, grant: true }), /the project nowhere is not in use/);
+  await stands(await file('kitGrant', { agent: 'art', kit: 'tools', to: { member: 'ghost' }, grant: true }), /Ghost is not a member of the household now/);
+  const marks = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
+  expect(await blocked(marks)).toBeNull();
+  f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
+  expect(await blocked(marks)).toMatch(/changed since the card was filed/);
+  await deny(marks);
+  // Filed while the agent is removed, it says so; restored, a fresh card is clear.
+  const removed = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
+  await stands(removed, /^This cannot be allowed: Mark is not an agent in the household now\./);
+  await deny(removed);
+  f.db.update(agents).set({ removedAt: null }).where(eq(agents.id, 'mark')).run();
+  expect(await blocked(await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam'))).toBeNull();
+
+  // Other kinds: what Allow would refuse, where reading alone can tell.
+  await stands(await file('remove', { of: 'project', id: 'nowhere' }), /^This cannot be allowed as it stands: loom has no project by that name\.$/);
+  await stands(await file('restore', { of: 'agent', id: 'art' }), /it is already so/);
+  await stands(await file('models', { agent: 'art', models: ['no-such-model'] }), /^This cannot be allowed as it stands: Choose configured models\.$/);
+  await stands(await file('bridge', { action: 'disconnect', id: 'nothing' }), /Unknown connection/);
+  const already = await file('settings', { commsDays: f.root.services.household.settings().commsDays });
+  await stands(already, /it is already so/);
+  await deny(already);
+  // A card that can be allowed says nothing against itself.
+  expect(await blocked(await file('settings', { commsDays: 3 }))).toBeNull();
+});
+
+it.each([
+  { action: 'removeChannel', platform: 'discord', workspace: 'G1', channel: 'C1' },
+  { action: 'removePerson', platform: 'discord', workspace: 'G1', user: 'U1' },
+])('accepts a bridge removal with no matching rule or link ($action)', async input => {
+  const f = fixture();
+  const id = (await f.call('household/propose', { change: 'bridge', input, why: 'Clean up' }, 'art')).body.value!.id;
+  expect(await preview(f, id)).toMatchObject({ blocked: null, card: { nothing: true } });
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+});
+
+it('puts serialized older summaries in owner-only Exact request, including after the answer', async () => {
+  const f = fixture();
+  const id = (await f.call('household/propose', { change: 'settings', input: { commsDays: 7 }, why: 'Keep less' }, 'art')).body.value!.id;
+  const summary = '{"saved":"private settings"}';
+  f.db.update(approvals).set({ what: 'Saved title', changeSummary: summary, details: JSON.stringify({ change: 'fromTheFuture', after: {} }) }).where(eq(approvals.id,id)).run();
+  const expected = { summary: '', problem: null, card: null, blocked: null, exact: JSON.stringify({ summary, input: {} }, null, 2) };
+  expect(await preview(f, id)).toEqual(expected);
+  expect((await f.call('household/proposalPreview', { id }, 'lee')).status).toBe(403);
+  await f.call('approvals/answer', { id, answer: 'deny' }, 'sam');
+  expect(await preview(f, id)).toEqual(expected);
+});
+
+it('shows the same full-owner roster that Allow assigns', async () => {
+  const f = fixture();
+  const input = { id: 'pat', role: 'owner', fullOwner: true, agents: [] };
+  const id = (await f.call('household/propose', { change: 'member', input, why: 'Share ownership' }, 'art')).body.value!.id;
+  expect((await preview(f,id)).card!.facts).toContainEqual({ label: 'Their agents', value: 'As a full owner they have every agent: Art, Mark' });
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.root.services.household.members().find(row => row.id === 'pat')?.agents).toEqual(['art', 'mark']);
+});
+
+it('caps the whole Exact request even when individual values fit', async () => {
+  const f = fixture();
+  const input = { ...pond, members: ['lee', 'sam'], repositories: Array.from({ length: 30 }, (_, i) => 'github:house/' + String(i).padStart(2, '0') + 'x'.repeat(1700)) };
+  const id = (await f.call('household/propose', { change: 'project', input, why: 'Track repositories' }, 'art')).body.value!.id;
+  const exact = (await preview(f, id)).card!.exact;
+  expect(exact.length).toBeLessThanOrEqual(40_000);
+  expect(exact).toContain('Display clipped.');
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details).after).toEqual(input);
+});
+
+it('files, reads, previews and answers a project card with a 5,000-character repository reference', async () => {
+  const f = fixture();
+  const input = { ...pond, members: ['lee', 'sam'], repositories: ['github:house/' + 'x'.repeat(4987)] };
+  const file = () => f.call('household/propose', { change: 'project', input, why: 'Track repository' }, 'art');
+  const answer = (id: string, answer: 'allow' | 'deny') => f.call('approvals/answer', { id, answer }, 'sam');
+  const filed = await file();
+  expect(filed.body.ok).toBe(true);
+  const id = filed.body.value!.id;
+  expect((await look(f, id)).problem).toBeNull();
+  const pending = await preview(f, id);
+  expect(pending.card!.facts.find(fact => fact.label === 'Repositories')?.value).toMatch(/…\(\+\d+ more characters\)$/u);
+  const [display, notice] = pending.card!.exact.split('\n\n');
+  expect(notice).toContain('Display clipped.');
+  const [repository] = JSON.parse(display!).repositories as string[];
+  expect(repository.length).toBeLessThanOrEqual(2_000);
+  const suffix = repository.match(/…\(\+(\d+) more characters\)$/u)!;
+  expect(suffix.index! + Number(suffix[1])).toBe(5_000);
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details).after).toEqual(input);
+  expect((await answer(id, 'allow')).body.ok).toBe(true);
+  const done = await preview(f, id);
+  expect(done).toMatchObject({ exact: pending.card!.exact, card: null, blocked: null });
+  expect((await f.call('household/proposalPreview', { id }, 'lee')).status).toBe(403);
+  const next = await file();
+  expect((await answer(next.body.value!.id, 'deny')).body.ok).toBe(true);
+});
+
+it('rewrites a pre-digest project card with a 5,000-character repository reference', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const input = { ...pond, members: ['lee', 'sam'], repositories: ['github:house/' + 'x'.repeat(4987)] };
+  f.db.insert(approvals).values({ id: 'old-project', kind: 'setting', operation: 'household.change',
+    target: 'household:project:pond', state: 'pending', agent: 'art', askedFrom: 'terminal', actingFor: 'unknown',
+    minutes: 30, askedAt: at, what: 'Change Pond', changeSummary: 'Old roster', why: 'Track repository',
+    ask: 'Change Pond?', ifYes: 'Apply it', ifNo: 'Keep it', details: JSON.stringify({ change: 'project', before: { members: ['private-roster'] }, after: input }),
+  }).run();
+  await f.root.close();
+  const second = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} });
+  clean.push(() => second.close());
+  const row = f.db.select().from(approvals).where(eq(approvals.id, 'old-project')).get()!;
+  expect(JSON.parse(row.details)).toEqual({ change: 'project', after: input, seal: { nonce: expect.any(String), digest: expect.any(String) } });
+  expect(row.changeSummary).not.toContain('Old roster');
+});
+
+it.each(['','empty'])('shows the exact stored secret description %j', async description => {
+  const f = fixture();
+  const id = (await f.call('household/propose', { change: 'secretDescription', input: { secret: 'key', description }, why: 'Update description' }, 'art')).body.value!.id;
+  expect(JSON.parse((await preview(f,id)).card!.exact)).toEqual({ secret: 'key', description });
+});
+
+it('refuses the owner preview to a body working on a conversation card', async () => {
+  const { bodyFixture, bodyCredentials } = await import('../test/fixtures/conversation-body.js');
+  const f = await bodyFixture(clean);
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
+  const card = f.root.writes.run(() => f.root.services.setup.propose('art', {
+    change: 'settings', input: { commsDays: 7 }, why: 'Keep less',
+  }, { conversation: f.thread.conversation, member: null, project: 'pond' })).value;
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + bodyCredentials.body };
+  const visible = await f.root.http.request('/graphql', { method: 'POST', headers,
+    body: JSON.stringify({ query: '{ approvals { id } }' }) });
+  expect(await visible.json()).toMatchObject({ data: { approvals: [{ id: card.id }] } });
+  const preview = await f.root.http.request('/api/household/proposalPreview', { method: 'POST', headers,
+    body: JSON.stringify({ input: { id: card.id } }) });
+  expect(preview.status).toBe(403);
+});
+
+it('reads a filed repeating schedule in plain facts and keeps the arrays in Exact request', async () => {
+  const f = fixture();
+  const trigger = { id: 'daily', ownerKind: 'agent', owner: 'art', sourceKind: 'time', targetKind: 'inbox',
+    toKind: 'agent', to: 'art', conversation: 'cv-pond', times: '09:00', lifespan: 'until-stopped',
+    note: 'Daily reading', needs: ['gpu', 'local'], prefers: ['fast'] };
+  const ask = { action: 'set', agent: 'art', conversation: 'cv-pond', place: '#pond', asker: { kind: 'member', id: 'lee' }, trigger };
+  const card = f.root.writes.run(() => f.root.services.setup.propose('art', { change: 'placeSchedule', input: ask, why: 'Daily check' })).value;
+  const given = await preview(f, card.id);
+  expect(given.card!.title).toBe('Set a repeating schedule for Art in conversation cv-pond');
+  expect(given.card!.facts).toEqual(expect.arrayContaining([
+    { label: 'Machine needs', value: 'gpu, local' },
+    { label: 'Machine preferences', value: 'fast' },
+  ]));
+  expect(JSON.parse(given.card!.exact)).toEqual(ask);
+});
+
+
+// The origin/next apply guard. Supply the same database state and observe whether it reaches the write.
+type Change = Parameters<typeof applyKitChange>[1];
+function upstreamApplyKitChange(db:DataDatabase,value:Change,rows:(db:DataDatabase,value:Change)=>{state:ReturnType<typeof kitBefore>;apply():void}) {
+  const {state,apply}=rows(db,value);
+  const adding=value.change==='kit'?value.input.tools!==null:value.change==='kitGrant'?value.input.grant:value.input.on;
+  if(adding){
+    if('agentLive' in state && !state.agentLive)throw new OperationError('invalid','Choose a live agent');
+    if('project' in state && (!state.project || state.project.removed || state.project.retired))throw new OperationError('invalid','Choose a project in use');
+    if('memberLive' in state && !state.memberLive)throw new OperationError('invalid','Choose a live member');
+    if('linked' in state && state.linked)throw new OperationError('invalid','This account is linked to a member. Name the member instead.');
+    if('known' in state && !state.known)throw new OperationError('invalid','Choose an outside account already known to the agent or household');
+    if(value.change==='kitGrant' && 'tools' in state && !state.tools)throw new OperationError('invalid','No such kit');
+  }
+  if(('on' in state && state.on===adding)||(value.change==='kit' && 'tools' in state && JSON.stringify(state.tools)===JSON.stringify(value.input.tools)))
+    throw new OperationError('conflict','That is how it already is');
+  apply();
+}
+
+it('matches the upstream kit apply guard for every refusal and allowed change', () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const key = { agent: 'art', kit: 'tools' };
+  const to = { platform: 'slack' as const, workspace: 'T1', user: 'U1' };
+  f.root.services.projects.save({ ...pond, id: 'live' });
+  f.root.services.projects.save({ ...pond, id: 'retired' });
+  f.root.services.projects.setRetired({ project: 'retired' }, true);
+  f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
+  f.db.insert(agentKits).values({ ...key, tools: [] }).run();
+  f.db.insert(agentKitMembers).values({ ...key, member: 'lee' }).run();
+  f.db.insert(bridgePeople).values({ ...to, member: 'lee' }).run();
+  const grant = (recipient: Extract<Change, {change:'kitGrant'}>['input']['to'], adding = true): Change =>
+    ({ change: 'kitGrant', input: { ...key, to: recipient, grant: adding } });
+  const rows: [string, Change, string | null][] = [
+    ['dead agent', { change: 'kit', input: { ...key, agent: 'mark', tools: [] } }, 'invalid'],
+    ['missing project', grant({ project: 'missing' }), 'invalid'],
+    ['retired project', grant({ project: 'retired' }), 'invalid'],
+    ['missing member', grant({ member: 'missing' }), 'invalid'],
+    ['linked account takes precedence over unknown', grant(to), 'invalid'],
+    ['unknown account', grant({ ...to, user: 'U2' }), 'invalid'],
+    ['missing kit', { change: 'kitGrant', input: { ...key, kit: 'missing', to: { member: 'lee' }, grant: true } }, 'invalid'],
+    ['existing grant', grant({ member: 'lee' }), 'conflict'],
+    ['absent grant', grant({ member: 'sam' }, false), 'conflict'],
+    ['unchanged tools', { change: 'kit', input: { ...key, tools: [] } }, 'conflict'],
+    ['new grant', grant({ project: 'live' }), null],
+    ['withdraw existing grant', grant({ member: 'lee' }, false), null],
+    ['define kit', { change: 'kit', input: { ...key, kit: 'new', tools: [] } }, null],
+    ['remove kit', { change: 'kit', input: { ...key, tools: null } }, null],
+    ['add outside project person', { change: 'projectOutsidePerson', input: { ...to, user: 'known', project: 'live', on: true } }, null],
+  ];
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'known']), tier: 1 }).run();
+  function outcome(apply: () => void) {
+    try { apply(); return null; }
+    catch (error) {
+      if (!(error instanceof OperationError)) throw error;
+      return { code: error.code, message: error.message };
+    }
+  }
+  for (const [label, value, expectedCode] of rows) {
+    let reachedWrite = false;
+    const rows = (db: DataDatabase, change: Change) => ({ state: kitBefore(db, change), apply: () => { reachedWrite = true; } });
+    const expected = outcome(() => upstreamApplyKitChange(f.db, value, rows));
+    expect(expected?.code ?? null, label).toBe(expectedCode);
+    expect(reachedWrite, label).toBe(expectedCode === null);
+    expect(outcome(() => applyKitChange(f.db, value)), label).toEqual(expected);
+  }
 });

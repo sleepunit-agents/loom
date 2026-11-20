@@ -27,20 +27,37 @@ function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): Approv
   return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),setRule:sendApprovalRule,allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
-/** A household owner who opens a waiting household card is shown what it would replace and anything that
- * already stands against it. Neither is on the card (work-proposal.ts), so it is read when the card opens. */
-function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owner: boolean): ApprovalSnapshot {
-  const card = owner && snapshot.status === 'live' ? snapshot.approvals.find(row => row.id === id && row.state === 'pending' && row.operation === 'household.change') : undefined;
-  const key = card?.id;
-  const [now, setNow] = useState<ProposalNow & { id: string }>();
+/** Read the owner preview for the open card and discard results when it closes or changes. */
+function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owner: boolean) {
+  const row = owner && snapshot.status === 'live' ? snapshot.approvals.find(row =>
+    row.id === id && row.operation === 'household.change') : undefined;
+  const opened = row?.id, state = row?.state;
+  const [revision, setRevision] = useState(0);
+  const [preview, setPreview] = useState<{ id: string; revision: number; state: typeof state; value: ProposalNow }>();
   useEffect(() => {
-    if (!key) return;
+    setPreview(undefined);
+    if (!opened) return;
     let current = true;
-    void readProposal(key).then(value => { if (current && value) setNow({ id: key, ...value }); });
+    void readProposal(opened).then(value => { if (current && value) setPreview({ id: opened, revision, state, value }); });
     return () => { current = false; };
-  }, [key]);
-  if (!card || now?.id !== card.id) return snapshot;
-  return { ...snapshot, approvals: snapshot.approvals.map(row => row.id === card.id ? { ...row, changeSummary: now.summary, problem: now.problem } : row) };
+  }, [opened, revision, state]);
+  useEffect(() => {
+    if (!opened || typeof window === 'undefined') return;
+    const refresh = () => setRevision(value => value + 1);
+    const visible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', visible);
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', visible);
+      window.clearInterval(interval);
+    };
+  }, [opened]);
+  const held = preview?.id === opened && preview?.revision === revision && preview?.state === state ? preview?.value : undefined;
+  const refresh = (id: string) => { if (id === opened) setRevision(value => value + 1); };
+  return { snapshot: held ? { ...snapshot, approvals: snapshot.approvals.map(row => row.id === opened
+    ? { ...row, card: held.card, blocked: held.blocked, exactRequest: held.exact } : row) } : snapshot, refresh };
 }
 
 // Times are said in the household's zone (the desk's own clock reading, data/zone.ts) unless the root supplies
@@ -49,6 +66,9 @@ function localTimezone() { return Intl.DateTimeFormat().resolvedOptions().timeZo
 export function useApprovalSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
   return approvalSnapshot(useDataQuery<ApprovalsResult>(approvalsQuery), timezone ?? zone ?? localTimezone());
+}
+export function useApprovalList() {
+  return useApprovalSnapshot();
 }
 export function useChangeSnapshot(timezone?: string) {
   const zone = useHouseholdZone();
@@ -79,7 +99,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
     try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
-  const snapshot = useProposalNow(read, selected, access.owner);
+  const { snapshot, refresh } = useProposalNow(read, selected, access.owner);
   const folder = ['history', 'rules', 'notices'].find(id => currentPath === `${base}/${id}`) ?? 'pending';
   const visit = (next: string) => {
     if (go) go(next);
@@ -90,7 +110,8 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
   };
   const standing=alwaysInput(snapshot.approvals.find(card=>card.id===selected),changes.status==='live'?changes.changes:[],access.members);
   const defaultActions=ownerApprovalActions(access.owner,standing);
-  return <Approvals snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
+  const answerActions = actions ?? defaultActions;
+  return <Approvals snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
@@ -151,9 +172,13 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const owner=useWorkAccess().owner, snapshot=useProposalNow(useApprovalSnapshot(timezone),id,owner), names=useAgentNames(), viewer=useViewer();
+  const owner=useWorkAccess().owner, names=useAgentNames(), viewer=useViewer();
+  const [details, setDetails] = useState<string>();
+  const open = details === id;
+  const { snapshot, refresh }=useProposalNow(useApprovalSnapshot(timezone),open ? id : undefined,owner);
   const defaultActions=ownerApprovalActions(owner);
-  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? defaultActions} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  const answerActions = actions ?? defaultActions;
+  return <ApprovalCard id={id} snapshot={snapshot} details={owner ? { open, toggle: () => setDetails(open ? undefined : id) } : undefined} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   const names = useAgentNames();

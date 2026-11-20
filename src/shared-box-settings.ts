@@ -1,5 +1,5 @@
 /** An enrolled machine's owner controls hosting; enrollment stays with Sign-in. */
-import { and, eq, ne, isNull } from 'drizzle-orm';
+import { and, eq, inArray, ne, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, boxes, boxAgents, boxFacts } from './core/data/schema.js';
@@ -18,8 +18,9 @@ export function validateBoxSettings(db:DataDatabase,input:z.infer<typeof boxSett
    if(!box||box.revokedAt)throw new OperationError('denied','Available machine required');
    const sharing=sharedSharing(db);
    for(const reader of input.readers ?? []) if(!sharing.agents?.includes(reader))throw new OperationError('invalid','Choose existing agents');
+   const existing=new Set(db.select({id:agents.id}).from(agents).where(inArray(agents.id,input.agents.map(row=>row.agent))).all().map(row=>row.id));
    for(const value of input.agents){
-    if(!db.select({id:agents.id}).from(agents).where(eq(agents.id,value.agent)).get())throw new OperationError('invalid','Choose existing agents');
+    if(!existing.has(value.agent))throw new OperationError('invalid','Choose existing agents');
     // Who has an agent is policy.ts's reading (membersWithAgent), the one placement goes by.
     const owned=membersWithAgent(value.agent,sharing).includes(box.owner);
     if(value.lent===owned)throw new OperationError('invalid','Lending must match current agent ownership');
@@ -36,7 +37,7 @@ export function applyBoxSettings(db:DataDatabase,input:z.infer<typeof boxSetting
 }
 
 
-export function applyMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
+export function validateMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
   const {box, agent, allow} = input;
   const machine = db.select().from(boxes).where(and(eq(boxes.id, box), isNull(boxes.revokedAt))).get();
   if (!machine || machine.owner !== owner) throw new OperationError('denied', 'Only the machine owner may change explicit readers');
@@ -44,6 +45,11 @@ export function applyMachineReader(db: DataDatabase, owner: string, input: {box:
   if (allow && (!sharedSharing(db).agents?.includes(agent) || readers.length >= 128))
     throw new OperationError('invalid', 'Reader unavailable or limit reached');
   if (allow === readers.includes(agent)) throw new OperationError('conflict', 'That is how it already is');
-  const next = allow ? [...readers, agent].sort() : readers.filter(id => id !== agent);
-  db.update(boxes).set({readers:next}).where(eq(boxes.id, box)).run();
+  return readers;
+}
+
+export function applyMachineReader(db: DataDatabase, owner: string, input: {box: string; agent: string; allow: boolean}) {
+  const readers = validateMachineReader(db, owner, input);
+  const next = input.allow ? [...readers, input.agent].sort() : readers.filter(id => id !== input.agent);
+  db.update(boxes).set({readers:next}).where(eq(boxes.id, input.box)).run();
 }

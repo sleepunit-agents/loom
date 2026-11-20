@@ -1,4 +1,6 @@
 import { TaskQuestionAnswer } from '../tasks/question-answer';
+import { LiveApprovalCard, useApprovalList } from '../../data/work-views';
+import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
@@ -51,6 +53,11 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   // Every control below acts on `current`, and `current` is only ever the item the path names.
   const current = live && item && item.id === selected ? retainedInboxItem(item, Math.max(now, Date.now())) : null;
   const mutate = memberOperation;
+  // An approval's item is said as its card says it: the same plain sentence, made when it is read, and the same
+  // card with its Allow and Deny in the reader. The words stored with the item stay where the card is not readable.
+  const cards = useApprovalList();
+  const cardOf = (row: { waitsOnKind?: string | null; waitsOnId?: string | null }) => row.waitsOnKind === 'approval' && cards.status === 'live' ? cards.approvals.find(card => card.id === row.waitsOnId) : undefined;
+
 
   const actions: InboxActions | undefined = live ? {
     volume: current?.canSetVolume ? (id, volume) => mutate('inbox.volume', { item: id, volume }) : undefined,
@@ -61,7 +68,9 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
-    sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/> : undefined}
+    words={row => { const approval = cardOf(row); return approval?.operation === 'household.change' ? approvalTitle(approval) : undefined; }}
+    sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
+      : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} /> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
     navigation={{ folder, query: search, offset, hasNext: (data?.items.length ?? 0) > inboxPageSize,
       onFolder(id) { setFolder(id); setOffset(0); select(); }, onQuery(value) { setSearch(value); setOffset(0); },

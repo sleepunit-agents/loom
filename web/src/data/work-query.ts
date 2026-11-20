@@ -1,4 +1,4 @@
-import { quotedDecision } from '../pieces/approval-view/model';
+import { approvalTitle, quotedDecision } from '../pieces/approval-view/model';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import type { ChangeSnapshot } from '../pieces/change-view/model';
 
@@ -41,7 +41,7 @@ export function approvalSnapshot(feed: Feed<ApprovalsResult>, timezone: string):
   const recordNotices = (data?.approvalRecord ?? []).flatMap(event => {
     const card = data?.approvals.find(card => card.id === event.approval);
     const decision = quotedDecision(event);
-    if (card && decision) return [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.target,what:card.what+' — '+decision,at:event.at}];
+    if (card && decision) return [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.operation==='household.change'?'':card.target,what:approvalTitle(card)+' — '+decision,at:event.at}];
     return card?.member && event.event === 'use' && event.note.startsWith('Reported step: ')
       ? [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.target,what:event.note.slice('Reported step: '.length),at:event.at}] : [];
   });

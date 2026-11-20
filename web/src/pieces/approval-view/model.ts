@@ -1,3 +1,5 @@
+import { publicProposalTitle, type CardFact } from '../../../../src/proposal-words';
+export type { CardFact } from '../../../../src/proposal-words';
 // Selected query fields, matching the approved shared schema. The generated
 // browser client will provide its result type when the composition connects it.
 export interface Approval {
@@ -9,7 +11,14 @@ export interface Approval {
   askedAt: string; decidedBy: string | null; expiresAt: string | null;
   /** For a household owner looking at a waiting household card: what already stands against allowing it. Not on the card itself. */
   problem?: string | null;
+  /** For a household owner looking at a waiting household card: the card as the program says it to an owner, with
+   * the names it holds and what the change would replace (household.proposalPreview). Not on the card itself. */
+  exactRequest?: string;
+  card?: { title: string; nothing: boolean; facts: readonly CardFact[]; exact: string; ifYes?: string; ifNo?: string } | null;
+  /** For the same owner: the plain line saying this cannot be allowed and what would fix it. The answer operation still decides. */
+  blocked?: string | null;
 }
+export const approvalTitle = (approval: Approval) => approval.operation === 'household.change' ? publicProposalTitle(approval) : approval.what;
 export interface Rule {
   kind: Approval['kind']; scope: string; person: string; tier: 'do' | 'tell' | 'ask'; setBy: string; setAt: string;
 }
@@ -61,7 +70,7 @@ export function matches(values: readonly (string | null)[], query: string) {
 export function rows(snapshot: ApprovalSnapshot, folder: string, query: string) {
   if (snapshot.status !== 'live') return [];
   return snapshot.approvals.filter(a => (folder === 'pending' ? a.state === 'pending' : a.state !== 'pending')
-    && matches([a.id, a.what, a.ask, a.why, a.target, a.agent, a.project, a.member], query))
+    && (!query.trim() || matches(a.operation === 'household.change' ? [approvalTitle(a), a.why] : [a.id, a.what, a.ask, a.why, a.target, a.agent, a.project, a.member], query)))
     .sort((a, b) => folder === 'pending' ? a.askedAt.localeCompare(b.askedAt) || a.id.localeCompare(b.id)
       : b.askedAt.localeCompare(a.askedAt) || a.id.localeCompare(b.id));
 }

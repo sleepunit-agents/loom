@@ -1,6 +1,7 @@
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
+import {clipProposalText,publicProposalTitle} from './proposal-words.js';
 import {DAY} from './core/day.js';
 import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
@@ -342,14 +343,16 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   async input=>{
    // The state is one of the column's own fixed words, so it is safe to write into the query as an enum value.
    type Decision = {event:'allow'|'deny';note:string};
-   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null;approvalRecordByApproval:Decision[]}[]}>(
-    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy approvalRecordByApproval(where:{event:{inArray:["allow","deny"]}},orderBy:{seq:{direction:desc,priority:1}},limit:1){event note}}}',{limit:input.limit??20});
+   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;what:string;ask:string;why:string;changeSummary:string|null;details:string;operation:string|null;target:string;askedAt:string;decidedBy:string|null;approvalRecordByApproval:Decision[]}[]}>(
+    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent what ask why changeSummary details operation target askedAt decidedBy approvalRecordByApproval(where:{event:{inArray:["allow","deny"]}},orderBy:{seq:{direction:desc,priority:1}},limit:1){event note}}}',{limit:input.limit??20});
    if(!data.approvals.length)return 'No approvals'+(input.state?' are '+input.state:'')+'.';
    return data.approvals.map(row=>{
     const decision=row.approvalRecordByApproval[0];
     const attributed=decision?.note.startsWith(decision.event==='allow'?'Allowed by ':'Denied by ');
     const answer=attributed?decision.note:row.decidedBy?'answered by '+row.decidedBy:'';
-    return '## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(answer?' · '+answer:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
+    const head='_'+[row.id,row.kind,row.state,'asked by '+row.agent+' '+row.askedAt,answer].filter(Boolean).map(value=>approvalText(value)).join(' · ')+'_';
+    if(row.operation==='household.change')return '## '+approvalText(publicProposalTitle(row))+'\n'+head+'\n\nWhy: '+approvalText(row.why,500);
+    return '## '+row.ask+'\n'+head+'\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
    }).join('\n\n---\n\n');
   });
  tool('inbox','List what is in your inbox, newest first. state narrows it: '+inbox.state.enumValues.join(', ')+'.',
@@ -365,3 +368,7 @@ interface PersonCard{slug:string;name:string;updated:string;card:{summary:string
 interface ProjectCard{slug:string;name:string;updated:string;card:{status:string|null;summary:string|null;goal:string|null;where:{key:string;value:string|null;verified_at:string|null}[]|null;links:Record<string,string|string[]|null>|null}|null}
 /** A refusal whose words are safe to show the caller. */
 class Refusal extends Error{}
+
+function approvalText(value:string,limit=2000):string {
+ return clipProposalText(value,limit).replace(/\s+/g,' ').replace(/[\\&<>`#*~|!\[\]{}]/g,char=>'&#'+char.charCodeAt(0)+';').replace(/(^|\W)_|_(?!\w)/g,part=>part.replace('_','&#95;'));
+}
