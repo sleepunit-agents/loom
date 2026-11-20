@@ -1,5 +1,5 @@
 import { Suspense, useRef, useState } from 'react';
-import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Clamp, Body, Chip, Markdown } from '../../kit';
+import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, ShortIdentifier, Clamp, Body, Chip, Markdown } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
 import { displayName } from '../../kit/words';
 import { rows, rowWord, summary, waitingWord, checksWord, checkWord, reviewWord, mergeableWord, roleWord, type Change, type ChangeSnapshot } from './model';
@@ -71,7 +71,7 @@ function Details({ change: c, snapshot, actions, openTask, name }: { change: Cha
     {c.body && <Section label="Description"><Clamp long={isLong(c.body)}><Suspense fallback={<Body>{c.body}</Body>}><Markdown text={c.body} /></Suspense></Clamp></Section>}
     <Disclosure label="Details"><Facts>
       <Fact label="Can be merged">{mergeableWord[c.mergeable] ?? c.mergeable}</Fact>
-      <Fact label="Commit"><span title={c.headCommit}>{c.headCommit.slice(0, 8)}</span></Fact>
+      <Fact label="Commit"><ShortIdentifier value={c.headCommit} /></Fact>
     </Facts></Disclosure>
   </Reader>;
 }

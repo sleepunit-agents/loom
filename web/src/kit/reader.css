@@ -88,3 +88,5 @@
     .loom-split__reader :where(dl) > :where(dt, dd) { grid-column: 1; max-width: none; }
   }
 }
+
+.loom-reader__identifier { max-width: 100%; overflow-wrap: anywhere; text-align: start; text-decoration: underline dotted; cursor: pointer; user-select: text; }
