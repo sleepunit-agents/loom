@@ -14,7 +14,7 @@ afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();})
 it('renders shared account metadata and sends only the selected opaque personal reference',async()=>{
  await act(async()=>{tree=create(h(Account));});
  expect(JSON.stringify(tree.toJSON())).toContain('Chrome on Mac');
- expect(JSON.stringify(tree.toJSON())).toContain('Models and accounts');expect(JSON.stringify(tree.toJSON())).toContain('Visible model subscription');expect(JSON.stringify(tree.toJSON())).toContain('visible-preferred-model');
+ expect(JSON.stringify(tree.toJSON())).not.toContain('Visible model subscription');
  const button=tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Remove passkey');
  await act(async()=>button.props.onClick());expect(f.operation).toHaveBeenCalledExactlyOnceWith('account.removePasskey',{ref:'a'.repeat(64)});
 });

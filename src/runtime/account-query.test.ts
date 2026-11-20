@@ -21,7 +21,7 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const keys = { alice: 'a'.repeat(64), bob: 'b'.repeat(64), guest: 'g'.repeat(64), house: 'h'.repeat(64), agent: 'x'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const selection = `modelAccounts { ... on RuntimeAccount { label level }
-  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } } }`;
+  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } windows { window usage resetsAt } } }`;
 function fixture(fields?: Parameters<typeof nextData>[4]) {
   const statements: string[] = [];
   const client = new Database(':memory:', { verbose: value => statements.push(String(value)) }); clean.push(() => { if (client.open) client.close(); });
@@ -56,7 +56,8 @@ it('shows full account data only to its actual member owner or a household owner
   const f = fixture();
   const alice = await (await f.post('alice')).json();
   expect(alice.data.modelAccounts[0]).toEqual({ ...coarse[0], id: 'private-a', owner: 'alice', provider: 'private-provider', usage: 0.2,
-    usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 3.5 * 86400_000).toISOString(), hasRoom: true, signedInOn: [{ id: 'private-box-id', name: 'Private worker name' }] });
+    usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 3.5 * 86400_000).toISOString(), hasRoom: true, signedInOn: [{ id: 'private-box-id', name: 'Private worker name' }],
+    windows: [{window:'week',usage:.2,resetsAt:new Date(f.clock.now()+3.5*86400_000).toISOString()}] });
   expect(alice.data.modelAccounts[1]).toEqual(coarse[1]);
   const house = await (await f.post('house')).json(); expect(house.data.modelAccounts.map((row: { id: string }) => row.id)).toEqual(['private-a', 'private-b']);
   expect(house.data.modelAccounts[1]).toMatchObject({ owner: 'bob', provider: 'private-provider', usage: 0.58 });

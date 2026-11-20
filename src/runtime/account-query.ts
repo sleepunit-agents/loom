@@ -9,7 +9,7 @@ const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
   resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
@@ -19,11 +19,16 @@ const login = new GraphQLObjectType({ name: 'RuntimeAccountLogin', fields: {
   box: { type: new GraphQLNonNull(machine) }, harness: { type: text }, place: { type: text }, state: { type: text },
   expiresAt: { type: GraphQLString }, checkedAt: { type: text }, since: { type: text }, learnedFrom: { type: text }, why: { type: GraphQLString },
 } });
+const windowReading = new GraphQLObjectType({ name: 'RuntimeAccountWindow', fields: {
+  window: { type: text }, usage: { type: GraphQLFloat }, usageReadAt: { type: GraphQLString },
+  resetsAt: { type: GraphQLString }, reserve: { type: GraphQLFloat },
+} });
 const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces: [account], fields: {
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
   hasRoom: column('hasRoom', new GraphQLNonNull(GraphQLBoolean)),
   signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
+  windows: column('windows', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(windowReading)))),
   logins: column('logins', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(login)))),
 } });
 // The union registers both concrete types with the generated schema. Their
@@ -49,7 +54,7 @@ export function modelAccountQueries(db: DataDatabase, now: () => string) {
         const publicFields = { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full' };
         const privateRow = selected.privateRows.get(row.id);
         if (!privateRow) return { __typename: summary.name, ...publicFields };
-        const values = { ...privateRow, hasRoom: capacity.hasRoom };
+        const values = { ...privateRow, hasRoom: capacity.hasRoom, windows: row.modelAccountWindowsByAccount };
         return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
           if (actor !== viewer) throw new Error('Account access ended');
           // Public-only selections never acquire a private witness. Record an
