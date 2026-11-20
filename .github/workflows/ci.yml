@@ -209,7 +209,12 @@ jobs:
           mv deploy-runtime/node_modules node_modules-runtime
           mv node_modules node_modules-dev
           mv node_modules-runtime node_modules
-          tar -czf loom-build.tar.gz dist assets package.json package-lock.json deploy-commit deploy-protocol node_modules
+          tar -czf loom-build.tar.gz dist assets house src/core/data/shipped-shapes package.json package-lock.json deploy-commit deploy-protocol node_modules
+          # Check the worker definition and every historical schema as delivered by the archive.
+          probe=$(mktemp -d)
+          tar -xzf loom-build.tar.gz -C "$probe" house/core src/core/data/shipped-shapes
+          diff -r house/core "$probe/house/core"
+          diff -r src/core/data/shipped-shapes "$probe/src/core/data/shipped-shapes"
           mv node_modules deploy-runtime/node_modules
           mv node_modules-dev node_modules
       - name: Keep deploy build
