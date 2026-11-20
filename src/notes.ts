@@ -21,7 +21,7 @@
  */
 import { DAY_MS } from './core/day.js';
 import { createHash } from 'node:crypto';
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 
@@ -91,10 +91,29 @@ export class Notes {
     if (at !== NOTES_VERSION) this.db.pragma(`user_version = ${NOTES_VERSION}`);
   }
 
+  private collectAfterWrite = false;
+
   close(): void { this.db.close(); }
 
   /** A native command owns this connection and commits its receipt with its note. */
-  atomicWrite<T>(run:(db:Database)=>T):T { return this.db.transaction(()=>run(this.db)).immediate(); }
+  atomicWrite<T>(run:(db:Database)=>T):T {
+    try {
+      return this.db.transaction(()=>run(this.db)).immediate();
+    } finally {
+      // Files do not roll back with SQLite. Collect against the committed references only,
+      // after the outermost write (including a failed receipt) releases its transaction.
+      if (!this.db.inTransaction && this.collectAfterWrite) {
+        try {
+          this.db.transaction(()=>this.collect()).immediate();
+          this.collectAfterWrite = false;
+        } catch (error) {
+          // A competing writer can win the lock after commit. Its references are still safe;
+          // leave collection pending for the next write rather than reporting a failed save.
+          if (!(error instanceof BetterSqlite3.SqliteError && error.code.startsWith('SQLITE_BUSY'))) throw error;
+        }
+      }
+    }
+  }
 
   private iso(): string { return new Date(this.now()).toISOString(); }
 
@@ -156,27 +175,29 @@ export class Notes {
   }
 
   /** Attach a file to a note (the note must exist). The bytes are stored once, by their sha256; a name is replaced. */
-  attach(path: string, name: string, from: string, opts: { type?: string } = {}): NoteFile {
+  attach(path: string, name: string, from: string | Buffer, opts: { type?: string } = {}): NoteFile {
     this.check(path);
     if (!FILE_NAME.test(name)) throw new NoteError("a file's name is one segment of letters, digits and . _ - and spaces");
-    if (!this.row(path)) throw new NoteError(`there's no note ${path} to attach to`, 404);
-    const st = statSync(from);
-    if (!st.isFile()) throw new NoteError(`${from} isn't a file`);
-    if (st.size > MAX_FILE_BYTES) throw new NoteError(`a file is at most ${MAX_FILE_BYTES / 1024 / 1024} MB`);
-    const sha = sha256File(from);
-    const to = blobPath(this.dir, sha);
-    if (!existsSync(to)) {
-      mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
-      const tmp = `${to}.loom.tmp`;
-      copyFileSync(from, tmp);
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, to);
-    }
-    const f: NoteFile = { name, sha256: sha, bytes: st.size, ...(opts.type ? { type: opts.type } : {}), added: this.iso() };
-    this.db.prepare('INSERT INTO note_files (path, name, sha256, bytes, type, added) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (path, name) DO UPDATE SET sha256 = excluded.sha256, bytes = excluded.bytes, type = excluded.type, added = excluded.added')
-      .run(path, name, sha, st.size, opts.type ?? null, f.added);
-    this.collect();
-    return f;
+    return this.atomicWrite(() => {
+      if (!this.row(path)) throw new NoteError(`there's no note ${path} to attach to`, 404);
+      if (typeof from !== 'string' && from.length > MAX_FILE_BYTES) throw new NoteError(`a file is at most ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+      const bytes = typeof from === 'string' ? readAttachment(from) : Buffer.from(from);
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      const to = blobPath(this.dir, sha);
+      this.collectAfterWrite = true;
+      if (!existsSync(to)) {
+        mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+        const tmp = `${to}.loom.tmp`;
+        try {
+          writeFileSync(tmp, bytes, {mode:0o600});
+          renameSync(tmp, to);
+        } finally { rmSync(tmp, {force:true}); }
+      }
+      const f: NoteFile = { name, sha256: sha, bytes: bytes.length, ...(opts.type ? { type: opts.type } : {}), added: this.iso() };
+      this.db.prepare('INSERT INTO note_files (path, name, sha256, bytes, type, added) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (path, name) DO UPDATE SET sha256 = excluded.sha256, bytes = excluded.bytes, type = excluded.type, added = excluded.added')
+        .run(path, name, sha, bytes.length, opts.type ?? null, f.added);
+      return f;
+    });
   }
 
   /** Where a note's file's bytes are on disk (read it there; never write it). */
@@ -193,13 +214,12 @@ export class Notes {
 
   delete(path: string): boolean {
     this.check(path);
-    const gone = this.db.transaction(() => {
+    return this.atomicWrite(() => {
+      this.collectAfterWrite = true;
       this.db.prepare('DELETE FROM note_files WHERE path = ?').run(path);
       this.db.prepare('DELETE FROM note_revisions WHERE path = ?').run(path);
       return this.db.prepare('DELETE FROM notes WHERE path = ?').run(path).changes > 0;
-    })();
-    this.collect();
-    return gone;
+    });
   }
 
   /**
@@ -222,7 +242,8 @@ export class Notes {
       return { gone, keptCited };
     };
     if (opts.dryRun) return plan();
-    const result = this.db.transaction(() => {
+    return this.atomicWrite(() => {
+      this.collectAfterWrite = true;
       const result = plan();
       for (const path of result.gone) {
         this.db.prepare('DELETE FROM note_files WHERE path = ?').run(path);
@@ -230,9 +251,7 @@ export class Notes {
         this.db.prepare('DELETE FROM notes WHERE path = ?').run(path);
       }
       return result;
-    }).immediate();
-    this.collect();
-    return result;
+    });
   }
 
   /** Remove the stored bytes no note's file names any more. */
@@ -247,18 +266,23 @@ export class Notes {
   }
 }
 
-function sha256File(path: string): string {
-  const h = createHash('sha256');
-  const fd = openSync(path, 'r');
+/** The metadata and blob must describe the same bytes even if a local producer changes its file. */
+function readAttachment(path: string): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
-    const buf = Buffer.allocUnsafe(1 << 20);
-    for (;;) {
-      const n = readSync(fd, buf, 0, buf.length, null);
-      if (!n) break;
-      h.update(buf.subarray(0, n));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new NoteError(`${path} isn't a file`);
+    if (stat.size > MAX_FILE_BYTES) throw new NoteError(`a file is at most ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fd, bytes, offset, bytes.length-offset, null);
+      if (!count) throw new NoteError('attachment changed while reading');
+      offset += count;
     }
+    if (readSync(fd, Buffer.alloc(1), 0, 1, null)) throw new NoteError('attachment changed while reading');
+    return bytes;
   } finally { closeSync(fd); }
-  return h.digest('hex');
 }
 
 /** `notes/homelab/x.md`, `note:homelab/x` → the paths they name; a folder (ending in `/`) names none. */
