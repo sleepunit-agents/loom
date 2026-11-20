@@ -7,11 +7,11 @@ export async function appearanceActions({page,app,out,open:openApp}){
  const panel=page.getByRole('region',{name:'Appearance tile',exact:true});
  const open=async()=>{if(!await panel.isVisible())await openApp('Appearance');await panel.waitFor();};
  // A choice is a group of radio buttons named for the setting; a switch is named for its own.
- const choose=(setting,choice)=>panel.getByRole('group',{name:setting,exact:true}).getByRole('radio',{name:choice,exact:true}).click();
+ const choose=(setting,choice)=>panel.getByRole('radiogroup',{name:setting,exact:true}).getByRole('radio',{name:choice,exact:true}).click();
  const save=async change=>{
   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/household/setPreferences'&&r.request().method()==='POST',{timeout:4000});void response.catch(()=>{});
   await change();const result=await response,body=await result.json();check(result.ok()&&body.ok===true,'Appearance save was refused');
-  await panel.getByRole('group',{name:'Look',exact:true}).waitFor({state:'visible'});
+  await panel.getByRole('radiogroup',{name:'Look',exact:true}).waitFor({state:'visible'});
   await page.waitForFunction(()=>{const control=document.querySelector('[data-tile=appearance] [role=switch]');return !!control&&!control.disabled;});
  };
  await attempt('deskLooks',async()=>{
