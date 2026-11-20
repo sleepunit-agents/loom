@@ -27,7 +27,7 @@ vi.mock('../../web/node_modules/graphql-ws/dist/index.js',()=>({createClient:(op
 }}));
 vi.mock('../../web/src/memory/commands',()=>({memoryCall:wire.call}));
 vi.mock('../../web/src/data',()=>({call:wire.call,useRecords:()=>{throw Error('Memory tiles must not read legacy records');}}));
-vi.mock('../../web/src/kit',()=>({Field:'label',Disclosure:'section',Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:'section',Facts:'dl',Fact:'dd',Split:(p:any)=>h('main',{'data-tile':p.label},p.list,p.reader),List:(p:any)=>h('div',null,p.children),Row:(p:any)=>h('button',{onClick:p.onClick},p.title),Empty:(p:any)=>h('p',null,p.title),Loading:(p:any)=>h('p',null,p.label),Error:(p:any)=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',Markdown:(p:any)=>h('p',null,p.text)}));
+vi.mock('../../web/src/kit',()=>({Field:'label',Disclosure:'section',Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:(p:any)=>h('section',null,h('h3',null,p.label),p.children),Facts:'dl',Fact:'dd',Split:(p:any)=>h('main',{'data-tile':p.label},p.list,p.reader),List:(p:any)=>h('div',null,p.children),Row:(p:any)=>h('button',{onClick:p.onClick},p.title),Empty:(p:any)=>h('p',null,p.title),Loading:(p:any)=>h('p',null,p.label),Error:(p:any)=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',Markdown:(p:any)=>h('p',null,p.text)}));
 import Knowledge from '../../web/src/pieces/knowledge';
 import People from '../../web/src/pieces/people';
 import Projects from '../../web/src/pieces/projects';
@@ -74,7 +74,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
   await act(async()=>{await expect.poll(()=>selections.size).toBe(12);});expect(wire.create).toHaveBeenCalledTimes(1);
   expect(text()).toContain('Opening knowledge');expect(text()).not.toContain('Private pump words');
   await refresh();await act(async()=>{await expect.poll(()=>[...selections.values()].some(s=>s.variables?.id==='fiction:friend')&&[...selections.values()].some(s=>s.variables?.to==='2026-11-14')).toBe(true);});await refresh();expect(text()).toContain('Private fictional friend');expect(text()).toContain('Private fictional pond');expect(text()).toContain('Private fictional session');expect(text()).toContain('Fictional pump');expect(text()).toContain('Private pump words');expect(wire.call).not.toHaveBeenCalled();
-  const projectText=()=>JSON.stringify(tree!.root.findAllByType('main').find(p=>p.props['data-tile']==='Projects')!.findAllByType('h2').map(p=>p.props.children));
+  const projectText=()=>JSON.stringify(tree!.root.findAllByType('main').find(p=>p.props['data-tile']==='Projects')!.findAllByType('h3').map(p=>p.props.children));
   expect(projectText()).toContain('People');
   // A paused index intentionally omits hub roles. Its normalized result must
   // not erase the selected hub's sections when only that selection refreshes.
