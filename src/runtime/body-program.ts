@@ -235,8 +235,13 @@ export async function bodyProgram(input: {
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || policy?.word === 'others' || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
-    if(job.venue==='loom' && policy?.word==='owners'){
-      const delegation='Check conversation.handoffOptions for assigned peers, enabled work roles and current availability. To delegate through Loom, call conversation.handoff with one of role (a listed work role), agent (a listed peer), or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, include the repository and commit. For a role or Codex handoff, Loom returns the result to this thread. To check that worker’s progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
+    const coordinating = job.venue === 'loom' && policy?.word === 'owners';
+    if (coordinating || job.review) {
+      const nativeBudget = 'Native subagents work within this job and share its account quota. Provider readings can lag while children are running. Start only as many children as the brief needs, and account for outstanding children before starting more.';
+      context.unshift(nativeBudget);continued.unshift(nativeBudget);
+    }
+    if(coordinating){
+      const delegation='Check conversation.handoffOptions for assigned peers, enabled work roles and current availability. To delegate through Loom, call conversation.handoff with one of role (a listed work role), agent (a listed peer), or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, put the repository and commit in words. For a role or Codex handoff, Loom returns the result to this thread. To check that worker’s progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
       context.unshift(delegation);continued.unshift(delegation);
     }
     if(job.venue==='discord'&&job.venueDescription){
