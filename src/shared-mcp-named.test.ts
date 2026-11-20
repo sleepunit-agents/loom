@@ -94,6 +94,24 @@ it('writes and searches knowledge by every word',async()=>{
  }finally{await art.client.close();await p.close();}
 });
 
+it('reads filtered duplicate pairs through the signed-in agent tool',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ try{
+  for(const [category,title] of [['episode','Noise'],['reference','First'],['reference','Second']]){
+   const saved=await art.call('remember',{category,title,content:'Common fictional words for a duplicate review.'});
+   expect(saved.error,saved.text).toBe(false);
+  }
+  const call=(who:typeof art,input:Record<string,unknown>)=>who.call('loom_command',{operation:'memory.duplicates',input,id:'fictional-audit-read'});
+  const answer=await call(art,{excludeCategories:['episode'],maxDuplicates:1,similarityThreshold:0});
+  expect(answer.error,answer.text).toBe(false);
+  const {pairs}=JSON.parse(answer.text).value;
+  expect(pairs).toHaveLength(1);
+  expect(pairs[0]).toMatchObject({a:expect.stringMatching(/^art:/),b:expect.stringMatching(/^art:/)});
+  expect(pairs[0].a).not.toBe(pairs[0].b);
+  expect(JSON.parse((await call(mark,{})).text).value.pairs).toEqual([]);
+ }finally{await art.client.close();await mark.client.close();await p.close();}
+});
+
 it('lists recent episodes',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{

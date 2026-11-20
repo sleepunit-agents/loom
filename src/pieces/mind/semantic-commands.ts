@@ -7,7 +7,8 @@ import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {OperationError,RecoveredWrite,type Operations,type Context,type WriteReceipt} from '../../core/operations/index.js';
 import type {Viewer} from '../../policy.js';
-import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
+import * as sqliteVec from 'sqlite-vec';
+import {SqliteVecBackend,auditMemories} from '../../backends/sqlite-vec.js';
 import {MEMORY_CONTENT_MAX,OBSERVATIONS,type EmbeddingProvider} from '../../backends/types.js';
 import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
@@ -126,6 +127,24 @@ operations.register({...adding,doors:[...base.doors],name:'memory.remember',inpu
    }finally{backend.close();options.committed();}
   },
   run(_ctx,_input,prepared){return prepared;}});
+ operations.register({name:'memory.duplicates',doors:['http'],recheckPolicy:true,
+  may:viewer=>!!selected(viewer)&&!options.addsOnly?.(viewer),
+  input:z.object({category:z.string().min(1).max(200).optional(),excludeCategories:z.array(z.string().min(1).max(200)).max(20).optional(),maxDuplicates:z.number().int().min(1).max(100).optional(),similarityThreshold:z.number().min(0).max(1).optional()}).strict(),
+  output:z.object({pairs:z.array(z.object({a:scopedId,b:scopedId,score:z.number()}))}),
+  run(ctx,input){
+   const source=current(ctx.viewer),agent=author(ctx.viewer);
+   if(!source)throw new OperationError('unavailable','Memory is not prepared for commands');
+   if(!source.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get())return {pairs:[]};
+   const db=new Database(source.path,{readonly:true,fileMustExist:true,timeout:0});
+   try{
+    sqliteVec.load(db);
+    return db.transaction(()=>{
+     const result=auditMemories(db,{...input,currentAt:ctx.now});
+     const pairs=result.duplicates.map(({a,b,relevance})=>({a:agent+':'+opaque(db,a.ref),b:agent+':'+opaque(db,b.ref),score:relevance}));
+     return {pairs};
+    })();
+   }finally{db.close();}
+  }});
  const cardValue=z.union([z.string(),z.number(),z.boolean(),z.array(z.string())]);
  const stamp={verified_at:z.string().optional(),source:z.string().optional(),stale_after_days:z.number().optional()};
  const person=z.object({slug:z.string().min(1).max(PERSON_CARD_SLUG_MAX),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();

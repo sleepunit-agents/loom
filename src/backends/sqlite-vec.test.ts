@@ -1113,6 +1113,20 @@ describe('SqliteVecBackend', () => {
       expect(dupTitles).toContain('Loom duplicate');
     });
 
+    it('filters before nearest-neighbour selection when episode rows fill the closest ten', async () => {
+      for (let i = 0; i < 12; i++) {
+        await backend.remember({category:'episode',title:'Receipt '+i,content:'loom alpha'});
+      }
+      for (const title of ['Anchor','Reference']) {
+        await backend.remember({category:'reference',title,content:'loom alpha'});
+      }
+      const report = await backend.audit({excludeCategories:['episode'],maxDuplicates:1});
+      expect(report.totalMemories).toBe(2);
+      expect(report.duplicates).toHaveLength(1);
+      expect([report.duplicates[0].a.title,report.duplicates[0].b.title].sort()).toEqual(['Anchor','Reference']);
+      expect((await backend.audit({category:'not in the store'})).duplicates).toEqual([]);
+    });
+
     it('excludes TTL=permanent memories from the stale list', async () => {
       const { ref } = await backend.remember({
         category: 'reference',

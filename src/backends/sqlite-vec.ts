@@ -124,6 +124,127 @@ interface VecMatch {
   distance: number;
 }
 
+/** The caller supplies a sqlite-vec connection, which may be read-only. */
+export function auditMemories(db: Database, options?: AuditOptions): AuditReport {
+    const staleDays = options?.staleDays ?? 30;
+    const similarityThreshold = options?.similarityThreshold ?? 0.85;
+    const maxDuplicates = options?.maxDuplicates ?? 20;
+
+    const now = new Date(options?.currentAt ?? Date.now());
+    const staleThreshold = new Date(now.getTime() - staleDays * DAY_MS);
+
+    const conditions = ['archived = 0'];
+    const parameters: string[] = [];
+    if (options?.category !== undefined) {
+      conditions.push('category = ?');
+      parameters.push(options.category);
+    }
+    if (options?.excludeCategories?.length) {
+      conditions.push('category NOT IN (' + options.excludeCategories.map(() => '?').join(',') + ')');
+      parameters.push(...options.excludeCategories);
+    }
+    if (options?.currentAt !== undefined) {
+      conditions.push('(expires_at IS NULL OR julianday(expires_at) > julianday(?))');
+      parameters.push(now.toISOString());
+    }
+    const selected = conditions.join(' AND ');
+    const rows = db
+      .prepare(
+        `SELECT id, ref, title, category, project, ttl, expires_at,
+                last_accessed, updated, created
+         FROM memories WHERE ${selected}`,
+      )
+      .all(...parameters) as (Pick<MemoryRow,
+        'id' | 'ref' | 'title' | 'category' | 'project' | 'ttl' |
+        'expires_at' | 'last_accessed' | 'updated' | 'created'>)[];
+
+    const byCategory: Record<string, number> = {};
+    const stale: AuditStaleEntry[] = [];
+    const expired: string[] = [];
+
+    for (const r of rows) {
+      byCategory[r.category] = (byCategory[r.category] ?? 0) + 1;
+      if (r.expires_at && isExpired(r.expires_at, now)) {
+        expired.push(r.ref);
+        continue;
+      }
+      if (r.ttl === 'permanent') continue;
+      const lastTouch = r.last_accessed ?? r.updated ?? r.created;
+      if (new Date(lastTouch) < staleThreshold) {
+        stale.push({
+          ref: r.ref,
+          title: r.title,
+          category: r.category,
+          project: r.project ?? undefined,
+          lastTouch,
+        });
+      }
+    }
+
+    // Duplicate detection: batch-load all embeddings in one query, then
+    // for each memory find its k-nearest neighbours (k=10 to surface
+    // clusters, not just the single closest), collect ALL pairs above the
+    // threshold, sort by descending similarity, and truncate to maxDuplicates.
+    // One DB query per row (the MATCH) instead of two (fetch + MATCH).
+    const allPairs: DuplicatePair[] = [];
+    const seenPair = new Set<string>();
+    const pairKey = (a: number, b: number) =>
+      a < b ? `${a}:${b}` : `${b}:${a}`;
+    const byIdRow = new Map(rows.map((r) => [r.id, r]));
+
+    // Load all stored embeddings in one pass so the inner loop only runs
+    // the MATCH query rather than a fetch-then-match pair.
+    const allEmbedRows = db
+      .prepare(`SELECT rowid, embedding FROM vec_memories WHERE rowid IN (SELECT id FROM memories WHERE ${selected})`)
+      .all(...parameters) as { rowid: number | bigint; embedding: Buffer }[];
+    const embeddingMap = new Map<number, Buffer>();
+    for (const er of allEmbedRows) {
+      embeddingMap.set(Number(er.rowid), er.embedding);
+    }
+
+    const kNeighbours = 10;
+    const vecStmt = db.prepare(
+      `SELECT rowid, distance FROM vec_memories
+       WHERE embedding MATCH ? AND k = ${kNeighbours}
+         AND rowid IN (SELECT id FROM memories WHERE ${selected})
+       ORDER BY distance`,
+    );
+
+    for (const r of rows) {
+      const emb = embeddingMap.get(r.id);
+      if (!emb) continue;
+      const hits = vecStmt.all(emb, ...parameters) as VecMatch[];
+      for (const h of hits) {
+        if (h.rowid === r.id) continue;
+        const relevance = 1 - h.distance;
+        if (relevance < similarityThreshold) break;
+        const key = pairKey(r.id, h.rowid);
+        if (seenPair.has(key)) continue;
+        seenPair.add(key);
+        const other = byIdRow.get(h.rowid);
+        if (!other) continue;
+        allPairs.push({
+          a: { ref: r.ref, title: r.title },
+          b: { ref: other.ref, title: other.title },
+          relevance,
+        });
+      }
+    }
+
+    // Sort highest-similarity pairs first so the truncation keeps the worst
+    // duplicates, not just the ones discovered first by insertion order.
+    allPairs.sort((x, y) => y.relevance - x.relevance);
+    const duplicates = allPairs.slice(0, maxDuplicates);
+
+    return {
+      totalMemories: rows.length,
+      byCategory,
+      stale,
+      duplicates,
+      expired,
+    };
+}
+
 export class SqliteVecBackend implements MemoryBackend {
   private readonly db: Database;
 
@@ -631,107 +752,7 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async audit(options?: AuditOptions): Promise<AuditReport> {
-    const staleDays = options?.staleDays ?? 30;
-    const similarityThreshold = options?.similarityThreshold ?? 0.85;
-    const maxDuplicates = options?.maxDuplicates ?? 20;
-
-    const now = new Date();
-    const staleThreshold = new Date(now.getTime() - staleDays * DAY_MS);
-
-    const rows = this.db
-      .prepare(
-        `SELECT id, ref, title, category, project, ttl, expires_at,
-                last_accessed, updated, created
-         FROM memories WHERE archived = 0`,
-      )
-      .all() as (Pick<MemoryRow,
-        'id' | 'ref' | 'title' | 'category' | 'project' | 'ttl' |
-        'expires_at' | 'last_accessed' | 'updated' | 'created'>)[];
-
-    const byCategory: Record<string, number> = {};
-    const stale: AuditStaleEntry[] = [];
-    const expired: string[] = [];
-
-    for (const r of rows) {
-      byCategory[r.category] = (byCategory[r.category] ?? 0) + 1;
-      if (r.expires_at && isExpired(r.expires_at, now)) {
-        expired.push(r.ref);
-        continue;
-      }
-      if (r.ttl === 'permanent') continue;
-      const lastTouch = r.last_accessed ?? r.updated ?? r.created;
-      if (new Date(lastTouch) < staleThreshold) {
-        stale.push({
-          ref: r.ref,
-          title: r.title,
-          category: r.category,
-          project: r.project ?? undefined,
-          lastTouch,
-        });
-      }
-    }
-
-    // Duplicate detection: batch-load all embeddings in one query, then
-    // for each memory find its k-nearest neighbours (k=10 to surface
-    // clusters, not just the single closest), collect ALL pairs above the
-    // threshold, sort by descending similarity, and truncate to maxDuplicates.
-    // One DB query per row (the MATCH) instead of two (fetch + MATCH).
-    const allPairs: DuplicatePair[] = [];
-    const seenPair = new Set<string>();
-    const pairKey = (a: number, b: number) =>
-      a < b ? `${a}:${b}` : `${b}:${a}`;
-    const byIdRow = new Map(rows.map((r) => [r.id, r]));
-
-    // Load all stored embeddings in one pass so the inner loop only runs
-    // the MATCH query rather than a fetch-then-match pair.
-    const allEmbedRows = this.db
-      .prepare('SELECT rowid, embedding FROM vec_memories')
-      .all() as { rowid: number | bigint; embedding: Buffer }[];
-    const embeddingMap = new Map<number, Buffer>();
-    for (const er of allEmbedRows) {
-      embeddingMap.set(Number(er.rowid), er.embedding);
-    }
-
-    const kNeighbours = 10;
-    const vecStmt = this.db.prepare(
-      `SELECT rowid, distance FROM vec_memories
-       WHERE embedding MATCH ? AND k = ${kNeighbours}
-       ORDER BY distance`,
-    );
-
-    for (const r of rows) {
-      const emb = embeddingMap.get(r.id);
-      if (!emb) continue;
-      const hits = vecStmt.all(emb) as VecMatch[];
-      for (const h of hits) {
-        if (h.rowid === r.id) continue;
-        const relevance = 1 - h.distance;
-        if (relevance < similarityThreshold) break;
-        const key = pairKey(r.id, h.rowid);
-        if (seenPair.has(key)) continue;
-        seenPair.add(key);
-        const other = byIdRow.get(h.rowid);
-        if (!other) continue;
-        allPairs.push({
-          a: { ref: r.ref, title: r.title },
-          b: { ref: other.ref, title: other.title },
-          relevance,
-        });
-      }
-    }
-
-    // Sort highest-similarity pairs first so the truncation keeps the worst
-    // duplicates, not just the ones discovered first by insertion order.
-    allPairs.sort((x, y) => y.relevance - x.relevance);
-    const duplicates = allPairs.slice(0, maxDuplicates);
-
-    return {
-      totalMemories: rows.length,
-      byCategory,
-      stale,
-      duplicates,
-      expired,
-    };
+    return auditMemories(this.db, options);
   }
 
   async archive(input: ArchiveInput): Promise<ArchiveResult> {
