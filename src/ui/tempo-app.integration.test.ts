@@ -11,7 +11,7 @@ import {chromium,type Browser,type BrowserContext} from 'playwright-core';
 import {createDataSchema} from '../core/data/database.js';
 import {dataAuthentication} from '../core/data/authentication.js';
 import {FakeClock} from '../core/clock.js';
-import {members,agents,household,tokens,sessions} from '../core/data/schema.js';
+import {members,agents,memberAgents,household,tokens,sessions} from '../core/data/schema.js';
 import {sharedRoot} from '../shared-root.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -28,6 +28,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
  const client=new Database(':memory:'),clock=new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+ db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  db.insert(household).values({timezone:'America/Chicago'}).run();
  const token='tempo-token-'.repeat(6),cookie='tempo-cookie-'.repeat(6);
  db.insert(tokens).values({fingerprint:hash(token),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
