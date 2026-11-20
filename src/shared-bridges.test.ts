@@ -1902,6 +1902,16 @@ it.each([false,true])('rechecks the linked DM recipient after opening a channel 
  expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',text:input.text,channel:'DOWNER',thread:null});
  expect((await f.call('bridges','directStatus',address)).body).toMatchObject({value:{state:'sent',postedIds:['1794432000.000017']}});
  expect((await f.call('bridges','directStatus',address,token.other)).status).toBe(403);
+ const fresh={...input,id:randomUUID()};
+ expect((await f.call('bridges','direct',fresh)).status).toBe(409);
+ const previous=f.db.select().from(bridgeConnections).get()!;
+ f.root.writes.run(()=>{
+  f.db.update(bridgeConnections).set({enabled:false,removedAt:new Date(f.clock.now()).toISOString()}).where(eq(bridgeConnections.id,previous.id)).run();
+  f.db.insert(bridgeConnections).values({...previous,id:'reconnected'}).run();
+ });
+ const duplicate=await f.call('bridges','direct',fresh);
+ expect(duplicate.status,JSON.stringify(duplicate.body)).toBe(409);
+ expect(posts).toHaveLength(1);
 });
 
 it.each(['relinked','job stopped','machine revoked'])('holds an offline DM after %s before release',async change=>{
@@ -1964,4 +1974,29 @@ it('keeps the confirmed first part and holds the rest when its channel is filter
  expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
  expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{part:0,postedId:'1794432000.000009'}]);
  expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+});
+
+it('delivers a held progress message promoted to the final answer once after the job ends',async()=>{
+ let effects=true;
+ const f=fixture(()=>effects),incoming=await f.receive(),cv=incoming.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const input={id:randomUUID(),text:'Final answer'};
+ effects=false;
+ expect((await f.call('bridges','say',input)).status).toBe(200);
+ expect((await f.call('bridges','reply',{...input,incoming:incoming.id,model:'observed'})).status).toBe(200);
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  reviewReply(f.db,input.id,'release');
+ });
+ effects=true;
+ const daemon=f.root.services.bridges.daemon!;
+ await daemon.reconcile();
+ await daemon.idle();
+ await daemon.sends.flush();
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{id:input.id,state:'sent'}]);
+ expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{send:input.id,part:0,postedId:'1794432000.000009'}]);
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed',run:'body'}]);
 });

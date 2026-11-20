@@ -176,13 +176,13 @@ export class BridgeSends {
         const last = files.length > 0 && part++ === parts - 1;
         const address = { channel: send.channel, thread: send.thread };
         const authored=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
-        if(authored||send.id.startsWith('dm:')){
+        if(authored&&!authored.finalReply||send.id.startsWith('dm:')){
           const permitted=()=>{
             const source=this.db.select().from(bridgeSendJobs).where(eq(bridgeSendJobs.send,send.id)).get();
             if(!source||source.job!==authored?.job)return false;
             if(send.id.startsWith('dm:'))return send.thread===null&&source.directTarget?.channel===send.channel&&
               this.transport.directAllowed?.(source.job,source.directTarget,send.connection,send.channel)===true;
-            return !source.directTarget&&this.transport.progressAllowed?.(source.job,send,files.length>0)===true;
+            return !source.directTarget&&(source.finalReply||this.transport.progressAllowed?.(source.job,send,files.length>0)===true);
           };
           if(!permitted())throw new BridgeReplyNotSent(false);
           return this.transport.post(current,address,text,last?files:undefined,permitted);

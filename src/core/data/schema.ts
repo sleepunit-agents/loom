@@ -2063,6 +2063,7 @@ export const bridgeSendJobs = sqliteTable('bridge_send_jobs', {
   send: text('send').primaryKey().notNull().references(() => bridgeSends.id, { onDelete:'cascade' }),
   job: text('job').notNull().references(() => jobs.id, { onDelete:'cascade' }),
   directTarget:text('direct_target',{mode:'json'}).$type<DirectSendTarget & {channel:string}>(),
+  finalReply:integer('final_reply',{mode:'boolean'}).notNull().default(false),
 });
 /** Which messages carried a kept Slack or Discord file. The same file shared in a second message is listed under
  * both and its bytes are kept once; a file with no message left is removed. */

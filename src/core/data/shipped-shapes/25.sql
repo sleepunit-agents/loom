@@ -1640,6 +1640,7 @@ CREATE TABLE `bridge_send_jobs` (
 	`send` text PRIMARY KEY NOT NULL,
 	`job` text NOT NULL,
 	`direct_target` text,
+	`final_reply` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade
 );

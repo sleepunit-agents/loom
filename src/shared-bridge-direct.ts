@@ -43,8 +43,10 @@ export function registerBridgeDirect(ops:Operations,db:DataDatabase,conversation
   if(count>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict','Job post limit reached');
   const since=new Date(Date.parse(conversations.now())-600_000).toISOString();
   const duplicate=db.select({id:bridgeSends.id}).from(bridgeSends).innerJoin(bridgeSendJobs,eq(bridgeSends.id,bridgeSendJobs.send))
-   .where(and(eq(bridgeSends.text,text),eq(bridgeSends.connection,bound.connection),gte(bridgeSends.createdAt,since),
+   .where(and(eq(bridgeSends.text,text),gte(bridgeSends.createdAt,since),
     sql`json_extract(${bridgeSendJobs.directTarget}, '$.origin') = ${bound.target.origin}`,
+    sql`json_extract(${bridgeSendJobs.directTarget}, '$.platform') = ${bound.target.platform}`,
+    sql`json_extract(${bridgeSendJobs.directTarget}, '$.workspace') = ${bound.target.workspace}`,
     sql`json_extract(${bridgeSendJobs.directTarget}, '$.user') = ${bound.target.user}`)).get();
   if(duplicate)throw new OperationError('conflict','This message was already queued for this recipient');
  };
