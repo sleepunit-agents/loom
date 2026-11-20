@@ -12,7 +12,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   assert.equal(result.triggers.length,1);return {row:result.triggers[0],events:result.triggerLog.map(row=>row.event)};
  };
  const inbox=async()=> (await query('{inboxItems(limit:100){id toKind to source sourceId refs state volume body{words}}}')).inboxItems;
- const notice=async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice;
+ const notice=async()=> (await query('{settledInboxNotice{id count needs fyi}}')).settledInboxNotice;
  const observe=async(name,work)=>{
   try{const facts=await work(),screenshot=await capture(name);checks[name]={ok:true,facts,screenshot};}
   catch(error){const failed={ok:false,error:String(error)};try{failed.screenshot=await capture(name+'-failed');}catch{}checks[name]=failed;throw error;}
@@ -55,7 +55,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   clock.advance(4999);assert.equal((await notice())?.id??null,previousNotice);
   clock.advance(1);const settled=await notice();assert.notEqual(settled?.id,previousNotice);const waiting=items.filter(item=>item.state==='waiting'&&item.volume==='full').length;
   assert.equal(settled.count,waiting);assert.ok(waiting>0);
-  const notification=page.getByRole('status',{name:'Inbox notification'});await notification.waitFor();assert.ok((await notification.innerText()).includes(`${waiting} items are waiting in your Inbox`));
+  const notification=page.getByRole('status',{name:'Inbox notification'});await notification.waitFor();const label=await notification.innerText();if(settled.fyi)assert.ok(label.includes(`${settled.fyi} FYI`));if(settled.needs)assert.ok(label.includes('your response'));
   return {delivered:1,source:'trigger',recipient:example.members[0],noticeBeforeDeadline:previousNotice,settleMilliseconds:5000,notifiedItems:waiting};
  });
  await observe('cancelled',async()=>{

@@ -12,7 +12,7 @@ function fixture(){
  db.insert(members).values([{id:'sam',role:'member',joinedAt:at},{id:'other',role:'member',joinedAt:at},{id:'owner',role:'owner',joinedAt:at}]).run();
  db.insert(agents).values({id:'sam',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values({member:'sam',project:'pond'}).run();
- const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:notices.fields})}),query='{ settledInboxNotice { id count } }';
+ const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:notices.fields})}),query='{ settledInboxNotice { id count needs fyi } }';
  const read=async(kind='member',id='sam')=>{const result=await graphql({schema,source:query,contextValue:{viewer:{kind,id}}});expect(result.errors).toBeUndefined();return result.data?.settledInboxNotice;};
  const item=(id:string,values:Partial<typeof inbox.$inferInsert>={})=>db.insert(inbox).values({id,toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'agent',words:'PRIVATE WORDS',state:'waiting',at,changedAt:at,...values}).run();
  closes.push(()=>client.close(),()=>live.close(),()=>notices.close());return {db,client,live,notices,schema,query,read,item};
@@ -20,8 +20,8 @@ function fixture(){
 it('emits a real live delta with only the settled recipient count and a new occurrence',async()=>{
  const f=fixture(),watch=f.live.watch({schema:f.schema,query:f.query,contextValue:{viewer:{kind:'member',id:'sam'}},valid:()=>true});
  expect((await watch.next()).value?.patches).toEqual([{path:[],value:{settledInboxNotice:null}}]);
- f.item('a');f.item('b');const pending=watch.next();expect(f.notices.publish('sam',['a','b'])).toBe(true);
- const notice=await pending;expect(notice.value?.patches).toMatchObject([{path:['settledInboxNotice'],value:{count:2,id:expect.any(String)}}]);
+ f.item('a',{answers:'words'});f.item('b');const pending=watch.next();expect(f.notices.publish('sam',['a','b'])).toBe(true);
+ const notice=await pending;expect(notice.value?.patches).toMatchObject([{path:['settledInboxNotice'],value:{count:2,needs:1,fyi:1,id:expect.any(String)}}]);
  expect(JSON.stringify(notice)).not.toContain('PRIVATE WORDS');expect(JSON.stringify(notice)).not.toContain('"a"');
  const first=await f.read();f.notices.publish('sam',['a','b']);expect(await f.read()).not.toEqual(first);await watch.return?.();
 });

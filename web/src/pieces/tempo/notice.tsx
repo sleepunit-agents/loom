@@ -1,16 +1,41 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { inboxApp } from '../attention/registration';
-export const settledNoticeQuery = '{ settledInboxNotice { id count } }';
-type Notice = { id: string; count: number };
-/** One word-free notification on the shell's existing generated connection. */
+import './notice.css';
+
+export const settledNoticeQuery = '{ settledInboxNotice { id needs fyi } }';
+type Notice = { id: string; needs: number; fyi: number };
+
+function Popup({ notice, dismiss }: { notice: Notice; dismiss: (id: string) => void }) {
+  const [closing, setClosing] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  useEffect(() => {
+    if (!closing && (focused || hovered)) return;
+    const timer = setTimeout(() => {
+      if (closing) dismiss(notice.id);
+      else setClosing(true);
+    }, closing ? 180 : 8000);
+    return () => clearTimeout(timer);
+  }, [closing, focused, hovered, dismiss, notice.id]);
+
+  const counts = [
+    notice.needs > 0 && `${notice.needs} ${notice.needs === 1 ? 'needs' : 'need'} your response`,
+    notice.fyi > 0 && `${notice.fyi} ${notice.fyi === 1 ? 'FYI' : 'FYIs'}`,
+  ].filter(Boolean).join(' · ');
+  return <aside role="status" aria-label="Inbox notification" className="tempo-inbox-notice" data-closing={closing}
+    onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+    onFocus={() => setFocused(true)} onBlur={event => setFocused(event.currentTarget.contains(event.relatedTarget))}>
+    <a href={inboxApp.path}><strong>Inbox</strong><span>{counts}</span></a>
+    <button type="button" aria-label="Dismiss Inbox notification" onClick={() => setClosing(true)}>Dismiss</button>
+  </aside>;
+}
+
 export default function InboxNotice() {
   const query = useDataQuery<{ settledInboxNotice: Notice | null }>(settledNoticeQuery);
   const [dismissed, dismiss] = useState<string>();
   const notice = query.status === 'live' ? query.data?.settledInboxNotice : undefined;
-  if (!notice || typeof notice.id !== 'string' || !Number.isSafeInteger(notice.count) || notice.count <= 0 || notice.id === dismissed) return null;
-  return <aside role="status" aria-label="Inbox notification" className="fixed bottom-12 right-4 z-50 flex items-center gap-3 rounded-lg border border-border bg-background text-foreground p-3 shadow-lg">
-    <a href={inboxApp.path}>{notice.count === 1 ? '1 item is' : `${notice.count} items are`} waiting in your Inbox</a>
-    <button type="button" aria-label="Dismiss Inbox notification" onClick={() => dismiss(notice.id)}>Dismiss</button>
-  </aside>;
+  if (!notice || ![notice.needs, notice.fyi].every(n => Number.isSafeInteger(n) && n >= 0)
+    || notice.needs + notice.fyi === 0 || notice.id === dismissed) return null;
+  return <Popup key={notice.id} notice={notice} dismiss={dismiss} />;
 }

@@ -76,11 +76,11 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   clock.advance(1);
   for(const page of [a,b]){
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
-   expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).toContain('2 items are waiting in your Inbox');
+   expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).toContain('2 FYIs');
    expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).not.toContain('PRIVATE');
   }
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
-  expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  await expect.poll(()=>a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
   mark('pause');await a.getByRole('button',{name:'Pause agent',exact:true}).click();
   await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0)));
