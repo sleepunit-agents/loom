@@ -50,6 +50,8 @@ export async function knowledgeSourceCheck({page,tile,out}) {
  const source='https://example.invalid/manual/pump-pressure';
  const screenshot='action-knowledge-source-check.png';
  try {
+  const back=tile.getByRole('button',{name:'Knowledge',exact:true});
+  if(await back.isVisible())await back.click();
   await tile.getByRole('button',{name:'Add a fact',exact:true}).click();
   const form=tile.getByRole('form',{name:'Add a fact',exact:true});
   for(const [label,value] of [['Title',title],['Topic','household/garden'],['What it says',claim],['Where it came from',source]])
