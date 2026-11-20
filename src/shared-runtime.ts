@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, conversations, changeReviewRounds, jobUsage } from './core/data/schema.js';
-import { canonical as canonicalInput, OperationError, type Operations } from './core/operations/index.js';
+import { canonical as canonicalJson, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
 import { Dispatcher } from './runtime/dispatcher.js';
@@ -122,7 +122,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         // The findings belong only to the protected round. Check their stored value on replay.
         const report = input.coldReview;
         const evidence = report && [report.change, report.headCommit, report.before, report.after];
-        const usage = report?.usage && canonicalInput(report.usage);
+        const usage = report?.usage && canonicalJson(report.usage);
         return createHash('sha256').update(JSON.stringify({ job: input.job, exit: input.exitCode, by: input.exitBy, evidence, usage })).digest('hex');
       }
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();

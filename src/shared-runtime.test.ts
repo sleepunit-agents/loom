@@ -1,3 +1,5 @@
+import { boundedReviewReport } from './runtime/cold-review-report.js';
+import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 import { change as fixtureChange } from './pieces/changes/change.fixture.js';
 import { changeReviewStore } from './apps/change-reviews.js';
 import {testProgramPin} from './runtime/pinned-program.fixture.js';
@@ -740,7 +742,7 @@ it.each(['mismatch', 'missing verdict'])('checks the discarded reply on a %s rec
   expect(store.history(row.id)[0].findings).not.toContain(report.reply);
 });
 
-it.each(['unchanged', 'changed', 'oversize', 'malformed', 'missing'] as const)('delivers the %s review from the worker client and closes the assigned round', async evidence => {
+it.each(['unchanged', 'changed', 'oversize', 'malformed', 'escaped', 'missing'] as const)('delivers the %s review from the worker client and closes the assigned round', async evidence => {
   const f = fixture(), job = f.send(), row = fixtureChange();
   f.root.services.changes.put(row);
   const store = changeReviewStore(f.db, f.now);
@@ -748,7 +750,7 @@ it.each(['unchanged', 'changed', 'oversize', 'malformed', 'missing'] as const)('
   const tree = 'a'.repeat(64);
   const usage = { source: 'report' as const, tokensIn: 23, tokensOut: 7 };
   const report = { change: row.id, headCommit: row.head.id, before: tree, usage, after: evidence === 'changed' ? 'b'.repeat(64) : tree,
-    reply: evidence === 'oversize' ? 'x'.repeat(110_000) : evidence === 'malformed' ? '\uD800' : '- MAJOR — unhandled case\nVERDICT: CLEAR' };
+    reply: evidence === 'oversize' ? 'x'.repeat(110_000) : evidence === 'malformed' ? '\uD800' : evidence === 'escaped' ? '\u0001'.repeat(MESSAGE_WORDS_MAX) : '- MAJOR — unhandled case\nVERDICT: CLEAR' };
   expect(await f.control.next()).toBeUndefined();
   const finish = vi.spyOn(f.control, 'finish');
   const ordinary = { build: vi.fn(), start: vi.fn() };
@@ -778,6 +780,9 @@ it.each(['unchanged', 'changed', 'oversize', 'malformed', 'missing'] as const)('
     const literal = { ...report, reply: 'Unusable reviewer reply SHA-256: ' + digest };
     const input = { job: job.id, exitCode: 0, logTail: '', exitBy: 'runner', coldReview: literal };
     expect((await f.call('finish', input, receipt.id)).status).toBe(409);
+    for (const [reply, status] of [[report.reply, 200], [report.reply + 'x', 409]] as const) {
+      expect((await f.call('finish', { ...input, coldReview: boundedReviewReport({ ...report, reply }) }, receipt.id)).status).toBe(status);
+    }
   }
   if (!valid) expect(store.history(row.id)[0].findings).not.toContain('unhandled case');
 });
