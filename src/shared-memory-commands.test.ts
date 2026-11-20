@@ -611,7 +611,8 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const f=await fixture(),signal=new AbortController().signal;
  const access={url:f.url,token:raw.body,signal,agent:'art',job:'job',conversation:f.thread.conversation,clock:f.clock};
  const tools=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(tools.close);
- const local=await bodySecretTools({...access,houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
+ const sentinel='fictional-protected-receipt';
+ const local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
  const env={LOOM_BODY_HOUSE_NOTE:local.houseNote};
  const run=async(...args:string[])=>{
    let out='',err='';
@@ -621,6 +622,10 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const write=['write','field/log','--lifespan','short','--body','first reading','--id','one-reading'];
  expect(await run(...write)).toMatchObject({code:0});
  expect(await run(...write)).toMatchObject({code:0});
+ const refused=await run(...write.slice(0,-1),sentinel);
+ expect(refused.code).toBe(1);
+ expect(refused.err).toContain('Reuse the supplied --id');
+ expect(refused.out+refused.err).not.toContain(sentinel);
  const executable=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','read','field/log'],{env:{...process.env,...env}});
  expect(executable.stdout).toBe('first reading\n');
  const list=await run('list','field/','--json');expect(list.code).toBe(0);

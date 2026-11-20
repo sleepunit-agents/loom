@@ -23,7 +23,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
   if(args[0]==='--help'||args[0]==='-h'){io.stdout(usage);return 0;}
   const [operation,...rest]=args;
   if(!['list','read','write'].includes(operation)){io.stderr(usage);return 2;}
-  let input:Record<string,unknown>, json=false;
+  let input:Record<string,unknown>, generatedReceipt:string|undefined, json=false;
   try{
     // parseArgs regards a dash-prefixed string after an option as ambiguous.
     // A note's body is literal text, including option-looking words.
@@ -49,9 +49,10 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     }else if(operation==='read')input={operation,path};
     else {
       if(values.lifespan&&!['short','while','keep'].includes(String(values.lifespan)))throw Error('Unknown lifespan');
-      input={operation,path,lifespan:values.lifespan,id:values.id??randomUUID(),body:values.body??await stdinBody()};
+      if(values.id===undefined)generatedReceipt=randomUUID();
+      input={operation,path,lifespan:values.lifespan,id:values.id??generatedReceipt,body:values.body??await stdinBody()};
     }
-  }catch(error){io.stderr((error instanceof Error?error.message:'Invalid arguments')+'\n'+usage);return 2;}
+  }catch{io.stderr('Invalid note arguments or input.\n'+usage);return 2;}
   const cap=/^([1-9][0-9]{0,4})\.([a-f0-9]{64})$/.exec(env.LOOM_BODY_HOUSE_NOTE??'');
   if(!cap||Number(cap[1])>65535){io.stderr('Loom note needs an active worker job with shell access.\n');return 1;}
   try{
@@ -74,7 +75,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     }
     return 0;
   }catch{
-    io.stderr('Loom note request failed.'+(operation==='write'?' Check the note before retrying. Reuse --id '+input.id+' for the same write.':'')+'\n');
+    io.stderr('Loom note request failed.'+(operation==='write'?' Check the note before retrying. '+(generatedReceipt?'Reuse --id '+generatedReceipt:'Reuse the supplied --id')+' for the same write.':'')+'\n');
     return 1;
   }
 }
