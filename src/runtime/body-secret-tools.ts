@@ -1,3 +1,4 @@
+import {houseNoteRequest} from './house-note-request.js';
 import {BodyContactExpired} from './body-contact.js';
 /** The receiving body's private model tools. Root credentials never leave this
  * process; only a lifetime-bound local capability enters native MCP config.
@@ -28,6 +29,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
  agent?:string;
+ houseNotes?:Pick<Parameters<typeof houseNoteRequest>[0],'denied'|'call'>;
  /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
  identityHanded?:boolean;
  /** False for a body held to loom's tools because its job works on anybody else's word (policy.ts,
@@ -44,7 +46,9 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
  let authority:string|undefined,closed=false,waiting=0,retained=0,closing:Promise<void>|undefined,config:Buffer|undefined;
- const exposed:Buffer[]=[];
+ const noteKey=input.houseNotes&&input.agent?Buffer.from(randomBytes(32).toString('hex')):undefined;
+ const noteExpected=noteKey?Buffer.from('Bearer '+noteKey.toString()):undefined;
+ const exposed:Buffer[]=noteKey?[noteKey]:[];
  // No secret this body was handed is said by it: not in its answer (the body program asks allowsReply), and
  // not in anything it sends through a tool, which is how a post (bridges.say, bridges.post) and a reply of its
  // own making (bridges.reply) leave. Every text in a tool call is looked at, whatever the tool: the reason given
@@ -63,12 +67,24 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }
  async function request(request:Request):Promise<Response>{
   const supplied=Buffer.from(request.headers.get('authorization')??'');
-  let authenticated=false;try{authenticated=!closed&&!signal.aborted&&supplied.length===expected.length&&timingSafeEqual(supplied,expected)&&!request.headers.has('origin')&&new URL(request.url).host===authority&&request.headers.get('host')===authority;}finally{supplied.fill(0);}
+  const noteRoute=new URL(request.url).pathname==='/house/note';
+  const credential=noteRoute?noteExpected:expected;
+  let authenticated=false;try{authenticated=!closed&&!signal.aborted&&!!credential&&supplied.length===credential.length&&timingSafeEqual(supplied,credential)&&!request.headers.has('origin')&&new URL(request.url).host===authority&&request.headers.get('host')===authority;}finally{supplied.fill(0);}
   if(!authenticated)return new Response(null,{status:403});
   if(active.size>=16)return new Response(null,{status:429});
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
   const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>TOOL_REQUEST_BYTES)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
+  if(noteRoute){
+   try{
+    if(!input.agent||!input.houseNotes)return new Response(null,{status:403});
+    const current=AbortSignal.any([signal,request.signal]);
+    const reply=await houseNoteRequest({...input.houseNotes,agent:input.agent,allowsCall},await bounded.json(),current);
+    if(current.aborted||closed||reply.isError||reply.content.length!==1)throw unavailable();
+    if(!allowsCall(JSON.parse(reply.content[0].text)))throw unavailable();
+    return new Response(reply.content[0].text,{headers:{'content-type':'application/json','cache-control':'no-store'}});
+   }catch{return new Response(null,{status:403});}
+  }
   const server=new McpServer({name:BODY_TOOLS_SERVER,version:'1'});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
@@ -115,7 +131,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }));
  const onAbort=()=>{void close().catch(()=>{});};
  function close(){
-  if(closing)return closing;closed=true;stop.abort();expected.fill(0);config?.fill(0);for(const value of exposed)value.fill(0);exposed.length=0;input.signal.removeEventListener('abort',onAbort);
+  if(closing)return closing;closed=true;stop.abort();expected.fill(0);noteExpected?.fill(0);config?.fill(0);for(const value of exposed)value.fill(0);exposed.length=0;input.signal.removeEventListener('abort',onAbort);
   const stopped=new Promise<void>(resolve=>listener.close(()=>resolve()));listener.closeAllConnections();
   return closing=Promise.allSettled([...active]).then(async()=>{await stopped;});
  }
@@ -125,6 +141,6 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
   authority=`127.0.0.1:${address.port}`;
   config=Buffer.from(JSON.stringify({mcpServers:{[BODY_TOOLS_SERVER]:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
-  return{config,close,allowsReply,allowedTools};
+  return{config,close,allowsReply,allowedTools,houseNote:noteKey?address.port+'.'+noteKey.toString():undefined};
  }catch{await close();throw unavailable();}
 }

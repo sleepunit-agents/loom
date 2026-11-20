@@ -11,7 +11,7 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
@@ -30,7 +30,7 @@ import { usageReport, type UsageReport } from './usage-report.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
-import { bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
+import { deniedTools, bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
 import {SESSION_HISTORY_KEYS} from '../core/conversations/session-limit.js';
 import { BODY_TOKEN } from './body-token.js';
@@ -276,12 +276,16 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
+        ...(reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS)?{houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
     let failureReport:UsageReport|undefined;
-    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: input.env, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const shellEnv={...input.env};
+    delete shellEnv.LOOM_BODY_HOUSE_NOTE;
+    if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
     const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
