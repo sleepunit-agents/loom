@@ -1,3 +1,5 @@
+import {bridgeSends} from './core/data/schema.js';
+import {directAddress} from './runtime/house-send-request.js';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {parseArgs} from 'node:util';
@@ -9,7 +11,7 @@ import type {ServeIo} from './index.js';
 const usage='Usage: loom runtime send --conversation <id> --text <text|-> [--person <id> --via discord|slack] [--id <uuid>]\n';
 const receipt=z.discriminatedUnion('state',[
   z.object({state:z.literal('recorded'),seq:z.number().int().positive()}).strict(),
-  z.object({state:z.enum(['pending','held','sending','sent','uncertain','dismissed']),postedIds:z.array(z.string().min(1))}).strict(),
+  z.object({state:z.enum(bridgeSends.state.enumValues),postedIds:z.array(z.string().min(1))}).strict(),
 ]);
 const handle=new RegExp('^([1-9][0-9]{0,4})\\.('+SHA256_HEX_WITHIN+')$');
 
@@ -41,8 +43,8 @@ export async function houseRuntimeCli(args:string[],io:ServeIo,env=process.env):
     if(values.help){io.stdout(usage);return 0;}
     conversation=z.string().min(1).max(200).parse(values.conversation);
     ref=z.uuid().parse(values.id??randomUUID());
-    person=z.string().min(1).max(200).optional().parse(values.person);
-    via=z.enum(['discord','slack']).optional().parse(values.via);
+    person=directAddress.shape.person.optional().parse(values.person);
+    via=directAddress.shape.via.optional().parse(values.via);
     if((person===undefined)!==(via===undefined))throw Error('Target incomplete');
     text=z.string().min(1).max(MESSAGE_WORDS_MAX).parse(values.text==='-'?await pipedText():values.text);
   }catch{io.stderr(usage);return 2;}

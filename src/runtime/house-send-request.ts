@@ -1,10 +1,12 @@
+import {bridgeConnections} from '../core/data/schema.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {MESSAGE_WORDS_MAX} from '../core/conversations/words.js';
 import type {BodyProgramToolResult} from './body-program-tools.js';
 import {denialCoversTool} from './tool-denial.js';
 
-const address={conversation:z.string().min(1).max(200),id:z.uuid(),person:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),via:z.enum(['slack','discord']).optional()};
+export const directAddress=z.object({id:z.uuid(),person:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),via:z.enum(bridgeConnections.platform.enumValues)}).strict();
+const address={conversation:z.string().min(1).max(200),...directAddress.partial({person:true,via:true}).shape};
 const request=z.discriminatedUnion('operation',[
   z.object({...address,operation:z.literal('send'),text:z.string().min(1).max(MESSAGE_WORDS_MAX)}).strict(),
   z.object({...address,operation:z.literal('status')}).strict(),

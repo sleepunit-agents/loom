@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, max } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendJobs, bridgeSendParts, bridgeSends, type DirectSendTarget } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
@@ -127,6 +127,12 @@ export class BridgeSends {
     }));
     this.changed();
     return result;
+  }
+
+  /** Called in the same transaction that settles the job's mail and records its final turn. */
+  adoptFinalReply(job:string,id:string):boolean {
+    return this.db.update(bridgeSendJobs).set({finalReply:true}).where(and(eq(bridgeSendJobs.job,job),
+      eq(bridgeSendJobs.send,id),eq(bridgeSendJobs.finalReply,false),isNull(bridgeSendJobs.directTarget))).run().changes===1;
   }
 
   private transition(id: string, from: BridgeSend['state'], to: BridgeSend['state']): void {

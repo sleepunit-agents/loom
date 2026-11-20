@@ -181,7 +181,9 @@ it('ends git when the job is cancelled, when whoever reads stops, and tells the 
   const failed = (async () => { try { for await (const _chunk of stream) abort.abort(); } catch (error) { return error as Error; } })();
   expect(await failed).toBeInstanceOf(Error);
   await vi.waitFor(() => expect(children.every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true));
-  expect(started).toHaveLength(2); expect(forgotten.sort()).toEqual([...started].sort());
+  expect(started).toHaveLength(2);
+  // The child exit status can become visible before its stdio closes and its registration is removed.
+  await vi.waitFor(() => expect([...forgotten].sort()).toEqual([...started].sort()));
   // Whoever reads gives up (a build that failed): git is ended too.
   children.length = 0;
   const abandoned = houseContext(store, house.commit, never(), noted);

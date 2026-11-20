@@ -13,7 +13,7 @@ import type {SharedBridges} from './pieces/bridges/shared-daemon.js';
 import type {directTargets} from './shared-direct-target.js';
 import {BRIDGE_POSTS_PER_JOB} from './shared-bridge-reply.js';
 
-const address=z.object({id:z.uuid(),person:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),via:z.enum(['slack','discord'])}).strict();
+import {directAddress as address} from './runtime/house-send-request.js';
 type Address=z.infer<typeof address>;
 const denied=()=>new OperationError('denied','Direct recipient unavailable for this job');
 
