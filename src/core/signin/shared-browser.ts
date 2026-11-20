@@ -5,12 +5,7 @@ import {eq,inArray} from 'drizzle-orm';
 import type {DataDatabase} from '../data/database.js';
 import {credentialFingerprint,isAgentBrowser,sessionEnds} from '../data/authentication.js';
 import {notificationQueue,notificationDevices,sessions,signinLinks,tokens} from '../data/schema.js';
-/** What a browser is called in Setup, from its own name for itself. */
-function browserDevice(ua: string): string {
-  const browser = isAgentBrowser(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
-  return system ? `${browser} on ${system}` : browser;
-}
+import {browserDevice} from './browser-device.js';
 type Session = typeof sessions.$inferSelect;
 /** Sign a browser in on a member's current token, inside the caller's write transaction. Returns the
  * cookie, which is stored only as its fingerprint, and how long the browser should keep it.

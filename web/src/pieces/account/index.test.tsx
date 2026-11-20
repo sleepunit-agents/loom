@@ -5,7 +5,7 @@ import {act,create} from 'react-test-renderer';
 const f=vi.hoisted(()=>({feed:{status:'live',data:{account:{member:'sam',passkeys:[{ref:'a'.repeat(64),label:'Laptop',createdAt:'2026-11-15T00:00:00Z',lastUsedAt:null,ended:false}],sessions:[{ref:'b'.repeat(64),device:'Chrome on Mac',issuedAt:'2026-11-15T00:00:00Z',seenAt:'2026-11-15T01:00:00Z',ended:false}]}}} as {status:string;data?:unknown},runtime:{status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Visible model subscription',level:'plenty'}],agents:[{id:'sam-agent',removedAt:null}],agentModels:[{agent:'sam-agent',model:'visible-preferred-model',position:0}],deskTime:{timezone:'America/Chicago'}}},operation:vi.fn()}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>query.includes('RuntimeModelAccounts')?f.runtime:f.feed}));
 vi.mock('../../data/operation',()=>({memberOperation:f.operation}));
-vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
+vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Section','Field','Fields','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
@@ -26,3 +26,16 @@ it('disables account actions when inactive or disconnected and hides retained me
 it.each([true,false])('replaces stale account UI after this browser revokes its own session (operation success: %s)',async success=>{if(!success)f.operation.mockRejectedValue(Error('Could not save'));vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:null})));vi.stubGlobal('location',{reload:vi.fn()});await act(async()=>{tree=create(h(Account));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Sign out browser').props.onClick());expect(location.reload).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('Could not');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledExactlyOnceWith('account.revokeSession',{ref:'b'.repeat(64)});});
 
 it.each([true,false])('confirms another-browser revocation without hiding a refusal (operation success: %s)',async success=>{if(!success)f.operation.mockRejectedValue(Error('Could not save'));vi.stubGlobal('location',{reload:vi.fn()});await act(async()=>{tree=create(h(Account));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Sign out browser').props.onClick());expect(location.reload).not.toHaveBeenCalled();expect(JSON.stringify(tree.toJSON())).toContain(success?'Saved':'Could not confirm sign-out');if(!success)expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledOnce();});
+
+it('shows readable saved user-agent labels and preserves names provided by a member',async()=>{
+ const before=f.feed.data;
+ try{
+  f.feed.data={account:{member:'sam',passkeys:[],sessions:[],notifications:{publicKey:null,devices:[
+   {ref:'a',device:'Mozilla/5.0 (X11; Linux x86_64) Chrome/145.0 Safari/537.36',seenAt:'2026-11-15T12:00:00Z'},
+   {ref:'b',device:'Kitchen tablet',seenAt:'2026-11-15T12:00:00Z'},
+  ]}}};
+  await act(async()=>{tree=create(h(Account));});
+  const view=JSON.stringify(tree.toJSON());
+  expect(view).toContain('Chrome on Linux');expect(view).toContain('Kitchen tablet');expect(view).not.toContain('Mozilla/');
+ }finally{f.feed.data=before;}
+});
