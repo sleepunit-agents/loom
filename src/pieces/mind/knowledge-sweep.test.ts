@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { FakeClock } from '../../core/clock.js';
 import { Sweep, type SweepDelivery } from '../../core/tempo/sweep.js';
 import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
+import { knowledgeView } from './knowledge.js';
 import { knowledgeSweep } from './knowledge-sweep.js';
 
 const cleanup: Array<() => void> = [];
@@ -106,4 +107,18 @@ it('reschedules retired pages, while an explicit stale report stays immediately 
   expect(part.open(who)).toEqual([]);
   mark('in-use');
   expect(part.open(who)).toHaveLength(1);
+});
+
+it.each([[false, 30], [true, 90]] as const)('keeps the page and sweep due at the same boundary (retired=%s)', async (retired, days) => {
+  const {store, db, reader, part, clock} = fixture();
+  const anchor = new Date(clock.now() - days * 86_400_000 + 1).toISOString();
+  await store.writePage({slug:'meter',title:'Meter',domain:'tools',body:'Fixture',verified_at:anchor});
+  if (retired) db.prepare(`INSERT INTO page_annotations(page_id,kind,actor,words,evidence,created)
+    SELECT id,'no-longer-owned','owner','Meter returned','',? FROM pages WHERE slug='meter'`).run(anchor);
+  const freshness = () => knowledgeView(reader, clock.now(), 'meter', true).open?.fresh;
+  expect(freshness()).toBe('aging');
+  expect(part.open(who)).toEqual([]);
+  clock.advance(1);
+  expect(freshness()).toBe('due');
+  expect(part.open(who)).toMatchObject([{id:'meter',openedAt:new Date(clock.now()).toISOString()}]);
 });
