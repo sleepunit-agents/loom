@@ -1,7 +1,7 @@
 /** Own-source Notes through the same query and operation doors as Memory. */
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
-import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLList} from 'graphql/index.js';
+import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLBoolean,GraphQLList} from 'graphql/index.js';
 import {Notes,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
 import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
@@ -9,12 +9,20 @@ import {maySee,type Sharing,type Viewer} from './policy.js';
 import {OperationError,RecoveredWrite,type Operations,type WriteReceipt,type Context} from './core/operations/index.js';
 const path=z.string().max(NOTE_PATH_MAX).regex(NOTE_PATH);
 const noteBody=z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES);
-const noteType=new GraphQLObjectType({name:'MemoryNote',fields:Object.fromEntries(['path','body','lifespan','created','updated','by'].map(name=>[name,{type:new GraphQLNonNull(GraphQLString)}]))});
-/** A listing carries no words: path, lifetime and size only. */
-const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:{
- ...Object.fromEntries(['path','lifespan','created','updated','by'].map(name=>[name,{type:new GraphQLNonNull(GraphQLString)}])),
- bytes:{type:new GraphQLNonNull(GraphQLInt)},files:{type:new GraphQLNonNull(GraphQLInt)},expires:{type:GraphQLString},
+const requiredText={type:new GraphQLNonNull(GraphQLString)};
+const requiredInt={type:new GraphQLNonNull(GraphQLInt)};
+const noteFileType=new GraphQLObjectType({name:'MemoryNoteFile',fields:{
+ name:requiredText,sha256:requiredText,bytes:requiredInt,type:{type:GraphQLString},added:requiredText,
 }});
+const summaryFields={
+ path:requiredText,lifespan:requiredText,created:requiredText,updated:requiredText,by:requiredText,
+ pinned:{type:new GraphQLNonNull(GraphQLBoolean)},bytes:requiredInt,files:requiredInt,expires:{type:GraphQLString},
+};
+const noteType=new GraphQLObjectType({name:'MemoryNote',fields:{
+ ...summaryFields,body:requiredText,fileList:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(noteFileType)))},
+}});
+/** A listing carries no words or attachment names. */
+const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:summaryFields});
 type Receipt=WriteReceipt;
 export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now():number}){
  const sources=new AgentFiles<AgentSource,Notes>(()=>options.sources?.agents??[],source=>existsSync(notesDbPath(source.directory))?new Notes(source.directory,options.now,{prepared:true}):undefined);
