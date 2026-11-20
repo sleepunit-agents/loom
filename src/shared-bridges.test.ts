@@ -86,16 +86,33 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
   f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
   f.root.services.conversations.take(cv,'body');
  });
- const id=randomUUID(),status=(credential:string)=>f.call('bridges','sendStatus',{id},credential);
- expect((await f.call('bridges','say',{id,text:'Progress from the body'},token.body)).status).toBe(200);
+ const id=randomUUID(),status=(credential:string,send=id)=>f.call('bridges','sendStatus',{id:send},credential);
+ const provider=f.request.getMockImplementation()!;
+ let part=0;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('chat.postMessage')
+  ? Response.json({ok:true,channel:'CROOM',ts:'1794432000.00000'+(++part)}) : provider(url,init));
+ expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)},token.body)).status).toBe(200);
  await f.root.services.bridges.daemon!.idle();
- expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000009']}});
- expect((await status(token.other)).status).not.toBe(200);
+ expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000001','1794432000.000002']}});
+ const legacy={id:randomUUID(),text:'Existing post'};
+ f.root.services.bridges.daemon!.sends.queue({...legacy,incoming:incoming.id});
+ await f.root.services.bridges.daemon!.idle();
+ expect((await f.call('bridges','say',legacy,token.body)).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ expect(part).toBe(3);
+ expect((await status(token.body,legacy.id)).status).toBe(404);
  expect((await status(token.owner)).status).not.toBe(200);
- f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run());
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'other')).run();
+  f.db.update(inbox).set({job:'other'}).where(eq(inbox.job,'body')).run();
+ });
  expect((await status(token.body)).status).not.toBe(200);
- f.root.writes.run(()=>f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'other')).run());
- expect((await status(token.other)).status).not.toBe(200);
+ const next=randomUUID();
+ expect((await f.call('bridges','say',{id:next,text:'Another post'},token.other)).status).toBe(200);
+ expect((await status(token.other,next)).status).toBe(200);
+ expect((await status(token.other)).status).toBe(404);
+ expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)},token.other)).status).not.toBe(200);
 });
 it('retires actual sockets after committed owner disconnect and drains on root close',async()=>{
  const f=fixture();await f.receive();expect((await f.call('bridges','command',{action:'disconnect',id:'connection'},token.owner)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.closed).toHaveBeenCalledOnce();await expect(f.transports[0].receive({},Buffer.from('{}'))).rejects.toThrow();await f.root.close();expect((await f.call('bridges','reply',{id:randomUUID(),incoming:'in',text:'Late'})).status).toBe(503);

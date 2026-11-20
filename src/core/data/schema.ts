@@ -1378,8 +1378,6 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   text: text('text').notNull(),
   state: text('state', { enum: ["pending", "held", "sending", "sent", "uncertain", "dismissed"] }).notNull(),
   createdAt: text('created_at').notNull(),
-  /** The body that queued an intermediate post. Existing posts have no recorded authoring job. */
-  sendingJob: text('sending_job').references(() => jobs.id, { onDelete: 'set null' }),
 }, t => [
   check('bridge_sends_created_at_utc', utc(t.createdAt)),
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
@@ -2057,6 +2055,11 @@ export const bridgeSendParts = sqliteTable('bridge_send_parts', {
   part: integer('part').notNull(),
   postedId: text('posted_id').notNull(),
 }, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
+/** Private provenance for delivery receipts. Historical sends have no entry. */
+export const bridgeSendJobs = sqliteTable('bridge_send_jobs', {
+  send: text('send').primaryKey().notNull().references(() => bridgeSends.id, { onDelete:'cascade' }),
+  job: text('job').notNull().references(() => jobs.id, { onDelete:'cascade' }),
+});
 /** Which messages carried a kept Slack or Discord file. The same file shared in a second message is listed under
  * both and its bytes are kept once; a file with no message left is removed. */
 export const bridgeFileMessages = sqliteTable('bridge_file_messages', {
@@ -2256,7 +2259,7 @@ export const plumbing = {
   terminalCredentials, terminalSessions, terminalRuns,
   jobUsage,
   modelAccountLogins,
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeSendJobs, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {
   members,

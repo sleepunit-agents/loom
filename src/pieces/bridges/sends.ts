@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendJobs, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
 import { STOP_WORD } from './incoming.js';
 
@@ -95,7 +95,8 @@ export class BridgeSends {
       queued.length = 0;
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
-        if ((old.sendingJob !== null && old.sendingJob !== input.sendingJob) || old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new BridgeQueueRefusal('Reply id reused');
+        const author = tx.select({job:bridgeSendJobs.job}).from(bridgeSendJobs).where(eq(bridgeSendJobs.send,old.id)).get();
+        if ((author && author.job !== input.sendingJob) || old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new BridgeQueueRefusal('Reply id reused');
         // The same id is the same post, files and all. While the post still has its files they are compared;
         // once it is settled they are gone, and a repeat that names files cannot be told from the first.
         const kept = tx.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, old.id)).orderBy(asc(bridgeSendFiles.position)).all();
@@ -116,8 +117,9 @@ export class BridgeSends {
       files.forEach((file, position) => { queued.push({ send: input.id, position, name: sendFileName(file.name), contents: Buffer.from(file.contents) }); });
       const row = tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread, conversation: input.at?.conversation ?? null,
-        sendingJob: input.sendingJob ?? null, text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
+        text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
+      if (input.sendingJob) tx.insert(bridgeSendJobs).values({send:row.id,job:input.sendingJob}).run();
       if (queued.length) tx.insert(bridgeSendFiles).values(queued).run();
       return row;
     }));

@@ -9,7 +9,7 @@ import { channelTarget, type ChannelTarget } from './core/conversations/channel-
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,bridgeSendParts,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,bridgeSendJobs,bridgeSendParts,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { householdOwners,sharedSharing } from './shared-sharing.js';
 import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
@@ -192,7 +192,8 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const scope=current(ctx.viewer);
    if(!scope)throw new OperationError('denied','Current bridge body required');
    const send=db.select({state:bridgeSends.state,incoming:bridgeSends.incoming,conversation:bridgeSends.conversation})
-    .from(bridgeSends).where(and(eq(bridgeSends.id,input.id),eq(bridgeSends.sendingJob,scope.job.id))).get();
+    .from(bridgeSends).innerJoin(bridgeSendJobs,eq(bridgeSendJobs.send,bridgeSends.id))
+    .where(and(eq(bridgeSends.id,input.id),eq(bridgeSendJobs.job,scope.job.id))).get();
    if(!send||(send.incoming?!inConversation(ctx.viewer,send.incoming):send.conversation!==scope.cv.id))
     throw new OperationError('not-found','No such post from this job');
    const parts=db.select({id:bridgeSendParts.postedId}).from(bridgeSendParts)
