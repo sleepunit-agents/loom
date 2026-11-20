@@ -176,14 +176,14 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
 }
 /** Cards read current entities. Inline approvals answer one request; standing grants live in the tiles. */
-export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
+export function LiveApprovalCard({ id, timezone, actions, displayTitle }: { id: string; displayTitle?: string; timezone?: string; actions?: ApprovalActions }) {
   const owner=useWorkAccess().owner, names=useAgentNames(), viewer=useViewer();
   const [details, setDetails] = useState<string>();
   const open = details === id;
   const { snapshot, refresh }=useProposalNow(useApprovalSnapshot(timezone),open ? id : undefined,owner);
   const defaultActions=ownerApprovalActions(owner);
   const answerActions = actions ?? defaultActions;
-  return <ApprovalCard id={id} snapshot={snapshot} details={owner ? { open, toggle: () => setDetails(open ? undefined : id) } : undefined} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  return <ApprovalCard id={id} snapshot={snapshot} displayTitle={displayTitle} details={owner ? { open, toggle: () => setDetails(open ? undefined : id) } : undefined} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   const names = useAgentNames();

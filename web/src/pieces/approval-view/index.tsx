@@ -70,7 +70,7 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
   </>;
 }
 type DetailsToggle = { open: boolean; toggle(): void };
-function Details({ approval: a, snapshot, actions, renderChange, inline = false, details, viewer, name }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; details?: DetailsToggle; viewer?: string; name: Name } & ChangePresentation) {
+function Details({ approval: a, snapshot, actions, renderChange, inline = false, details, viewer, name, displayTitle }: { approval: Approval; displayTitle?: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; details?: DetailsToggle; viewer?: string; name: Name } & ChangePresentation) {
   const household = a.operation === 'household.change';
   const change = household ? undefined : renderChange?.(a);
   const record = snapshot.record.filter(r => r.approval === a.id).sort((x, y) => x.seq - y.seq);
@@ -80,7 +80,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const ends = a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)}</Meta>;
   const whom = forWhom(a, viewer, name);
   const card = a.card;
-  const title = card?.title ?? approvalTitle(a);
+  const title = card?.title ?? displayTitle ?? approvalTitle(a);
   const exact = card?.exact ?? a.exactRequest;
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
@@ -128,10 +128,10 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
 }
 
 /** Same current request and answer controls as the tile, with before and after. */
-export function ApprovalCard({ id, snapshot, actions, renderChange, details, viewer, names }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; details?: DetailsToggle; viewer?: string; names?: Readonly<Record<string, string>> } & ChangePresentation) {
+export function ApprovalCard({ id, snapshot, actions, renderChange, details, viewer, names, displayTitle }: { id: string; displayTitle?: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; details?: DetailsToggle; viewer?: string; names?: Readonly<Record<string, string>> } & ChangePresentation) {
   if (snapshot.status !== 'live') return <Unavailable status={snapshot.status} />;
   const approval = snapshot.approvals.find(a => a.id === id);
-  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline details={details} viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
+  return approval ? <Details key={id} displayTitle={displayTitle} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline details={details} viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
 }
 /** A standing rule, opened: what it is, and (for a household owner) its fields. */
 function RuleReader({ rule, rules, go, name, zone }: { rule?: Rule; rules: readonly Rule[]; go?: (path:string)=>void; name: Name; zone: string }) {

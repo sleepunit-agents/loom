@@ -6,13 +6,14 @@ import type { InboxItem } from '../inbox-view/model';
 type Asked = { query: string; variables: Record<string, unknown>; options?: { keep?: boolean; pause?: boolean } };
 // `item` is the state of the open item's own reading; `hold` makes the list answer as the data hook does while
 // the next folder, search or page loads (the last answer again, marked settling); `stray` answers with another item.
-const f = vi.hoisted(() => ({ approvals: [] as unknown[], status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
+const f = vi.hoisted(() => ({ approvals: [] as unknown[], owner: false, status: 'live', item: 'live', hold: false, stray: undefined as unknown, last: undefined as unknown, data: {} as Record<string, unknown>, requests: [] as Asked[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>, options?: Asked['options']) {
   // The household's zone, for the times the Inbox says (data/zone.ts): not one of the Inbox's own requests.
   if (query.includes('query DeskTime')) return { status: 'live', data: { deskTime: { at: 0, timezone: 'America/Chicago' } } };
   // The approvals an approval item's card is read from (data/work-views.ts): not one of the Inbox's own requests either.
+  if (query.includes('query InboxProposalTitles')) return {status:'live', data:{inboxProposalTitles:f.owner?[{approval:'a-grant',title:'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit'}]:[]}};
   if (query.includes('query ApprovalsView')) return { status: 'live', data: { approvals: f.approvals, approvalRules: [], approvalNotices: [], approvalRecord: [] } };
-  if (/query (WorkAnswerOwner|WorkViewer)/.test(query)) return { status: 'live', data: { workAnswerOwner: false, workChangesRefresh: false, members: [], homeComms: null } };
+  if (/query (WorkAnswerOwner|WorkViewer)/.test(query)) return { status: 'live', data: { workAnswerOwner: f.owner, workChangesRefresh: false, members: [], homeComms: null } };
   if (!variables) return { status: 'loading' };
   f.requests.push({ query, variables, options });
   if (options?.pause) return { status: 'loading' };
@@ -31,7 +32,7 @@ vi.mock('../../kit', () => Object.fromEntries(['Split','Row','NoteRow','Empty','
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { f.approvals = []; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
+afterEach(async () => { f.approvals = []; f.owner = false; await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
 function row(extra: Partial<InboxItem> = {}): InboxItem {
   return { id: 'in-1', canAnswer: true, source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
 }
@@ -239,15 +240,18 @@ it('says an approval item as its card says it: the plain sentence in the row and
   const raw = 'Grant art kit pond-et-livonia to slack user U07V8CZUC1J in T02AYL3QM?';
   const item = row({ source: 'approval', waitsOnKind: 'approval', waitsOnId: 'a-grant', canAnswer: false, body: { words: raw, why: 'Restore the recorded Pond field scope.', ifYes: 'Grant it.', ifNo: 'Keep the current access.' } });
   setup(item);
+  f.owner = true;
   f.approvals = [{ id: 'a-grant', kind: 'setting', operation: 'household.change', target: 'household:kitGrant:art/pond-et-livonia ' + JSON.stringify(account), what: 'kitGrant art/pond-et-livonia ' + JSON.stringify(account) + ': ' + JSON.stringify(after),
     changeSummary: 'kitGrant art/pond-et-livonia ' + JSON.stringify(account) + ': ' + JSON.stringify(after), ask: raw, ifYes: 'Grant it.', ifNo: 'Keep the current access.', why: 'Restore the recorded Pond field scope.', agent: 'art', project: null, member: null, conversation: null,
     state: 'pending', details: JSON.stringify({ change: 'kitGrant', after, seal: { nonce: 'n', digest: 'd' } }), askedAt: item.at, decidedBy: null, expiresAt: null }];
   f.records.mockReturnValue({ status: 'loading', records: [] });
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1' })); });
-  const sentence = 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use art’s pond-et-livonia kit';
+  const sentence = 'Let Gage Taylor (Slack) use Art’s pond-et-livonia kit';
   expect(tree.root.findByType('Row' as never).props.title).toBe(sentence);
   expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(sentence);
+  expect(tree.root.findAllByType('strong').some((node: {props:{children:unknown}}) => node.props.children === sentence)).toBe(true);
   const words = JSON.stringify(tree.toJSON());
+  expect(words).not.toContain('U07V8CZUC1J');
   expect(words).not.toContain('When Art works on that account’s word in an eligible conversation.');
   expect(words).not.toContain('Grant art kit'); expect(words).not.toContain('{\\"');
   // An approval the reader may not see leaves the item in the words stored with it.

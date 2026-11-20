@@ -63,6 +63,7 @@ export const clipProposalText = (text: string, limit: number): string =>
 const workspaceWords = (names: CardNames | undefined, platform: string, workspace: string): string => {
   if (!names) return str(workspace);
   const connection = names.workspace(platform, workspace);
+  if (platform === 'slack') return connection ? 'Slack connection ' + connection.name : 'Unnamed Slack workspace';
   return 'A workspace loom has no name for (' + workspace + ')' +
     (connection ? ', ' + connection.source + ' ' + connection.name : '');
 };
@@ -130,17 +131,20 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   const outside = (who: Outside) => {
     const platform = platformWord(who.platform), held = names?.person(who.platform, who.workspace, who.user) ?? null;
     const short = held ? held.name + ' (' + platform + ')'
+      : names && who.platform === 'slack' ? 'an unnamed Slack account'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
     const facts: CardFact[] = [
       { label: 'Who', value: held ? held.name + ', on ' + platform : names ? cap(short) : 'A ' + platform + ' account' },
       ...(held ? [{ label: 'Name from', value: held.source }] : []),
       { label: 'Workspace', value: workspaceWords(names, who.platform, who.workspace) },
+      ...(names && who.platform === 'slack' ? [{label: 'Workspace id', value: who.workspace, small: true}] : []),
     ];
     return { short, facts, id: { label: 'Account id', value: str(who.user), small: true } as CardFact };
   };
   const channel = (platform: string, workspace: string, id: string) => {
     const held = names?.channel(platform, workspace, id) ?? null;
+    if (platform === 'slack' && names && !held) return {short:'an unnamed Slack channel', held};
     return { short: (held ? held.name : names ? 'a channel loom has no name for (' + id + ')' : 'the channel ' + id) + ' on ' + platformWord(platform), held };
   };
   const tools = (value: unknown, label: string) => shownItems(arr(value).map(rec), label,
@@ -168,8 +172,8 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
           ? format(previous) + ' → ' + format(value) : format(value) }];
       });
       return { title: (setting ? 'Set a repeating schedule for ' + name(input.agent)
-        : 'Change the repeating schedule ' + str(input.id) + ' for ' + name(input.agent)) + ' in conversation ' + str(input.conversation),
-        facts: [{ label: 'Asked by', value: askedBy }, { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [...account.facts.filter(fact => fact.label !== 'Who'), account.id] : [])],
+        : 'Change the repeating schedule ' + str(input.id) + ' for ' + name(input.agent)) + (names && address?.platform === 'slack' && account ? ', requested by ' + askedBy : ' in conversation ' + str(input.conversation)),
+        facts: [{ label: 'Asked by', value: askedBy }, ...(names && address?.platform === 'slack' && account ? [{label:'Conversation id',value:str(input.conversation),small:true}] : []), { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [...account.facts.filter(fact => fact.label !== 'Who'), account.id] : [])],
         ifYes: setting ? 'Each firing starts a job in that conversation on the asker’s word, with loom’s tools only.'
           : 'The schedule changes as shown and continues on the asker’s word.',
         ifNo: setting ? 'No schedule is set.' : 'The schedule stays as it is.' };

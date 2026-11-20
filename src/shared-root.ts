@@ -179,6 +179,7 @@ export function sharedRoot(options: {
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
   const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
+  const proposalNames = (viewer: Viewer) => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user));
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
     { secrets: { setRule: input => late.requests!.setRule(input) },
@@ -189,7 +190,7 @@ export function sharedRoot(options: {
       schedule: ask => late.schedule!(ask),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
       // Proposal names come from owner-readable bridge records.
-      names: viewer => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
+      names: proposalNames,
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
@@ -225,7 +226,7 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {subscriptionSetup:subscriptionSetupField(db,roles), ...memory.fields, ...kitQueries.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes,proposalNames,householdProposals.inboxTitle)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);}, viewer => mayReadProgramWork(db, viewer, bodyJob(viewer)?.job));
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});

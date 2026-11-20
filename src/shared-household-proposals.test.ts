@@ -889,16 +889,16 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
     ifNo: 'Keep the current access.',
   });
   // loom holds no name yet: the owner is told so in words.
-  expect((await preview(f, id)).card).toMatchObject({ title: 'Let a Slack account loom has no name for (U07V8CZUC1J in workspace T02AYL3QM) use Art’s pond-et-livonia kit' });
+  expect((await preview(f, id)).card).toMatchObject({ title: 'Let an unnamed Slack account use Art’s pond-et-livonia kit' });
   // A person link names the account for the owner. It is read when the card is read, so the same card now says it.
   f.db.insert(members).values({ id: 'gage', role: 'member', joinedAt: at }).run();
   f.db.insert(bridgePeople).values({ ...gage, workspace: 'T0OTHER', member: 'gage' }).run();
-  expect((await preview(f, id)).card!.title).toContain('loom has no name for');
+  expect((await preview(f, id)).card!.title).toContain('unnamed Slack account');
   f.db.delete(bridgePeople).run();
   f.db.insert(secrets).values({ name: 'slack-token', description: 'Bot token', changedAt: at, changedBy: 'sam' }).run();
   f.db.insert(bridgeConnections).values({ id: 'art-slack', platform: 'slack', agent: 'art', workspace: gage.workspace, botUser: 'UBOT', tokenSecret: 'slack-token', enabled: true, state: 'connected', stateAt: at }).run();
   const told = await preview(f, id);
-  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'A workspace loom has no name for (T02AYL3QM), reached by the connection art-slack' });
+  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'Slack connection art-slack' });
   expect(told.card!.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
   expect(told.summary).not.toContain('{"');
   expect(JSON.parse(told.card!.exact)).toMatchObject({ to: gage });
@@ -909,6 +909,15 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   f.db.insert(memberAgents).values({ member: 'lee', agent: 'art' }).run();
   f.db.insert(bridgePeople).values({ ...gage, member: 'gage' }).run();
   expect((await preview(f, id)).card!.title).toContain('gage (Slack)');
+  const titles = async (actor: keyof typeof credentials, ids=[id]) => {
+    const response = await f.root.http.request('http://loom/graphql', {method:'POST',
+      headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
+      body:JSON.stringify({query:'query Titles($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids}})});
+    const result=await response.json();expect(result.errors).toBeUndefined();return result.data.inboxProposalTitles;
+  };
+  expect(await titles('sam')).toEqual([{approval:id,title:expect.stringContaining('gage (Slack)')}]);
+  expect(await titles('lee')).toEqual([]);
+  expect(await titles('art')).toEqual([]);
   for (const actor of ['lee', 'art'] as const) {
     const response = await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + credentials[actor] }, body: JSON.stringify({ query: '{ approvals { id what ask changeSummary ifYes ifNo details } }' }) });
     const read = JSON.stringify(await response.json());
@@ -916,6 +925,13 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
     expect(read).toContain('slack user U07V8CZUC1J in T02AYL3QM');
     expect(read).not.toMatch(/gage|art-slack|loom has no name/i);
   }
+  const disconnect=(await f.call('household/propose',{change:'bridge',input:{action:'disconnect',id:'art-slack'},why:'Disconnect Slack'},'art')).body.value!.id;
+  const unrelated=(await f.call('household/propose',{change:'kit',input:{agent:'art',kit:'second-kit',tools:[]},why:'Add kit'},'art')).body.value!.id;
+  const disconnectedTitle=(await preview(f,disconnect)).card!.title;
+  expect(disconnectedTitle).toContain('Slack connection');
+  expect(await titles('sam',[disconnect,unrelated])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
+  expect((await f.call('approvals/answer',{id:disconnect,answer:'allow'},'sam')).body.ok).toBe(true);
+  expect(await titles('sam',[disconnect])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
 });
 
 it('names an outside account from its exact directory record only for the owner', async () => {
@@ -939,7 +955,7 @@ it('names an outside account from its exact directory record only for the owner'
   expect(named.card!.title).toContain('Casey Field (Slack)');
   expect(named.card!.facts).toContainEqual({ label: 'Name from', value: 'People directory record for this account' });
   for (const [platform, workspace, user] of [['slack', 'TOTHER', 'UCASEY'], ['discord', 'TFIELD', 'UCASEY'], ['slack', 'TFIELD', 'UOTHER']]) {
-    expect((await preview(f, await file(platform, workspace, user))).card!.title).toContain('loom has no name for');
+    expect((await preview(f, await file(platform, workspace, user))).card!.title).toContain(platform === 'slack' ? 'unnamed Slack account' : 'Discord account loom has no name for');
   }
   for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposalPreview', { id }, actor)).status).toBe(403);
 });
