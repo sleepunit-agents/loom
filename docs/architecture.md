@@ -204,6 +204,12 @@ it, stored once by content. Also `mind_operation_receipts` and `mind_source_migr
 (`src/pieces/mind/receipt-schema.ts`): retry receipts for `memory.noteWrite`, kept in the
 file the note is in.
 
+Set `memory.noteSweepAgent` in `program.json` to schedule expiry for that agent at 04:41
+in the household timezone. The field is optional. The sweep keeps pins and permanent notes.
+Open and in-progress task text and comments, the agent’s live memories, and active knowledge
+pages and their evidence can protect a note by citing its path or an attachment. If a
+citation store cannot be read, the sweep leaves the notes in place and tries the next night.
+
 ### `commons/knowledge.db` and `commons/people.db`: shared by every agent
 
 | Store | Tables | Made by |

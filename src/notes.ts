@@ -69,14 +69,14 @@ const NOTES_VERSION = 1;
 export class Notes {
   private readonly db: Database;
 
-  constructor(readonly dir: string, private readonly now: () => number = Date.now, options: {prepared?:boolean} = {}) {
-    if(!options.prepared)mkdirSync(dir, { recursive: true, mode: 0o700 });
+  constructor(readonly dir: string, private readonly now: () => number = Date.now, options: {prepared?:boolean;readonly?:boolean} = {}) {
+    if(!options.prepared && !options.readonly)mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = notesDbPath(dir);
-    this.db = new BetterSqlite3(path, {fileMustExist:!!options.prepared,timeout:options.prepared?0:5000});
+    this.db = new BetterSqlite3(path, {readonly:!!options.readonly,fileMustExist:!!(options.prepared || options.readonly),timeout:options.prepared?0:5000});
     // Before anything is created or written: a store a newer program has changed is left as it is.
     const at = this.db.pragma('user_version', { simple: true }) as number;
     if (at > NOTES_VERSION) { this.db.close(); throw new Error(`This notes store is from a newer program (version ${at}; this program knows ${NOTES_VERSION})`); }
-    if(options.prepared)return;
+    if(options.prepared || options.readonly)return;
     chmodSync(path, 0o600);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
@@ -209,27 +209,30 @@ export class Notes {
    */
   sweep(cited: Iterable<string>, opts: { dryRun?: boolean } = {}): { gone: string[]; keptCited: string[] } {
     const refs = normaliseRefs(cited);
-    const now = this.now();
-    const due = (this.db.prepare("SELECT path, lifespan, updated FROM notes WHERE pinned = 0 AND lifespan != 'keep'").all() as Array<{ path: string; lifespan: Lifespan; updated: string }>)
-      .filter((n) => Date.parse(expiresAt(n.lifespan, n.updated)!) <= now);
-    const gone: string[] = [];
-    const keptCited: string[] = [];
-    for (const n of due) {
-      if (isCited(n.path, refs)) keptCited.push(n.path);
-      else gone.push(n.path);
-    }
-    if (!opts.dryRun) {
-      const tx = this.db.transaction(() => {
-        for (const p of gone) {
-          this.db.prepare('DELETE FROM note_files WHERE path = ?').run(p);
-          this.db.prepare('DELETE FROM note_revisions WHERE path = ?').run(p);
-          this.db.prepare('DELETE FROM notes WHERE path = ?').run(p);
-        }
-      });
-      tx();
-      this.collect();
-    }
-    return { gone, keptCited };
+    const plan = () => {
+      const now = this.now();
+      const due = this.db.prepare("SELECT path, lifespan, updated FROM notes WHERE pinned = 0 AND lifespan != 'keep'")
+        .all() as Array<{ path: string; lifespan: Lifespan; updated: string }>;
+      const gone: string[] = [], keptCited: string[] = [];
+      for (const note of due) {
+        const expiry = Date.parse(expiresAt(note.lifespan, note.updated)!);
+        if (!(expiry <= now)) continue;
+        (isCited(note.path, refs) ? keptCited : gone).push(note.path);
+      }
+      return { gone, keptCited };
+    };
+    if (opts.dryRun) return plan();
+    const result = this.db.transaction(() => {
+      const result = plan();
+      for (const path of result.gone) {
+        this.db.prepare('DELETE FROM note_files WHERE path = ?').run(path);
+        this.db.prepare('DELETE FROM note_revisions WHERE path = ?').run(path);
+        this.db.prepare('DELETE FROM notes WHERE path = ?').run(path);
+      }
+      return result;
+    }).immediate();
+    this.collect();
+    return result;
   }
 
   /** Remove the stored bytes no note's file names any more. */
@@ -262,8 +265,13 @@ function sha256File(path: string): string {
 function normaliseRefs(cited: Iterable<string>): Set<string> {
   const exact = new Set<string>();
   for (const raw of cited) {
-    const r = raw.trim().replace(/^note:/, '').replace(/^notes\//, '').replace(/[)\].,;:`'"*>]+$/, '');
-    if (r && !r.endsWith('/')) exact.add(r.replace(/\.md$/, ''));
+    const literal = raw.trim().replace(/^(?:note:|notes\/)/, '');
+    const r = literal.replace(/[)\].,;:`'"*>]+$/, '');
+    if (r && !r.endsWith('/')) {
+      exact.add(literal);
+      exact.add(r);
+      exact.add(r.replace(/\.md$/, ''));
+    }
   }
   return exact;
 }

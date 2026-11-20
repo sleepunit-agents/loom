@@ -42,7 +42,7 @@ const githubBindings=z.record(z.string(),z.string()).refine(value=>{try{githubBi
 const programSchema=z.object({
  githubBindings:githubBindings.optional(),
  secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().optional(),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
- memory:z.object({checkingAgent:z.string().min(1),alternateCheckingAgent:z.string().min(1).optional(),sources:z.object({
+ memory:z.object({noteSweepAgent:z.string().min(1).optional(),checkingAgent:z.string().min(1),alternateCheckingAgent:z.string().min(1).optional(),sources:z.object({
   commons:z.object({directory:path,knowledge:path,people:path}).strict(),
   agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()).optional(),
  }).strict()}).strict(),
@@ -134,7 +134,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    }};
   }
   const publicOrigin=relyingParty(process.env)?.origin;
-  app=await serveShared({db,clock,memory:{checkingAgent:program.memory.checkingAgent,alternateCheckingAgent:program.memory.alternateCheckingAgent,sources:householdMemorySources(db,commons,agentFiles)},commsKey,notifications:{vapid:notificationKey(home)},
+  app=await serveShared({db,clock,memory:{noteSweepAgent:program.memory.noteSweepAgent,checkingAgent:program.memory.checkingAgent,alternateCheckingAgent:program.memory.alternateCheckingAgent,sources:householdMemorySources(db,commons,agentFiles)},commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:request=>sameIncomingOrigin(request,publicOrigin),publicOrigin,
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
