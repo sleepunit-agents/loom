@@ -1,5 +1,5 @@
-import { commsQuery } from '../web/src/pieces/comms/shared-query.js';
-import { inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
+import { commsQuery, commsThreadQuery } from '../web/src/pieces/comms/shared-query.js';
+import { inboxItemQuery, inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -53,20 +53,23 @@ it('mounts actual shared private reads and cookie writes with metadata-only rece
   const read = await f.query(query); expect(read.body.errors).toBeUndefined(); expect(JSON.stringify(read.body.data)).toContain('PRIVATE PERSON MESSAGE');
   expect(read.body.data?.recentConversations).toEqual([{id:expect.any(String),agent:'art',label:'Pump',lastAnswer:null}]);
   expect((await f.query(query,'bob')).body.data?.commsThreads).toEqual([]);
-  expect((await f.query('{commsThread(id:"th:pump"){id}}','owner')).body.data?.commsThread).toEqual({ id: 'th:pump' });
+  // A thread is its member's alone: a household owner gets none of it, not its row, its words or its place in a list.
+  const asOwner = await f.query('{commsThread(id:"th:pump"){id title} commsThreads{id} commsMessages(thread:"th:pump"){words} conversations{id label} turns{seq} recentConversations(agent:"art"){id label} inboxItems{id}}','owner');
+  expect(asOwner.body.errors).toBeUndefined(); expect(asOwner.body.data).toEqual({ commsThread: null, commsThreads: [], commsMessages: [], conversations: [], turns: [], recentConversations: [], inboxItems: [] });
   expect((await f.post('comms.send', { ...input, clientId:'owner' }, 'owner-send','owner')).status).toBe(403);
   expect((await f.post('comms.open',{thread:'th:bob',agent:'art',title:'Bob'},'bob-open','bob')).status).toBe(403);
   expect((await f.post('comms.change',{thread:'th:pump',change:'rename',title:'Owner changed it'},'owner-change','owner')).status).toBe(403);
   expect(f.db.select().from(threads).all()).toMatchObject([{id:'th:pump',title:'Pump'}]);
   for (const id of ['bob-open','owner-change']) expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
-  expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(403);
+  // A member's own token may send, as a signed-in window may.
+  expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(200);
   f.root.writes.run(() => f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run());
   const hidden = await f.query(`{commsThread(id:"th:pump"){id title} commsMessages(thread:"th:pump"){seq words} inboxItem(id:"${sent.value.item}"){body{words}}}`,'bob');
   expect(hidden.body.errors).toBeUndefined(); expect(hidden.body.data).toEqual({commsThread:null,commsMessages:[],inboxItem:null});
 
   expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE PERSON MESSAGE');
   expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain('PRIVATE PERSON MESSAGE');
-  expect(f.db.select().from(messages).all()).toHaveLength(1);
+  expect(f.db.select().from(messages).all()).toHaveLength(2);
   f.root.writes.run(() => f.db.delete(memberAgents).run());
   expect((await f.post('comms.send', input, 'send')).status).toBe(403);
   expect((await f.query(query)).body.data?.homeComms).toEqual({ member: 'alice', agents: [] });
@@ -80,17 +83,17 @@ it('answers the same private Inbox item through real HTTP and denies other peopl
   expect((await f.post('inbox.read',{item:question.inboxItem!},'other-read','bob')).status).toBe(403);
   expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'other-read')).all()).toEqual([]);
-  const visibleOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words}}}`,'owner');
-  expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){canAnswer}}`,'owner')).body.data?.inboxItem).toEqual({canAnswer:false});
+  // A household owner is one of the other people: the question is not there for them to read, mark or answer.
+  const hiddenOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words} canAnswer}}`,'owner');
+  expect(hiddenOwner.body.errors).toBeUndefined(); expect(hiddenOwner.body.data?.inboxItem).toBeNull();
   expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){canAnswer}}`)).body.data?.inboxItem).toEqual({canAnswer:true});
-  expect(visibleOwner.body.errors).toBeUndefined(); expect(visibleOwner.body.data?.inboxItem).toEqual({body:{words:'PRIVATE QUESTION'}});
-  expect((await f.post('inbox.read',{item:question.inboxItem!},'owner-read','owner')).status).toBe(200);
-  expect(f.client.prepare('SELECT member FROM inbox_reads').all()).toEqual([{member:'owner'}]);
+  expect((await f.post('inbox.read',{item:question.inboxItem!},'owner-read','owner')).status).toBe(403);
+  expect(f.client.prepare('SELECT member FROM inbox_reads').all()).toEqual([]);
   expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){read}}`)).body.data?.inboxItem).toEqual({read:false});
   expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'OWNER ANSWER'},'owner-answer','owner')).status).toBe(403);
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'owner-answer')).all()).toEqual([]);
   const plain = f.root.services.conversations.send({toKind:'person',to:'alice',source:'discord',sourceId:'plain-owner-test',fromKind:'agent',fromId:'art',member:'alice',agent:'art',words:'PUBLIC SOURCE QUESTION',answers:'yes-no'});
-  expect((await f.query(`{inboxItem(id:"${plain.id}"){body{words}}}`,'owner')).body.data?.inboxItem).toEqual({body:{words:'PUBLIC SOURCE QUESTION'}});
+  expect((await f.query(`{inboxItem(id:"${plain.id}"){body{words}}}`,'owner')).body.data?.inboxItem).toBeNull();
   expect((await f.post('inbox.answer',{item:plain.id,answer:'yes'},'owner-plain-answer','owner')).status).toBe(403);
   expect(f.db.select().from(inbox).where(eq(inbox.id,plain.id)).get()?.state).toBe('waiting');
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'owner-plain-answer')).all()).toEqual([]);
@@ -167,11 +170,12 @@ it('withholds private metadata when read authority changes while a sibling decry
   let entered!:()=>void,release!:()=>void;
   const started=new Promise<void>(resolve=>{entered=resolve;});
   f.openGate(()=>{entered();return new Promise<void>(resolve=>{release=resolve;});});
-  const pending=f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
-  await started; f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run()); release();
+  // Its own member is reading when the conversation stops being theirs.
+  const pending=f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}');
+  await started; f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).run()); release();
   const read=await pending;
   expect(read.response.status).toBe(503); expect(JSON.stringify(read.body)).not.toContain('PRIVATE THREAD LABEL'); expect(JSON.stringify(read.body)).not.toContain('PRIVATE WORDS');
-  const retry=await f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
+  const retry=await f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}');
   expect(retry.response.status).toBe(200); expect(retry.body.data).toEqual({commsThread:null,commsMessages:[]});
 });
 
@@ -199,12 +203,12 @@ it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored',
   const retry=await f.query(source);expect(retry.response.status).toBe(200);expect(JSON.stringify(retry.body)).not.toContain('PRIVATE FINAL WORDS');
 });
 
-it('withdraws a returned but unread HTTP response after the owner loses read access', async () => {
+it('withdraws a returned but unread HTTP response after its reader loses read access', async () => {
   const f=await fixture();
   expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE BUFFERED LABEL'},'open')).status).toBe(200);
-  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.owner.cookie}`},body:JSON.stringify({query:'{commsThread(id:"th:pump"){title}}'})});
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.alice.cookie}`},body:JSON.stringify({query:'{commsThread(id:"th:pump"){title}}'})});
   expect(response.status).toBe(200);
-  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
+  f.root.writes.run(()=>f.db.update(members).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(members.id,'alice')).run());
   await expect(response.text()).rejects.toThrow('Data access ended');
 });
 it('withdraws a returned but unread HTTP word response at its deadline without a data commit', async () => {
@@ -223,7 +227,7 @@ it('publishes the existing Tempo volume capability independently of answer owner
  const row=f.root.services.comms!.threads.conversations.send({toKind:'person',to:'alice',source:'approval',fromKind:'agent',agent:'art',member:'alice',words:'Timing request',answers:'yes-no'});
  const query=`{inboxItem(id:"${row.id}"){id canAnswer canSetVolume volume quietUntil}}`;
  expect((await f.query(query)).body).toMatchObject({data:{inboxItem:{canAnswer:false,canSetVolume:true,volume:'full',quietUntil:null}}});
- expect((await f.query(query,'owner')).body).toMatchObject({data:{inboxItem:{canSetVolume:true}}});
+ expect((await f.query(query,'owner')).body.data?.inboxItem).toBeNull();
  expect((await f.query(query,'bob')).body.data?.inboxItem).toBeNull();
  expect((await f.post('inbox.volume',{item:row.id,volume:'mute'},'mute')).status).toBe(200);
  expect((await f.query(query)).body).toMatchObject({data:{inboxItem:{volume:'mute',quietUntil:'2026-11-21T18:00:00.000Z'}}});
@@ -267,7 +271,7 @@ it.each(['dim','mute'] as const)('real ordinary and encrypted answers lift dim b
 it('bounds SQL for the full actual Inbox selection with two and ten private questions',async()=>{
   const f=await fixture(),comms=f.root.services.comms!;
   const thread=comms.threads.open({id:'th:growth',member:'alice',agent:'art',title:'Private growth fixture'});
-  const variables={folder:'all',search:'',agent:null,offset:0,id:'',hasItem:false,onlyErrors:false};
+  const variables={folder:'all',search:'',agent:null,offset:0,onlyErrors:false};
   const read=async()=>{
     f.statements.length=0;
     const result=await f.query(inboxQuery,'alice',variables);
@@ -284,11 +288,12 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
   }
   const large=await read();expect(large.rows).toHaveLength(10);
   expect(large.count).toBe(small);
-  expect(large.count).toBe(17);
+  // Six of these are the one reading of household facts that answers "can answer" for the whole page.
+  expect(large.count).toBe(23);
   expect(large.rows.every(row=>row.body?.words.startsWith('PRIVATE QUESTION'))).toBe(true);
   for(const row of large.rows){expect(row.refs).toEqual(['a-ref','z-ref']);expect(row.read).toBe(true);}
   f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(f.statements.length).toBe(smallSearch);expect(search.body.data!.inboxItems).toHaveLength(10);expect((search.body.data!.inboxItems as {body:{words:string}}[]).every(row=>row.body.words.startsWith('PRIVATE QUESTION'))).toBe(true);
-  const direct=await f.query(inboxQuery,'alice',{...variables,hasItem:true,id:selected});expect(direct.body.errors).toBeUndefined();expect(direct.body.data!.inboxItem).toMatchObject({body:{words:'PRIVATE QUESTION 9'}});
+  const direct=await f.query(inboxItemQuery,'alice',{id:selected});expect(direct.body.errors).toBeUndefined();expect(direct.body.data!.inboxItem).toMatchObject({body:{words:'PRIVATE QUESTION 9'}});
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(inbox).set({member:'bob'}).where(eq(inbox.thread,thread.id)).run());}});
   const revoked=await f.query(inboxQuery,'alice',variables);
@@ -299,10 +304,12 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
 it('bounds SQL for the full actual Comms selection with two and ten retained messages',async()=>{
   const f=await fixture(),comms=f.root.services.comms!;
   const thread=comms.threads.open({id:'th:message-growth',member:'alice',agent:'art',title:'Private message growth'});
-  const variables={archived:false,search:'',offset:0,id:thread.id,selected:true,before:null};
+  const variables={id:thread.id,before:null};
   const read=async()=>{
     f.statements.length=0;
-    const result=await f.query(commsQuery,'alice',variables);
+    const list=await f.query(commsQuery,'alice',{archived:false,search:'',offset:0});
+    expect(list.body.errors).toBeUndefined();expect(list.body.data!.commsThreads).toHaveLength(1);
+    const result=await f.query(commsThreadQuery,'alice',variables);
     expect(result.body.errors).toBeUndefined();expect(result.response.status).toBe(200);
     return {rows:result.body.data!.commsMessages as {words:string}[],count:f.statements.length};
   };
@@ -312,11 +319,12 @@ it('bounds SQL for the full actual Comms selection with two and ten retained mes
     if(n===1){const result=await read();expect(result.rows).toHaveLength(2);small=result.count;}
   }
   const large=await read();expect(large.rows).toHaveLength(10);
-  expect(large.count).toBe(small);expect(large.count).toBe(14);
+  // Home's part asks policy.ts who the member may give work to, which reads the household's sharing (comms-home.ts).
+  expect(large.count).toBe(small);expect(large.count).toBe(19);
   expect(large.rows.map(row=>row.words)).toEqual(Array.from({length:10},(_,n)=>'PRIVATE MESSAGE '+n));
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
-  const revoked=await f.query(commsQuery,'alice',variables);
+  const revoked=await f.query(commsThreadQuery,'alice',variables);
   expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE MESSAGE');
 });
 

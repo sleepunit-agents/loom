@@ -13,7 +13,7 @@ import {settingsQuery,type SettingsData} from './data';
 import SettingsApp from './index';
 const feed=vi.hoisted(()=>({data:undefined as SettingsData|undefined}));
 vi.mock('../../data/graphql',()=>({useDataQuery:()=>({status:'live',data:feed.data})}));
-vi.mock('../../kit',()=>({Button:(p:any)=>h('button',p),Input:(p:any)=>h('input',p),Split:(p:any)=>h('main',{},p.reader??p.blank),List:(p:any)=>h('div',{},p.children),Row:(p:any)=>h('button',p,p.title),Empty:(p:any)=>h('p',{},p.title),Loading:()=>h('p',{},'Loading'),Error:(p:any)=>h('p',{},p.text)}));
+vi.mock('../../kit',()=>({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Button:(p:any)=>h('button',p),Input:(p:any)=>h('input',p),Split:(p:any)=>h('main',{},p.reader??p.blank),List:(p:any)=>h('div',{},p.children),Row:(p:any)=>h('button',p,p.title),Empty:(p:any)=>h('p',{},p.title),Loading:()=>h('p',{},'Loading'),Error:(p:any)=>h('p',{},p.text)}));
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:any;const close:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;vi.unstubAllGlobals();for(const stop of close.splice(0).reverse())await stop();});

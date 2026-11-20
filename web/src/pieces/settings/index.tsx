@@ -1,5 +1,6 @@
 import { ValueControl, RequestControl, RevokeControl, DefaultControl, RuleControl } from './controls';
 import { useState, type ComponentProps } from 'react';
+import {useHouseholdZone} from '../../data/zone';
 import { useDataQuery } from '../../data/graphql';
 import { SecretsView, type SecretsFolder, type SecretsSelection } from '../secrets-view';
 import { settingsQuery, settingsSnapshot, type SettingsData } from './data';
@@ -18,13 +19,14 @@ function selection(path: string): { folder: SecretsFolder; selected?: SecretsSel
 function LiveSettings({ path, go }: { path?: string; go?: (path: string) => void }) {
   const [local, setLocal] = useState(base);
   const route = selection(path ?? local), navigate = go ?? setLocal;
+  const zone=useHouseholdZone();
   const snapshot = settingsSnapshot(useDataQuery<SettingsData>(settingsQuery));
-  return <SecretsView key={snapshot.member} snapshot={snapshot} member={snapshot.member} {...route}
+  return <SecretsView key={snapshot.member} zone={zone} snapshot={snapshot} member={snapshot.member} {...route}
     select={selected => navigate(selected ? `${base}/item/${selected.folder}/${encodeURIComponent(selected.id)}` : `${base}/${route.folder}`)}
     changeFolder={folder => navigate(`${base}/${folder}`)}
-    cards={{ add: () => <ValueControl />, secret: name => <><ValueControl key={name} name={name} description={snapshot.secrets.find(row => row.name === name)?.description} /><RuleControl key={JSON.stringify([name, snapshot.rules, snapshot.ruleAgents])} secret={name} snapshot={snapshot} /></>,
+    cards={{ add: () => <ValueControl />, secret: name => <><ValueControl key={name} name={name} description={snapshot.secrets.find(row => row.name === name)?.description} /><RuleControl go={navigate} key={JSON.stringify([name, snapshot.rules, snapshot.ruleAgents])} secret={name} snapshot={snapshot} /></>,
       request: id => <RequestControl key={id} id={id} />, grant: id => <RevokeControl key={id} id={id} />,
-      piece: () => <DefaultControl key={snapshot.defaultAnswer} answer={snapshot.defaultAnswer ?? 'ask'} /> }}
+      piece: () => <DefaultControl go={navigate} key={snapshot.defaultAnswer} answer={snapshot.defaultAnswer ?? 'ask'} /> }}
     pieces={[{ id: 'secret-default', label: 'Secret default', description: 'Standing answer for secrets with no rule.', open: () => navigate(`${base}/item/pieces/secret-default`) }]} />;
 }
 export default function SettingsApp({ shared, ...navigation }: {

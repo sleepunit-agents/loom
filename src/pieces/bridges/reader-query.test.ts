@@ -60,5 +60,7 @@ it('uses current reader membership and owner role without exposing the owner def
  expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{secretsReader:{defaultAnswer:'auto'}}});
  db.update(members).set({role:'member'}).run();
  expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{bridgeReader:{id:'owner',manage:false},secretsReader:null}});
+ db.update(members).set({role:'owner',removedAt:'2026-11-19T12:00:00.000Z'}).run();
+ expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{bridgeReader:null,secretsReader:null}});
  for(const viewer of [{kind:'member',id:'missing'},{kind:'agent',id:'art'},{kind:'runner',id:'box'},{kind:'service',id:'internal'}])expect(await read(viewer)).toMatchObject({data:{bridgeReader:null,secretsReader:null}});
 });

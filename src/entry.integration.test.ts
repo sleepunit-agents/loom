@@ -38,8 +38,8 @@ describe('entry point — invoked through a symlinked bin', () => {
     expect(stdout).toMatch(/^loom v\d+\.\d+\.\d+/);
   });
 
-  it.skipIf(!existsSync(dist))('dispatches a subcommand through the symlink', async () => {
+  it.skipIf(!existsSync(dist))('prints its usage through the symlink', async () => {
     const { stdout } = await run(process.execPath, [bin, '--help']);
-    expect(stdout).toContain('Usage: loom <command> [options]');
+    expect(stdout).toContain('loom serve --home <dir>');
   });
 });

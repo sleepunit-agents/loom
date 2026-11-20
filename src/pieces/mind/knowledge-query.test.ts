@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { dataQueries } from '../../core/data/queries.js';
-import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
 import type { Sharing } from '../../policy.js';
 import { knowledgeQueryFields, type MemoryQueryContext } from './knowledge-query.js';
 const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
@@ -15,7 +15,7 @@ afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();
 const home=()=>{const h=mkdtempSync(join(tmpdir(),'knowledge-query-'));homes.push(h);return h;};
 function fixture(path:string){
  let now=Date.parse('2026-11-14T18:00:00Z');
- const sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']}},projects:{},services:{}};
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']}},projects:{}};
  const reader=knowledgeQueryFields({path,sharing:()=>sharing,now:()=>now});closes.push(reader.close);
  const client=new Database(':memory:');closes.push(()=>client.close());createDataSchema(client);
  const generated=dataQueries(client,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
@@ -24,7 +24,7 @@ function fixture(path:string){
  return {query,generated,sharing,reader,at:(at:number)=>{now=at;}};
 }
 it('lets a generated endpoint compose typed file-backed fields and return exactly the selected content',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  const body='Fictional factual content. '.repeat(1000)+'Final fact.';
  await store.writePage({slug:'hose',title:'The hose',domain:'pond',body,citations:[{claim:'25 mm',source_kind:'web',source_locator:'https://example.com/hose',excerpt:'25 mm'}]});
  await store.writePage({slug:'ref',title:'Referring fact',domain:'pond',body:'[[hose]]'});
@@ -64,7 +64,7 @@ it('keeps absent files absent and hides source failures from callers without vis
  expect(JSON.stringify(result)).not.toContain(broken);
 });
 it('matches complete backlink targets and keeps an uncited page provisional in query output',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  await store.writePage({slug:'hose',title:'The hose',domain:'pond',body:'Uncited fictional fact'});
  await store.writePage({slug:'prefix',title:'Prefix only',domain:'pond',body:'knowledge:hose-adapter /knowledge/hose-adapter [[hose-adapter]]'});
  await store.writePage({slug:'wiki',title:'Wiki alias',domain:'pond',body:'[[hose|the pump hose]]'});
@@ -74,7 +74,7 @@ it('matches complete backlink targets and keeps an uncited page provisional in q
  expect(result.data).toEqual({memoryKnowledgePage:{sourcing:'provisional',sources:[],citedBy:[{slug:'exact'},{slug:'wiki'}]}});
 });
 it('selects the newest ten prior versions without changing the current page',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  for(let i=0;i<13;i++)await store.writePage({slug:'hose',title:'Hose',domain:'pond',body:`Version ${i}`,mode:'replace'});
  const f=fixture(path),result=await f.query('{ memoryKnowledgePage(slug:"hose") { body history { body op replacedAt } } }');
  expect(result.errors).toBeUndefined();
@@ -83,7 +83,7 @@ it('selects the newest ten prior versions without changing the current page',asy
 });
 
 it('schedules the earliest future freshness boundary and recomputes from current metadata',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  const writer=new Database(path);closes.push(()=>writer.close());
  const f=fixture(path),now=Date.parse('2026-11-14T18:00:00Z'),day=86400_000;
  expect(f.reader.nextDeadline()).toBeUndefined();
@@ -111,7 +111,7 @@ it('projects the same current capabilities without a legacy record subscription'
  expect(await f.query(source)).toMatchObject({data:{memoryKnowledgeAccess:{allowed:false,canAdd:false,canVerify:false,canRecheck:false}}});
 });
 it('lists every active page beyond the old two-thousand-page ceiling',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  await store.writePage({slug:'first',title:'First',domain:'fiction',body:'Fictional'});
  const writer=new Database(path);closes.push(()=>writer.close());
  const insert=writer.prepare("INSERT INTO pages(uuid,slug,title,domain,body,created,updated,status) VALUES(?,?,?,'fiction','Fictional','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z','active')");
@@ -122,21 +122,21 @@ it('lists every active page beyond the old two-thousand-page ceiling',async()=>{
 });
 
 it('keeps the successful stamp after a stale check and recomputes backlinks from current source content',async()=>{
- const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
  await store.writePage({slug:'fact',title:'Fact',domain:'fiction',body:'Fictional fact'});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'[[fact]]'});
  await store.verifyPages({slug:'fact',verified_at:'2026-11-10T00:00:00.000Z',verifier:'checker'});
- const f=fixture(path),read=()=>f.query('{memoryKnowledgePage(slug:"fact"){fresh verified_at checked{outcome} citedBy{slug}}}');
+ const f=fixture(path),read=()=>f.query('{memoryKnowledgePage(slug:"fact"){fresh verified_at checked{outcome} checks{at outcome by} citedBy{slug}}}');
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'fresh',citedBy:[{slug:'ref'}]}}});
  await store.verifyPages({slug:'fact',outcome:'stale',verified_at:'2026-11-11T00:00:00.000Z'});
- expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'due',verified_at:'2026-11-10T00:00:00.000Z',checked:{outcome:'stale'}}}});
+ expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'due',verified_at:'2026-11-10T00:00:00.000Z',checked:{outcome:'stale'},checks:[{at:'2026-11-11T00:00:00.000Z',outcome:'stale'},{at:'2026-11-10T00:00:00.000Z',outcome:'confirmed',by:'checker'}]}}});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'No link',mode:'replace'});
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[]}}});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'/knowledge/fact',mode:'replace'});
- await store.movePage({slug:'ref',new_slug:'renamed',leave_pointer:false});
+ await store.renamePage({slug:'ref',new_slug:'renamed'});
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[{slug:'renamed'}]}}});
  await store.archivePage({slug:'renamed'});expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[]}}});
  await store.restorePage({slug:'renamed'});expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[{slug:'renamed'}]}}});
- await store.archivePage({slug:'renamed'});await store.purgePages({slugs:['renamed'],confirm:true});
+ await store.archivePage({slug:'renamed'});await store.purgePages(['renamed']);
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[]}}});
 });

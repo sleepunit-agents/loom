@@ -1,6 +1,7 @@
 /** The fixed child's private stdin owner. Incoming buffers and collected copies
  * are erased; cancellation erases immediately, before the stream settles. */
 import type { Readable } from 'node:stream';
+import { BODY_START_BYTES } from './body-input-limit.js';
 export async function readBodyStdin(source: Readable, signal: AbortSignal): Promise<Uint8Array> {
   const chunks: Buffer[] = []; let size = 0;
   const erase = () => { for (const chunk of chunks) chunk.fill(0); };
@@ -13,7 +14,7 @@ export async function readBodyStdin(source: Readable, signal: AbortSignal): Prom
       const chunk = Buffer.from(data);
       if (data instanceof Uint8Array) data.fill(0);
       chunks.push(chunk); size += chunk.length;
-      if (signal.aborted || size > 1_048_576) throw new Error('Body input unavailable');
+      if (signal.aborted || size > BODY_START_BYTES) throw new Error('Body input unavailable');
     }
     if (signal.aborted) throw new Error('Body input cancelled');
     const result = Buffer.concat(chunks);

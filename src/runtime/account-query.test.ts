@@ -10,9 +10,10 @@ import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
+import { readModelAccounts } from '../core/data/model-account-read.js';
 import type { Viewer } from '../policy.js';
 import { GraphQLNonNull, GraphQLList, GraphQLUnionType } from 'graphql/index.js';
 const clean: (() => void | Promise<void>)[] = [];
@@ -20,7 +21,7 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const keys = { alice: 'a'.repeat(64), bob: 'b'.repeat(64), guest: 'g'.repeat(64), house: 'h'.repeat(64), agent: 'x'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const selection = `modelAccounts { ... on RuntimeAccount { label level }
-  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } } }`;
+  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } windows { window usage resetsAt } } }`;
 function fixture(fields?: Parameters<typeof nextData>[4]) {
   const statements: string[] = [];
   const client = new Database(':memory:', { verbose: value => statements.push(String(value)) }); clean.push(() => { if (client.open) client.close(); });
@@ -55,7 +56,8 @@ it('shows full account data only to its actual member owner or a household owner
   const f = fixture();
   const alice = await (await f.post('alice')).json();
   expect(alice.data.modelAccounts[0]).toEqual({ ...coarse[0], id: 'private-a', owner: 'alice', provider: 'private-provider', usage: 0.2,
-    usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 3.5 * 86400_000).toISOString(), hasRoom: true, signedInOn: [{ id: 'private-box-id', name: 'Private worker name' }] });
+    usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 3.5 * 86400_000).toISOString(), hasRoom: true, signedInOn: [{ id: 'private-box-id', name: 'Private worker name' }],
+    windows: [{window:'week',usage:.2,resetsAt:new Date(f.clock.now()+3.5*86400_000).toISOString()}] });
   expect(alice.data.modelAccounts[1]).toEqual(coarse[1]);
   const house = await (await f.post('house')).json(); expect(house.data.modelAccounts.map((row: { id: string }) => row.id)).toEqual(['private-a', 'private-b']);
   expect(house.data.modelAccounts[1]).toMatchObject({ owner: 'bob', provider: 'private-provider', usage: 0.58 });
@@ -229,7 +231,8 @@ it('does not establish ownership for a retained Viewer whose member no longer ex
   f.db.delete(members).where(eq(members.id, 'alice')).run();
   const projection = modelAccountQueries(f.db, f.now);
   const rows = await projection.fields.modelAccounts.resolve!({}, {}, { viewer }, {} as never) as unknown[];
-  expect(rows[0]).toEqual({ __typename: 'RuntimeAccountSummary', ...coarse[0] });
+  // Not the detail, and not the summary either: that is for someone in the household now (rules.accountSummary).
+  expect(rows).toEqual([]);
 });
 it('registers a private witness when only account locations are selected', async () => {
   let begin!: () => void, release!: () => void;
@@ -269,4 +272,26 @@ it.each(['http', 'socket', 'observe'])('keeps the shipped model-account page SQL
     counts.push(f.statements.filter(statement => /^select\b/i.test(statement)).length);
   }
   expect(counts).toEqual([counts[0], counts[0]]);
+});
+
+it('shows an account\'s name and level to whoever is in the household now, by a rule, and to nobody else', () => {
+  const f = fixture(), labels = (viewer: Viewer) => readModelAccounts(f.db, viewer).rows.map(row => row.label);
+  const all = ['Main subscription', 'Other subscription'];
+  for (const viewer of [{ kind: 'member', id: 'guest' }, { kind: 'agent', id: 'agent' }, { kind: 'agent', id: 'agent', workingFor: 'guest' }] as const) expect(labels(viewer)).toEqual(all);
+  for (const viewer of [{ kind: 'runner', id: 'private-box-id' }, { kind: 'service', id: 'tasks' }, { kind: 'member', id: 'nobody' }, { kind: 'agent', id: 'nobody' }] as const) expect(labels(viewer)).toEqual([]);
+  // A removed member, and a body whose member has been removed, are nobody (rules.accountSummary).
+  f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'guest')).run();
+  for (const viewer of [{ kind: 'member', id: 'guest' }, { kind: 'agent', id: 'agent', workingFor: 'guest' }] as const) expect(labels(viewer)).toEqual([]);
+});
+
+it('offers sign-in only for a reporting machine the viewer may manage',async()=>{
+  const f=fixture();
+  f.db.update(boxes).set({lastSeenAt:f.now()}).run();
+  f.db.insert(modelAccountLogins).values({account:'private-a',box:'private-box-id',harness:'codex',place:'containers',state:'signed-out',since:f.now(),checkedAt:f.now(),learnedFrom:'check'}).run();
+  const query='{ modelAccounts { ... on RuntimeAccountDetail { logins { reporting needsSignIn canRequest } } } }';
+  const login=async(who:'alice'|'house')=>(await (await f.post(who,query)).json()).data.modelAccounts[0].logins[0];
+  expect(await login('house')).toEqual({reporting:true,needsSignIn:true,canRequest:true});
+  expect(await login('alice')).toEqual({reporting:true,needsSignIn:true,canRequest:false});
+  f.clock.advance(121_000);
+  expect(await login('house')).toEqual({reporting:false,needsSignIn:false,canRequest:false});
 });

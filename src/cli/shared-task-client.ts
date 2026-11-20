@@ -3,24 +3,29 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {parseRedactedJSON} from '../pieces/changes/redact.js';
+import {DOOR_REQUEST_BYTES} from '../core/data/door-limit.js';
+import {doorConnection} from './connection.js';
 import {readStdin,type IOStreams} from './io.js';
-import type {ClientRuntime} from './api-client.js';
+import type { ClientRuntime } from './io.js';
 
 const query=`query Taskstore {
  tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){
   id title type status priority position ownerKind owner project assigneeKind assignee
-  goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady
+  goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady isShelved
  }
 }`;
 const textField=z.string().nullable().optional();
 const taskReply=z.object({data:z.object({tasks:z.array(z.object({
  id:z.string(),title:z.string(),isReady:z.boolean(),
+ // Unfinished, in a retired project. A field of its own: the stored status is printed as it is.
+ isShelved:z.boolean().optional(),
  type:textField,status:textField,priority:z.number().optional(),position:z.number().optional(),
  ownerKind:textField,owner:textField,project:textField,assigneeKind:textField,assignee:textField,
  goal:textField,why:textField,doneWhen:textField,description:textField,ask:textField,ifYes:textField,ifNo:textField,
  closeReason:textField,sourceKind:textField,sourceId:textField,
 }))})});
-const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional()}).strict()});
+// One task's id, or for a move to a project the tasks that moved.
+const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional(),moved:z.array(z.string()).optional()}).strict()});
 const defaults:ClientRuntime={request:(...args)=>fetch(...args),retry:ms=>new Promise(resolve=>setTimeout(resolve,ms))};
 const help='usage: loom-taskstore ready|list|show <id>|search <words>|command <JSON>|command --file <path|->\nWrites use the same typed action/input object as POST /api/tasks/command.\n';
 const searchFields=['id','title','description','goal','why','doneWhen','ask'] as const;
@@ -40,16 +45,12 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
  if(verb==='command'){
   try{
    const text=args[0]==='--file'?(args[1]==='-'?await readStdin(io.stdin):await readFile(args[1],'utf8')):args[0];
-   if(Buffer.byteLength(text)>1_048_576)throw Error();input=JSON.parse(text);
+   if(Buffer.byteLength(text)>DOOR_REQUEST_BYTES)throw Error();input=JSON.parse(text);
    if(!input||typeof input!=='object'||Array.isArray(input)||typeof (input as {action?:unknown}).action!=='string')return invalid();
   }catch{return fail('Invalid command input');}
  }
- let base:URL,token:string,bytes:Buffer|undefined;
- try{
-  if(!io.env.LOOM_URL||!io.env.LOOM_TOKEN_FILE)throw Error();base=new URL(io.env.LOOM_URL);
-  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.pathname!=='/'||base.search||base.hash)throw Error();
-  bytes=await readFile(io.env.LOOM_TOKEN_FILE);if(bytes.length>8192)throw Error();token=bytes.toString('utf8').trim();if(!/^[\x21-\x7e]{1,4096}$/.test(token))throw Error();
- }catch{return fail('Cannot configure loom connection');}finally{bytes?.fill(0);}
+ let base:URL,token:string;
+ try{({base,token}=await doorConnection(io.env));}catch{return fail('Cannot configure loom connection');}
  const write=verb==='command';
  const selection=verb==='ready'?query.replace('tasks(orderBy:','tasks:readyTasks(orderBy:'):verb==='show'?query.replace('query Taskstore {','query Taskstore($id:String!){').replace('tasks(orderBy:','tasks(where:{id:{eq:$id}},orderBy:'):query;
  const body=JSON.stringify(write?{id:randomUUID(),input}:{query:selection,...(verb==='show'?{variables:{id:args[0]}}:{})});

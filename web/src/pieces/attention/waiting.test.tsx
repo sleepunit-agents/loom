@@ -40,7 +40,7 @@ it('withdraws private wording at its deadline and routes the preview into the ac
  const button=tree!.root.findByType('button');await act(async()=>button.props.onClick());
  expect(go).toHaveBeenCalledExactlyOnceWith('/p/inbox-preview/ask/question');
  await act(async()=>{await vi.advanceTimersByTimeAsync(50);});
- const words=JSON.stringify(tree!.toJSON());expect(words).not.toContain('Private question');expect(words).not.toContain('Private reason');expect(words).toContain('Wording unavailable');
+ const words=JSON.stringify(tree!.toJSON());expect(words).not.toContain('Private question');expect(words).not.toContain('Private reason');expect(words).toContain('Open it in the Inbox to read it.');
 });
 it('does not mark a preview read or submit an answer',async()=>{
  vi.useFakeTimers();vi.setSystemTime(0);f.snapshot=preview;

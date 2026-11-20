@@ -15,7 +15,7 @@ it('executes the minimal desk selection through the existing Memory reader and c
   directory.write({slug:'art',name:'Current name',how:{kind:'agent'}});
   directory.write({slug:'human',name:'Human name'});
   relationship.write({slug:'art',name:'Private relationship name',how:{kind:'agent'}});
-  const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{},services:{}};
+  const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{}};
   const fields=peopleQueryFields({directory:directory.database.name,agents:[{agent:'other',memories:relationship.database.name}],sharing:()=>sharing,now:()=>Date.parse('2026-11-14T00:00:00Z')});close=fields.close;
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:fields.fields})});
   const read=async()=>{const result=await graphql({schema,source:deskAgentDirectoryQuery,contextValue:{viewer:{kind:'member',id:'owner'}}});expect(result.errors).toBeUndefined();return deskAgentDirectory({status:'live',data:result.data as unknown as DeskAgentDirectoryData});};

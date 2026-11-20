@@ -2,6 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
+import {BODY_EXIT} from './job-exit.js';
 import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
@@ -13,6 +14,9 @@ import * as projection from './body-program-tools.js';
 import * as listener from './body-secret-tools.js';
 import {bodyProgram} from './body-program.js';
 import type {WorkerAssignment} from './worker.js';
+import {bodyNamedToolNames} from './body-named-tools.js';
+/** What the default body serves its harness: the secret tools, the generic ones, and the named ones a terminal has. */
+const served=()=>['request_secret','use_secret','loom_commands','loom_command','loom_query',...bodyNamedToolNames()];
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
@@ -25,13 +29,14 @@ async function prepare(){
   fixture.db.delete(schema.tokens).where(eq(schema.tokens.job,'job')).run();
   fixture.db.insert(schema.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Fictional native',kind:'agent',agent:'art',job:'job',createdAt:new Date(fixture.clock.now()).toISOString()}).run();
   fixture.db.update(schema.jobs).set({model:'requested',harness:'claude'}).where(eq(schema.jobs.id,'job')).run();
-  fixture.db.update(schema.members).set({role:'owner'}).where(eq(schema.members.id,'bob')).run();
+  // The rule below is a standing answer, which serves a body only when the member it works for is a household owner.
+  fixture.db.update(schema.members).set({role:'owner'}).where(eq(schema.members.id,'alice')).run();
   fixture.db.insert(schema.secrets).values({name:'TOKEN',description:'Fictional credential',changedAt:new Date(fixture.clock.now()).toISOString(),changedBy:'alice'}).run();
   fixture.db.insert(schema.secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'alice',at:new Date(fixture.clock.now()).toISOString()}).run();
   fixture.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'on_request'}]});
  });
  expect((await fixture.send('Use canonical tools privately','canonical')).status).toBe(200);
- const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:fixture.thread.conversation,thread:fixture.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'}};
+ const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:fixture.thread.conversation,thread:fixture.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'},run:{nestedContainers:false,gpu:false,ports:[],policy:{people:[{kind:'person',person:'owner',tier:null}],deniedTools:[],word:'owners'}}};
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}}));
  return{...fixture,token,bytes,source,sourceBuffers,value};
 }
@@ -53,10 +58,10 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
  vi.spyOn(fixture.clock,'at').mockImplementation((time,work)=>{if(waitingReported&&pollDeadline===undefined)pollDeadline=time;return at(time,work);});
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   const names=args.slice(args.indexOf('--allowedTools')+1),nextFlag=names.findIndex(name=>name.startsWith('--'));
-  expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query'].map(name=>'mcp__loom_secrets__'+name));
+  expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(served().map(name=>'mcp__loom__'+name));
   expect(JSON.stringify({args,options})).not.toContain(fixture.token);
   let words='',ended=false,started=false;
-  const control=new Writable({write(bytes,_encoding,next){pipeBuffers.push(bytes);endpoint=JSON.parse(bytes.toString()).mcpServers.loom_secrets;expect(bytes.includes(Buffer.from(fixture.token))).toBe(false);next();}});
+  const control=new Writable({write(bytes,_encoding,next){pipeBuffers.push(bytes);endpoint=JSON.parse(bytes.toString()).mcpServers.loom;expect(bytes.includes(Buffer.from(fixture.token))).toBe(false);next();}});
   const stdin=new Writable({write(bytes,_encoding,next){words+=bytes.toString();next();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   const start=()=>{
@@ -64,9 +69,11 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    void(async()=>{
     const model=new Client({name:'fictional-native-model',version:'1'},{capabilities:{}});
     try{
-     expect(words).toBe('Use canonical tools privately');
+     expect(words).toMatch(/approvals\.answer[\s\S]*\n\nUse canonical tools privately$/);
      await model.connect(new StreamableHTTPClientTransport(new URL(endpoint!.url),{requestInit:{headers:endpoint!.headers}}));
-     expect((await model.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query']);
+     expect((await model.listTools()).tools.map(tool=>tool.name)).toEqual(served());
+     // A named tool, as the default body serves it: for this job's agent, through the body's own credential.
+     expect(await model.callTool({name:'task_ready',arguments:{}})).toEqual({content:[{type:'text',text:'Nothing is ready.'}]});
      expect(decoded(await model.callTool({name:'loom_commands',arguments:{name:'secrets.request'}})).value.commands[0].name).toBe('secrets.request');
      expect(decoded(await model.callTool({name:'loom_query',arguments:{query:'{agents{id} members{id}}'}}))).toMatchObject({data:{agents:[{id:'art'}],members:[]}});
      const before=fixture.db.select().from(schema.household).get();
@@ -122,13 +129,15 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
   }finally{releaseHeartbeat();}
  }
- expect(await running).toBe(failed?1:0);await actorFinished;if(failure)throw failure;
+ expect(await running).toBe(failed?14:stop?10:0);await actorFinished;if(failure)throw failure;
  expect(errors).toHaveBeenCalledTimes(failed?1:0);expect(cancel).toHaveBeenCalledOnce();
  expect(fixture.bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(fixture.sourceBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  expect(fixture.source).toHaveBeenCalledTimes(mode==='overlapping-waits'?2:1);
  expect(statusInputs.filter(value=>JSON.stringify(value)===JSON.stringify({state:'waiting',work:'Canonical waiting'}))).toHaveLength(mode==='stop'?1:2);
  const replies=fixture.db.select().from(schema.turns).all().filter(row=>row.kind==='reply');expect(replies).toHaveLength(stop||failed?0:1);
- if(stop){expect(killed).toBe(true);expect(statusInputs).toContainEqual({state:'idle',work:'',seenStop:true});expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(false);}
+ if(stop){expect(killed).toBe(true);expect(statusInputs.at(-1)).toEqual({state:'idle',work:''});
+  // The body leaves the Stop for loom to take when the worker reports this job.
+  expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(true);}
  else if(!failed)expect(replies[0]).toMatchObject({model:'observed',run:'job'});
  expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.token))).toBe(false);expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.value))).toBe(false);
  await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
@@ -151,5 +160,5 @@ it('retires the projection on listener setup failure before a held heartbeat set
   const before=requests;expect(await captured!.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});expect(requests).toBe(before);
   let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);expect(spawn).not.toHaveBeenCalled();
  }finally{release();}
- expect(await running).toBe(1);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
+ expect(await running).toBe(BODY_EXIT.tools);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
 });

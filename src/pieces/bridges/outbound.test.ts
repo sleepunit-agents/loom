@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { postReply, replyParts } from './outbound.js';
+import { BridgeReplyNotSent, postReply, replyParts } from './outbound.js';
 
 describe('outbound reply parts', () => {
   it.each([['discord', 2000], ['slack', 3900]] as const)('%s preserves legacy line replies within its cap', (platform, limit) => {
@@ -35,35 +35,56 @@ describe('outbound reply parts', () => {
   });
   it.each(['', ' \n\t'])('rejects an empty reply before posting', async text => {
     const post = vi.fn();
-    await expect(postReply('slack', text, post)).rejects.toThrow('Empty bridge reply');
+    await expect(postReply('slack', text, 0, post, () => {})).rejects.toThrow('Empty bridge reply');
     expect(post).not.toHaveBeenCalled();
   });
 });
 
 describe('one sequential reply attempt', () => {
-  it('waits for each receipt before the next post and returns only the final id', async () => {
+  it('waits for each receipt before the next post, and tells of each part as it is confirmed', async () => {
     let release!: (receipt: { id: string }) => void;
     const first = new Promise<{ id: string }>(resolve => { release = resolve; });
     const post = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce({ id: 'last', text: 'not returned' });
-    const sending = postReply('discord', 'x'.repeat(2001), post);
-    expect(post).toHaveBeenCalledTimes(1);
+    const confirmed = vi.fn(), sending = postReply('discord', 'x'.repeat(2001), 0, post, confirmed);
+    expect(post).toHaveBeenCalledTimes(1); expect(confirmed).not.toHaveBeenCalled();
     release({ id: 'first' });
-    await expect(sending).resolves.toEqual({ id: 'last' });
+    await expect(sending).resolves.toEqual({ parts: 2, done: true });
     expect(post.mock.calls.map(args => args[0])).toEqual(['x'.repeat(2000), 'x']);
+    expect(confirmed.mock.calls).toEqual([[0, 'first'], [1, 'last']]);
   });
-  it.each([0, 1, 2])('stops at failure on chunk %s without retry or leaking upstream details', async failed => {
-    const calls: string[] = [];
+  it.each([0, 1, 2])('stops at failure on chunk %s without retry or leaking upstream details, and says what was confirmed', async failed => {
+    const calls: string[] = [], confirmed = vi.fn();
     const post = async (part: string) => {
       calls.push(part);
       if (calls.length === failed + 1) throw new Error('token-and-message-words');
       return { id: `post-${calls.length}` };
     };
-    await expect(postReply('discord', 'x'.repeat(4500), post)).rejects.toEqual(new Error('Bridge reply attempt uncertain'));
-    expect(calls).toHaveLength(failed + 1);
+    const attempt = await postReply('discord', 'x'.repeat(4500), 0, post, confirmed);
+    expect(attempt).toEqual({ parts: failed, done: false });
+    expect(JSON.stringify(attempt)).not.toContain('token');
+    expect(calls).toHaveLength(failed + 1); expect(confirmed).toHaveBeenCalledTimes(failed);
   });
-  it.each([undefined, null, {}, { id: '' }, { id: ' ' }, { id: 123 }])('treats malformed receipt %j as uncertain and stops', async result => {
+  it('goes on from the part an earlier attempt stopped at, posting nothing before it', async () => {
+    const post = vi.fn().mockResolvedValueOnce({ id: 'second' }).mockResolvedValueOnce({ id: 'third' }), confirmed = vi.fn();
+    expect(await postReply('discord', 'a'.repeat(2000) + 'b'.repeat(2000) + 'c', 1, post, confirmed)).toEqual({ parts: 3, done: true });
+    expect(post.mock.calls.map(args => args[0])).toEqual(['b'.repeat(2000), 'c']);
+    expect(confirmed.mock.calls).toEqual([[1, 'second'], [2, 'third']]);
+    // Everything was already out: nothing is posted.
+    expect(await postReply('discord', 'x', 1, post, confirmed)).toEqual({ parts: 1, done: true }); expect(post).toHaveBeenCalledTimes(2);
+  });
+  it('says when the part it stopped at never left', async () => {
+    const refusal = new BridgeReplyNotSent(true);
+    const post = vi.fn().mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(refusal);
+    expect(await postReply('discord', 'x'.repeat(2001), 0, post, () => {})).toEqual({ parts: 1, done: false, refused: refusal });
+  });
+  it('calls a part unconfirmed when it could not be put on record, and stops', async () => {
+    const post = vi.fn().mockResolvedValue({ id: 'out' });
+    expect(await postReply('discord', 'x'.repeat(2001), 0, post, () => { throw new Error('database is locked'); })).toEqual({ parts: 0, done: false });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, null, {}, { id: '' }, { id: ' ' }, { id: 123 }])('treats malformed receipt %j as unconfirmed and stops', async result => {
     const post = vi.fn().mockResolvedValue(result);
-    await expect(postReply('slack', 'x'.repeat(4000), post)).rejects.toThrow('Bridge reply attempt uncertain');
+    expect(await postReply('slack', 'x'.repeat(4000), 0, post, () => {})).toEqual({ parts: 0, done: false });
     expect(post).toHaveBeenCalledTimes(1);
   });
 });

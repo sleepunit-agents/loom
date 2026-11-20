@@ -1,4 +1,10 @@
 export interface Clock { now(): number; at(time: number, fn: () => void): () => void }
+/** How long the real clock waits at most before it reads the wall clock again. A deadline is a wall
+ * time, and a timer counts time that has run: when the host's clock is set forward (a resume from
+ * suspend, an unpaused machine, a time correction on a board with no clock of its own) a timer set for
+ * the whole wait would end late by the size of the step. So no single wait is longer than this, and a
+ * deadline runs at most this long after the wall clock reaches it, however the clock got there. */
+export const STEP_CHECK_MS = 30_000;
 export const clock: Clock = {
   now: () => Date.now(),
   at(time, fn) {
@@ -8,10 +14,10 @@ export const clock: Clock = {
       if (cancelled) return;
       const remaining = time - Date.now();
       if (remaining <= 0) { fn(); return; }
-      timer = setTimeout(schedule, Math.min(remaining, 2 ** 31 - 1)); timer.unref();
+      timer = setTimeout(schedule, Math.min(remaining, STEP_CHECK_MS)); timer.unref();
     };
     // Always defer, including deadlines already due.
-    timer = setTimeout(schedule, Math.min(Math.max(0, time - Date.now()), 2 ** 31 - 1)); timer.unref();
+    timer = setTimeout(schedule, Math.min(Math.max(0, time - Date.now()), STEP_CHECK_MS)); timer.unref();
     return () => { cancelled = true; clearTimeout(timer); };
   },
 };

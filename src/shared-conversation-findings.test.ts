@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {eq} from 'drizzle-orm';
+import {and,eq,inArray} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
 import * as s from './core/data/schema.js';
@@ -36,10 +36,10 @@ it('accepts the complete 200-printable-character boundary',async()=>{
 });
 it('lets the newly enrolled current body review its own conversation agent turn from an earlier run',async()=>{
  const f=await fixture(),original=f.db.select().from(s.jobs).get()!;f.root.services.runtime.stop('job','alice','reset');
- f.root.writes.run(()=>{f.db.insert(s.jobs).values({...original,id:'reviewer-job',state:'starting'}).run();f.db.update(s.conversations).set({job:'reviewer-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();});
+ f.root.writes.run(()=>{f.db.insert(s.jobs).values({...original,id:'reviewer-job',state:'starting'}).run();});
  const token='body_'+'d'.repeat(64),runtime=(name:string,input:unknown)=>f.root.http.request('/api/runtime/'+name,{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({input,id:'reviewer-'+name})});
  expect((await runtime('enrollBody',{job:'reviewer-job',fingerprint:hash(token)})).status).toBe(200);expect((await f.call('finding',finding,'not-running',token)).status).toBe(403);
- expect((await runtime('started',{job:'reviewer-job',build:'fixture-reviewer'})).status).toBe(200);expect((await f.call('finding',finding,'earlier-run',token)).status).toBe(200);expect(f.db.select().from(s.turns).get()?.run).toBe('job');expect(f.db.select().from(s.conversations).get()?.job).toBe('reviewer-job');expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:1,score:4});expect((await f.call('finding',finding,'old-body')).status).toBe(401);
+ expect((await runtime('started',{job:'reviewer-job',build:'fixture-reviewer'})).status).toBe(200);expect((await f.call('finding',finding,'earlier-run',token)).status).toBe(200);expect(f.db.select().from(s.turns).get()?.run).toBe('job');expect(f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),inArray(s.jobs.state,['queued','starting','running']))).all()).toEqual([{id:'reviewer-job'}]);expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:1,score:4});expect((await f.call('finding',finding,'old-body')).status).toBe(401);
 });
 it.each(['measure','text'] as const)('counts Unicode characters in the complete 200-character %s boundary through the SDK',async field=>{
  const f=await fixture(),client=sdk(f);

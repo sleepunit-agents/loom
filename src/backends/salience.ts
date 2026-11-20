@@ -4,18 +4,17 @@
  * A memory's temperature DECAYS by a per-category half-life and REHEATS when
  * it's written or edited (full heat) or recalled (heat added by rank, see
  * recallWeight) — so a frequently-used fact stays warm and an untouched one
- * cools. It's computed when read (heatOf); the stored scalar is a cache. The consolidation lane recomputes the stored field; the digest assembler
+ * cools. It's computed when read (heatOf); the `salience` column holds only what a
+ * memory was written with and is not read for ranking. The digest assembler
  * fills a token budget HOTTEST-FIRST from existing authored atoms, labeled into
  * tiers. It ASSEMBLES a view over authored memories — it never generates new
  * prose (the integrity line: loom holds the pen, unlike Anthropic's native digest
  * which is generated).
  */
-import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
-import { runMigrations } from './migrations.js';
+import { DAY_MS } from '../core/day.js';
+import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
-import { retryWrite } from './retry.js';
+import type { Observation } from './types.js';
 
 function hasColumn(db: Database, table: string, column: string): boolean {
   return (db.pragma(`table_info(${table})`) as { name: string }[]).some((c) => c.name === column);
@@ -33,7 +32,6 @@ export const HALF_LIVES: Record<string, number> = {
 };
 export const DEFAULT_HALF_LIFE_DAYS = 30;
 
-const DAY_MS = 86_400_000;
 
 /**
  * Temperature in [0, 1]: 1.0 at the moment of last touch, 0.5 after one
@@ -79,7 +77,7 @@ export function clampConfidence(value: number): number {
 }
 
 /** Apply one confirming or contradicting observation to a stored confidence value. */
-export function applyObservation(current: number, kind: 'confirm' | 'contradict'): number {
+export function applyObservation(current: number, kind: Observation): number {
   const delta = kind === 'confirm' ? FEEDBACK_CONFIRM_DELTA : FEEDBACK_CONTRADICT_DELTA;
   return clampConfidence(current + delta);
 }
@@ -160,38 +158,20 @@ export function heatColumns(db: Database): string {
 }
 
 /**
- * Recompute and STORE the salience scalar for every non-archived memory. Called
- * by the consolidation lane. The digest no longer depends on it (it reads heat
- * live, see liveRows); the stored field is for anything that sorts in SQL.
- * Returns the number of memories recomputed.
+ * The ids of the `limit` hottest memories a WHERE clause selects, hottest first (ties: newer first).
+ * Heat is worked out now, from when each was written and how it has been recalled (heatOf). The
+ * stored `salience` column is not read: it is set when a memory is written and nothing refreshes it,
+ * so sorting by it in SQL gives the order of writing.
  */
-export interface TimestampCounts { invalidTimestamps: number; futureTimestamps: number }
-
-export function recomputeSalience(db: Database, nowMs: number, counts?: TimestampCounts): number {
+export function hottestIds(db: Database, where: string, args: readonly unknown[], limit: number, nowMs: number): number[] {
   const rows = db
-    .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE archived = 0`)
-    .all() as Array<HeatInput & { id: number }>;
-  if (counts) {
-    counts.invalidTimestamps = 0;
-    counts.futureTimestamps = 0;
-    for (const r of rows) {
-      // Count timestamp fields, not rows; absent optional fields are not invalid.
-      for (const value of [r.created, r.updated, r.authored_at, r.recall_heat_at]) {
-        if (value == null) continue;
-        const ms = Date.parse(value);
-        if (!Number.isFinite(ms)) counts.invalidTimestamps++;
-        else if (ms > nowMs) counts.futureTimestamps++;
-      }
-    }
-  }
-  const upd = db.prepare('UPDATE memories SET salience = ? WHERE id = ?');
-  const tx = db.transaction(() => {
-    for (const r of rows) upd.run(heatOf(r, nowMs), r.id);
-  });
-  // The nightly full-table recompute is the heaviest write in loom; wrap it so
-  // a concurrent remember() call during the recompute retries instead of throwing.
-  retryWrite(() => tx());
-  return rows.length;
+    .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE ${where}`)
+    .all(...args) as Array<HeatInput & { id: number }>;
+  return rows
+    .map((r) => ({ id: r.id, created: r.created, heat: heatOf(r, nowMs) }))
+    .sort((a, b) => b.heat - a.heat || (a.created < b.created ? 1 : a.created > b.created ? -1 : 0) || b.id - a.id)
+    .slice(0, limit)
+    .map((r) => r.id);
 }
 
 export interface DigestRow {
@@ -204,9 +184,7 @@ export interface DigestRow {
 }
 
 export interface DigestOptions {
-  /** Trusted private-store selection; omitted keeps the legacy override. */
-  memorySelection?: MemorySelection;
-  /** Current canonical reads omit expired rows; legacy wrapper defaults stay unchanged. */
+  /** Leave out rows whose time has run out. */
   excludeExpired?:boolean;
   /** Approximate token budget for the whole digest. */
   tokenBudget?: number;
@@ -279,49 +257,14 @@ export function assembleDigest(rows: DigestRow[], opts: DigestOptions = {}): str
   return sections.join('\n\n');
 }
 
-// ── context-dir wrappers (open memories.db directly; no embedder needed) ──
-
-/** Open memories.db without the vector/embedder stack — salience is plain SQL. */
-function openMemoriesDb(contextDir: string, readonly: boolean, selection?: MemorySelection): Database | null {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return null;
-  const db = new BetterSqlite3(dbPath, { readonly });
-  db.pragma('busy_timeout = 5000');
-  return db;
-}
-
-/** Lane entry point: recompute + store salience for a context. Returns count (or null if no store). */
-export function recomputeSalienceForContext(contextDir: string, nowMs: number, counts?: TimestampCounts, selection?: MemorySelection): number | null {
-  const db = openMemoriesDb(contextDir, false, selection);
-  if (!db) return null;
-  try {
-    // Self-heal: a store that predates the salience migration gets it here, so
-    // the lane works on any store (migrations are idempotent).
-    if (!hasColumn(db, 'memories', 'salience')) runMigrations(db, { strict: false });
-    return recomputeSalience(db, nowMs, counts);
-  } finally {
-    db.close();
-  }
-}
-
-export interface DigestAtom {
-  title: string;
-  category: string;
-  content: string;
-  salience: number;
-  tier: Tier;
-  /** Sourcing tier — null on legacy records. */
-  sourcing: string | null;
-}
-
 /**
  * Every live authored memory (not episodes) with its heat computed NOW from
  * its timestamps, hottest first. The digest reads heat this way instead of
- * trusting the stored field: the stored field only moves when the
- * consolidation lane runs, and when the lane missed days (t-1488, and once
- * before for two months) Top of Mind froze, with ties at 1.0 falling back to
- * write order. The stored field stays, refreshed by the lane, for anything
- * that sorts in SQL.
+ * trusting the stored field: nothing in this program refreshes the stored
+ * field after a memory is written, and when an earlier program's refresh
+ * missed days (t-1488, and once before for two months) Top of Mind froze,
+ * with ties at 1.0 falling back to write order. Anything that ranks by heat
+ * works it out at the read (here, and hottestIds).
  */
 function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<DigestRow & { stored: number }> {
   const expiry=excludeExpired&&hasColumn(db,'memories','expires_at')?' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))':'';
@@ -336,42 +279,6 @@ function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<Diges
       salience: heatOf({ category: r.category, created, updated, authored_at, recall_heat, recall_heat_at }, nowMs),
     }))
     .sort(compareDigestRows);
-}
-
-/**
- * Structured salience digest for a UI widget: the hottest authored atoms,
- * tier-labeled, ordered hot→cold, plus the total memory count. Same
- * assemble-not-generate view as the text digest — just shaped for rendering.
- */
-export function digestData(
-  contextDir: string,
-  limit = 40,
-  nowMs = Date.now(),
-  selection?: MemorySelection,
-): { atoms: DigestAtom[]; total: number } | null {
-  const db = openMemoriesDb(contextDir, true, selection);
-  if (!db) return null;
-  try {
-    if (!hasColumn(db, 'memories', 'salience')) return { atoms: [], total: 0 };
-    const total = (db.prepare('SELECT COUNT(*) AS n FROM memories WHERE archived = 0').get() as { n: number }).n;
-    const atoms = liveRows(db, nowMs)
-      .slice(0, limit)
-      .map(({ stored: _stored, ...r }) => ({ ...r, tier: tierOf(r.salience) }));
-    return { atoms, total };
-  } finally {
-    db.close();
-  }
-}
-
-/** Assemble the boot digest for a context, with heat read live. Returns null if no store / nothing hot. */
-export function digestForContext(contextDir: string, opts: DigestOptions = {}): string | null {
-  const db = openMemoriesDb(contextDir, true, opts.memorySelection);
-  if (!db) return null;
-  try {
-    return digestOnConnection(db,opts);
-  } finally {
-    db.close();
-  }
 }
 
 /** Read-only projection over an explicitly selected, already-owned connection. */

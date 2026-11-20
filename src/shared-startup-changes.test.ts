@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 /** Actual normal startup and holder protocol/store; fake GitHub HTTP only. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
@@ -9,6 +10,8 @@ import {WebSocket} from 'ws';
 import {startSharedHome} from './shared-startup.js';
 import {initializeSharedHome} from './shared-initialize.js';
 import {FakeClock} from './core/clock.js';
+// The household's first owner: who it is is in the household database, not in program.json.
+const ownerOf=(database:string)=>{const db=new Database(database,{readonly:true});try{return (db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;}finally{db.close();}};
 const wire=vi.hoisted(()=>({start:vi.fn()}));
 vi.mock('./shared-holder-process.js',async()=>{const {inProcessSharedHolder}=await import('../test/fixtures/shared-holder.js');return{startSharedHolder:wire.start.mockImplementation(inProcessSharedHolder)};});
 const clean:Array<()=>void|Promise<void>>=[];
@@ -23,11 +26,11 @@ async function command(app:Awaited<ReturnType<typeof startSharedHome>>,cookie:st
 const raw=JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
 it('reads Owner-written credentials on normal restart, rotates tokens, retains cache on failure and joins shutdown',async()=>{
  const {home,webRoot,clock}=files();let link='';
- let app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());let cookie=await signin(link);
+ let app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());let cookie=await signin(link);
  expect(app.refreshChanges).toBeUndefined();
  expect(await command(app,cookie,'secrets/set',{id:randomUUID(),name:'FORGE',value:'FICTITIOUS_GITHUB_TOKEN',mode:'add'})).toMatchObject({ok:true});
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
- expect(await command(app,cookie,'household/setProject',{id:'app',name:'App',members:[program.signinMember],agents:['assistant'],repositories:['github:acme/app']})).toMatchObject({ok:true});
+ app.writes.run(()=>app.services.setup.project({id:'app',name:'App',members:[ownerOf(program.database)],agents:['assistant'],repositories:['github:acme/app']}));
  await app.close();program.githubBindings={ACME:'FORGE'};writeFileSync(file,JSON.stringify(program),{mode:0o600});
  let token='FICTITIOUS_GITHUB_TOKEN',fail=false,hold=false,release!:()=>void,began!:()=>void;
  const realFetch=globalThis.fetch,requests=vi.fn<typeof fetch>(async(input,init)=>{
@@ -39,7 +42,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
   const states=JSON.parse(String(init?.body)).variables.states;
   return Response.json({data:{repository:{pullRequests:{nodes:states.includes('OPEN')?[raw]:[],pageInfo:{hasNextPage:false,endCursor:null}}}}});
  });vi.stubGlobal('fetch',requests);
- app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});cookie=await signin(link);
+ app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();cookie=await signin(link);
  const socket=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url}});clean.push(()=>socket.terminate());await once(socket,'open');
  let next=once(socket,'message');socket.send(JSON.stringify({type:'connection_init'}));await next;
  next=once(socket,'message');socket.send(JSON.stringify({type:'subscribe',id:'changes',payload:{query:'subscription { observe(query:"{ changes { id title project } }") { revision patches { path value removed } } }'}}));await next;

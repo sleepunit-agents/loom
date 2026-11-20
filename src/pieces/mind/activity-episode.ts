@@ -8,11 +8,11 @@
  *
  * No I/O here: the caller looks the conversation up (data.ts tapeRows, activity.ts), so this is tested on its own.
  */
+import { CONVERSATION_ID, SLUG_WITHIN } from '../../slug.js';
 
 /** The runtime's spawn preamble, at the start of a title or of a fallback episode's "Ask:" line. */
-const PREAMBLE = /^(?:Ask:\s*)?You are ([a-z][a-z0-9-]{0,39}), in a conversation on ([a-z][a-z0-9-]{0,39})(?::\s*(.*?))?\s*(?:\(bridge\b|Its conversation is\b|$)/s;
+const PREAMBLE = new RegExp(`^(?:Ask:\\s*)?You are (${SLUG_WITHIN}), in a conversation on ([a-z][a-z0-9-]{0,39})(?::\\s*(.*?))?\\s*(?:\\(bridge\\b|Its conversation is\\b|$)`, 's');
 /** The conversation a preamble names. */
-const CONVERSATION_ID = 'cv-(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{12})';
 const NAMED = new RegExp(`\\bIts conversation is (${CONVERSATION_ID})\\b`);
 const METADATA_ID = new RegExp(`^${CONVERSATION_ID}$`);
 /** Anything that opens like a prompt to the body, preamble or not: never shown as a title. */

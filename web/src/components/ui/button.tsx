@@ -27,6 +27,12 @@ const buttonVariants = cva(
         danger:
           "-danger bg-[var(--v-danger-fill)] text-[color:var(--destructive-foreground)]",
         block: "-block w-full",
+        /* The one filled action of a screen. Outside an app's page it is the default face; inside one
+           (kit/controls.css) the default is quiet and this is the fill, in the app's tint. */
+        primary: "-primary",
+        /* Remove, delete, disconnect, revoke: outlined in the danger colour, never a fill. */
+        "danger-quiet":
+          "-outline -danger-quiet bg-transparent text-[color:var(--v-danger-ink)] [box-shadow:inset_0_0_0_1px_var(--v-danger)]",
       },
       size: {
         default: "",

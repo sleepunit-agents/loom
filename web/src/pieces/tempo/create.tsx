@@ -45,7 +45,7 @@ export function CreateTrigger({ timezone, submit, done }: { timezone: string; su
         <label>{content === 'file' ? 'Repository file' : 'Words'}<Textarea name="words" required /></label>
       </>}
       <label>Project<Input name="project" /></label>
-      <Button type="submit">{busy ? 'Creating…' : 'Create trigger'}</Button>
+      <Button variant="primary" type="submit">{busy ? 'Creating…' : 'Create trigger'}</Button>
     </fieldset>
     {failed && <p role="alert">Tempo could not create that trigger. Check the details and your access.</p>}
     <Button type="button" variant="outline" onClick={done}>Back to Tempo</Button>

@@ -16,3 +16,14 @@ export const orderedAgents = <T extends OwnedAgent>(records: readonly T[]) => [.
 export const latestStatus = (records: readonly AgentStatus[], agent: string) => records.filter(r => r.agent === agent).sort((a,b) => b.changedAt-a.changedAt || a.id.localeCompare(b.id))[0];
 
 export const agentPath = (agent: string) => `/p/agents-preview/agent/${encodeURIComponent(agent)}`;
+/** The word beside an agent's name, for Home and the rail alike. It agrees with the list of what the agent is
+ * doing: with anything on that list it is working, whatever it last reported. */
+export function agentStateWord(state: AgentStatus['state'] | undefined, doing = 0): string {
+  return doing > 0 ? 'Working' : state === 'offline' ? 'Unavailable' : state === 'working' ? 'Working' : state === 'waiting' ? 'Waiting' : 'Quiet';
+}
+/** The state its face and dot draw: working while it has something on its list. */
+export const shownState = (state: AgentStatus['state'] | undefined, doing = 0): AgentStatus['state'] | undefined => doing > 0 ? 'working' : state;
+/** The whole line beside a name: the state word, and how many of its questions are waiting on this person. */
+export function agentStateLine(state: AgentStatus['state'] | undefined, doing = 0, needs = 0): string {
+  return `${agentStateWord(state, doing)}${needs > 0 ? ` · ${needs} ${needs === 1 ? 'needs' : 'need'} you` : ''}`;
+}

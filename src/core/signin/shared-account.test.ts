@@ -29,7 +29,8 @@ function fixture(){
 it('registers a passkey on the actual shared door and signs in with verified single-use assertions',async()=>{
  const f=fixture(),key=await f.add();expect(f.db.select().from(passkeys).get()?.label).toBe('Laptop');
  const challenge=async()=> (await(await f.post('/login/passkey/options')).json()).challenge;
- expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(401);
+ // An authenticator that has never counted (0 against a stored 0) signs in; see shared-passkeys.test.ts.
+ expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(200);
  key.counter=1;const c=await challenge();const response=await f.post('/login/passkey',key.assertion(c));expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toContain('HttpOnly');
  const cookie=response.headers.get('set-cookie')!.split(';')[0];
  expect(await(await f.root.http.request(origin+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'sam'}});
@@ -52,6 +53,20 @@ it('binds registration challenges to the exact fresh browser and rejects expired
  f.db.update(sessions).set({provedAt:new Date(f.clock.now()).toISOString(),isAgent:true}).where(eq(sessions.id,hash(f.cookies.sam))).run();
  expect((await f.post('/passkeys/options')).status).toBe(401);
  expect(f.db.select().from(passkeys).all()).toEqual([]);
+});
+it('ends the browsers a passkey signed in when that passkey is removed, and no others',async()=>{
+ const f=fixture(),key=await f.add();
+ key.counter=1;const challenge=(await(await f.post('/login/passkey/options')).json()).challenge;
+ expect((await f.post('/login/passkey',key.assertion(challenge))).status).toBe(200);
+ const made=f.db.select().from(sessions).where(eq(sessions.via,'passkey')).get()!;expect(made.passkey).toBe(f.db.select().from(passkeys).get()!.id);
+ // The browser the link signed in is not the passkey's: it stays, and its notifications with it.
+ const linked=f.db.select().from(sessions).all().filter(row=>row.via!=='passkey').map(row=>row.id);expect(linked.length).toBeGreaterThan(0);
+ f.db.insert(notificationDevices).values({endpoint:'https://push.example/passkey',member:'sam',session:made.id,keys:'{}',device:'Phone',createdAt:made.issuedAt,seenAt:made.issuedAt}).run();
+ const account=(await f.read()).data.account;
+ expect((await f.post('/api/account/removePasskey',{input:{ref:account.passkeys[0].ref},id:'remove'})).status).toBe(200);
+ expect(f.db.select().from(passkeys).all()).toEqual([]);
+ expect(f.db.select().from(sessions).all().map(row=>row.id).sort()).toEqual(linked.sort());
+ expect(f.db.select().from(notificationDevices).all()).toEqual([]);
 });
 it('serves only personal metadata and ends the selected browser and its notifications through shared commands',async()=>{
  const f=fixture(),key=await f.add();

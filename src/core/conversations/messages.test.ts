@@ -46,8 +46,11 @@ it('keeps private question details and answer text out of every plaintext Inbox 
   const item = service.threads.conversations.item(ask.inboxItem!);
   expect(item).toMatchObject({ words: null, why: null, ifYes: null, ifNo: null, link: null, answers: 'yes-no', thread: thread.id });
   expect(() => service.threads.conversations.answer(item.id, 'jonathan', 'words', 'Secret reply')).toThrow('encrypted conversation');
-  const results = await Promise.all([service.answer(item.id, 'jonathan', 'words', 'Secret reply'), service.answer(item.id, 'owner', 'words', 'Other secret reply')]);
-  expect(results[0]).toEqual(results[1]);
+  // Two people answer at once: one answer is the record, and the other is told it was not saved.
+  const settled = await Promise.allSettled([service.answer(item.id, 'jonathan', 'words', 'Secret reply'), service.answer(item.id, 'owner', 'words', 'Other secret reply')]);
+  const results = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+  expect(results).toHaveLength(1);
+  expect(settled.find(result => result.status === 'rejected')).toMatchObject({ reason: { message: 'Question is already answered' } });
   expect(results[0]).toMatchObject({ answer: 'words', answerText: null, answeredBy: results[0].answeredBy });
   const rows = db.select().from(messages).all();
   expect(rows).toHaveLength(2);
@@ -57,7 +60,8 @@ it('keeps private question details and answer text out of every plaintext Inbox 
   expect(db.select().from(inbox).where(eq(inbox.source, 'answer')).get()).toMatchObject({ sourceId: item.id, words: null, thread: thread.id, messageSeq: 2 });
   expect(JSON.stringify(db.select().from(inbox).all())).not.toContain('Private');
   expect(JSON.stringify(db.select().from(inbox).all())).not.toContain('Secret reply');
-  expect(await service.answer(item.id, 'owner', 'yes')).toEqual(results[0]);
+  await expect(service.answer(item.id, results[0].answeredBy!, 'words', 'A second thought')).rejects.toThrow('already answered');
+  expect(db.select().from(messages).all()).toHaveLength(2);
 });
 
 it('validates words answers and records yes/no verdict inline on the same round trip', async () => {
@@ -172,7 +176,8 @@ it('prepares encryption without effects and commits messages, questions and answ
   expect(seals).toBe(3);
   expect(commitMessage().seq).toBe(1);
   expect(commitQuestion().seq).toBe(2);
-  expect(commitAnswer().answer).toBe('words');
+  // A worded answer is sealed, so running its commit again cannot be told from a second answer.
+  expect(() => commitAnswer()).toThrow('already answered');
   expect(db.select().from(messages).all()).toHaveLength(3);
 });
 
@@ -198,7 +203,7 @@ it('records each committed Comms message as one wordless turn and records its sp
   await service.send({ thread: thread.id, sender: 'art', kind: 'reply', run: 'run-1', words: 'Private reply', turn: { model: 'model-1', outcome: 'answered', latencyMs: 250 } });
   const ask = await service.ask(thread.id, 'art', 'ask-1', { words: 'Private question?', answers: 'words' });
   await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Private answer');
-  await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Retry');
+  await expect(service.answer(ask.inboxItem!, 'jonathan', 'words', 'Retry')).rejects.toThrow('already answered');
   await service.send({ thread: thread.id, sender: 'art', kind: 'notice', words: 'Private notice' });
   const recorded = db.select().from(turns).all();
   expect(recorded.map(r => [r.seq, r.kind, r.fromKind, r.fromId])).toEqual([

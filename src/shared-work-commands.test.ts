@@ -28,10 +28,6 @@ function fixture(install = true, permissive = false, rawGates = false) {
   // Optional fixture restrictions cannot broaden the built-in current-owner rule.
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
     approvedOperations: new Map([['fixture.change', () => {}]]),
-    workAnswerAuthority: install ? {
-      approval: (viewer, row) => rawGates ? restrictions.approval : restrictions.approval && (permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household')),
-      change: (viewer, row, approval) => rawGates ? restrictions.change : restrictions.change && (permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household')),
-    } : undefined,
   });
   cleanup.push(() => root.close());
   const request = () => root.writes.run(() => root.services.approvals.request({ kind: 'merge', target: `${changeId}@${head}`, agent: 'art', project: 'pond', what: 'Merge pump', why: 'Ready', askedFrom: 'loom', actingFor: 'owner', ask: 'Merge?', ifYes: 'Agent merges this head', ifNo: 'Wait' })).value;
@@ -66,9 +62,14 @@ it('denies visible ordinary members for all kinds despite owned agents and execu
   expect((await f.send('changes',{id:changeId,head,approval:requests[0].id,answer:'yes'})).status).toBe(403);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
-  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(200);
+  // A dangerous card is not allowed by a bare yes: it stays pending until the owner confirms.
+  const dangerous = requests.find(request => request.kind === 'dangerous')!;
+  expect((await f.send('approvals',{id:dangerous.id,answer:'allow'},'unconfirmed')).status).toBe(400);
+  expect(f.root.services.approvals.get(dangerous.id).state).toBe('pending');
+  const allow = (request: typeof requests[number]) => ({id:request.id,answer:'allow',...(request.kind==='dangerous'?{confirm:true}:{})});
+  for (const request of requests) expect((await f.send('approvals',allow(request),request.kind)).status).toBe(200);
   f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
-  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(403);
+  for (const request of requests) expect((await f.send('approvals',allow(request),request.kind)).status).toBe(403);
   expect(f.db.select().from(operationResults).all()).toHaveLength(4);
 });
 
@@ -181,6 +182,16 @@ it('refuses stale merge heads through the Approvals door for fresh calls and cac
   expect(f.root.services.approvals.get(second.id).state).toBe('pending');
   expect(f.root.services.approvals.get(first.id).target).toBe(`${changeId}@${head}`);
   expect(f.db.select().from(operationResults).all()).toHaveLength(1);
+  // The owner can still say no to the card the pull request left behind, and again after it closes or is gone.
+  expect((await f.send('approvals', { id: second.id, answer: 'deny' }, 'deny-stale')).status).toBe(200);
+  expect(f.root.services.approvals.get(second.id)).toMatchObject({ state: 'denied', decidedBy: 'sam' });
+  const third = f.request(), fourth = f.request();
+  f.root.writes.run(() => f.db.update(changes).set({ headCommit: head, state: 'closed' }).run());
+  expect((await f.send('approvals', { id: third.id, answer: 'allow' }, 'allow-closed')).status).toBe(409);
+  expect((await f.send('approvals', { id: third.id, answer: 'deny' }, 'deny-closed')).status).toBe(200);
+  f.root.writes.run(() => f.db.delete(changes).run());
+  expect((await f.send('approvals', { id: fourth.id, answer: 'deny' }, 'deny-gone')).status).toBe(200);
+  expect(f.root.services.approvals.get(fourth.id).state).toBe('denied');
 });
 
 it('keeps non-merge approvals independent of the Changes cache', async () => {
@@ -191,46 +202,64 @@ it('keeps non-merge approvals independent of the Changes cache', async () => {
   expect(f.root.services.approvals.get(request.id)).toMatchObject({ state: 'allowed', decidedBy: 'sam' });
 });
 
-it('honors restrictive approval and change callbacks for fresh answers and cached replay through both merge doors', async () => {
-  for (const piece of ['approvals','changes']) for (const gate of ['approval','change'] as const) {
-    const f = fixture(true,true), request = f.request();
-    const input = piece === 'approvals' ? {id:request.id,answer:'allow'} : {id:changeId,head,approval:request.id,answer:'yes'};
-    f.restrictions[gate] = false;
-    expect((await f.send(piece,input,'restricted-fresh')).status).toBe(403);
-    expect(f.db.select().from(operationResults).all()).toEqual([]);
-    f.restrictions[gate] = true;
-    expect((await f.send(piece,input,'confirmed')).status).toBe(200);
-    const receipts = f.db.select().from(operationResults).all();
-    f.restrictions[gate] = false;
-    expect((await f.send(piece,input,'confirmed')).status).toBe(403);
-    expect((await f.send(piece,input,'restricted-after-confirmation')).status).toBe(403);
-    expect(f.db.select().from(operationResults).all()).toEqual(receipts);
-  }
-});
-
 it('projects only the current caller owner status through the real query door and observes role changes', async () => {
   const f = fixture(true,true);
   f.root.writes.run(() => f.db.insert(members).values({id:'lee',role:'owner',joinedAt:'2026-11-14T00:00:00.000Z'}).run());
   const read = async () => (await (await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ workAnswerOwner }'})})).json());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
-  f.restrictions.approval=false; f.restrictions.change=false;
-  expect(await read()).toEqual({data:{workAnswerOwner:true}});
-  const request=f.request();
-  expect((await f.send('approvals',{id:request.id,answer:'allow'})).status).toBe(403);
-  expect((await f.send('changes',{id:changeId,head,approval:request.id,answer:'yes'})).status).toBe(403);
   f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:false}});
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
 });
 
-it.each(['approvals','changes'])('requires explicit true from configured %s answer gates, including receipt replay',async piece=>{
- for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
-  const f=fixture(true,true,true),card=f.request(),input=piece==='approvals'?{id:card.id,answer:'allow'}:{id:changeId,head,approval:card.id,answer:'yes'};
-  const snapshot=()=>({cards:f.db.select().from(approvals).all(),changes:f.db.select().from(changes).all(),audit:f.db.select().from(approvalRecord).all(),rules:f.db.select().from(approvalRules).all(),receipts:f.db.select().from(operationResults).all(),inbox:f.db.select().from(inbox).all()});
-  (f.restrictions as Record<string,unknown>)[gate]=value;const before=snapshot();
-  expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.send(piece,input)).status).toBe(200);
-  const committed=snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(committed);
- }
+
+it.each(['allow', 'deny'] as const)('records an unverified terminal %s on the owner credential', async answer => {
+  const f = fixture(), card = f.request();
+  const response = await f.send('approvals', { id: card.id, answer,
+    onWord: { venue: 'terminal', quote: 'Go ahead with this one', through: 'art' } });
+  expect(response.status).toBe(200);
+  const event = f.root.services.approvals.record(card.id).find(row => row.event === answer);
+  expect(event?.note).toContain('as told to art at the terminal');
+  expect(event?.note).toContain('Go ahead with this one');
+  expect(event?.note).toContain('unverified');
+  expect(f.root.services.approvals.get(card.id).decidedBy).toBe('sam');
+});
+
+it.each(['command', 'dangerous', 'projectJoin'] as const)('tells the signing owner at the volume for %s', async kind => {
+  const f = fixture();
+  f.root.writes.run(() => f.db.insert(agents).values({
+    id: 'mark', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot',
+  }).run());
+  let card: Approval;
+  if (kind === 'projectJoin') {
+    const response = await f.root.http.request('http://loom/api/household/propose', {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
+      body: JSON.stringify({ id: 'propose', input: { change: 'projectJoin', input: { project: 'pond', agent: 'art' }, why: 'Help with the pond' } }),
+    });
+    expect(response.status).toBe(200);
+    card = f.root.services.approvals.get((await response.json()).value.id);
+    expect(card.kind).toBe('setting');
+  } else {
+    card = f.root.writes.run(() => f.root.services.approvals.request({
+      kind, agent: 'art', target: 'fixture', askedFrom: 'terminal', actingFor: 'sam',
+      what: 'Apply fixture', ask: 'Apply?', why: 'Requested', ifYes: 'Apply', ifNo: 'Wait',
+      ...(kind === 'dangerous' ? {operation: 'fixture.change', changeSummary: 'Before and after'} : {}),
+    })).value;
+  }
+  const quote = 'Apply the fixture';
+  const response = await f.send('approvals', { id: card.id, answer: 'allow', onWord: { venue: 'terminal', through: 'mark', quote } });
+  expect(response.status).toBe(200);
+  const tells = f.db.select().from(inbox).all().filter(item => item.words?.includes(quote));
+  expect(tells).toHaveLength(1);
+  expect(tells[0]).toMatchObject({ toKind: 'person', to: 'sam', member: 'sam', fromId: 'mark',
+    volume: kind === 'command' ? 'dim' : 'full', words: expect.stringContaining(card.what) });
+  expect(f.root.services.approvals.notices().some(notice => notice.what.includes(quote))).toBe(false);
+});
+
+it.each([['',400],['\ud83d',400],['🖐'.repeat(500),200],['a'.repeat(501),400]] as const)('bounds the terminal quote by Unicode characters', async (quote,status) => {
+  const f = fixture(), card = f.request();
+  const response = await f.send('approvals', { id:card.id, answer:'deny', onWord:{venue:'terminal',through:'art',quote} });
+  expect(response.status).toBe(status);
+  expect(f.root.services.approvals.get(card.id).state).toBe(status === 200 ? 'denied' : 'pending');
 });

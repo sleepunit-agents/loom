@@ -3,6 +3,7 @@
 import {GraphQLFloat,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {DataDatabase} from './core/data/database.js';
 import type {Clock} from './core/clock.js';
+import {householdDefaults} from './core/data/household-settings.js';
 import {household,members} from './core/data/schema.js';
 import {eq,sql} from 'drizzle-orm';
 import type {Viewer} from './policy.js';
@@ -12,7 +13,7 @@ export function deskTimeFields(db:DataDatabase,clock:Clock):GraphQLFieldConfigMa
   if(viewer.kind!=='member')return null;
   // Constrain the personal row in SQL, including when no household row exists.
   const row=db.select({timezone:household.timezone}).from(members).leftJoin(household,sql`true`).where(eq(members.id,viewer.id)).get();
-  return row?{at:Math.floor(clock.now()/60000)*60000,timezone:row.timezone??'UTC'}:null;
+  return row?{at:Math.floor(clock.now()/60000)*60000,timezone:row.timezone??householdDefaults.timezone}:null;
  }}};
 }
 /** A jump publishes the current minute once; queued callbacks stop at close. */

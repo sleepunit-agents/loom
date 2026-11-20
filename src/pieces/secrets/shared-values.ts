@@ -1,27 +1,32 @@
-import { inboxContentChanged } from '../../core/tempo/volume.js';
 /** Trusted shared-model value writes. Outside doors authenticate an owner before
  * calling this service. The holder owns values; the journal owns retry identity.
  * A positive holder receipt finishes metadata after a crash. A negative receipt
  * never proves that a write is undone, and never releases the reservation.
  */
 import { createHash, createHmac, createSecretKey } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
-import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents, inbox } from '../../core/data/schema.js';
-import type { AsyncSecretMutations } from './async-values.js';
+import { members, secrets, secretChanges, secretWriteJournal } from '../../core/data/schema.js';
+import { SecretRequests } from './requests.js';
 import type { HolderWrite } from './holder-store.js';
-import { secretName } from './input.js';
+import { secretName, secretDescription, secretValueText, secretWriteMode } from './input.js';
 import { secretHasValue } from './presence.js';
 
 const identity = z.object({ id: z.uuid(), member: z.string().min(1).max(256), name: secretName }).strict();
-const setInput = identity.extend({ mode: z.enum(['add', 'replace']), description: z.string().max(4000).optional(),
-  value: z.string().refine(value => Buffer.byteLength(value) > 0 && Buffer.byteLength(value) <= 65536) }).strict();
+/** One value write. The `secrets.set` door takes the same shape without the member, whom it names itself. */
+export const secretSetInput = identity.extend({ mode: secretWriteMode, description: secretDescription.optional(), value: secretValueText }).strict();
 type Journal = typeof secretWriteJournal.$inferSelect;
 const unavailable = () => new Error('Secret write awaits reconciliation');
 const conflict = () => new Error('Secret write identity already reserved');
 
-export interface RecoverableSecretMutations extends AsyncSecretMutations {
+/** The holder's side of a value write. Each call names the write it belongs to, so a retry can be told from a new one. */
+export interface RecoverableSecretMutations {
+  /** Production transports drain or cancel active IO before daemon shutdown. */
+  close?(): void | Promise<void>;
+  set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add'|'replace'): Promise<void>;
+  remove(who: HolderWrite, name: string): Promise<void>;
+  hasReceipt(who: HolderWrite): Promise<boolean>;
   recover(who: HolderWrite): Promise<'committed' | 'undone'>;
 }
 
@@ -37,8 +42,8 @@ export class SecretValues {
     this.key = createSecretKey(fingerprintKey);
   }
 
-  async set(raw: z.input<typeof setInput>): Promise<{ saved: true }> {
-    const input = setInput.parse(raw);
+  async set(raw: z.input<typeof secretSetInput>): Promise<{ saved: true }> {
+    const input = secretSetInput.parse(raw);
     const hash = this.hash(JSON.stringify([input.member, input.id, input.name, input.mode, input.description ?? null, input.value]));
     const row = this.reserve(input, input.mode, hash, input.description);
     await this.perform(row, input.value);
@@ -127,21 +132,8 @@ export class SecretValues {
       // it. The holder, not metadata presence, decides add/replace availability.
       this.db.insert(secrets).values({ name: row.secret, description: row.description, changedAt: at, changedBy: row.member })
         .onConflictDoUpdate({ target: secrets.name, set: { description: row.description, changedAt: at, changedBy: row.member } }).run();
-      if (row.operation === 'remove') {
-        this.db.delete(secretGrants).where(eq(secretGrants.secret, row.secret)).run();
-        const requests = this.db.select().from(secretRequests).where(eq(secretRequests.secret, row.secret)).all();
-        for (const request of requests) {
-          if (request.state !== 'pending' && request.state !== 'allowed') continue;
-          const state = request.state === 'pending' ? 'cancelled' : 'revoked';
-          this.db.update(secretRequests).set({ state, answeredAt: at }).where(eq(secretRequests.id, request.id)).run();
-          const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: state, changedAt: at })
-            .where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, request.id), eq(inbox.state, 'waiting'))).returning().all();
-          for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
-        }
-        this.db.delete(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).run();
-        this.db.insert(secretRules).values({ secret: row.secret, answer: 'ask', minutes: 30 })
-          .onConflictDoUpdate({ target: secretRules.secret, set: { answer: 'ask' } }).run();
-      }
+      // What a removal does to requests, grants and the standing answer is the request owner's rule.
+      if (row.operation === 'remove') new SecretRequests(this.db, () => at).removed(row.secret);
       this.db.insert(secretChanges).values({ id: row.id, secret: row.secret,
         action: row.operation === 'remove' ? 'removed' : row.operation, by: row.member, at }).run();
       this.db.update(secretWriteJournal).set({ state: 'committed', completedAt: at }).where(eq(secretWriteJournal.id, row.id)).run();
@@ -170,4 +162,10 @@ export class SecretValues {
   }
   /** Root closes/cancels the transport before closing the shared database. */
   close(): void { this.closed = true; }
+}
+
+/** Change what a named secret is for, and nothing else about it. False when no secret has that name. */
+export function describeSecret(db: DataDatabase, input: { secret: string; description: string; by: string; at: string }): boolean {
+  const description = secretDescription.parse(input.description);
+  return db.update(secrets).set({ description, changedAt: input.at, changedBy: input.by }).where(eq(secrets.name, input.secret)).run().changes > 0;
 }
