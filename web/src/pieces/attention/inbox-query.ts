@@ -11,18 +11,15 @@ export const answerInboxItem = (id: string, answer: InboxAnswer, words?: string)
   memberOperation<void>('inbox.answer', { item: id, answer, ...(words ? { words } : {}) });
 const fields = `id canAnswer canSetVolume quietUntil source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
  bodyKeepUntil answerKeepUntil body { words why ifYes ifNo link } read refs answer answerText answeredBy answeredAt resolution`;
-/** The list: rows, folder counts and action outcomes. Inbox no longer asks for the open item here (`hasItem` is
- * false; see `inboxItemQuery`). The clause stays because server tests run this exact document with it. */
-export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$id:String!,$hasItem:Boolean!,$onlyErrors:Boolean!){
+export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$onlyErrors:Boolean!){
  inboxItems(folder:$folder,search:$search,agent:$agent,limit:51,offset:$offset) @skip(if:$onlyErrors){${fields}}
- inboxItem(id:$id) @include(if:$hasItem){${fields}}
  inboxFolders { needs alerts answered fyi all agents { id count } }
  inboxActionResults(limit:20){id at ok text page readAt}
 }`;
 /** The open item, alone. Opening one changes this request and nothing the list reads. */
 export const inboxItemQuery = `query InboxItem($id:String!){ inboxItem(id:$id){${fields}} }`;
 interface InboxSelection { query: string; variables: Record<string, unknown>; decode(data: Record<string, unknown>): InboxReading }
-export interface InboxReading { folders: InboxFolders; items: InboxItem[]; item: InboxItem | null; results: InboxActionResult[] }
+export interface InboxReading { folders: InboxFolders; items: InboxItem[]; results: InboxActionResult[] }
 function item(value: unknown): InboxItem {
   if (!value || typeof value !== 'object') throw Error('Invalid Inbox item');
   const row = value as InboxItem;
@@ -31,14 +28,14 @@ function item(value: unknown): InboxItem {
     || row.body && typeof row.body.words !== 'string') throw Error('Invalid Inbox item');
   return row;
 }
-export function inboxSelection(folder: string, search: string, offset: number, selected?: string): InboxSelection {
+export function inboxSelection(folder: string, search: string, offset: number): InboxSelection {
   return { query: inboxQuery, variables: { folder: folder.startsWith('agent:') || folder === 'errors' ? 'all' : folder,
-    search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, id: selected ?? '', hasItem: !!selected, onlyErrors: folder === 'errors' },
+    search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, onlyErrors: folder === 'errors' },
     decode(data) {
       if (folder !== 'errors' && !Array.isArray(data.inboxItems) || !Array.isArray(data.inboxActionResults)) throw Error('Invalid Inbox selection');
       const folders = data.inboxFolders as InboxFolders;
       if (!folders || !['needs','alerts','answered','fyi','all'].every(key => Number.isInteger(folders[key as keyof Pick<InboxFolders,'needs'|'alerts'|'answered'|'fyi'|'all'>])) || !Array.isArray(folders.agents)) throw Error('Invalid Inbox folders');
-      return { folders, items: ((data.inboxItems ?? []) as unknown[]).map(item), item: data.inboxItem ? item(data.inboxItem) : null,
+      return { folders, items: ((data.inboxItems ?? []) as unknown[]).map(item),
         results: data.inboxActionResults.map(value => {
           const row = value as InboxActionResult;
           if (!row || typeof row.id !== 'string' || typeof row.text !== 'string' || typeof row.ok !== 'boolean') throw Error('Invalid action result');

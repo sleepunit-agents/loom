@@ -314,15 +314,19 @@ it('orders Home by instant across timestamp precision and ignores replies from a
 
 it('executes the actual shipped Comms selection over the shared read group', async () => {
   const f = await fixture(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
-  const { commsSelection } = await import('../../../web/src/pieces/comms/shared-query.js');
+  const { commsSelection, commsThreadSelection } = await import('../../../web/src/pieces/comms/shared-query.js');
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
-  const selection = commsSelection(false, '', 0, f.thread.id);
+  const selection = commsSelection(false, '', 0);
   const result = await graphql({ schema, source: selection.query, variableValues: selection.variables, contextValue: { viewer: alice } });
   expect(result.errors).toBeUndefined();
+  const detail = commsThreadSelection(f.thread.id);
+  const opened = await graphql({ schema, source: detail.query, variableValues: detail.variables, contextValue: { viewer: alice } });
+  expect(opened.errors).toBeUndefined();
+  const picked = detail.decode(opened.data as Record<string, unknown>);
   const value = selection.decode(result.data as Record<string, unknown>);
-  expect(value.home).toEqual({ member: 'alice', agents: ['art'] }); expect(value.thread?.id).toBe(f.thread.id);
-  expect(value.messages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
-  expect(value.messages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
+  expect(value.home).toEqual({ member: 'alice', agents: ['art'] }); expect(picked.thread?.id).toBe(f.thread.id);
+  expect(picked.messages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
+  expect(picked.messages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
   expect(value.folders).toEqual({ threads: 1, archived: 0 });
 });
 

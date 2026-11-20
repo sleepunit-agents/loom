@@ -417,17 +417,21 @@ it('projects independent private wording deadlines without decryption and keeps 
   expect(f.service.answerKeepUntil({ kind: 'member', id: 'bob' }, id)).toBeNull();
 });
 it('executes the shipped Inbox selection on actual shared rows, including server folders and pagination', async () => {
-  const { inboxSelection } = await import('../../../web/src/pieces/attention/inbox-query.js');
+  const { inboxSelection, inboxItemSelection } = await import('../../../web/src/pieces/attention/inbox-query.js');
   const f = await fixture();
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: inboxQueryFields(f.service) }) });
-  const selection = inboxSelection('needs', 'private pump', 0, f.ask.inboxItem!);
+  const selection = inboxSelection('needs', 'private pump', 0);
   const result = await graphql({ schema, source: selection.query, variableValues: selection.variables, contextValue: { viewer: alice } });
   expect(result.errors).toBeUndefined();
+  const detail = inboxItemSelection(f.ask.inboxItem!);
+  const opened = await graphql({ schema, source: detail.query, variableValues: detail.variables, contextValue: { viewer: alice } });
+  expect(opened.errors).toBeUndefined();
+  const picked = detail.decode(opened.data as Record<string, unknown>);
   const value = selection.decode(result.data as Record<string, unknown>);
   expect(value.items.map(row => row.id)).toEqual([f.ask.inboxItem]);
-  expect(value.item?.body?.words).toBe('Order the private pump?');
+  expect(picked?.body?.words).toBe('Order the private pump?');
   expect(value.folders).toEqual({ needs: 1, alerts: 0, answered: 0, fyi: 0, all: 1, agents: [{ id: 'art', count: 1 }] });
-  expect(value.item?.bodyKeepUntil).toBe('2026-11-28T18:00:00.000Z');
+  expect(picked?.bodyKeepUntil).toBe('2026-11-28T18:00:00.000Z');
   const errors = inboxSelection('errors', '', 0);
   const errorResult = await graphql({ schema, source: errors.query, variableValues: errors.variables, contextValue: { viewer: alice } });
   expect(errorResult.errors).toBeUndefined(); expect(errors.decode(errorResult.data as Record<string, unknown>).items).toEqual([]);

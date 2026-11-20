@@ -1,5 +1,5 @@
-import { commsQuery } from '../web/src/pieces/comms/shared-query.js';
-import { inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
+import { commsQuery, commsThreadQuery } from '../web/src/pieces/comms/shared-query.js';
+import { inboxItemQuery, inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -271,7 +271,7 @@ it.each(['dim','mute'] as const)('real ordinary and encrypted answers lift dim b
 it('bounds SQL for the full actual Inbox selection with two and ten private questions',async()=>{
   const f=await fixture(),comms=f.root.services.comms!;
   const thread=comms.threads.open({id:'th:growth',member:'alice',agent:'art',title:'Private growth fixture'});
-  const variables={folder:'all',search:'',agent:null,offset:0,id:'',hasItem:false,onlyErrors:false};
+  const variables={folder:'all',search:'',agent:null,offset:0,onlyErrors:false};
   const read=async()=>{
     f.statements.length=0;
     const result=await f.query(inboxQuery,'alice',variables);
@@ -293,7 +293,7 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
   expect(large.rows.every(row=>row.body?.words.startsWith('PRIVATE QUESTION'))).toBe(true);
   for(const row of large.rows){expect(row.refs).toEqual(['a-ref','z-ref']);expect(row.read).toBe(true);}
   f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(f.statements.length).toBe(smallSearch);expect(search.body.data!.inboxItems).toHaveLength(10);expect((search.body.data!.inboxItems as {body:{words:string}}[]).every(row=>row.body.words.startsWith('PRIVATE QUESTION'))).toBe(true);
-  const direct=await f.query(inboxQuery,'alice',{...variables,hasItem:true,id:selected});expect(direct.body.errors).toBeUndefined();expect(direct.body.data!.inboxItem).toMatchObject({body:{words:'PRIVATE QUESTION 9'}});
+  const direct=await f.query(inboxItemQuery,'alice',{id:selected});expect(direct.body.errors).toBeUndefined();expect(direct.body.data!.inboxItem).toMatchObject({body:{words:'PRIVATE QUESTION 9'}});
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(inbox).set({member:'bob'}).where(eq(inbox.thread,thread.id)).run());}});
   const revoked=await f.query(inboxQuery,'alice',variables);
@@ -304,10 +304,12 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
 it('bounds SQL for the full actual Comms selection with two and ten retained messages',async()=>{
   const f=await fixture(),comms=f.root.services.comms!;
   const thread=comms.threads.open({id:'th:message-growth',member:'alice',agent:'art',title:'Private message growth'});
-  const variables={archived:false,search:'',offset:0,id:thread.id,selected:true,before:null};
+  const variables={id:thread.id,before:null};
   const read=async()=>{
     f.statements.length=0;
-    const result=await f.query(commsQuery,'alice',variables);
+    const list=await f.query(commsQuery,'alice',{archived:false,search:'',offset:0});
+    expect(list.body.errors).toBeUndefined();expect(list.body.data!.commsThreads).toHaveLength(1);
+    const result=await f.query(commsThreadQuery,'alice',variables);
     expect(result.body.errors).toBeUndefined();expect(result.response.status).toBe(200);
     return {rows:result.body.data!.commsMessages as {words:string}[],count:f.statements.length};
   };
@@ -322,7 +324,7 @@ it('bounds SQL for the full actual Comms selection with two and ten retained mes
   expect(large.rows.map(row=>row.words)).toEqual(Array.from({length:10},(_,n)=>'PRIVATE MESSAGE '+n));
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
-  const revoked=await f.query(commsQuery,'alice',variables);
+  const revoked=await f.query(commsThreadQuery,'alice',variables);
   expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE MESSAGE');
 });
 
