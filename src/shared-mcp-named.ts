@@ -139,11 +139,11 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   z.object({id:memoryId}).strict(),
   async input=>{await run('memory.forget',input);return 'Forgot '+input.id;});
 
- tool('episodes','Recent activity across your bodies, newest first. Pass `to` (YYYY-MM-DD) for an earlier window. Use page=true to read every visible current episode in stable reference order, and pass before from the previous page.',
-  z.object({to:z.string().regex(DAY).optional(),page:z.boolean().optional(),before:z.string().min(1).max(300).optional(),limit:z.number().int().min(1).max(25).optional()}).strict(),
+ tool('episodes','Recent activity by date, or page all current episodes with limit and nextBefore as before.',
+  z.object({to:z.string().regex(DAY).optional(),before:z.string().min(1).max(300).optional(),limit:z.number().int().min(1).max(25).optional()}).strict(),
   async (input,agent)=>{
-   if(input.page||input.before!==undefined||input.limit!==undefined){
-    if(input.to)throw Error('A date window and episode pagination cannot be combined.');
+   if(input.before!==undefined||input.limit!==undefined){
+    if(input.to)throw new Refusal('A date window and episode pagination cannot be combined.');
     const result=await read<{memoryEpisodePage:{entries:{id:string;at:string;title:string;story:string|null;asked:string[];decided:string[]}[];nextBefore:string|null}|null}>(
      'query($agent:String!,$first:Int,$before:String){memoryEpisodePage(agent:$agent,first:$first,before:$before){entries{id at title story asked decided} nextBefore}}',
      {agent,first:input.limit??10,before:input.before??null});
