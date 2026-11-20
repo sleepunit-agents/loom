@@ -15,7 +15,7 @@ import { BODY_OWN_HARNESS, BODY_SCRATCH, HarnessResumeUnavailable, type HarnessR
 import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
-import { mayReadNoteFile } from './house-note-request.js';
+import { mayAttachNoteFile,mayReadNoteFile } from './house-note-request.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
@@ -25,7 +25,7 @@ import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
 import {saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
-import {bodyFileReader} from './body-files.js';
+import {bodyFileReader,bodyNoteFileReader} from './body-files.js';
 import {bodySessions,type BodySessions} from './body-session.js';
 import { usageReport, type UsageReport } from './usage-report.js';
 import type { Clock } from '../core/clock.js';
@@ -255,6 +255,9 @@ export async function bodyProgram(input: {
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       const houseShell=reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS);
       programTools=bodyProgramTools({...rootAccess,
+        ...(houseShell&&hasFileTools(reach,policy)&&mayAttachNoteFile(deniedTools(policy))?{
+          noteUpload:{read:bodyNoteFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]]),allows:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}
+        }:{}),
         ...(houseShell&&mayReadNoteFile(deniedTools(policy))?{allowsFileBytes:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}:{}),
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});

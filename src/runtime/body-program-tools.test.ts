@@ -127,3 +127,21 @@ it('refuses attachment reads through generic commands before contacting Root whe
  const reply=await f.tools.call('loom_command',{operation:'memory.noteFile',input:{path:'plans/alpha',name:'frame.bin'},id:'read'});
  expect(reply.isError).toBe(true);expect(f.fetcher).not.toHaveBeenCalled();
 });
+
+it('admits one attachment per job before reading bytes and releases the slot once the command completes',async()=>{
+ let opened!:()=>void,proceed!:()=>void;
+ const started=new Promise<void>(resolve=>opened=resolve),gate=new Promise<void>(resolve=>proceed=resolve);
+ const read=vi.fn(()=>({contents:Buffer.from([0,255])}));
+ const tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,onStop(){},onStatus(){},
+   noteUpload:{read,allows:()=>true},fetch:async url=>{
+    if(String(url).endsWith('commandCatalog'))return Response.json({ok:true,value:{commands:[{name:'memory.noteAttach'}]}});
+    opened();await gate;return Response.json({ok:true,value:{saved:true}});
+   }});
+ const args={operation:'memory.noteAttach',id:'file-test',input:{path:'note',name:'file',source:'file'}};
+ try{
+   const first=tools.call('loom_command',args);await started;
+   expect(await tools.call('loom_command',args)).toMatchObject({isError:true});expect(read).toHaveBeenCalledTimes(1);
+   proceed();expect((await first).isError).toBeUndefined();
+   expect((await tools.call('loom_command',args)).isError).toBeUndefined();expect(read).toHaveBeenCalledTimes(2);
+ }finally{proceed();tools.close();}
+});

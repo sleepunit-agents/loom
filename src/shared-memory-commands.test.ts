@@ -555,9 +555,11 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  const page=await api('mind','knowledgeAdd',{title:'Pond pumps',domain:'pond',body:'Pumps run at night.'},'own-page');expect(page.status).toBe(200);const slug=page.result.value.slug as string;
  const kept=()=>JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories ORDER BY id').all(),f.source.prepare('SELECT count(*) AS n FROM proposals').get()]);
  const before=kept(),{token,conversation}=heldBody(f);
- for(const [verb,args] of [['notePin',{path:'plans/pond',pinned:true}],['noteDelete',{path:'plans/pond'}]] as const){
+ for(const [verb,args] of [['notePin',{path:'plans/pond',pinned:true}],['noteDelete',{path:'plans/pond'}],['noteAttach',{path:'plans/pond',name:'x',contents:'AA=='}]] as const){
   expect((await api('memory',verb,args,'held-'+verb,token)).status).toBe(403);
  }
+ const heldUpload=await fetch(f.url+'/api/memory/noteAttach',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'multipart/form-data; boundary=fixture'},body:'malformed'});
+ expect(heldUpload.status).toBe(403);
  const line=`[From loom: written while working for the member bob in conversation ${conversation}, who is not one of art's owners.]`;
  // It adds a memory. loom writes whose word it was: first in its words, where every reader meets it, and in its
  // record, where the body's own claim of the same name is thrown away.
@@ -614,7 +616,10 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const f=await fixture(),signal=new AbortController().signal;
  const access={url:f.url,token:raw.body,signal,agent:'art',job:'job',conversation:f.thread.conversation,clock:f.clock};
  let local:Awaited<ReturnType<typeof bodySecretTools>>;
- const tools=bodyProgramTools({...access,onStop(){},onStatus(){},allowsFileBytes:bytes=>local.allowsBytes(bytes)});clean.push(tools.close);
+ const area=join(f.home,'work');mkdirSync(area);
+ const {bodyNoteFileReader}=await import('./runtime/body-files.js');
+ const tools=bodyProgramTools({...access,onStop(){},onStatus(){},allowsFileBytes:bytes=>local.allowsBytes(bytes),
+   noteUpload:{read:bodyNoteFileReader(area,[area]),allows:bytes=>local.allowsBytes(bytes)}});clean.push(tools.close);
  const sentinel='fictional-protected-receipt';
  local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
  const env={LOOM_BODY_HOUSE_NOTE:local.houseNote};
@@ -650,6 +655,14 @@ it('runs the house note CLI against a running job and refuses the same shell han
    expect(await run(op,missing,'--id',id)).toMatchObject({code:3});
    expect(JSON.parse((await run('read',missing,'--json')).out).pinned).toBe(op==='unpin');
  }
+ const attach=(id:string,contents:string)=>fetch(f.url+'/api/memory/noteAttach',{method:'POST',
+   headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},
+   body:JSON.stringify({input:{path:'field/log',name:'reading.bin',contents},id})});
+ const firstBytes=Buffer.from([0,255]).toString('base64'),nextBytes=Buffer.from([255,0]).toString('base64');
+ expect((await attach('first-file',firstBytes)).status).toBe(200);
+ expect((await attach('next-file',nextBytes)).status).toBe(200);
+ expect((await attach('first-file',firstBytes)).status).toBe(200);
+ expect((await attach('first-file',nextBytes)).status).toBe(409);
  const refused=await run(...write.slice(0,-1),sentinel);
  expect(refused.code).toBe(1);
  expect(refused.err).toContain('Reuse the supplied --id');
@@ -660,12 +673,18 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const stored=new Notes(f.memory.sources.agents[0].directory);
  const data=Buffer.alloc(MAX_FILE_BYTES,0xff);data[0]=0;data[1]=0x80;
  try{
-   stored.attach('field/log','full.bin',data);
-   stored.attach('field/log','empty',Buffer.alloc(0));
+   const fullPath=join(area,'input.bin'), emptyPath=join(area,'empty'), protectedPath=join(area,'protected');
+   writeFileSync(fullPath,data);writeFileSync(emptyPath,Buffer.alloc(0));writeFileSync(protectedPath,Buffer.from(sentinel));
+   const cli=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','attach','field/log',fullPath,'--name','full.bin','--type','application/octet-stream','--id','full-upload','--json'],{env:{...process.env,...env}});
+   expect(JSON.parse(cli.stdout)).toMatchObject({bytes:data.length,sha256:createHash('sha256').update(data).digest('hex'),type:'application/octet-stream'});
+   expect(await run('attach','field/log',emptyPath)).toMatchObject({code:0});
+   expect(await run('attach','field/log',protectedPath)).toMatchObject({code:1,out:''});
+   expect(stored.filePath('field/log','protected')).toBeNull();
    stored.attach('field/log','protected',Buffer.concat([Buffer.from([0xff]),Buffer.from(sentinel)]));
  }finally{stored.close();}
  const readFile=(name:string)=>promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','file','field/log',name],
    {env:{...process.env,...env},encoding:'buffer',maxBuffer:MAX_FILE_BYTES+1024});
+ expect((await readFile('reading.bin')).stdout.equals(Buffer.from([255,0]))).toBe(true);
  const full=await readFile('full.bin');expect(full.stdout.equals(data)).toBe(true);
  expect((await readFile('empty')).stdout.length).toBe(0);
  await expect(readFile('missing')).rejects.toMatchObject({code:3,stdout:Buffer.alloc(0)});
@@ -692,3 +711,19 @@ it('runs the house note CLI against a running job and refuses the same shell han
  for(const pending of [direct,mcp])await expect(pending.text()).rejects.toThrow();
  expect(await run('read','field/log')).toMatchObject({code:1,out:''});
 },30000);
+
+it.each(['application/json','multipart/form-data; boundary=sample'])('bounds pending uploads and releases the slot after the deadline for %s',async type=>{
+ const f=await fixture();
+ let began!:()=>void;const reading=new Promise<void>(resolve=>began=resolve);
+ const body=new ReadableStream<Uint8Array>({pull(){began();}},{highWaterMark:0});
+ const headers={authorization:'Bearer '+raw.body,'content-type':type};
+ const path=f.url+'/api/memory/noteAttach';
+ const paused=f.root.http.fetch(new Request(path,{method:'POST',headers,body,duplex:'half'} as RequestInit));
+ await reading;
+ const attempt=(token:string)=>f.root.http.request(path,{method:'POST',headers:{...headers,authorization:'Bearer '+token},body:'invalid'});
+ expect((await attempt(raw.body)).status).toBe(429);
+ expect((await attempt(raw.agent)).status).toBe(403);
+ f.clock.advance(60_001);
+ expect((await paused).status).toBe(400);
+ expect((await attempt(raw.body)).status).toBe(400);
+});

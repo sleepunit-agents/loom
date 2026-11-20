@@ -166,7 +166,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   return {people,projects,activity,checkingAgent:options?.checkingAgent,alternateCheckingAgent:options?.alternateCheckingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
    /** `held` says what the body of a job on anybody else's word is refused and what loom stamps on what it adds
     * (shared-root.ts, from shared-place-mail.ts): such a body adds a memory or a new note, and nothing else here. */
-   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>&{mayReadFile(viewer:Viewer):boolean},held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
+   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>&{mayReadFile(viewer:Viewer):boolean;mayAttachFile(viewer:Viewer):boolean},held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,refused:held?.knowledge});closers.push(knowledge.close);
     // The household's default agent, asked each time: it can be changed in Setup while the program runs.
     const agent=()=>householdSettings(db).defaultAgent??undefined;
