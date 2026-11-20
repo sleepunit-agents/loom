@@ -176,7 +176,7 @@ export function sharedRoot(options: {
       schedule: ask => late.schedule!(ask),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
       // Proposal names come from owner-readable bridge records.
-      names: () => outsideNames(db),
+      names: viewer => outsideNames(db, (platform, workspace, user) => memory.people.outsideName(viewer, platform, workspace, user)),
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));

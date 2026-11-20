@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > (2026-04-23) and this release ship together as `0.5.0`.
 
 ## [Unreleased]
+- Keep older household proposals answerable, resolve workspace-qualified directory names, and load owner details only when a card is opened.
 
 - Household proposal cards use plain titles. Owners can open a preview of the requested changes, held names and exact input. Cautions report what would make Allow refuse while both answer buttons remain available.
 

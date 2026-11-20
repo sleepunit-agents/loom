@@ -311,7 +311,7 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges'];
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges', 'people_outside_accounts'];
 
 type RawRow = CardRowBase;
 

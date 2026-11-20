@@ -1,7 +1,7 @@
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
-import {publicProposalTitle} from './proposal-words.js';
+import {clipProposalText,publicProposalTitle} from './proposal-words.js';
 import {DAY} from './core/day.js';
 import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
@@ -370,5 +370,5 @@ interface ProjectCard{slug:string;name:string;updated:string;card:{status:string
 class Refusal extends Error{}
 
 function approvalText(value:string,limit=2000):string {
- return value.slice(0,limit).replace(/\s+/g,' ').replace(/[\\&<>`#*~|!\[\]{}]/g,char=>'&#'+char.charCodeAt(0)+';').replace(/(^|\W)_|_(?!\w)/g,part=>part.replace('_','&#95;'));
+ return clipProposalText(value,limit).replace(/\s+/g,' ').replace(/[\\&<>`#*~|!\[\]{}]/g,char=>'&#'+char.charCodeAt(0)+';').replace(/(^|\W)_|_(?!\w)/g,part=>part.replace('_','&#95;'));
 }

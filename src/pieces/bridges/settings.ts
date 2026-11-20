@@ -14,7 +14,7 @@ export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('disconnect'),id:text}).strict(),
  // `brief` names a role page of the answering agent (roles/<brief>.md in its Memory), handed to the body of
  // every conversation in the channel beside the venue's own page. Left out or null: the channel has none.
- z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().max(100).regex(PAGE_NAME).nullable().optional(),
+ z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().regex(PAGE_NAME).nullable().optional(),
   // Where a body working in this channel for a guest may hand a note: one channel on any of the answering agent's bridges.
   reportsTo:channelTarget.omit({thread:true}).strict().nullable().optional()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),

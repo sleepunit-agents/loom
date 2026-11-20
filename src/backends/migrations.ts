@@ -1,3 +1,4 @@
+import {accountPlatforms,accountColumns,accountIndex} from './people-accounts.js';
 /**
  * Schema migration registry for memories.db.
  *
@@ -502,6 +503,17 @@ export const MIGRATIONS: readonly Migration[] = [
     description: 'Separate authored heat from audit updates; legacy rows use created, never ambiguous updated',
     pending: (db) => !hasColumn(db, 'memories', 'authored_at'),
     run: (db) => { db.prepare('ALTER TABLE memories ADD COLUMN authored_at TEXT').run(); },
+  },
+  {
+    id: 'people_outside_accounts',
+    description: 'Index workspace-qualified outside accounts on live person cards',
+    pending: (db) => hasTable(db, 'people') && accountPlatforms.some(platform =>
+      !db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(accountIndex(platform))),
+    run: (db) => {
+      for (const platform of accountPlatforms) {
+        db.exec(`CREATE INDEX IF NOT EXISTS ${accountIndex(platform)} ON people (${accountColumns(platform).join(', ')}) WHERE archived_at IS NULL AND json_valid(card_json)`);
+      }
+    },
   },
 ];
 

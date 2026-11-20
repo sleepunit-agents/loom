@@ -122,17 +122,16 @@ export function kitRefusal(value:Change,state:ReturnType<typeof kitBefore>):KitR
 }
 export function applyKitChange(db:DataDatabase,value:Change) {
   const {state,apply}=rows(db,value);
-  const adding=value.change==='kit'?value.input.tools!==null:value.change==='kitGrant'?value.input.grant:value.input.on;
-  if(adding){
-    if('agentLive' in state && !state.agentLive)throw new OperationError('invalid','Choose a live agent');
-    if('project' in state && (!state.project || state.project.removed || state.project.retired))throw new OperationError('invalid','Choose a project in use');
-    if('memberLive' in state && !state.memberLive)throw new OperationError('invalid','Choose a live member');
-    if('linked' in state && state.linked)throw new OperationError('invalid','This account is linked to a member. Name the member instead.');
-    if('known' in state && !state.known)throw new OperationError('invalid','Choose an outside account already known to the agent or household');
-    if(value.change==='kitGrant' && 'tools' in state && !state.tools)throw new OperationError('invalid','No such kit');
+  const refusal=kitRefusal(value,state);
+  if(refusal){
+    const messages={
+      agent:'Choose a live agent',project:'Choose a project in use',member:'Choose a live member',
+      linked:'This account is linked to a member. Name the member instead.',
+      unplaced:'Choose an outside account already known to the agent or household',
+      'no-kit':'No such kit',same:'That is how it already is',
+    };
+    throw new OperationError(refusal.cause==='same'?'conflict':'invalid',messages[refusal.cause]);
   }
-  if(('on' in state && state.on===adding)||(value.change==='kit' && 'tools' in state && JSON.stringify(state.tools)===JSON.stringify(value.input.tools)))
-    throw new OperationError('conflict','That is how it already is');
   apply();
 }
 

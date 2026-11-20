@@ -248,7 +248,7 @@ it('says an approval item as its card says it: the plain sentence in the row and
   expect(tree.root.findByType('Row' as never).props.title).toBe(sentence);
   expect(tree.root.findAllByType('Title' as never)[0].props.children).toBe(sentence);
   const words = JSON.stringify(tree.toJSON());
-  expect(words).not.toContain('In that person’s own conversations with Art.');
+  expect(words).not.toContain('When Art works on that account’s word in an eligible conversation.');
   expect(words).not.toContain('Grant art kit'); expect(words).not.toContain('{\\"');
   // An approval the reader may not see leaves the item in the words stored with it.
   f.approvals = [];

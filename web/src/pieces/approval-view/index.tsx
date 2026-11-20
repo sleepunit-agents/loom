@@ -1,3 +1,4 @@
+import { clipProposalText, hasPlainProposal } from '../../../../src/proposal-words';
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
@@ -69,7 +70,8 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
     {error && <Error text={error} />}
   </>;
 }
-function Details({ approval: a, snapshot, actions, renderChange, inline = false, viewer, name }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; viewer?: string; name: Name } & ChangePresentation) {
+type DetailsToggle = { open: boolean; toggle(): void };
+function Details({ approval: a, snapshot, actions, renderChange, inline = false, details, viewer, name }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean; details?: DetailsToggle; viewer?: string; name: Name } & ChangePresentation) {
   const household = a.operation === 'household.change';
   const change = household ? undefined : renderChange?.(a);
   const record = snapshot.record.filter(r => r.approval === a.id).sort((x, y) => x.seq - y.seq);
@@ -79,25 +81,29 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const ends = a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)}</Meta>;
   const whom = forWhom(a, viewer, name);
   const card = a.card;
-  const title = card?.title ?? approvalTitle(a);
-  const exact = card?.exact;
+  const title = card?.title ?? (a.storedSummary ? clipProposalText(a.what, 240) : approvalTitle(a));
+  const exact = card?.exact ?? a.exactRequest;
+  const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
+  const storedSummary = a.storedSummary ?? (!change && (!household || !hasPlainProposal(a)) && a.changeSummary);
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
   const caution = card && a.state === 'pending' && a.blocked
     ? <Body role="note">loom will refuse this as things stand: {a.blocked.replace(/^This cannot be allowed(?: yet| as it stands)?: /, '')}</Body>
     : !household && a.problem ? <Body role="note">This cannot be allowed as it stands: {a.problem}</Body> : null;
   const showStored = !household || !!card;
   // In a conversation: the same request and the same answer controls on a compact card, built from the kit's reader
-  // parts like a question's (inbox-view ChatQuestion). Its record and its exact fields are in Approvals.
+  // parts like a question’s (inbox-view ChatQuestion).
   if (inline) return <Reader aria-label={household ? title : a.ask} data-inline="">
     <Meta>{kindWord[a.kind] ?? a.kind} · {a.state}{showStored && whom && ` · ${whom}`}</Meta>
     <Body><strong>{household ? title : a.ask}</strong></Body>
     <Body quiet>{a.why}</Body>
+    {details && household && <Button aria-expanded={details.open} onClick={details.toggle}>Details</Button>}
     {card && card.facts.length > 0 && <Facts>{cardFacts(card.facts)}</Facts>}
     {showStored && <Body quiet>Allow: {ifYes} Deny: {ifNo}</Body>}
-    {!household && !change && a.changeSummary && <Body>{a.changeSummary}</Body>}
+    {storedSummary && <Body>{storedSummary}</Body>}
     {change}
     {!household && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
     <Answer key={a.id} approval={a} actions={actions} caution={caution} />
+    {exactRequest}
     {showStored && <>{answered}{ends}</>}
   </Reader>;
   return <Reader aria-label="Approval">
@@ -110,23 +116,23 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
       {card && cardFacts(card.facts)}
       {showStored && <Fact label="If you allow">{ifYes}</Fact>}
       {showStored && <Fact label="If you deny">{ifNo}</Fact>}
-      {!household && !change && <Fact label="Exactly what will change">{a.changeSummary}</Fact>}
+      {storedSummary && <Fact label="Exactly what will change">{storedSummary}</Fact>}
       {!household && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
     </Facts>
     {change}
     <Answer key={a.id} approval={a} actions={actions} caution={caution} />
     {showStored && <>{!decision && answered}{ends}</>}
-    {exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>}
+    {exactRequest}
     {!household && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}
     {showStored && record.length > 0 && <Section label="History"><ol className="grid gap-1.5">{record.map(r => <li key={r.seq}><Body>{recordWord(r, name)} <span className="loom-reader__meta">{time(r.at)}</span></Body></li>)}</ol></Section>}
   </Reader>;
 }
 
 /** Same current request and answer controls as the tile, with before and after. */
-export function ApprovalCard({ id, snapshot, actions, renderChange, viewer, names }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; viewer?: string; names?: Readonly<Record<string, string>> } & ChangePresentation) {
+export function ApprovalCard({ id, snapshot, actions, renderChange, details, viewer, names }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions; details?: DetailsToggle; viewer?: string; names?: Readonly<Record<string, string>> } & ChangePresentation) {
   if (snapshot.status !== 'live') return <Unavailable status={snapshot.status} />;
   const approval = snapshot.approvals.find(a => a.id === id);
-  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
+  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline details={details} viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
 }
 /** A standing rule, opened: what it is, and (for a household owner) its fields. */
 function RuleReader({ rule, rules, save, name, zone }: { rule?: Rule; rules: readonly Rule[]; save?: SaveRule; name: Name; zone: string }) {

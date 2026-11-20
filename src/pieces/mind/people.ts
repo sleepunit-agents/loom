@@ -1,3 +1,4 @@
+import {accountColumns,accountIndex,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -16,6 +17,7 @@ export interface PeopleReaderOptions {
 /** Direct file projection used by GraphQL. */
 export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
+ outsideName(viewer:Viewer, platform:AccountPlatform, workspace:string, user:string):string|undefined;
  nextDeadline():number|undefined;
  read(id:string,viewer:Viewer):PersonRecord|undefined;
  ids(scope?:string):string[];
@@ -135,6 +137,17 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   return {
     access(v){const sharing=options.sharing();return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
       agents:options.agents.filter(a=>allowed(v,a.agent)&&(sharing.agents?.includes(a.agent)??true)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},sharing,'act')};},
+    outsideName(viewer,platform,workspace,user) {
+      if (!allowed(viewer)) return;
+      const db=sources.get('commons');
+      if(!db) return;
+      const [space,account]=accountColumns(platform);
+      try {
+        const matches=db.prepare(`SELECT json_extract(card_json, '$.name') AS name FROM people INDEXED BY ${accountIndex(platform)}
+          WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND ${account}=? LIMIT 2`).all(workspace,user) as {name:string}[];
+        return matches.length===1 ? matches[0]?.name : undefined;
+      } catch { return undefined; } // An unavailable directory cannot supply a held name.
+    },
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer,given?:Sharing) {
       // Synchronous from here to the end: no write of this program can fall inside it.

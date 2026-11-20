@@ -5,7 +5,11 @@ import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
 const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
 vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
-vi.mock('../kit', async () => ({ ...Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])), Disclosure: ((Real) => (props: { label: string; children?: ReactNode }) => props.label === 'Exact request' ? h(Real, props) : h('Disclosure', { label: props.label }, props.children))((await import('../kit/reader')).Disclosure) }));
+vi.mock('../kit', async () => ({ ...Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown', 'Pager'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])), Disclosure: ((Real) => (props: { label: string; children?: ReactNode }) => props.label === 'Exact request' ? h(Real, props) : h('Disclosure', { label: props.label }, props.children))((await import('../kit/reader')).Disclosure) }));
+vi.mock('./graphql/selection', () => ({ useSelection: () => ({ status: 'live', data: {
+  ordinary: feed.approvals.approvals, questions: [], hasNext: false,
+} }) }));
+import { ConversationQuestions } from '../pieces/comms/conversation-questions';
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
@@ -388,6 +392,10 @@ it.each(['app','inline'])('shows a household owner what a waiting household card
  expect(request).not.toHaveBeenCalled();expect(words()).toContain('Set lee as a');expect(words()).not.toContain('→');expect(words()).not.toContain('{\\"');
  await act(async()=>tree.unmount());
  feed.owner=true;await draw(node());await act(async()=>{});
+ if (surface==='inline') {
+  expect(request).not.toHaveBeenCalled();
+  await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Details').props.onClick());
+ }
  expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposalPreview',expect.objectContaining({method:'POST',credentials:'same-origin',body:JSON.stringify({input:{id:card.id}})}));
  expect(words()).toContain('Change what Lee is in the household');expect(words()).toContain('Member → Owner of the household');expect(words()).toContain('it is already so, and nothing would change');expect(words()).not.toContain('{\\"');
  // The caution leaves both buttons available.
@@ -403,9 +411,7 @@ it.each(['app','inline'])('shows a household owner what a waiting household card
   const outsideExact=tree.root.findAll((node: { type: unknown; props: { children?: unknown } }) => typeof node.type==='string' && node.type!=='pre' && typeof node.props.children==='string');
   for (const node of outsideExact) expect(node.props.children).not.toMatch(/\{\s*"/);
  }
- // A card that is answered, or is not a household change, is shown as it is.
- await act(async()=>tree.unmount());request.mockClear();card.state='used';await draw(node());await act(async()=>{});
- expect(request).not.toHaveBeenCalled();
+
 });
 
 it('shows a quoted decision in approval notices while the card is visible', async () => {
@@ -455,4 +461,77 @@ it('reads only the open card, keeps the dangerous confirmation available, and re
  await act(async()=>button('Yes, allow it').props.onClick());
  expect(words()).not.toContain('Fresh caution');
  expect(request).toHaveBeenCalledTimes(4);
+});
+
+it('requests details for only the opened card in a conversation with ten household approvals', async () => {
+ fixture();feed.owner=true;
+ feed.approvals.approvals=Array.from({length:10},(_,i)=>({...feed.approvals.approvals[0],id:'a-'+i,operation:'household.change',
+  details:JSON.stringify({change:'member',after:{id:'lee',role:'owner'}})}));
+ const request=vi.fn(async()=>({ok:false,json:async()=>({})}));vi.stubGlobal('fetch',request);
+ await draw(h(ConversationQuestions,{conversation:'cv',go:vi.fn(),readVisible:true}));
+ expect(words()).toContain('Set lee as a');
+ expect(request).not.toHaveBeenCalled();
+ const details=tree.root.findAllByType('Button').filter((button:{props:{children:string}})=>button.props.children==='Details');
+ expect(details).toHaveLength(10);
+ await act(async()=>details[6].props.onClick());
+ expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposalPreview',expect.objectContaining({body:JSON.stringify({input:{id:'a-6'}})}));
+});
+
+it('opens Exact request from History and omits the caution and live facts', async () => {
+ fixture();feed.owner=true;
+ const card=feed.approvals.approvals[0], input={id:'lee',role:'owner'};
+ Object.assign(card,{state:'used',operation:'household.change',details:JSON.stringify({change:'member',after:input})});
+ const request=vi.fn(async()=>({ok:true,json:async()=>({ok:true,value:{summary:'Stored summary',problem:null,blocked:null,card:null,exact:JSON.stringify(input)}})}));
+ vi.stubGlobal('fetch',request);
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}));
+ const exact=tree.root.findAllByType('button').find((button:{props:{children:string}})=>button.props.children==='Exact request');
+ expect(exact).toBeDefined();
+ await act(async()=>exact.props.onClick());
+ expect(JSON.parse(tree.root.findByType('pre').props.children)).toEqual(input);
+ expect(words()).not.toContain('loom will refuse');
+});
+
+it.each(['app','inline'])('shows an older household card’s title, reason and summary (%s)',async surface=>{
+ fixture();
+ const row=feed.approvals.approvals[0];
+ Object.assign(row,{operation:'household.change',what:'Saved title',why:'Saved reason',changeSummary:'Saved summary',details:JSON.stringify({change:'olderKind',after:{}})});
+ await draw(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+row.id}):h(LiveApprovalCard,{id:row.id}));
+ for (const word of ['Saved title','Saved reason','Saved summary']) expect(words()).toContain(word);
+});
+
+it('refreshes an open caution on focus, visibility, the interval, and a refused Allow', async () => {
+ fixture();feed.owner=true;
+ const row=feed.approvals.approvals[0];
+ Object.assign(row,{operation:'household.change',details:JSON.stringify({change:'member',after:{id:'lee',role:'owner'}})});
+ const tab = new EventTarget(), page = new EventTarget();
+ let tick: (()=>void) | undefined;
+ Object.assign(tab,{setInterval:(fn:()=>void,ms:number)=>{expect(ms).toBe(60_000);tick=fn;return 1;},clearInterval:()=>{tick=undefined;}});
+ Object.assign(page,{visibilityState:'hidden'});
+ vi.stubGlobal('window',tab);vi.stubGlobal('document',page);
+ let failed=false;
+ const request=vi.fn(async()=>({ok:!failed,json:async()=>({ok:true,value:{
+  summary:'',problem:null,blocked:'This cannot be allowed as it stands: Missing token.',
+  card:{title:'Test preview',nothing:false,facts:[],exact:'{}'},
+ }})}));
+ vi.stubGlobal('fetch',request);
+ const allow=vi.fn(async()=>{throw Error('Refused');});
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+row.id,go:vi.fn(),actions:{allow,deny:vi.fn()}}));
+ expect(words()).toContain('Missing token');
+ expect(request).toHaveBeenCalledTimes(1);
+ failed=true;
+ await act(async()=>tab.dispatchEvent(new Event('focus')));
+ expect(request).toHaveBeenCalledTimes(2);expect(words()).not.toContain('Missing token');
+ await act(async()=>page.dispatchEvent(new Event('visibilitychange')));
+ expect(request).toHaveBeenCalledTimes(2);
+ Object.assign(page,{visibilityState:'visible'});failed=false;
+ await act(async()=>page.dispatchEvent(new Event('visibilitychange')));
+ expect(request).toHaveBeenCalledTimes(3);expect(words()).toContain('Missing token');
+ await act(async()=>tick!());
+ expect(request).toHaveBeenCalledTimes(4);
+ const button=tree.root.findAllByType('Button').find((button:{props:{children:string}})=>button.props.children==='Allow');
+ expect(button.props.disabled).toBe(false);
+ await act(async()=>button.props.onClick());
+ expect(request).toHaveBeenCalledTimes(5);
+ await act(async()=>tree.unmount());
+ expect(tick).toBeUndefined();
 });

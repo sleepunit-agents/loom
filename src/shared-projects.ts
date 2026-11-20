@@ -18,7 +18,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
 import { householdId, projectId } from './slug.js';
 const id=projectId,list=z.array(householdId).max(1000).transform(values=>[...new Set(values)].sort());
-export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().max(256).regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
+export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).refine(value=>canonicalRepository(value.slice(7).toLowerCase()),'Write a repository as github:owner/repo, without .git')).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 /** Merging one project into another: `from` is emptied into `into` and removed. */
 export const projectMergeInput=z.object({from:id,into:id}).strict();
 /** Every household table that names a project, by its SQL name, and what a merge does with the rows that

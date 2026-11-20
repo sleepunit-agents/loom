@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PeopleStore } from './backends/people.js';
+import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
@@ -11,14 +16,14 @@ afterEach(async () => { for (const close of clean.splice(0).reverse()) await clo
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
-function fixture() {
+function fixture(memory?: SharedMemoryOptions) {
   const client = new Database(':memory:'); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values([{ id: 'sam', role: 'owner', joinedAt: at }, { id: 'lee', role: 'member', joinedAt: at }]).run();
   db.insert(agents).values([{ id: 'art', ...visual }, { id: 'mark', ...visual }]).run();
   for (const member of ['sam', 'lee'] as const) db.insert(tokens).values({ fingerprint: hash(credentials[member]), label: member, kind: 'owner', member, createdAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(credentials.art), label: 'Art', kind: 'agent', agent: 'art', createdAt: at }).run();
-  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
+  const root = sharedRoot({ db, clock, memory, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
   let seq = 0;
   const call = async (path: string, input: unknown, actor: keyof typeof credentials, id = 'r'+(++seq)) => {
     const response = await root.http.request('http://loom/api/'+path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ input, id }) });
@@ -500,6 +505,7 @@ it('merges one project into another only when an owner allows the card, and the 
   const filed = await ask({ from: 'pond', into: 'garden' });
   expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
   const id = filed.body.value!.id;
+  expect((await preview(f, id)).card?.ifYes).toContain('Member-scoped approvals keep their member scope.');
   // The card says what is asked, in words that name both projects. Nothing has moved.
   expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'dangerous', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge project pond into garden?',
     changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.', why: 'The first sort put pond work in two places', decidedBy: null });
@@ -863,7 +869,7 @@ it('shows an agent-proposed change to explicit readers on the machine owner’s 
 });
 
 const preview = async (f: Fixture, id: string) => (await f.call('household/proposalPreview', { id }, 'sam')).body.value as unknown as {
-  summary: string; blocked: string | null; card: { title: string; facts: { label: string; value: string; small?: boolean }[]; exact: string } | null;
+  summary: string; exact?: string; blocked: string | null; card: { title: string; facts: { label: string; value: string; small?: boolean }[]; exact: string; ifYes?: string } | null;
 };
 
 it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
@@ -889,7 +895,7 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   f.db.insert(secrets).values({ name: 'slack-token', description: 'Bot token', changedAt: at, changedBy: 'sam' }).run();
   f.db.insert(bridgeConnections).values({ id: 'art-slack', platform: 'slack', agent: 'art', workspace: gage.workspace, botUser: 'UBOT', tokenSecret: 'slack-token', enabled: true, state: 'connected', stateAt: at }).run();
   const told = await preview(f, id);
-  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'T02AYL3QM (reached by the connection art-slack)' });
+  expect(told.card!.facts).toContainEqual({ label: 'Workspace', value: 'A workspace loom has no name for (T02AYL3QM), reached by the connection art-slack' });
   expect(told.card!.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
   expect(told.summary).not.toContain('{"');
   expect(JSON.parse(told.card!.exact)).toMatchObject({ to: gage });
@@ -904,9 +910,35 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
     const response = await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + credentials[actor] }, body: JSON.stringify({ query: '{ approvals { id what ask changeSummary ifYes ifNo details } }' }) });
     const read = JSON.stringify(await response.json());
     expect(read).toContain(id);
-    expect(read).toContain('U07V8CZUC1J');
-    expect(read).not.toMatch(/Gage|art-slack|loom has no name/);
+    expect(read).toContain('slack user U07V8CZUC1J in T02AYL3QM');
+    expect(read).not.toMatch(/gage|art-slack|loom has no name/i);
   }
+});
+
+it('names an outside account from its exact directory record only for the owner', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'approval-people-'));
+  clean.push(() => rmSync(directory, { recursive: true, force: true }));
+  const people = join(directory, 'people.db'), knowledge = join(directory, 'knowledge.db');
+  const store = new PeopleStore({ dbPath: people });
+  try {
+    store.write({ slug: 'field-contact', name: 'Casey Field', where: {
+      slack: { value: 'UCASEY' }, slack_workspace: { value: 'TFIELD' },
+    } });
+    store.write({ slug: 'bare-handle', name: 'Unscoped Name', where: { slack: { value: 'UCASEY' } } });
+  } finally { store.close(); }
+  const f = fixture({ checkingAgent: 'art', sources: { commons: { directory, people, knowledge }, agents: [] } });
+  const file = async (platform: string, workspace: string, user: string) => {
+    const input = { agent: 'art', kit: 'field', to: { platform, workspace, user }, grant: true };
+    return (await f.call('household/propose', { change: 'kitGrant', input, why: 'Set field access' }, 'art')).body.value!.id;
+  };
+  const id = await file('slack', 'TFIELD', 'UCASEY');
+  const named = await preview(f, id);
+  expect(named.card!.title).toContain('Casey Field (Slack)');
+  expect(named.card!.facts).toContainEqual({ label: 'Name from', value: 'People directory record for this account' });
+  for (const [platform, workspace, user] of [['slack', 'TOTHER', 'UCASEY'], ['discord', 'TFIELD', 'UCASEY'], ['slack', 'TFIELD', 'UOTHER']]) {
+    expect((await preview(f, await file(platform, workspace, user))).card!.title).toContain('loom has no name for');
+  }
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('household/proposalPreview', { id }, actor)).status).toBe(403);
 });
 
 it('says on the card, before anyone presses Allow, why it cannot be allowed and what would fix it; Allow refuses the same', async () => {
@@ -996,12 +1028,43 @@ it('returns the stored words for an unknown household proposal', async () => {
   const f = fixture();
   const id = (await f.call('household/propose', { change: 'settings', input: { commsDays: 7 }, why: 'Keep less' }, 'art')).body.value!.id;
   f.db.update(approvals).set({ what: 'Saved title', changeSummary: 'Saved summary', details: JSON.stringify({ change: 'fromTheFuture', after: {} }) }).where(eq(approvals.id,id)).run();
-  expect(await preview(f, id)).toEqual({ summary: 'Saved summary', problem: null, card: null, blocked: null });
+  expect(await preview(f, id)).toEqual({ summary: 'Saved summary', problem: null, card: null, blocked: null, exact: '{}' });
 });
 
-it('bounds each proposed repository reference', async () => {
+it('files, reads, previews and answers a project card with a 5,000-character repository reference', async () => {
   const f = fixture();
-  expect((await f.call('household/propose', { change: 'project', input: { ...pond, repositories: ['github:house/'+ 'x'.repeat(300)] }, why: 'Track repository' }, 'art')).body.ok).toBe(false);
+  const input = { ...pond, members: ['lee', 'sam'], repositories: ['github:house/' + 'x'.repeat(4987)] };
+  const file = () => f.call('household/propose', { change: 'project', input, why: 'Track repository' }, 'art');
+  const answer = (id: string, answer: 'allow' | 'deny') => f.call('approvals/answer', { id, answer }, 'sam');
+  const filed = await file();
+  expect(filed.body.ok).toBe(true);
+  const id = filed.body.value!.id;
+  expect((await look(f, id)).problem).toBeNull();
+  const pending = await preview(f, id);
+  expect(pending.card!.facts.find(fact => fact.label === 'Repositories')?.value).toMatch(/…$/u);
+  expect(JSON.parse(pending.card!.exact)).toEqual(input);
+  expect((await answer(id, 'allow')).body.ok).toBe(true);
+  const done = await preview(f, id);
+  expect(done).toMatchObject({ exact: pending.card!.exact, card: null, blocked: null });
+  expect((await f.call('household/proposalPreview', { id }, 'lee')).status).toBe(403);
+  const next = await file();
+  expect((await answer(next.body.value!.id, 'deny')).body.ok).toBe(true);
+});
+
+it('rewrites a pre-digest project card with a 5,000-character repository reference', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const input = { ...pond, members: ['lee', 'sam'], repositories: ['github:house/' + 'x'.repeat(4987)] };
+  f.db.insert(approvals).values({ id: 'old-project', kind: 'setting', operation: 'household.change',
+    target: 'household:project:pond', state: 'pending', agent: 'art', askedFrom: 'terminal', actingFor: 'unknown',
+    minutes: 30, askedAt: at, what: 'Change Pond', changeSummary: 'Old roster', why: 'Track repository',
+    ask: 'Change Pond?', ifYes: 'Apply it', ifNo: 'Keep it', details: JSON.stringify({ change: 'project', before: { members: ['private-roster'] }, after: input }),
+  }).run();
+  await f.root.close();
+  const second = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} });
+  clean.push(() => second.close());
+  const row = f.db.select().from(approvals).where(eq(approvals.id, 'old-project')).get()!;
+  expect(JSON.parse(row.details)).toEqual({ change: 'project', after: input, seal: { nonce: expect.any(String), digest: expect.any(String) } });
+  expect(row.changeSummary).not.toContain('Old roster');
 });
 
 it.each(['','empty'])('shows the exact stored secret description %j', async description => {

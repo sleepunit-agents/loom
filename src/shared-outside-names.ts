@@ -4,21 +4,29 @@
  * The owner-only preview reads person links and connections (policy.ts, `bridgePeople` and
  * `bridgeConnections`) and labels of shared conversations without a member or direct-message scope.
  *
- * Names come from indexed person links and retained Discord channel labels.
- * The people directory stores free-form fields in separate databases.
+ * Names come from indexed person links, the people directory, and retained Discord channel labels.
  * A workspace can be identified by a connection configured for its exact platform and id.
  */
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, bridgeConnections, bridgePeople, conversations } from './core/data/schema.js';
+import { outsidePersonKey } from './pieces/bridges/keys.js';
 import type { CardNames, HeldName } from './proposal-words.js';
 
-export function outsideNames(db: DataDatabase): CardNames {
+export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 'discord', workspace: string, user: string) => string | undefined): CardNames {
+  const people = new Map<string, HeldName | null>();
   return {
     person(platform, workspace, user): HeldName | null {
+      if (platform !== 'slack' && platform !== 'discord') return null;
+      const account = outsidePersonKey(platform, workspace, user);
+      const cached = people.get(account);
+      if (cached !== undefined) return cached;
       const link = db.select({ member: bridgePeople.member }).from(bridgePeople)
         .where(and(eq(bridgePeople.platform, platform), eq(bridgePeople.workspace, workspace), eq(bridgePeople.user, user))).get();
-      return link ? { name: link.member, source: 'Household person link for this account' } : null;
+      const name = link?.member ?? directory?.(platform, workspace, user);
+      const held = name ? { name, source: link ? 'Household person link for this account' : 'People directory record for this account' } : null;
+      people.set(account, held);
+      return held;
     },
     channel(platform, workspace, channel): HeldName | null {
       // Discord sends a channel's name with each message, and the conversation's label keeps it ("Discord channel

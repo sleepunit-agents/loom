@@ -27,7 +27,7 @@ it('says a card filed with raw lines in plain words, made from the change it kee
   for (const markup of [app(grant), chat(grant)]) {
     expect(markup).toContain(sentence);
     expect(markup).toContain('Restore the recorded Pond field scope.');
-    expect(markup).not.toContain('In that person’s own conversations with Art.');
+    expect(markup).not.toContain('When Art works on that account’s word in an eligible conversation.');
     expect(markup).not.toContain('They can have Art use the kit’s tools for them.');
     expect(markup).not.toMatch(json);
     expect(markup).not.toContain('Grant art kit');
@@ -64,7 +64,7 @@ it.each([
   ['boxSettings', { box: 'box-1', name: 'one', hostsAny: true, reportOnly: false, alwaysOn: true, agents: [{ agent: 'art', lent: false }], facts: [] }, 'Change the settings of the machine one'],
   ['models', { agent: 'art', models: ['fable', 'opus'] }, 'Change the models art may use'],
   ['remove', { of: 'agent', id: 'mark' }, 'Remove the agent mark from the household'],
-  ['bodyPolicy', { agent: 'art', people: [{ ...gage, tier: 2 }], deniedTools: [] }, 'Change which outside people art takes messages from, and which tools it is not given'],
+  ['bodyPolicy', { agent: 'art', people: [{ ...gage, tier: 2 }], deniedTools: [] }, 'Change art’s outside contacts and tool restrictions'],
   ['kit', { agent: 'art', kit: 'pond', tools: [{ name: 'status', description: 'Read status.', repository: 'https://example.com/house.git', commit: 'a'.repeat(40), image: 'sha256:' + 'b'.repeat(64), program: 'bin/read', args: [{ parameter: 'station' }], parameters: { station: { type: 'string', description: 'Station' } }, secrets: { KIT: 'pond-token' } }] }, 'Give art a kit called pond, with 1 tool'],
 ])('draws a %s card with no raw JSON anywhere a person looks', (change, after, sentence) => {
   const card = stored(change, after);

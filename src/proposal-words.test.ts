@@ -7,9 +7,9 @@ const tool = { name: 'pond_status', description: 'Read station status in the Pon
   program: 'bin/pond-kit-read', args: ['status', { parameter: 'station' }], parameters: { station: { type: 'string', description: 'Station' } }, secrets: { KIT_POND_TOKEN: 'pond-read-token' } };
 /** One fixture input per kind of change `household.propose` takes, with the sentence it must say from the input alone. */
 const kinds: Record<string, Array<[input: unknown, title: string, facts?: string[]]>> = {
-  kit: [[{ agent: 'art', kit: 'pond-field', tools: [tool] }, 'Give Art a kit called pond-field, with 1 tool', ['Tool: pond_status: Read station status in the Pond deployment.', 'Each runs: pond_status: bin/pond-kit-read status <station>', 'Secrets handed to it: pond_status: pond-read-token as KIT_POND_TOKEN']],
+  kit: [[{ agent: 'art', kit: 'pond-field', tools: [tool] }, 'Give Art a kit called pond-field, with 1 tool', ['Tool: pond_status: Read station status in the Pond deployment.', 'Each runs:\n  pond_status: "bin/pond-kit-read"\n  Arguments: \n  1. "status"\n  2. Parameter "station"', 'Secrets handed to it: pond_status: pond-read-token as KIT_POND_TOKEN']],
     [{ agent: 'art', kit: 'pond-field', tools: null }, 'Remove Art’s pond-field kit']],
-  kitGrant: [[{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit', ['Who: A Slack account', 'Workspace: T02AYL3QM', 'Applies: In that person’s own conversations with Art.', 'Account id: U07V8CZUC1J']],
+  kitGrant: [[{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit', ['Who: A Slack account', 'Workspace: T02AYL3QM', 'Applies: When Art works on that account’s word in an eligible conversation.', 'Account id: U07V8CZUC1J']],
     [{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: false }, 'Stop letting the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit'],
     [{ agent: 'art', kit: 'tools', to: { member: 'gage' }, grant: true }, 'Let Gage (a household member) use Art’s tools kit', ['Applies: When Art works for Gage.']],
     [{ agent: 'art', kit: 'tools', to: { project: 'pond' }, grant: false }, 'Stop letting everyone on the project pond use Art’s tools kit']],
@@ -25,15 +25,15 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
   settings: [[{ timezone: 'America/Chicago' }, 'Set the household’s time zone to America/Chicago'], [{ commsDays: 7 }, 'Have Comms keep words for 7 days'], [{ defaultAgent: 'art' }, 'Make Art the household’s default agent'], [{ timezone: 'America/Chicago', commsDays: 7 }, 'Change 2 household settings', ['Days Comms keeps words: 7']]],
   rule: [[{ kind: 'merge', scope: 'project:pond', person: 'gage', tier: 'do' }, 'Set a standing rule for merging a pull request (the project pond), when asked for Gage: Just do it', ['Answer: Just do it']],
     [{ kind: 'setting', scope: '*', person: '', tier: null }, 'Remove the standing rule for changing a setting (everything)']],
-  bodyPolicy: [[{ agent: 'art', people: [{ ...gage, tier: 2 }], deniedTools: [{ pattern: 'Bash', guestsOnly: true }] }, 'Change which outside people Art takes messages from, and which tools it is not given',
-    ['Outside accounts it takes messages from: the Slack account U07V8CZUC1J (workspace T02AYL3QM): tier 2', 'Tools its body is not given: Bash (only when working for a guest)']]],
+  bodyPolicy: [[{ agent: 'art', people: [{ ...gage, tier: 2 }], deniedTools: [{ pattern: 'Bash', guestsOnly: true }] }, 'Change Art’s outside contacts and tool restrictions',
+    ['Outside contacts: the Slack account U07V8CZUC1J (workspace T02AYL3QM): tier 2', 'Tools its body is not given: Bash (only when working for a guest)']]],
   secretRule: [[{ secret: 'pond-key', answer: 'auto', minutes: 30, agents: [{ agent: 'art', when: 'on_request' }] }, 'Change who may use the secret pond-key', ['Answer: Allow automatically', 'Automatic grant lasts: 30 minutes', 'When asked: Art', 'At startup: No agent']]],
   secretDefault: [[{ answer: 'never' }, 'For a secret with no rule of its own: never allow']],
   houseSecrets: [[{ agent: 'art', repository: 'house-key', secrets: [{ alias: 'POND', secret: 'pond-key' }] }, 'Change which secrets Art’s house is handed when it starts', ['Secrets handed over at start: pond-key (as POND)']]],
   bridge: [[{ action: 'connection', id: 'art-slack', platform: 'slack', agent: 'art', workspace: 'T02AYL3QM', botUser: 'UBOT', tokenSecret: 'slack-token', appSecret: 'slack-app', enabled: true, only: [], ignore: ['C1'] }, 'Set up Art’s Slack connection (art-slack)', ['Switched on: Yes', 'Ignores: the channel C1 on Slack']],
     [{ action: 'disconnect', id: 'mark-discord' }, 'Disconnect the Discord or Slack connection mark-discord'],
     [{ action: 'channel', platform: 'discord', workspace: 'G1', channel: 'C9', answers: 'art', botsMayTalk: false }, 'Let Art answer in the channel C9 on Discord', ['Other bots may talk to it there: No', 'Channel id: C9']],
-    [{ action: 'removeChannel', platform: 'discord', workspace: 'G1', channel: 'C9' }, 'Stop answering in the channel C9 on Discord'],
+    [{ action: 'removeChannel', platform: 'discord', workspace: 'G1', channel: 'C9' }, 'Remove the answer rule for the channel C9 on Discord'],
     [{ action: 'person', ...gage, member: 'gage' }, 'Treat the Slack account U07V8CZUC1J (workspace T02AYL3QM) as the household member Gage'],
     [{ action: 'removePerson', ...gage }, 'Stop treating the Slack account U07V8CZUC1J (workspace T02AYL3QM) as a household member']],
   tempoTimings: [[{ who: { kind: 'agent', id: 'art' }, settleSeconds: 60, dimDays: 2 }, 'Change Tempo’s timings for the agent Art', ['Inbox settle time: 60 seconds', 'Dim ends after: 2 days']]],
@@ -78,13 +78,13 @@ it('says who an outside account is for a household owner, and says so when loom 
   const named = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, { names, before: { value: state } })!;
   expect(named.title).toBe('Let Gage Taylor (Slack) use Art’s pond-et-livonia kit');
   expect(named.facts.map(fact => fact.label)).toEqual(['Who', 'Name from', 'Workspace', 'Kit', 'What the kit does', 'Applies', 'Now', 'Account id']);
-  expect(factLines(named.facts)).toContain('Who: Gage Taylor, on Slack\nName from: Art’s person card, which lists this account\nWorkspace: T02AYL3QM (reached by the connection art-slack)');
+  expect(factLines(named.facts)).toContain('Who: Gage Taylor, on Slack\nName from: Art’s person card, which lists this account\nWorkspace: A workspace loom has no name for (T02AYL3QM), reached by the connection art-slack');
   expect(factLines(named.facts)).toContain('What the kit does: pond_status: Read station status in the Pond deployment.');
   // The raw account id is kept, small and last, for certainty.
   expect(named.facts.at(-1)).toEqual({ label: 'Account id', value: 'U07V8CZUC1J', small: true });
   const nameless = proposalCard('kitGrant', { agent: 'art', kit: 'pond-et-livonia', to: { ...gage, user: 'U0STRANGER', workspace: 'T0OTHER' }, grant: true }, { names, before: { value: state } })!;
   expect(nameless.title).toBe('Let a Slack account loom has no name for (U0STRANGER in workspace T0OTHER) use Art’s pond-et-livonia kit');
-  expect(factLines(nameless.facts)).toContain('Who: A Slack account loom has no name for\nWorkspace: T0OTHER (loom holds no name for it)');
+  expect(factLines(nameless.facts)).toContain('Who: A Slack account loom has no name for (U0STRANGER in workspace T0OTHER)\nWorkspace: A workspace loom has no name for (T0OTHER)');
   expect(proposalCard('bridge', { action: 'channel', platform: 'discord', workspace: 'G1', channel: 'C9', answers: 'art', botsMayTalk: false }, { names, before: { value: null } })!.title).toBe('Let Art answer in #pond on Discord');
   expect(proposalCard('bridge', { action: 'person', ...gage, member: 'gage' }, { names, before: { value: null } })!.title).toBe('Treat Gage Taylor (Slack) as the household member Gage');
   expect(proposalCard('bridge', { action: 'disconnect', id: 'mark-discord' }, { names, before: { value: { id: 'mark-discord', agent: 'mark', platform: 'discord', workspace: 'G1', enabled: true } } })!.title).toBe('Disconnect Mark’s Discord connection (mark-discord)');
@@ -132,4 +132,28 @@ it('shows machine needs and preferences on a repeating schedule', () => {
   expect(card.facts).toContainEqual({ label: 'Asked by', value: 'Gage Taylor (Slack)' });
   expect(factLines(card.facts)).toContain('Machine needs: gpu, local\nMachine preferences: fast');
   expect(factLines(card.facts)).not.toContain('["');
+});
+
+it('shows argument boundaries in both versions of a kit', () => {
+  const before = [{ ...tool, args: ['north pond'] }];
+  const after = [{ ...tool, args: ['north', 'pond'] }];
+  const card = proposalCard('kit', { agent: 'art', kit: 'field', tools: after }, { before: { value: { tools: before } } })!;
+  expect(card.facts.find(fact => fact.label === 'Each runs now')?.value).toContain('1. "north pond"');
+  expect(card.facts.find(fact => fact.label === 'Each runs')?.value).toContain('1. "north"\n2. "pond"');
+});
+
+it('describes the member scope of approvals moved by a project merge', () => {
+  const card = proposalCard('projectMerge', { from: 'pond', into: 'garden' })!;
+  expect(card.ifYes).toContain('Member-scoped approvals keep their member scope.');
+});
+
+it('names an unknown bot and workspace and bounds channel name reads to displayed filters', () => {
+  const connection = { action: 'connection', id: 'art-discord', agent: 'art', platform: 'discord',
+    workspace: 'G1', botUser: 'B1', only: Array.from({ length: 100 }, (_, i) => 'C' + i), ignore: ['C100'] };
+  let reads = 0;
+  const reader = { ...names, channel: () => { reads++; return null; } };
+  const card = proposalCard('bridge', connection, { names: reader, before: { value: { ...connection, only: [] } } })!;
+  expect(card.facts).toContainEqual({ label: 'Bot account', value: 'A Discord account loom has no name for (B1 in G1)' });
+  expect(card.facts).toContainEqual({ label: 'Workspace', value: 'A workspace loom has no name for (G1)' });
+  expect(reads).toBe(10);
 });

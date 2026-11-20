@@ -72,7 +72,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {proposalCard,factLines,type CardContext,type CardNames} from './proposal-words.js';
+import {proposalCard,factLines,storedProposal,clipProposalText,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -98,7 +98,7 @@ const kinds={...kitChanges,project:projectInput,
  // Dangerous, not a setting: it cannot be put back. Named by label because an agent cannot read fingerprints.
  // How things run: a machine's settings, how an agent runs, the models it may use, and its outside accounts.
  boxSettings:boxSettingsInput,machineReader:z.object({box:householdMachine,agent:householdId,allow:z.boolean()}).strict(),runSettings:agentRunSettingsInput,models:agentModelsInput,
- agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().max(39).regex(GITHUB_LOGIN)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
+ agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(GITHUB_LOGIN)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
  // The order people or agents are listed in: every one of them, once.
  order:z.object({of:z.enum(['members','agents']),ids:z.array(z.string().min(1).max(100)).min(1).max(1000)}).strict(),
  // Removing keeps the row and its history: a removed person cannot sign in, a removed agent does not run,
@@ -479,7 +479,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // the card itself carries none of it. Whether the change can be made is not tried here. It is made as
    // the owner who allows it, who is refused in the rule's own words if they may not make it; one owner may
    // be able to make a change another may not, so there is no one owner to try it as beforehand.
-   const waiting=(id:string)=>{const card=db.select().from(approvals).where(eq(approvals.id,id)).get();return card?.operation===operation&&card.state==='pending'?card:undefined;};
+   const stored=(id:string)=>{const card=db.select().from(approvals).where(eq(approvals.id,id)).get();return card?.operation===operation?card:undefined;};
+   const waiting=(id:string)=>{const card=stored(id);return card?.state==='pending'?card:undefined;};
    const ownedMachine=(viewer:Viewer,id:string)=>viewer.kind==='member'&&!!db.select({id:boxes.id}).from(boxes)
     .where(and(eq(boxes.id,id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt))).get();
    const cardId=z.string().min(1).max(200);
@@ -606,12 +607,17 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // and only shared conversation labels may supply channel names. Exact input is also shown here.
    const cardOutput=z.object({title:z.string(),nothing:z.boolean(),facts:z.array(z.object({label:z.string(),value:z.string(),small:z.boolean().optional()}).strict()),exact:z.string(),ifYes:z.string().optional(),ifNo:z.string().optional()}).strict();
    operations.register({name:'household.proposalPreview',doors:['http'],input:z.object({id:z.string().min(1).max(200)}).strict(),
-    output:z.object({summary:z.string(),problem:z.string().nullable(),card:cardOutput.nullable(),blocked:z.string().nullable()}).strict(),
-    may:(viewer,input)=>householdOwner(db,viewer)&&!!waiting(input.id),
+    output:z.object({summary:z.string(),problem:z.string().nullable(),card:cardOutput.nullable(),blocked:z.string().nullable(),exact:z.string().optional()}).strict(),
+    may:(viewer,input)=>householdOwner(db,viewer)&&!!stored(input.id),
     run(ctx,input){
-     const card=waiting(input.id);if(!card||!householdOwner(db,ctx.viewer))throw new OperationError('not-found','No such waiting card');
+     const card=stored(input.id);if(!card||!householdOwner(db,ctx.viewer))throw new OperationError('not-found','No such household card');
+     const exactOnly=()=>{
+      const inputHeld=storedProposal(card);
+      return inputHeld ? {exact:JSON.stringify(inputHeld.input,null,2)} : {};
+     };
+     if(card.state!=='pending')return{summary:'',problem:null,card:null,blocked:null,...exactOnly()};
      let parsed: ReturnType<typeof read>;
-     try{parsed=read(card);}catch{return{summary:card.changeSummary??card.what,problem:null,card:null,blocked:null};}
+     try{parsed=read(card);}catch{return{summary:card.changeSummary??card.what,problem:null,card:null,blocked:null,...exactOnly()};}
      const {kept,value}=parsed,was=before(value);
      const machineIds=value.change==='runSettings'
       ? [...value.input.boxes,...((was as {boxes?:string[]}|null)?.boxes??[])]
@@ -629,9 +635,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       const askedBy=told?.facts.find(fact=>fact.label==='Asked by')?.value??'The outside account';
       blocked=blocked.replace('the outside account '+value.input.asker.id,()=>askedBy);
      }
-     return{summary:told?factLines(told.facts):card.changeSummary??card.what,problem:null,blocked,
+     return{summary:told?factLines(told.facts):card.changeSummary??card.what,problem:null,blocked:blocked&&clipProposalText(blocked,1500),
       card:told?{title:told.title,nothing:told.nothing,facts:told.facts,exact:JSON.stringify(kept.after,null,2),
-       ...(!dangerOf(value)?{ifYes:told.ifYes,ifNo:told.ifNo}:{})}:null};
+       ifYes:told.ifYes,ifNo:told.ifNo}:null};
     },
    });
   },

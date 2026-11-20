@@ -58,13 +58,24 @@ type Outside = { platform: string; workspace: string; user: string };
 type ChangeRow = [label: string, was: string | undefined, asked: string, equal?: boolean];
 const sameValue = (before: unknown, after: unknown) => JSON.stringify(before) === JSON.stringify(after);
 
+export const clipProposalText = (text: string, limit: number): string =>
+  text.length <= limit ? text : text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '') + '…';
+
+const workspaceWords = (names: CardNames | undefined, platform: string, workspace: string): string => {
+  if (!names) return str(workspace);
+  const connection = names.workspace(platform, workspace);
+  return 'A workspace loom has no name for (' + workspace + ')' +
+    (connection ? ', ' + connection.source + ' ' + connection.name : '');
+};
+
+const FACT_LIMIT = 1500;
 const NOTHING = 'Nothing would change: it is already like this.';
 
 /** Field by field: with an owner's reading of what is there, only what differs, as before and after. */
 function changes(before: { value: unknown } | undefined, rows: ChangeRow[]): { facts: CardFact[]; nothing: boolean } {
   if (!before || before.value === null) return { facts: rows.map(([label, , asked]) => ({ label, value: asked })), nothing: false };
   // A value of several lines is said twice, as it is now and as it would be: an arrow between two lists reads badly.
-  const facts = rows.filter(([, was, asked, equal]) => !(equal ?? was === asked)).flatMap(([label, was, asked]): CardFact[] => (was ?? '').includes('\n') || asked.includes('\n')
+  const facts = rows.filter(([, was, asked, equal]) => !(equal ?? was === asked)).flatMap(([label, was, asked]): CardFact[] => (was ?? '').includes('\n') || asked.includes('\n') || (was?.length ?? 0) + asked.length + 3 > FACT_LIMIT
     ? [{ label: label + ', now', value: was ?? 'Not set' }, { label: label + ', if allowed', value: asked }] : [{ label, value: (was ?? 'Not set') + ' → ' + asked }]);
   return facts.length ? { facts, nothing: false } : { facts: [{ label: 'What changes', value: NOTHING }], nothing: true };
 }
@@ -73,8 +84,8 @@ export function proposalCard(change: string, rawInput: unknown, context: CardCon
   try {
     const told = tell(change, rec(rawInput), context);
     if (!told) return undefined;
-    return { title: told.title, facts: told.facts.filter(fact => fact.value !== ''), nothing: !!told.nothing,
-      ...(told.ifYes ? { ifYes: told.ifYes } : {}), ...(told.ifNo ? { ifNo: told.ifNo } : {}) };
+    return { title: clipProposalText(told.title, 240), facts: told.facts.filter(fact => fact.value !== '').map(fact => ({ ...fact, value: clipProposalText(fact.value, FACT_LIMIT) })), nothing: !!told.nothing,
+      ...(told.ifYes ? { ifYes: clipProposalText(told.ifYes, FACT_LIMIT) } : {}), ...(told.ifNo ? { ifNo: clipProposalText(told.ifNo, FACT_LIMIT) } : {}) };
   } catch { return undefined; }
 }
 
@@ -91,16 +102,15 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
   /** An outside account: the name loom holds, or, for an owner, that it holds none; otherwise just the id. */
   const outside = (who: Outside) => {
     const platform = platformWord(who.platform), held = names?.person(who.platform, who.workspace, who.user) ?? null;
-    const place = names?.workspace(who.platform, who.workspace) ?? null;
     const short = held ? held.name + ' (' + platform + ')'
       : names ? 'a ' + platform + ' account loom has no name for (' + who.user + ' in workspace ' + who.workspace + ')'
       : 'the ' + platform + ' account ' + who.user + ' (workspace ' + who.workspace + ')';
     const facts: CardFact[] = [
-      { label: 'Who', value: held ? held.name + ', on ' + platform : names ? 'A ' + platform + ' account loom has no name for' : 'A ' + platform + ' account' },
+      { label: 'Who', value: held ? held.name + ', on ' + platform : names ? cap(short) : 'A ' + platform + ' account' },
       ...(held ? [{ label: 'Name from', value: held.source }] : []),
-      { label: 'Workspace', value: place ? who.workspace + ' (' + place.source + ' ' + place.name + ')' : names ? who.workspace + ' (loom holds no name for it)' : who.workspace },
+      { label: 'Workspace', value: workspaceWords(names, who.platform, who.workspace) },
     ];
-    return { short, facts, id: { label: 'Account id', value: who.user, small: true } as CardFact };
+    return { short, facts, id: { label: 'Account id', value: str(who.user), small: true } as CardFact };
   };
   const channel = (platform: string, workspace: string, id: string) => {
     const held = names?.channel(platform, workspace, id) ?? null;
@@ -131,7 +141,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       });
       return { title: (setting ? 'Set a repeating schedule for ' + name(input.agent)
         : 'Change the repeating schedule ' + str(input.id) + ' for ' + name(input.agent)) + ' in conversation ' + str(input.conversation),
-        facts: [{ label: 'Asked by', value: askedBy }, { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [account.id] : [])],
+        facts: [{ label: 'Asked by', value: askedBy }, { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [...account.facts.filter(fact => fact.label !== 'Who'), account.id] : [])],
         ifYes: setting ? 'Each firing starts a job in that conversation on the asker’s word, with loom’s tools only.'
           : 'The schedule changes as shown and continues on the asker’s word.',
         ifNo: setting ? 'No schedule is set.' : 'The schedule stays as it is.' };
@@ -141,16 +151,19 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       const agent = name(input.agent), kit = str(input.kit), next = input.tools === null ? null : arr(input.tools).map(rec);
       const had = was ? was.tools : undefined;
       const facts: CardFact[] = [{ label: 'Agent', value: agent }, { label: 'Kit', value: kit }];
+      const commands = (value: unknown) => arr(value).map(rec).map(tool => {
+        const args = arr(tool.args).map(arg => typeof arg === 'string'
+          ? JSON.stringify(arg) : 'Parameter ' + JSON.stringify(str(rec(arg).parameter)));
+        return str(tool.name) + ': ' + JSON.stringify(str(tool.program)) + '\nArguments: ' + (args.length ? '\n' + numbered(args) : 'None');
+      }).join('\n');
       if (next) {
         facts.push({ label: next.length === 1 ? 'Tool' : 'Tools', value: tools(next) });
-        // What each tool runs is the whole of what the kit allows: the program, every fixed argument, and each
-        // argument the model supplies (in angle brackets), from one commit of one repository, in one image.
-        const argv = (tool: Rec) => arr(tool.args).map(arg => typeof arg === 'string' ? arg : '<' + str(rec(arg).parameter) + '>').join(' ');
-        facts.push({ label: 'Each runs', value: next.map(tool => str(tool.name) + ': ' + str(tool.program) + (argv(tool) ? ' ' + argv(tool) : '')).join('\n') });
+        facts.push({ label: 'Each runs', value: commands(next) });
         facts.push({ label: 'Code it runs', value: [...new Set(next.map(tool => str(tool.repository) + ' at commit ' + str(tool.commit).slice(0, 12) + ', image ' + str(tool.image).replace(/^sha256:/, '').slice(0, 12)))].join('\n') });
         facts.push({ label: 'Secrets handed to it', value: next.map(tool => { const secrets = Object.entries(rec(tool.secrets)).map(([alias, secret]) => str(secret) + ' as ' + alias); return str(tool.name) + ': ' + list(secrets, 'none'); }).join('\n') });
       }
       if (was) {
+        if (had) facts.push({ label: 'Each runs now', value: commands(had) });
         facts.push({ label: 'Now', value: had ? 'The kit has ' + count(arr(had).length, 'tool') + ':\n' + tools(had) : 'There is no such kit yet.' });
         const granted = [count(arr(was.projects).length, 'project'), count(arr(was.members).length, 'member'), count(arr(was.outside).length, 'outside account')];
         if (had) facts.push({ label: 'Granted to now', value: granted.join(', ') });
@@ -159,7 +172,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       if (same) facts.push({ label: 'What changes', value: NOTHING });
       const title = next === null ? 'Remove ' + owns(agent) + ' ' + kit + ' kit' : was && had ? 'Change the tools in ' + owns(agent) + ' ' + kit + ' kit'
         : 'Give ' + agent + ' a kit called ' + kit + ', with ' + count(next.length, 'tool');
-      return { title, facts, nothing: same, ifYes: next === null ? 'The kit is removed, and nobody can use it.' : 'The kit uses these tools. Anyone already granted the kit can use them.', ifNo: 'The kit stays as it is.' };
+      return { title, facts, nothing: same, ifYes: next === null ? 'The kit is removed, and nobody can use it.' : 'The kit’s grants stay in place and point to this tool list.', ifNo: 'The kit stays as it is.' };
     }
     case 'kitGrant': {
       const agent = name(input.agent), kit = str(input.kit), to = rec(input.to), grant = !!input.grant;
@@ -177,7 +190,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       } else {
         const who = outside(to as Outside);
         whom = who.short; facts.push(...who.facts); last = who.id;
-        applies = 'In that person’s own conversations with ' + agent + '.';
+        applies = 'When ' + agent + ' works on that account’s word in an eligible conversation.';
       }
       facts.push({ label: 'Kit', value: kit + ', of ' + agent });
       if (was) facts.push({ label: 'What the kit does', value: was.tools ? tools(was.tools) : 'There is no kit by that name.' });
@@ -186,7 +199,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       if (was) facts.push({ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was.on ? 'This grant is in place.' : 'This grant is absent.' });
       if (last) facts.push(last);
       return { title: grant ? 'Let ' + whom + ' use ' + whose : 'Stop letting ' + whom + ' use ' + whose, facts, nothing: same,
-        ifYes: grant ? 'They can have ' + agent + ' use the kit’s tools for them.' : 'This grant ends. Access through other grants stays in place.', ifNo: 'Who can use the kit stays as it is.' };
+        ifYes: grant ? 'This grant makes the kit available for eligible work by ' + agent + '.' : 'This grant ends. Access through other grants stays in place.', ifNo: 'Who can use the kit stays as it is.' };
     }
     case 'projectOutsidePerson': {
       const who = outside(input as unknown as Outside), project = projectName(input.project), on = !!input.on;
@@ -194,12 +207,12 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       const same = !!was && was.on === on;
       if (was) {
         const grants = arr(was.grants).map(rec).map(grant => owns(name(grant.agent)) + ' ' + str(grant.kit) + ' kit');
-        facts.push({ label: on ? 'Kits this gives them' : 'Kits they lose', value: list(grants, 'None: the project grants no kits now.') });
+        facts.push({ label: 'Kits granted through this project', value: list(grants, 'None: the project grants no kits now.') });
         facts.push({ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was.on ? 'They are on the project.' : 'They are not on the project.' });
       }
       facts.push(who.id);
       return { title: on ? 'Add ' + who.short + ' to the project ' + project : 'Remove ' + who.short + ' from the project ' + project, facts, nothing: same,
-        ifYes: on ? 'They are on the project, and can use every kit granted to it.' : 'They are off the project, and lose the kits granted to it.', ifNo: 'Who is on the project stays as it is.' };
+        ifYes: on ? 'Their account is added to the project roster used for kit access.' : 'Their account is removed from this project’s kit grants. Other grants still apply.', ifNo: 'Who is on the project stays as it is.' };
     }
     case 'project': {
       const names_ = (value: unknown) => list(strings(value).map(name));
@@ -207,20 +220,29 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         field('Agents', 'agents', names_), field('Repositories', 'repositories', value => list(strings(value)))]);
       return { title: (isNew ? 'Create the project ' : was ? 'Change the project ' : 'Set up the project ') + str(input.name) + (str(input.name).toLowerCase() === str(input.id) ? '' : ' (' + str(input.id) + ')'), ...told };
     }
-    case 'projectMerge': { const stands = (value: unknown) => { const project = rec(value); return !value ? 'There is no such project.'
-        : str(project.name) + (project.removed ? ' (removed)' : project.retired ? ' (retired)' : '') + ': members ' + list(strings(project.members).map(name), 'none') + '; agents ' + list(strings(project.agents).map(name), 'none') + '; ' + count(arr(project.repositories).length, 'repository', 'repositories'); };
+    case 'projectMerge': {
+      const stands = (value: unknown) => {
+        const project = rec(value);
+        return !value ? 'There is no such project.' : str(project.name) + (project.removed ? ' (removed)' : project.retired ? ' (retired)' : '')
+          + '. Members: ' + list(strings(project.members).map(name), 'none') + '. Agents: ' + list(strings(project.agents).map(name), 'none')
+          + '. ' + count(arr(project.repositories).length, 'repository', 'repositories') + '.';
+      };
       return { title: 'Merge the project ' + projectName(input.from) + ' into the project ' + projectName(input.into),
-      facts: [{ label: 'Emptied and removed', value: projectName(input.from) + (was ? '. Now: ' + stands(was.from) : '') }, { label: 'Receives everything', value: projectName(input.into) + (was ? '. Now: ' + stands(was.into) : '') },
-        { label: 'What happens', value: 'Everything filed under ' + projectName(input.from) + ' is filed under ' + projectName(input.into) + ', whose people and agents then see all of it.' },
-        { label: 'Afterwards', value: 'This cannot be undone.' }] }; }
+        facts: [{ label: 'Source project', value: projectName(input.from) + (was ? '. Now: ' + stands(was.from) : '') },
+          { label: 'Destination project', value: projectName(input.into) + (was ? '. Now: ' + stands(was.into) : '') },
+          { label: 'Afterwards', value: 'This cannot be undone.' }],
+        ifYes: 'Project records move to ' + projectName(input.into) + ' and use its project access rules. Member-scoped approvals keep their member scope. The source project is removed. Its members and agents are added to the destination. Outside accounts and kit grants stay with the source.',
+        ifNo: 'Both projects stay as they are.' };
+    }
     case 'projectRetire': return { title: 'Retire the project ' + projectName(input.project), facts: [{ label: 'Project', value: projectName(input.project) },
-      { label: 'What happens', value: 'Everything in it stays and stays readable. Its unfinished tasks are shelved until it is revived.' }] };
+      { label: 'What happens', value: 'Its records stay under the project with their existing access rules. Its unfinished tasks are shelved until it is revived.' }] };
     case 'projectRevive': return { title: 'Revive the project ' + projectName(input.project), facts: [{ label: 'Project', value: projectName(input.project) },
       { label: 'What happens', value: 'Its shelved tasks are work again, as they were.' }] };
     case 'projectJoin': {
       const same = !!was && was.on === true;
-      return { title: 'Let ' + name(input.agent) + ' work on the project ' + projectName(input.project), nothing: same, facts: [{ label: 'Agent', value: name(input.agent) }, { label: 'Project', value: projectName(input.project) },
-        { label: 'What happens', value: name(input.agent) + ' sees what is filed under the project. Nothing else about the project changes.' },
+      return { title: 'Let ' + name(input.agent) + ' work on the project ' + projectName(input.project), nothing: same,
+        ifYes: name(input.agent) + ' is added to the project’s agents and can read records the project shares with agents.',
+        facts: [{ label: 'Agent', value: name(input.agent) }, { label: 'Project', value: projectName(input.project) },
         ...(same ? [{ label: 'What changes', value: NOTHING }] : [])] };
     }
     case 'member': {
@@ -266,11 +288,11 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     case 'bodyPolicy': {
       const people = (value: unknown) => arr(value).map(rec).map(person => {
         const account = outside(person as unknown as Outside);
-        return account.short + (names ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier);
+        return account.short + (names ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier) + (names ? '\n' + workspaceWords(names, str(person.platform), str(person.workspace)) : '');
       }).join('\n') || 'Nobody';
       const denied = (value: unknown) => arr(value).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')).join('\n') || 'None';
-      const told = changes(before, [field('Outside accounts it takes messages from', 'people', people), field('Tools its body is not given', 'deniedTools', denied)]);
-      return { title: 'Change which outside people ' + name(input.agent) + ' takes messages from, and which tools it is not given', ...told };
+      const told = changes(before, [field('Outside contacts', 'people', people), field('Tools its body is not given', 'deniedTools', denied)]);
+      return { title: 'Change ' + owns(name(input.agent)) + ' outside contacts and tool restrictions', ...told };
     }
     case 'secretRule': {
       const answers: Record<string, string> = { ask: 'Ask each time', auto: 'Allow automatically', never: 'Never allow' };
@@ -319,7 +341,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         ifYes: input.readers === undefined ? 'The machine uses the settings shown here.' : 'The machine uses the settings shown here and replaces its explicit reader grants with those listed.',
         ifNo: 'The current machine settings stay in effect.' };
     }
-    case 'machineReader': return { title: (input.allow ? 'Let ' + name(input.agent) + ' read the machine ' : 'Stop letting ' + name(input.agent) + ' read the machine ') + machineName(input.box),
+    case 'machineReader': return { title: (input.allow ? 'Grant' : 'Remove') + ' explicit read access for ' + name(input.agent) + ' on the machine ' + machineName(input.box),
       facts: [{ label: 'Agent', value: name(input.agent) }, { label: 'Machine', value: machineName(input.box) }] };
     case 'runSettings': {
       const ports = (row: Rec) => arr(row.ports).map(rec).map(port => str(port.address) + ' port ' + str(port.port)).join(', ') || 'None';
@@ -345,10 +367,11 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     case 'remove': case 'restore': {
       const of = str(input.of), removing = change === 'remove';
       const thing = of === 'member' ? name(input.id) : of === 'agent' ? 'the agent ' + name(input.id) : of === 'project' ? 'the project ' + projectName(input.id) : 'the Discord or Slack connection ' + str(input.id);
-      const after = of === 'member' ? 'They can no longer sign in.' : of === 'agent' ? 'It no longer runs.' : of === 'project' ? 'It is out of use.' : 'It is out of use, and hears nothing.';
+      const after = of === 'member' ? 'They can no longer sign in.' : of === 'agent' ? 'It no longer runs.' : of === 'project' ? 'It is out of use.' : 'It is switched off and taken out of use.';
       const same = !!was && !!was.removed === removing;
+      const connectionState = of === 'agent' ? ' Its bridge connections stay off until switched on.' : of === 'bridge' ? ' It stays switched off until enabled.' : '';
       return { title: removing ? 'Remove ' + thing + (of === 'project' || of === 'bridge' ? '' : ' from the household') : 'Restore ' + thing + (of === 'project' || of === 'bridge' ? '' : ' to the household'), nothing: same,
-        facts: [{ label: 'What happens', value: removing ? after + ' Nothing is erased, and it can be restored later.' : 'It is put back in use, with its history as it was.' },
+        facts: [{ label: 'What happens', value: removing ? after + ' Nothing is erased, and it can be restored later.' : 'It is restored with its history.' + connectionState },
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : isNew ? 'loom has nothing by that name.' : was?.removed ? 'It is removed.' : 'It is in use.' }] : [])] };
     }
     case 'secretDescription': {
@@ -374,33 +397,39 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
   const { before, names } = context;
   const was = before && before.value !== null ? rec(before.value) : undefined, isNew = !!before && before.value === null;
   const platform = platformWord(str(input.platform)), workspace = str(input.workspace);
-  const place = (): CardFact => { const held = names?.workspace(str(input.platform), workspace) ?? null;
-    return { label: 'Workspace', value: held ? workspace + ' (' + held.source + ' ' + held.name + ')' : names ? workspace + ' (loom holds no name for it)' : workspace }; };
+  const place = (): CardFact => ({ label: 'Workspace', value: workspaceWords(names, str(input.platform), workspace) });
   switch (str(input.action)) {
     case 'connection': {
       const bot = (row: Rec) => {
-        const user = str(row.botUser);
-        const resolved = names?.person(str(row.platform), str(row.workspace), user);
-        return resolved ? resolved.name + ' (' + user + ')' : user;
+        const user = str(row.botUser), platform = str(row.platform), workspace = str(row.workspace);
+        const resolved = names?.person(platform, workspace, user);
+        return resolved ? resolved.name + ' (' + user + ' in ' + workspace + ')' : names
+          ? 'A ' + platformWord(platform) + ' account loom has no name for (' + user + ' in ' + workspace + ')' : user;
       };
-      const channels = (row: Rec, key: string) => list(strings(row[key]).map(id => {
-        const result = channel(str(row.platform), str(row.workspace), id);
-        return result.held ? result.short + ' (' + id + ')' : result.short;
-      }));
-      const told = changes(before, [['Agent', was && name(was.agent), name(input.agent)], ['Platform', was && platformWord(str(was.platform)), platform], ['Workspace', was && str(was.workspace), workspace],
-        ['Bot account', was && bot(was), bot(input), was?.botUser === input.botUser], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
+      const sameWorkspace = was?.platform === input.platform && was?.workspace === input.workspace;
+      const channels = (row: Rec, key: string) => {
+        const ids = strings(row[key]);
+        return list(ids.slice(0, 10).map(id => {
+          const result = channel(str(row.platform), str(row.workspace), id);
+          return result.held ? result.short + ' (' + id + ')' : result.short;
+        }).concat(ids.length > 10 ? ['…'] : []));
+      };
+      const filter = (label: string, key: string): ChangeRow => sameValue(was?.[key], input[key]) && was
+        ? [label, '', '', true] : [label, was && channels(was, key), channels(input, key), false];
+      const told = changes(before, [['Agent', was && name(was.agent), name(input.agent)], ['Platform', was && platformWord(str(was.platform)), platform], ['Workspace', was && workspaceWords(names, str(was.platform), str(was.workspace)), place().value, sameWorkspace],
+        ['Bot account', was && bot(was), bot(input), sameWorkspace && was?.botUser === input.botUser], ['Secret holding its token', was && str(was.tokenSecret), str(input.tokenSecret)],
         ['Secret holding its app token', was && (str(was.appSecret) || 'None'), str(input.appSecret) || 'None'], ['Switched on', was && yes(was.enabled), yes(input.enabled)],
-        ['Listens only in', was && channels(was, 'only'), channels(input, 'only'), sameValue(was?.only, input.only)], ['Ignores', was && channels(was, 'ignore'), channels(input, 'ignore'), sameValue(was?.ignore, input.ignore)]]);
+        filter('Listens only in', 'only'), filter('Ignores', 'ignore')]);
       const only = was && !told.nothing && told.facts.length === 1 && told.facts[0]!.label === 'Switched on';
       return { title: only ? (input.enabled ? 'Switch on ' : 'Switch off ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')'
-        : isNew ? 'Connect ' + name(input.agent) + ' to ' + platform + ' (connection ' + str(input.id) + ')' : (was ? 'Change ' : 'Set up ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')', ...told };
+        : isNew ? 'Connect ' + name(input.agent) + ' to ' + platform + ' (connection ' + str(input.id) + ')' : (was ? 'Change ' : 'Set up ') + owns(name(input.agent)) + ' ' + platform + ' connection (' + str(input.id) + ')', ...told, facts: [...told.facts, ...(!told.facts.some(fact => fact.label === 'Workspace') ? [place()] : []),
+          ...(!told.facts.some(fact => fact.label === 'Bot account') ? [{ label: 'Bot account', value: bot(input) }] : [])] };
     }
     case 'disconnect': {
       const same = !!was && was.enabled === false;
       return { title: was ? 'Disconnect ' + owns(name(was.agent)) + ' ' + platformWord(str(was.platform)) + ' connection (' + str(input.id) + ')' : 'Disconnect the Discord or Slack connection ' + str(input.id), nothing: same,
-        ifYes: 'The connection is switched off. You can switch it on again in Settings.', ifNo: 'The connection keeps its current settings.',
-        facts: [{ label: 'Connection', value: str(input.id) }, ...(was ? [{ label: 'Agent', value: name(was.agent) }, { label: 'Workspace', value: str(was.workspace) }] : []),
-          { label: 'What happens', value: 'It is switched off and hears nothing. Its settings stay, and it can be switched on again.' },
+        ifYes: 'The connection stops delivering messages. Its settings stay, and it can be switched on again.', ifNo: 'The connection keeps its current settings.',
+        facts: [{ label: 'Connection', value: str(input.id) }, ...(was ? [{ label: 'Agent', value: name(was.agent) }, { label: 'Workspace', value: workspaceWords(names, str(was.platform), str(was.workspace)) }] : []),
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : isNew ? 'loom has no connection by that name.' : 'It is switched on.' }] : [])] };
     }
     case 'channel': {
@@ -417,8 +446,8 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
     }
     case 'removeChannel': {
       const at = channel(str(input.platform), workspace, str(input.channel));
-      return { title: (was ? 'Stop ' + name(was.answers) + ' answering in ' : 'Stop answering in ') + at.short, nothing: isNew,
-        facts: [{ label: 'What happens', value: 'No agent is set to answer in that channel.' }, ...(isNew ? [{ label: 'What changes', value: 'Nothing would change: no agent is set to answer there.' }] : []),
+      return { title: 'Remove the answer rule for ' + at.short, nothing: isNew,
+        facts: [{ label: 'What happens', value: 'The channel loses its default answering agent and its permission for bots to wake the agent. Addressed messages from admitted people can still be routed.' }, ...(isNew ? [{ label: 'What changes', value: 'Nothing would change. There is no explicit answer rule there.' }] : []),
           place(), { label: 'Channel id', value: str(input.channel), small: true }] };
     }
     case 'person': {
@@ -440,9 +469,14 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
 /** The card's facts as lines of words, for where a card is read as text (the `approvals` tool, a stored summary). */
 export const factLines = (facts: readonly CardFact[]): string => facts.map(fact => fact.value.includes('\n') ? fact.label + ':\n' + fact.value.split('\n').map(line => '  ' + line).join('\n') : fact.label + ': ' + fact.value).join('\n');
 
+export function hasPlainProposal(card: Parameters<typeof storedProposal>[0]): boolean {
+  const kept = storedProposal(card);
+  return !!kept && !!proposalCard(kept.change, kept.input);
+}
+
 export function publicProposalTitle(card: { operation?: string | null; details: string; what: string }): string {
   const kept = storedProposal(card);
-  return kept ? (proposalCard(kept.change, kept.input)?.title ?? card.what).slice(0, 1500) : card.what.slice(0, 1500);
+  return clipProposalText((kept && proposalCard(kept.change, kept.input)?.title) ?? card.what, 240);
 }
 
 /** The change and input a stored household card keeps (its `details`), or nothing when it is not one. */
