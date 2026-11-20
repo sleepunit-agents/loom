@@ -30,17 +30,34 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   return threadFor(viewer);
  };
  const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-output');
+ const progressKey=(job:string,id:string)=>JSON.stringify([job,'progress',id]);
  const details={model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()};
  operations.register(operation({...common,name:'conversation.message',
   input:z.discriminatedUnion('kind',[
-   z.object({kind:z.enum(['reply','progress']),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
+   z.object({kind:z.literal('reply'),progressId:z.uuid().optional(),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
+   z.object({kind:z.literal('progress'),clientId:z.uuid(),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
    z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),...details}).strict(),
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   may:(viewer,input)=>common.may(viewer)&&(input.kind!=='progress'||maySendProgress?.(viewer)===true),
   async prepare(input,ctx){
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
-   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:kind==='progress'?'reply':kind,progress:kind==='progress',words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
+   if(kind==='reply'&&input.progressId){
+    if(before.cv.venue!=='loom'||clientId!==input.progressId)throw new OperationError('invalid','Invalid progress receipt');
+    const row=()=>db.select({seq:messages.seq,words:messages.words}).from(messages).where(and(
+     eq(messages.thread,before.thread.id),eq(messages.run,before.job.id),eq(messages.sender,before.cv.agent),
+     eq(messages.kind,'reply'),eq(messages.clientId,progressKey(before.job.id,clientId)))).get();
+    const saved=row();
+    if(!saved?.words||await service.key.open(saved.words)!==words)throw new OperationError('conflict','Progress message changed');
+    return ()=>{
+     const live=threadFor(ctx.viewer),again=row();
+     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.place!==before.cv.place||
+        live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||again?.seq!==saved.seq||
+        !again.words?.equals(saved.words!))throw new OperationError('conflict','Progress message changed');
+     return {seq:saved.seq};
+    };
+   }
+   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:kind==='progress'?'reply':kind,progress:kind==='progress',words,clientId:kind==='progress'?progressKey(before.job.id,clientId):before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
    return ()=>{
     const live=replyTarget(ctx.viewer,input.kind);
     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.id!==before.cv.id||live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||live.cv.agent!==before.cv.agent||live.cv.place!==before.cv.place)throw new OperationError('denied','Conversation changed');
@@ -50,6 +67,11 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   run(ctx,input,prepared){
    const found=replyTarget(ctx.viewer,input.kind),message=(prepared as ()=>{seq:number})();
    // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
+   if(input.kind==='reply'&&input.progressId&&!db.select({seq:turns.seq}).from(turns).where(and(
+     eq(turns.conversation,found.cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).get()){
+    service.threads.conversations.turn({conversation:found.cv.id,kind:'reply',fromKind:'agent',fromId:found.cv.agent,run:found.job.id,
+     model:input.model,outcome:input.outcome,latencyMs:input.latencyMs});
+   }
    if(input.kind==='reply')for(const id of new ConversationMail(service).settle(found.cv.id,found.job.id))ctx.changed('inbox',id);
    ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
  }));

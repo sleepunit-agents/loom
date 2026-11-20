@@ -15,6 +15,7 @@ export function mayUseHouseSend(denied:readonly string[]):boolean{
 }
 type SendPort={
   conversation:string;venue:string;denied:readonly string[];
+  accepted?(id:string,text:string):void;
   allowsCall(input:unknown):boolean;
   call(name:string,args:unknown,signal:AbortSignal):Promise<BodyProgramToolResult>;
 };
@@ -31,12 +32,15 @@ export async function houseSendRequest(port:SendPort,input:unknown,signal:AbortS
   };
   if(port.venue==='loom'&&intent.operation==='send'){
     const reply=await call('conversation.message',{kind:'progress',clientId:intent.id,words:intent.text},intent.id);
-    return {state:'recorded',seq:z.object({saved:z.literal(true),seq:z.number().int().positive()}).parse(reply).seq};
+    const {seq}=z.object({saved:z.literal(true),seq:z.number().int().positive()}).parse(reply);
+    port.accepted?.(intent.id,intent.text);
+    return {state:'recorded',seq};
   }
   if(port.venue!=='slack'&&port.venue!=='discord')throw Error('No current bridge');
   if(intent.operation==='send'){
     const queued=await call('bridges.say',{id:intent.id,text:intent.text},intent.id);
     z.object({saved:z.literal(true)}).parse(queued);
+    port.accepted?.(intent.id,intent.text);
   }
   return call('bridges.sendStatus',{id:intent.id},randomUUID());
 }

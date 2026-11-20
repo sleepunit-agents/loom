@@ -113,6 +113,7 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  await f.root.services.bridges.daemon!.idle();
  expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('done');
  expect(part).toBe(3);
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{run:'body',model:'observed'}]);
  const finalId=randomUUID();
  expect((await f.call('bridges','reply',{id:finalId,incoming:incoming.id,text:'Final',model:'observed'},token.body)).status).toBe(200);
  expect((await status(token.body,finalId)).status).toBe(404);

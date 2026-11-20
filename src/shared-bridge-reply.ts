@@ -91,7 +91,10 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    for(const item of db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.conversation,bound.conversation),eq(inbox.job,bound.job),eq(inbox.state,'taken'))).all()){
     conversations.confirm(item.id,bound.job);ctx.changed('inbox',item.id);
    }
-   if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
+   const completesProgress=existing&&db.select({id:bridgeSendJobs.send}).from(bridgeSendJobs).where(and(
+    eq(bridgeSendJobs.job,bound.job),eq(bridgeSendJobs.send,input.id))).get()&&!db.select({seq:turns.seq}).from(turns).where(and(
+    eq(turns.conversation,bound.conversation),eq(turns.run,bound.job),eq(turns.kind,'reply'))).get();
+   if(!existing||completesProgress){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
    if(current(ctx.viewer)?.cv.venue==='discord')replyJobs.set(input,bound.job);
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },

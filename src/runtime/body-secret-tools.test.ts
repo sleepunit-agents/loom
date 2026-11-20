@@ -74,7 +74,7 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
  vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
  const pipeBuffers:Buffer[]=[];
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
-  expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);expect(args).toContain('mcp__loom__use_secret');expect(options.env).toMatchObject({MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
+  expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);if(decision!=='allow')expect(args).toContain('mcp__loom__use_secret');expect(options.env).toMatchObject({MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
   let config:Record<string,{url:string;headers:Record<string,string>;timeout:number}>|undefined,words='',ended=false,started=false;
   const control=new Writable({write(bytes,_encoding,done){pipeBuffers.push(bytes);config=JSON.parse(bytes.toString()).mcpServers;expect(bytes.includes(Buffer.from(token))).toBe(false);done();}}),stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
@@ -87,19 +87,26 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
     const request=randomUUID();expect(JSON.parse(text(await protocol.callTool({name:'request_secret',arguments:{id:request,secret:'TOKEN',why:'Use it privately',minutes:5}}))).state).toBe('pending');
     const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}},undefined,{timeout:Number(options.env?.MCP_TOOL_TIMEOUT)});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
     const reply=decision==='leak-text'?privateValue:decision==='leak-base64'?Buffer.from(privateValue).toString('base64'):'Used the credential privately';
+    if(decision==='allow'){
+     const {houseRuntimeCli}=await import('../house-runtime-cli.js');
+     let out='';
+     expect(await houseRuntimeCli(['send','--conversation',f.thread.conversation,'--text',reply],{stdout:s=>{out+=s;},stderr(){}},options.env)).toBe(0);
+     expect(JSON.parse(out).recorded).toBe(true);
+    }
     const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:reply}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:reply}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
    }finally{await protocol.close();}
   })().catch(error=>{if(!killed){failure=error;child.emit('close',1);}}).finally(actorEnded);};
   control.once('finish',start);stdin.once('finish',()=>{ended=true;start();});return child;
  });
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}})),errors=vi.fn();
- const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account'},signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},error:errors});
+ const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house',reach:decision==='allow'?'all':'loom'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account',LOOM_BODY_OWN_HARNESS:'0'},signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},error:errors});
  expect(await Promise.race([waiting.then(()=>true),running.then(()=>false)])).toBe(true);expect(f.source).not.toHaveBeenCalled();
  if(decision!=='stop'){
   let published!:()=>void;const waitingStatus=new Promise<void>(resolve=>{published=resolve;}),unobserve=f.root.writes.observe(()=>{if(f.db.select().from(s.agentStatus).get()?.state==='waiting')published();});tick();await waitingStatus;unobserve();expect(f.db.select().from(s.threads).get()?.working).toBe(true);
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
  }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
  expect(await running).toBe(decision.startsWith('leak-')?14:decision==='stop'?10:0);await actorDone;if(failure)throw failure;expect(errors).toHaveBeenCalledTimes(decision.startsWith('leak-')?1:0);expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
+ if(decision==='allow')expect(f.db.select().from(s.messages).where(eq(s.messages.sender,'art')).all()).toHaveLength(1);
  if(decision!=='stop'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject(decision.startsWith('leak-')?[]:[{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);
   // The body leaves the Stop for loom to take when the worker next reports this job.
   expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);}

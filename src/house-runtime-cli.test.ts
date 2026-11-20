@@ -51,6 +51,13 @@ it('records a CLI update in its assigned Comms conversation and leaves the mail 
  expect((await execute('Denied after the room changed')).code).toBe(1);
  expect((await execute(text,ref)).code).toBe(1);
  f.root.writes.run(()=>f.db.delete(agentDeniedTools).where(eq(agentDeniedTools.agent,'art')).run());
+ const final={kind:'reply',progressId:ref,clientId:ref,words:text,model:'observed-final',outcome:'progressed'};
+ expect((await f.call('message',{...final,words:'Other words'},randomUUID())).status).toBe(409);
+ expect(f.db.select().from(inbox).get()?.state).toBe('taken');
+ for(let repeat=0;repeat<2;repeat++)expect((await f.call('message',final,'final:'+ref)).status).toBe(200);
+ expect(f.db.select().from(messages).all()).toHaveLength(2);
+ expect(f.db.select().from(inbox).get()?.state).toBe('done');
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed-final',run:'job'}]);
  f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'job')).run());
  expect((await execute(text,ref)).code).toBe(1);
 });
