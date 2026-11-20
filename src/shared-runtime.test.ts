@@ -772,6 +772,13 @@ it.each(['unchanged', 'changed', 'oversize', 'malformed', 'missing'] as const)('
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: valid ? 'done' : 'failed', logTail: null });
   const measured = f.db.select().from(jobUsage).where(eq(jobUsage.job, job.id)).get();
   expect(measured).toMatchObject(evidence === 'missing' ? { source: 'none', tokensIn: null } : usage);
+  if (evidence === 'oversize') {
+    const receipt = f.db.select().from(operationResults).where(eq(operationResults.operation, 'runtime.finish')).get()!;
+    const digest = createHash('sha256').update(report.reply, 'utf16le').digest('hex');
+    const literal = { ...report, reply: 'Unusable reviewer reply SHA-256: ' + digest };
+    const input = { job: job.id, exitCode: 0, logTail: '', exitBy: 'runner', coldReview: literal };
+    expect((await f.call('finish', input, receipt.id)).status).toBe(409);
+  }
   if (!valid) expect(store.history(row.id)[0].findings).not.toContain('unhandled case');
 });
 
