@@ -1,3 +1,4 @@
+import { wakeSource } from '../core/tempo/wake-sources.js';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
@@ -246,8 +247,8 @@ export class Jobs {
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
-        // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', prefers, brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff').map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        // No private conversation, encrypted brief or wake note is copied into the job.
+        state: 'queued', prefers, brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff' && !(item.source === 'notice' && item.fromKind === 'schedule' && item.sourceId?.startsWith('wake-'))).map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
@@ -535,6 +536,7 @@ export class Jobs {
     // The last reported agent state stays.
     if (job.conversation && jobUnended(job.state)) this.db.update(threads)
       .set({ working: false, workingSince: null, workingBeat: null, stopRequested: false }).where(eq(threads.conversation, job.conversation)).run();
+    wakeSource(this.db, { kind: 'job', id: ended.id });
     return ended;
   }
 }

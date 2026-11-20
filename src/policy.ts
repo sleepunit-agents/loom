@@ -55,7 +55,7 @@ export type TableWithRule = 'tasks' | 'taskComments' | 'taskLinks' | 'projects' 
   | 'agents' | 'agentStatus' | 'agentPauses' | 'agentModels' | 'agentRunSettings' | 'agentBoxes' | 'agentHousePorts' | 'agentHouseSecrets' | 'agentPeople' | 'agentDeniedTools'
   | 'members' | 'memberAgents' | 'memberPreferences'
   | 'approvals' | 'approvalRecord' | 'approvalNotices' | 'approvalRules' | 'changeSync' | 'changes' | 'changeChecks' | 'changePeople' | 'changeTasks'
-  | 'conversations' | 'conversationPeople' | 'turns' | 'digests' | 'conversationDays' | 'findings' | 'digestItems' | 'jobs' | 'inbox'
+  | 'conversations' | 'wakes' | 'conversationPeople' | 'turns' | 'digests' | 'conversationDays' | 'findings' | 'digestItems' | 'jobs' | 'inbox'
   | 'bridgeConnections' | 'bridgeChannelFilters' | 'bridgeChannels' | 'bridgePeople' | 'bridgeIncoming' | 'bridgeSends'
   | 'secrets' | 'secretGrants' | 'secretRequests' | 'secretRules' | 'secretRuleAgents' | 'secretUses' | 'secretChanges'
   | 'triggers' | 'triggerEdits' | 'triggerLog' | 'boxes' | 'boxAgents' | 'boxFacts' | 'timingDays' | 'measuringSettings';
@@ -314,6 +314,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   changePeople: seenWith('changes', 'change'),
   changeTasks: all(seenWith('changes', 'change'), seenWith('tasks', 'task')),
   conversations: conversation,
+  wakes: seenWith('conversations', 'conversation'),
   conversationPeople: seenWith('conversations', 'conversation'),
   turns: seenWith('conversations', 'conversation'),
   digests: seenWith('conversations', 'conversation'),

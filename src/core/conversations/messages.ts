@@ -1,3 +1,4 @@
+import { wakeSource } from '../tempo/wake-sources.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
@@ -214,8 +215,10 @@ export class CommsMessages {
       this.attach(row, mail);
       const at = this.now();
       inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
-      return this.db.update(inbox).set({ state: 'answered', answer, answerText: null, answeredBy: member, answeredAt: at, changedAt: at })
+      const answered = this.db.update(inbox).set({ state: 'answered', answer, answerText: null, answeredBy: member, answeredAt: at, changedAt: at })
         .where(eq(inbox.id, item.id)).returning().get()!;
+      wakeSource(this.db, { kind: 'question', id: item.id });
+      return answered;
     });
   }
 
@@ -235,7 +238,9 @@ export class CommsMessages {
       cvs.send({conversation:cv.id,toKind:'agent',to:cv.agent,source:'answer',sourceId:item.id,fromKind:'person',fromId:member,words,refs:[item.id,...refsIn(text??'')]});
       cvs.turn({conversation:cv.id,kind:'message',fromKind:'person',fromId:member});
       inboxContentChanged(this.db,{kind:item.toKind,id:item.to},item.id);
-      return this.db.update(inbox).set({state:'answered',answer,answerText:null,answeredBy:member,answeredAt:at,changedAt:at}).where(eq(inbox.id,item.id)).returning().get()!;
+      const answered = this.db.update(inbox).set({state:'answered',answer,answerText:null,answeredBy:member,answeredAt:at,changedAt:at}).where(eq(inbox.id,item.id)).returning().get()!;
+      wakeSource(this.db, { kind: 'question', id: item.id });
+      return answered;
     });
   }
 

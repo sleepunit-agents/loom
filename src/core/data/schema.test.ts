@@ -30,7 +30,7 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(85);
+    expect(Object.keys(expected)).toHaveLength(86);
     const columnsOf = (table: Parameters<typeof getTableColumns>[0]) => Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton');
     const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), columnsOf(table)]));
     // The schema keeps these three with its plumbing; the approved model describes each column by column.

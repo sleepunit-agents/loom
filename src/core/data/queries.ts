@@ -147,11 +147,18 @@ export function dataQueries(client: Database.Database, options: {
     const type = generated.getType(name);
     if (isInputObjectType(type)) for (const key of programColumns) delete type.getFields()[key];
   }
+  // Wake notes are delivered to the body as mail or returned by its waits command.
+  const wakeColumns = ['note', 'baseline', 'reading', 'onWord'];
+  if (selected.has('wakes')) for (const name of ['WakesOrderBy', 'WakesFilters', 'WakesFiltersOr']) {
+    const type = generated.getType(name);
+    if (isInputObjectType(type)) for (const key of wakeColumns) delete type.getFields()[key];
+  }
   const visited = new Set<object>();
   function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'wakes') for (const key of wakeColumns) delete fields[key];
     if (name === 'triggers') for (const key of programColumns) delete fields[key];
     // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
     if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings' || name === 'boxes') {

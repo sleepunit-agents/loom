@@ -369,6 +369,33 @@ export const conversations = sqliteTable('conversations', {
   index('conversations_agent_last_at_idx').on(t.agent, t.lastAt),
 ]);
 
+/** A one-shot watch whose audience is its conversation. */
+export const wakes = sqliteTable('wakes', {
+  id: text('id').primaryKey().notNull(),
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  conversation: text('conversation').notNull().references((): AnySQLiteColumn => conversations.id),
+  job: text('job').notNull().references((): AnySQLiteColumn => jobs.id),
+  onWord: text('on_word', { mode: 'json' }).$type<{ kind: 'member' | 'outside' | 'agent'; id: string }>().notNull(),
+  kind: text('kind', { enum: ['change', 'job', 'approval', 'question', 'time'] }).notNull(),
+  key: text('key').notNull(),
+  condition: text('condition', { enum: ['changed', 'checks-finished', 'checks-failed', 'review', 'merged-or-closed'] }),
+  note: text('note'),
+  baseline: text('baseline'),
+  reading: text('reading'),
+  state: text('state', { enum: ['waiting', 'fired', 'ended'] }).notNull(),
+  askedAt: text('asked_at').notNull(),
+  endedAt: text('ended_at'),
+  why: text('why'),
+}, t => [
+  check('wakes_kind_choice', sql`${t.kind} in ('change', 'job', 'approval', 'question', 'time')`),
+  check('wakes_state_choice', sql`${t.state} in ('waiting', 'fired', 'ended')`),
+  check('wakes_asked_at_utc', utc(t.askedAt)),
+  check('wakes_ended_at_utc', utc(t.endedAt)),
+  index('wakes_source_idx').on(t.state, t.kind, t.key),
+  index('wakes_conversation_idx').on(t.conversation, t.state),
+  index('wakes_agent_idx').on(t.agent, t.state),
+]);
+
 /** Who has spoken in a conversation. */
 export const conversationPeople = sqliteTable('conversation_people', {
   conversation: text('conversation').notNull().references((): AnySQLiteColumn => conversations.id),
@@ -2194,6 +2221,7 @@ export const tables = {
   taskComments,
   conversations,
   conversationPeople,
+  wakes,
   turns,
   digests,
   digestItems,

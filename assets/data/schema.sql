@@ -339,6 +339,34 @@ CREATE TABLE `conversation_people` (
 	CONSTRAINT "conversation_people_who_kind_choice" CHECK("conversation_people"."who_kind" in ('person', 'agent'))
 );
 
+CREATE TABLE `wakes` (
+	`id` text PRIMARY KEY NOT NULL,
+	`agent` text NOT NULL,
+	`conversation` text NOT NULL,
+	`job` text NOT NULL,
+	`on_word` text NOT NULL,
+	`kind` text NOT NULL,
+	`key` text NOT NULL,
+	`condition` text,
+	`note` text,
+	`baseline` text,
+	`reading` text,
+	`state` text NOT NULL,
+	`asked_at` text NOT NULL,
+	`ended_at` text,
+	`why` text,
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "wakes_kind_choice" CHECK("wakes"."kind" in ('change', 'job', 'approval', 'question', 'time')),
+	CONSTRAINT "wakes_state_choice" CHECK("wakes"."state" in ('waiting', 'fired', 'ended')),
+	CONSTRAINT "wakes_asked_at_utc" CHECK("wakes"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "wakes"."asked_at") = "wakes"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "wakes"."asked_at") = "wakes"."asked_at", 0)),
+	CONSTRAINT "wakes_ended_at_utc" CHECK("wakes"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "wakes"."ended_at") = "wakes"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "wakes"."ended_at") = "wakes"."ended_at", 0))
+);
+
+CREATE INDEX `wakes_source_idx` ON `wakes` (`state`,`kind`,`key`);
+CREATE INDEX `wakes_conversation_idx` ON `wakes` (`conversation`,`state`);
+CREATE INDEX `wakes_agent_idx` ON `wakes` (`agent`,`state`);
 CREATE TABLE `turns` (
 	`conversation` text NOT NULL,
 	`seq` integer NOT NULL,

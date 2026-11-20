@@ -5,7 +5,7 @@ import {githubReader} from './pieces/changes/github.js';
 import {githubSecrets} from './pieces/changes/secrets.js';
 import type {SecretValueSource} from './pieces/secrets/role.js';
 import {secretValueSize} from './pieces/secrets/input.js';
-export function sharedChangesReader(options:{source:SecretValueSource;bindings:Readonly<Record<string,string>>;request?:typeof fetch}){
+export function sharedChangesReader(options:{source:SecretValueSource;bindings:Readonly<Record<string,string>>;request?:typeof fetch}, exactRepository = false){
  const secrets=githubSecrets({async withValue(name,use){
   let bytes:Uint8Array|undefined;
   try{
@@ -17,5 +17,5 @@ export function sharedChangesReader(options:{source:SecretValueSource;bindings:R
   }catch{throw new Error('GitHub credential unavailable');}
   finally{bytes?.fill(0);}
  }},options.bindings);
- return githubReader(secrets,options.request);
+ return githubReader(secrets,options.request,exactRepository);
 }

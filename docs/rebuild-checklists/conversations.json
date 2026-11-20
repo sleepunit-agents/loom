@@ -2,7 +2,7 @@
   "page": "conversations",
   "title": "Conversations",
   "ownerTask": "t-2237",
-  "sourceSha256": "b002b41f15cc315b9e881378466385fb35db303107c9a0246d5090dd2f452dde",
+  "sourceSha256": "d22446a846405bc0a71704048ab65018b5a7a5419ba5a54bd967d174fafa19c4",
   "promises": [
     {
       "id": "conversations-001",
@@ -272,6 +272,7 @@
     "conversations",
     "conversation_people",
     "turns",
+    "wakes",
     "inbox",
     "digests",
     "digest_items",

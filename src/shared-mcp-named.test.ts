@@ -38,7 +38,7 @@ it('lists the names a terminal session already calls',async()=>{
  try{
   expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
-    'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
+    'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','wake_me_when','waits','wake_cancel','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
 });
 

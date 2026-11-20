@@ -1,3 +1,4 @@
+import { installWakes } from './shared-wake.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
 import type {EmbeddingProvider} from './backends/types.js';
 import {sharedMcpRequest} from './shared-mcp.js';
@@ -204,7 +205,16 @@ export function sharedRoot(options: {
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records,viewer=>{const work=bodyJob(viewer);return !work || !jobHeld(db,work.job);}, viewer => mayReadProgramWork(db, viewer, bodyJob(viewer)?.job));
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
-  const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
+  let wakeWatches: ReturnType<typeof installWakes> | undefined;
+  const sweepWakes = () => {
+    if (!wakeWatches) return;
+    for (const error of data.writes.run(wakeWatches.sweep).notificationErrors) report(error);
+  };
+  const operations = new Operations(db.$client, clock, changes => {
+    if (changes.some(change => change.type === 'agentPauses')) sweepWakes();
+    memorySignals?.changed();
+    options.changed?.(changes);
+  }, {
     receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.allows, receiptScope:credentials.receiptScope,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
@@ -251,7 +261,7 @@ export function sharedRoot(options: {
       if (meter?.enabled()) meter.run('job', name, work); else work();
     }),
   });
-  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: () => { accountSignIns.expire(); expireTerminalSessions(db, now()); sweepWakes(); }, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
@@ -371,6 +381,9 @@ export function sharedRoot(options: {
 
   startupCleanups.push(()=>commsLifetime?.close());
 
+  const pullReader = options.changes && ('read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github, true));
+  wakeWatches = installWakes(db, clock, operations, services.conversations, bodyScope, pullReader);
+  startupCleanups.push(wakeWatches.close);
   const settingsBinding = sharedTempoSettings(bodyScope);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
@@ -505,6 +518,7 @@ export function sharedRoot(options: {
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
       void Promise.allSettled([stopped, pushesStopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+        wakeWatches?.close();
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

@@ -1,3 +1,4 @@
+import { wakeSource } from '../core/tempo/wake-sources.js';
 /** Trusted household membership and agent appearance over the shared schema. */
 import { HH_MM } from '../core/tempo/calendar.js';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -96,6 +97,7 @@ export function householdService(db: DataDatabase, now: () => string) {
         // A removed agent never runs, so messages to it would arrive for nobody: its connections are switched
         // off with it. They stay its own, and stay off after a restore until someone turns them on.
         if (of === 'agent' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(and(eq(bridgeConnections.agent, id), eq(bridgeConnections.enabled, true))).run();
+        if (removed && (of === 'agent' || of === 'member')) wakeSource(db, { kind: of === 'agent' ? 'agent-removed' : 'member-removed', id });
         return { id };
       });
     },

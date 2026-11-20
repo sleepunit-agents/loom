@@ -1,3 +1,4 @@
+import { storedWatch, waitingOn } from '../core/tempo/wake.js';
 /** Home's current-job projection, and what each agent is doing. The outside composition supplies its current
  * SQL policy for jobs and for what a job is said by (conversations, machines, triggers, tasks); this module never invents sharing rules or reads credentials. */
 import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
@@ -5,7 +6,7 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { alias } from 'drizzle-orm/sqlite-core';
-import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
+import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers, wakes } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { TASK_ID } from '../slug.js';
 import { jobClaimed, unendedJobStates } from '../core/data/job-states.js';
@@ -30,7 +31,7 @@ export function nextTerminalDeadline(db: DataDatabase, now: number) {
  * a hand-off taken from another agent, a trigger's firing, a wake with no trigger to name, a task in progress,
  * a job that is none of these, or `private`: a job in a conversation this viewer may not read, which carries
  * nothing of that conversation (no venue, place, person, title or link). */
-export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private';
+export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'waiting' | 'task' | 'job' | 'private';
 export interface Doing {
   /** The job's id, or the task's. */
   id: string; kind: DoingKind;
@@ -63,7 +64,7 @@ export const doingCap = 8, doingMost = 100;
  * a link, a move), and at most this many do; the rest are counted (`claimed`). */
 export const taskRecentMs = 8 * 3_600_000, taskPills = 3;
 /** Things a person is in come first, then what a schedule or another agent started and plain jobs, then tasks. */
-const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, job: 1, task: 2 };
+const doingRank: Record<DoingKind, number> = { terminal: 0, discord: 0, slack: 0, loom: 0, private: 0, handoff: 1, trigger: 1, wake: 1, waiting: 3, job: 1, task: 2 };
 const threadPath = (place: string) => `/p/comms-preview/thread/${encodeURIComponent(place.replace(/^th:/, ''))}`;
 const conversationPath = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
 /** As web/src/pieces/tasks/route.ts writes a task's segment: a current id as it is, an imported one marked. */
@@ -96,7 +97,7 @@ export class JobSummaries {
         or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
       .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
   }
-  private rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
+  private rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers' | 'wakes') {
     const rule = this.visibility()[name];
     if (typeof rule !== 'function') throw new Error(`SQL visibility required for ${name}`);
     // A rule that answered with nothing would be dropped from the join it guards, leaving it open: refuse, as allowed() does.
@@ -117,9 +118,9 @@ export class JobSummaries {
    * machine's name is joined under the machines rule, the agent a hand-off came from under the jobs rule
    * (the job it was handed from), a trigger's note under the triggers rule, a task under the tasks rule.
    *
-   * Four statements at most, whatever the number of rows: jobs with their conversations and machines,
+   * Five statements at most, whatever the number of rows: jobs with their conversations and machines,
    * triggers (only when a visible wake names one), the count of tasks in progress, and (only when there
-   * are any) the few tasks that may be said. */
+   * are any) the few tasks that may be said, and visible waiting wakes. */
   doing(agent: string, limit = doingCap): { items: Doing[]; more: number; claimed: number } {
     if (!Number.isInteger(limit) || limit < 1 || limit > doingMost) throw new Error(`Doing limit must be 1–${doingMost}`);
     const allowed = this.allowed(), from = alias(jobs, 'doing_handed_from');
@@ -198,8 +199,12 @@ export class JobSummaries {
     });
     for (const task of working) items.push({ ...none, id: task.id, kind: 'task', title: task.title, ref: task.id, machine: null,
       since: task.changedAt, state: 'in_progress', href: taskPath(task.id) });
+    const waiting = this.db.select({ id: wakes.id, kind: wakes.kind, key: wakes.key, condition: wakes.condition, askedAt: wakes.askedAt }).from(wakes)
+      .where(and(this.rule('wakes')(getTableColumns(wakes)), eq(wakes.agent, agent), eq(wakes.state, 'waiting'))).all();
+    for (const wake of waiting) items.push({ ...none, id: wake.id, kind: 'waiting', machine: null,
+      title: waitingOn(storedWatch(wake.kind, wake.key), wake.condition ?? undefined), since: wake.askedAt, state: 'waiting' });
     // Jobs nothing has been heard from go last, whatever they are.
-    const rank = (item: Doing) => item.quietSince ? 3 : doingRank[item.kind];
+    const rank = (item: Doing) => item.quietSince ? 4 : doingRank[item.kind];
     items.sort((a, b) => rank(a) - rank(b) || b.since.localeCompare(a.since) || a.id.localeCompare(b.id));
     // `more` is what the cap cut; `claimed` is the in-progress tasks that are no pill and are named in none.
     return { items: items.slice(0, limit), more: Math.max(0, items.length - limit), claimed: inProgress - said.size - working.length };

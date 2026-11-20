@@ -17,7 +17,7 @@ import { QUEUE_DEADLINE_MS } from './jobs.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const c of clients.splice(0)) c.close(); });
 const at = '2026-11-19T18:00:00.000Z', hour = (n: number) => `2026-11-19T${String(n).padStart(2, '0')}:00:00.000Z`;
-const guarded = ['jobs', 'conversations', 'boxes', 'tasks', 'triggers'] as const;
+const guarded = ['jobs', 'conversations', 'boxes', 'tasks', 'triggers', 'wakes'] as const;
 /** The household: `house` runs it, `alex` has Art on their list, `bo` is on the pond project with Art. */
 function household() {
   const client = new Database(':memory:'); clients.push(client);
@@ -203,7 +203,7 @@ it('names a trigger, a task and a machine each under its own rule', () => {
   expect(h.as(house).doing('art').items.map(item => item.id)).toEqual(['t-7', 't-8']);
 });
 
-it('refuses to read without a rule for every source, and reads in four statements at most however many rows there are', async () => {
+it('refuses to read without a rule for every source, and reads in five statements at most however many rows there are', async () => {
   const h = busy();
   for (const missing of guarded) {
     const rules = { ...sqlVisibility(alex, guarded) } as QueryVisibility; delete rules[missing];
@@ -217,11 +217,11 @@ it('refuses to read without a rule for every source, and reads in four statement
   const statements: string[] = [], prepare = h.client.prepare.bind(h.client);
   h.client.prepare = ((source: string) => { statements.push(source); return prepare(source); }) as typeof h.client.prepare;
   h.as(alex).doing('art');
-  expect(statements.map(source => /from "(\w+)"/.exec(source)?.[1])).toEqual(['jobs', 'triggers', 'tasks', 'tasks']);
+  expect(statements.map(source => /from "(\w+)"/.exec(source)?.[1])).toEqual(['jobs', 'triggers', 'tasks', 'tasks', 'wakes']);
   statements.length = 0; h.db.delete(jobs).where(sql`${jobs.conversation} in ('cv-night','cv-program','cv-sweep')`).run(); statements.length = 0;
-  h.as(alex).doing('art'); expect(statements).toHaveLength(3);
+  h.as(alex).doing('art'); expect(statements).toHaveLength(4);
   // With no task in progress the count is the only read of tasks.
-  statements.length = 0; h.db.delete(tasks).run(); statements.length = 0; h.as(alex).doing('art'); expect(statements).toHaveLength(2);
+  statements.length = 0; h.db.delete(tasks).run(); statements.length = 0; h.as(alex).doing('art'); expect(statements).toHaveLength(3);
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(h.as(house)) }) });
   const result = await graphql({ schema, source: '{ agentDoing(agent:"art") { more items { id kind title with place direct ref task quietSince machine since state href } claimed } }' });
   expect(result.errors).toBeUndefined();

@@ -41,3 +41,13 @@ it('never exposes holder failures, invalid bytes, missing binding or an upstream
 it('validates configured bindings at startup',()=>{
  expect(()=>sharedChangesReader({source:{read:vi.fn()},bindings:{'bad/owner':'forge'}})).toThrow();
 });
+
+it('refuses a repository redirect before returning any wake baseline', async () => {
+ const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+  expect(JSON.parse(String(init?.body)).query).toContain('nameWithOwner');
+  return Response.json({ data: { repository: { nameWithOwner: 'renamed/app', pullRequests: { nodes: [raw], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+ });
+ const read = sharedChangesReader({ source: { read: async () => Buffer.from('SYNTHETIC_TOKEN') }, bindings: { acme: 'forge' }, request: fetcher }, true);
+ await expect(read('acme/app', Date.parse('2026-11-05T12:00:00Z'))).rejects.toThrow('GitHub read unavailable');
+ expect(fetcher).toHaveBeenCalledTimes(1);
+});

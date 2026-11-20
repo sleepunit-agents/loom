@@ -3,7 +3,7 @@
 import type { Viewer } from '../../policy.js';
 import { sqlVisibility } from '../../policy-sql.js';
 import type { QueryVisibility } from './queries.js';
-export const conversationTables = ['conversations','conversationPeople','turns','digests','digestItems','conversationDays','findings'] as const;
+export const conversationTables = ['conversations','wakes','conversationPeople','turns','digests','digestItems','conversationDays','findings'] as const;
 export function conversationVisibility(viewer: Viewer): QueryVisibility {
  return sqlVisibility(viewer, conversationTables);
 }

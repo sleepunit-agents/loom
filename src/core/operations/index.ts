@@ -56,6 +56,9 @@ export interface Operation<I = unknown> {
   name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
+  /** Trusted credential provenance for an operation whose receipts have a narrower audience.
+   * Refuse an unbound caller before reading a receipt. */
+  receiptPartition?(viewer: Viewer): string | undefined;
   /** Private pieces key retry fingerprints so exported receipts cannot test guessed words.
    * actor retains the exact authenticated Viewer for trusted in-process scope readers. */
   inputHash?(canonicalInput: string, identity: Readonly<{viewer: string; actor: Viewer; input: I; id?: string; name: string}>): string;
@@ -97,7 +100,7 @@ function canonical(value: unknown): string {
 }
 /** A receipt is kept by who the credential is: its kind and id. What a door wrote on the viewer for the
  * rules to read (the member a body works for) is not part of the key, so a retry still finds its receipt;
- * an operation that must not replay across such a change binds it through inputHash. */
+ * an operation may bind that provenance through inputHash or select a narrower receipt partition. */
 function callerKey(viewer: Viewer): string {
   return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical({ kind: viewer.kind, id: viewer.id });
 }
@@ -296,7 +299,9 @@ export class Operations {
         // checked once, below.
         const recheck = typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy !== false;
         if ((op.windowOnly || op.write && recheck) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
-        const who = callerKey(viewer);
+        const principal = callerKey(viewer);
+        const partition = op.receiptPartition?.(viewer);
+        const who = partition === undefined ? principal : canonical([principal, name, partition]);
         const fingerprint = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         // Keep the canonical principal for existing durable recovery journals.
         // A reused ID from another program/token conflicts before result replay.

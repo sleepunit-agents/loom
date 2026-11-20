@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import { claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
+import { busyCount, claimedPath, Doing, doingMeta, doingPhrase, doingReading, sinceWord, type DoingItem, type DoingReading } from './doing';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Node = { children: Array<Node | string>; props: Record<string, any>; type: unknown };
 const item = (kind: string, fields: Partial<DoingItem> = {}): DoingItem => ({ id: `id-${kind}`, kind, title: null, with: null, place: null, direct: null, ref: null,
@@ -34,6 +34,7 @@ it.each([
   ['Taking a hand-off · Check the pump', item('handoff', { title: 'Check the pump' })],
   ['On a wake · The sweep', item('wake', { title: 'The sweep' })],
   ['On a wake', item('wake')],
+  ['Waiting on checks on acme/app#3', item('waiting', { title: 'checks on acme/app#3' })],
   ['Rebuild the index', item('job', { title: 'Rebuild the index' })],
   ['Running a job', item('something-new')],
   ['In a private conversation', item('private')],
@@ -102,4 +103,11 @@ it('says the tasks an agent has only claimed in one quiet line under the pills, 
   expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
   await act(async () => tree!.update(h(Doing, { doing: live([item('job')], 0, 54), name: 'Art', agent: 'art', go, compact: true })));
   expect(tree!.root.findAllByProps({ className: 'desk-doing-claimed' })).toHaveLength(0);
+});
+
+it('renders a pending wake without counting it as active work', async () => {
+  const wait = item('waiting', { title: 'checks on acme/app#3', state: 'waiting' });
+  await draw(live([wait]));
+  expect(words(tree!.toJSON() as Node)).toContain('Waiting on checks on acme/app#3');
+  expect(busyCount([wait])).toBe(0);
 });

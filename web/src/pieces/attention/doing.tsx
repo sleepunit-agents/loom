@@ -4,7 +4,7 @@ import './doing.css';
 
 /** What an agent is doing now, as the server says it (src/runtime/job-summary.ts, `doing`): the parts of a
  * phrase, each already limited to what this viewer may read. The words are put together here and nowhere else. */
-export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'task' | 'job' | 'private';
+export type DoingKind = 'terminal' | 'discord' | 'slack' | 'loom' | 'handoff' | 'trigger' | 'wake' | 'waiting' | 'task' | 'job' | 'private';
 export interface DoingItem {
   id: string; kind: DoingKind | string; title: string | null; with: string | null; place: string | null;
   direct: 'person' | 'group' | string | null; ref: string | null; machine: string | null; since: string; state: string; href: string | null;
@@ -40,6 +40,8 @@ export function WithDoing({ agent, onChange, children }: { agent: string; onChan
   return <>{children(doing)}</>;
 }
 
+export const busyCount = (items: readonly DoingItem[]): number => items.filter(item => item.kind !== 'waiting').length;
+
 const venues: Record<string, string> = { discord: 'Discord', slack: 'Slack' };
 const fallbackName = (id: string) => id ? id[0].toUpperCase() + id.slice(1) : id;
 /** The sentence for one thing, from its parts. `name` gives a display name for a member's or an agent's id. */
@@ -57,13 +59,14 @@ export function doingPhrase(item: DoingItem, name: (id: string) => string = fall
     case 'handoff': return [who ? `Taking a hand-off from ${who}` : 'Taking a hand-off', item.title].filter(Boolean).join(' · ');
     case 'trigger': return item.title ? `Running ${item.title}` : 'Running a trigger';
     case 'wake': return item.title ? `On a wake · ${item.title}` : 'On a wake';
+    case 'waiting': return `Waiting on ${item.title}`;
     case 'task': return [`Working on ${item.title || 'a task'}`, item.ref].filter(Boolean).join(' · ');
     case 'private': return 'In a private conversation';
     default: return item.title || 'Running a job';
   }
 }
 /** A two-letter mark per kind: drawn in mono, so every look has it and it reads at a pill's size. */
-const marks: Record<string, string> = { terminal: '>_', discord: 'DC', slack: 'SL', loom: 'LM', handoff: 'HO', trigger: 'TP', wake: 'WK', task: 'TK', job: 'JB', private: '··' };
+const marks: Record<string, string> = { terminal: '>_', discord: 'DC', slack: 'SL', loom: 'LM', handoff: 'HO', trigger: 'TP', wake: 'WK', waiting: 'WK', task: 'TK', job: 'JB', private: '··' };
 const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' });
 const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
 /** "2:15 PM" today, "Nov 18, 2:15 PM" before. */

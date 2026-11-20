@@ -1,3 +1,4 @@
+import { wakeConditions, wakeInput } from './core/tempo/wake.js';
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
@@ -359,6 +360,15 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
    return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words??'(no words kept)')+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
   });
+ tool('wake_me_when', 'Ask loom to do the waiting. Only a runtime body can ask. The next job receives the wake in this conversation, on the same asker’s word. The wait ends if the conversation closes or access is lost. Watch github:owner/repo#12 in this conversation’s project (when: '+wakeConditions.join(', ')+', default changed), job:<id> in this conversation or started by this body, approval:<id> or question:<id> filed here, or at:<time with offset> or in:<minutes> up to 14 days less an hour away. Waits last up to 14 days. An optional plain-text note comes back with the wake.',
+  wakeInput, async input => 'Waiting. ID: '+((await run('tempo.wake', input)) as {id:string}).id);
+ tool('waits', 'List waiting wakes and their notes in this runtime body’s own conversation.', z.object({}).strict(), async input => {
+  const rows = (await run('tempo.waits', input)) as {id:string;what:string;note:string|null}[];
+  // Indented code blocks keep subjects and notes plain, including embedded newlines.
+  return rows.length ? rows.map(row => [row.id+' · '+row.what, row.note].filter(Boolean).join('\n').split(/\r\n?|\n/).map(line => '    '+line).join('\n')).join('\n\n') : 'You are waiting on nothing.';
+ });
+ tool('wake_cancel', 'Cancel a waiting wake in this runtime body’s own conversation.', z.object({id:z.string().min(1).max(200)}).strict(),
+  async input => { await run('tempo.wakeCancel', input); return 'Cancelled.'; });
 }
 interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}
 interface PersonCard{slug:string;name:string;updated:string;card:{summary:string|null;where:{key:string;label:string|null;source:string|null;verified_at:string|null;value:CardValue|null}[]|null;how:{key:string;value:CardValue|null}[]|null;may:{text:string;source:string}[]|null}|null}

@@ -5,7 +5,7 @@ import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { agentPath, type AgentStatus } from './home-model';
-import { Doing, WithDoing, useDoing } from './doing';
+import { Doing, WithDoing, useDoing, busyCount } from './doing';
 import { HomeTalk, useCardTalk } from './talk';
 import { HomeComposer, useHomeComms, threadPath } from './home-comms';
 import type { Summaries } from './home-comms-data';
@@ -26,13 +26,13 @@ function HomeCard({ agent, names, needs, state, display, conversations, go, solo
   agent: Agent; names: ReadonlyMap<string,string>; needs?: number; state?: AgentStatus['state'];
   display: Parameters<typeof AgentFace>[0]['display']; conversations?: Summaries; go(path:string): void; solo?: boolean;
 }) {
-  const doing = useDoing(agent.id, solo), talk = useCardTalk(agent.id, solo ? 6 : 3), count = doing.items.length;
+  const doing = useDoing(agent.id, solo), talk = useCardTalk(agent.id, solo ? 6 : 3), count = busyCount(doing.items);
   const page = agentPath(agent.id), summary = conversations?.summaries.find(s=>s.agent===agent.id);
   const open = (event: MouseEvent) => { if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return; event.preventDefault(); go(page); };
   if (solo) return <AgentDesk agent={agent} display={display} state={shownState(state, count)} needs={needs} open={open}>
     <section className="desk-solo-now" aria-label="Right now">
       <h3>Right now</h3>
-      <Doing doing={{ ...doing, items: doing.items.slice(0, 12), more: doing.more + Math.max(0, count - 12) }}
+      <Doing doing={{ ...doing, items: doing.items.slice(0, 12), more: doing.more + Math.max(0, doing.items.length - 12) }}
         name={agent.name} agent={agent.id} names={names} go={go} />
     </section>
     <section className="desk-solo-talk" aria-label="Talk">
@@ -108,7 +108,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               const summary=conversations?.summaries.find(s=>s.agent===agent.id);
               const unread=summary?.unread??0, thread=summary?.first??summary?.last;
               return <WithDoing key={agent.id} agent={agent.id}>{doing=>{
-                const count=doing.items.length, state=shownState(status?.state,count), word=agentStateLine(status?.state,count,needs);
+                const count=busyCount(doing.items), state=shownState(status?.state,count), word=agentStateLine(status?.state,count,needs);
                 return <section className="desk-home-compact" data-agent={agent.id} aria-label={`${agent.name} card`}>
                 <Row aria-label={`Open ${agent.name} conversation`} title={agent.name} meta={word}
                   icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,!!first)} size={32}/>}

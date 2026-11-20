@@ -23,7 +23,7 @@ export const repoId = (raw: string): string => {
 };
 const stamp = z.string().nullable();
 export const changeSchema = z.object({
-  id: z.string(), repo: z.string(), number: z.number().int().positive(), page: z.string(), title: z.string(), url: z.string(),
+  id: z.string(), repo: z.string(), sourceRepository: z.string().optional(), number: z.number().int().positive(), page: z.string(), title: z.string(), url: z.string(),
   state: z.enum(changes.state.enumValues), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
   created: stamp, updated: stamp, closed: stamp,
   head: z.object({ ref: z.string(), id: z.string() }), base: z.object({ ref: z.string() }), body: z.string(),

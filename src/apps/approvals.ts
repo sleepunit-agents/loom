@@ -1,3 +1,4 @@
+import { wakeSource } from '../core/tempo/wake-sources.js';
 import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
@@ -94,6 +95,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           record(row, 'use', row.operation);
         }
         answer(row, member, true);
+        wakeSource(db, { kind: 'approval', id });
         return get(id);
       });
     },
@@ -109,6 +111,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           record(previous, 'deny', `Overridden by ${id}`);
         }
         answer(row, member, false);
+        wakeSource(db, { kind: 'approval', id });
         return get(id);
       });
     },

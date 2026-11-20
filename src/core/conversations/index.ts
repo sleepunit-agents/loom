@@ -1,3 +1,4 @@
+import { wakeSource } from '../tempo/wake-sources.js';
 import {handoffEnvelope} from './handoff-words.js';
 import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words.js';
 /** The trusted conversation service. External callers enter through the data API;
@@ -208,6 +209,7 @@ export class Conversations {
           words: [words?.trim() || answer, item.words, outcome].filter(Boolean).join('\n'), refs: [item.id] });
         this.turn({ conversation: conversation.id, kind: 'message', fromKind: 'person', fromId: member });
       }
+      wakeSource(this.db, { kind: 'question', id: itemId });
       return updated;
     });
   }

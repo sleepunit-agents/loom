@@ -355,6 +355,7 @@ def conversations():
 
     groups = [
         ("The conversation", ["conversations", "conversation_people", "turns"]),
+        ("Waiting", ["wakes"]),
         ("The inbox", ["inbox"]),
         ("What comes out", ["digests", "digest_items"]),
         ("Threads in loom", ["threads", "messages", "thread_refs"]),
