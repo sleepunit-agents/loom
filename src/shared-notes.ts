@@ -2,7 +2,7 @@
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLBoolean,GraphQLList} from 'graphql/index.js';
-import {Notes,NoteError,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
+import {Notes,NoteError,FILE_NAME,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
 import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
 import {maySee,type Sharing,type Viewer} from './policy.js';
@@ -46,6 +46,18 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
   * with the words that refuse an overwrite and what loom records as the note's writer in place of the agent alone. */
  register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
+  operations.register({name:'memory.noteFile',doors:['http'],input:z.object({path,name:z.string().regex(FILE_NAME)}).strict(),
+   output:z.object({sha256:z.string(),contents:z.string()}).strict().nullable(),
+   may:viewer=>!!selected(viewer)&&maySee(viewer,{type:'memory',agent:viewer.id},options.sharing()),
+   run(ctx,input){
+    const notes=selected(ctx.viewer);if(!notes)throw new OperationError('denied','Authenticated agent required');
+    try{
+     const file=notes.fileContents(input.path,input.name);
+     if(!file)return null;
+     try{return {sha256:file.sha256,contents:file.bytes.toString('base64')};}finally{file.bytes.fill(0);}
+    }catch{throw new OperationError('unavailable','Note attachment unavailable');}
+   },
+  });
   const recover=(ctx:Context)=>{const notes=selected(ctx.viewer),prior=notes&&ctx.receipt?receipt(notes,ctx.receipt,ctx.now):undefined;if(prior)ctx.changed('memory',ctx.viewer.id);return prior;};
   const write=<T>(ctx:Context,apply:(notes:Notes)=>T)=>{
    const notes=selected(ctx.viewer),identity=ctx.receipt;

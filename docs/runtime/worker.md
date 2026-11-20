@@ -615,6 +615,8 @@ to return to its lifespan, and `loom note delete <path>` to remove it and its at
 A write reads text from standard input or `--body`. All six commands accept
 `--json`. For a retried change, pass the same `--id` and the same arguments.
 When the CLI generates an ID, it prints it on stderr before sending the request.
+To download an attachment, redirect `loom note file <path> <name>` to a local
+file. Successful output contains the attachment bytes, including for binary files.
 The body binds these commands to its agent and enforces the room's tool denials.
 The shell's local credential expires with the job.
 

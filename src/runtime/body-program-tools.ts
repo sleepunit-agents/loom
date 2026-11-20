@@ -1,6 +1,7 @@
+import {SHA256_HEX} from '../core/sha256-hex.js';
 import {BodyContactExpired} from './body-contact.js';
 /** Portable tools composed into the receiving body's single local MCP server. */
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {Tool} from '@modelcontextprotocol/sdk/types.js';
 import {bodyCommandClient} from './body-command-client.js';
@@ -19,6 +20,7 @@ export type BodyProgramToolResult={content:{type:'text';text:string}[];isError?:
 const unavailable=():BodyProgramToolResult=>({isError:true,content:[{type:'text',text:'Body tool unavailable; outcome may be uncertain'}]});
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bodyProgramTools(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof globalThis.fetch;clock?:Clock;
+ allowsFileBytes?:(bytes:Buffer)=>boolean;
  onJobEnded?:()=>void;onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
  /** Reads the files a post names from the body's own working area (body-files.ts). Without it a post carries none. */
  readFiles?:BodyFileReader}){
@@ -58,6 +60,13 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
       sent={...body,files:read.map(file=>({name:file.name,contents:file.contents.toString('base64')}))} as typeof input.input;
      }
      try{value=await client.command(input.operation,sent,input.id);}finally{for(const file of read)file.contents.fill(0);}
+     if(input.operation==='memory.noteFile'&&object(value)&&value.ok===true&&value.value!==null){
+      const file=z.object({sha256:z.string().regex(SHA256_HEX),contents:z.string()}).strict().parse(value.value);
+      const bytes=Buffer.from(file.contents,'base64');
+      try{
+       if(bytes.includes(token)||!options.allowsFileBytes?.(bytes)||createHash('sha256').update(bytes).digest('hex')!==file.sha256)return unavailable();
+      }finally{bytes.fill(0);}
+     }
      if(input.operation==='conversation.status'&&object(value)&&value.ok===true){
       const status=z.object({state:z.enum(['working','waiting','idle','offline']),work:z.string()}).passthrough().parse(body);
       if(object(value.value)&&value.value.stopRequested===true){try{onStatus(status);}finally{onStop();}return unavailable();}

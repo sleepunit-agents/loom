@@ -26,6 +26,7 @@ const probe = `
   import {readFileSync} from 'node:fs';
   import {execFile} from 'node:child_process';
   import {promisify} from 'node:util';
+  import {createHash} from 'node:crypto';
   import {bodySecretTools} from '${BODY_PROGRAM_TARGET}/dist/runtime/body-secret-tools.js';
   import {bodyCommandEnvironment} from '${BODY_PROGRAM_TARGET}/dist/runtime/worker-mounts.js';
   const env = bodyCommandEnvironment('${BODY_PROGRAM}',process.env);
@@ -43,7 +44,11 @@ const probe = `
   const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
     token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
       let value;
-      if(name==='loom_command'&&args.operation==='memory.noteDelete'){
+      if(name==='loom_command'&&args.operation==='memory.noteFile'){
+        const bytes=Buffer.from([0,128,255]);
+        assert.ok(notes.has(args.input.path));assert.equal(args.input.name,'sample.bin');
+        value={ok:true,value:{contents:bytes.toString('base64'),sha256:createHash('sha256').update(bytes).digest('hex')}};
+      }else if(name==='loom_command'&&args.operation==='memory.noteDelete'){
         value={ok:true,value:{deleted:notes.delete(args.input.path)}};
       }else if(name==='loom_command'&&args.operation==='memory.notePin'){
         notes.get(args.input.path).pinned=args.input.pinned;
@@ -64,6 +69,8 @@ const probe = `
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
+      const binary=await promisify(execFile)(shell,[flags,'loom note file '+path+' sample.bin'],{encoding:'buffer',env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}});
+      assert.deepEqual(binary.stdout,Buffer.from([0,128,255]));
       for(const command of ['pin','unpin']){
         const changed=JSON.parse(await run('loom note '+command+' '+path+' --json'));
         assert.equal(changed.pinned,command==='pin');

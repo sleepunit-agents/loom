@@ -613,9 +613,10 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const {bodySecretTools}=await import('./runtime/body-secret-tools.js');
  const f=await fixture(),signal=new AbortController().signal;
  const access={url:f.url,token:raw.body,signal,agent:'art',job:'job',conversation:f.thread.conversation,clock:f.clock};
- const tools=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(tools.close);
+ let local:Awaited<ReturnType<typeof bodySecretTools>>;
+ const tools=bodyProgramTools({...access,onStop(){},onStatus(){},allowsFileBytes:bytes=>local.allowsBytes(bytes)});clean.push(tools.close);
  const sentinel='fictional-protected-receipt';
- const local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
+ local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
  const env={LOOM_BODY_HOUSE_NOTE:local.houseNote};
  const run=async(...args:string[])=>{
    let out='',err='';
@@ -655,6 +656,20 @@ it('runs the house note CLI against a running job and refuses the same shell han
  expect(refused.out+refused.err).not.toContain(sentinel);
  const executable=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','read','field/log'],{env:{...process.env,...env}});
  expect(executable.stdout).toBe('later reading\n');
+ const {Notes,MAX_FILE_BYTES}=await import('./notes.js');
+ const stored=new Notes(f.memory.sources.agents[0].directory);
+ const data=Buffer.alloc(MAX_FILE_BYTES,0xff);data[0]=0;data[1]=0x80;
+ try{
+   stored.attach('field/log','full.bin',data);
+   stored.attach('field/log','empty',Buffer.alloc(0));
+   stored.attach('field/log','protected',Buffer.concat([Buffer.from([0xff]),Buffer.from(sentinel)]));
+ }finally{stored.close();}
+ const readFile=(name:string)=>promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','file','field/log',name],
+   {env:{...process.env,...env},encoding:'buffer',maxBuffer:MAX_FILE_BYTES+1024});
+ const full=await readFile('full.bin');expect(full.stdout.equals(data)).toBe(true);
+ expect((await readFile('empty')).stdout.length).toBe(0);
+ await expect(readFile('missing')).rejects.toMatchObject({code:3,stdout:Buffer.alloc(0)});
+ await expect(readFile('protected')).rejects.toMatchObject({code:1,stdout:Buffer.alloc(0)});
  const list=await run('list','field/','--json');expect(list.code).toBe(0);
  expect(JSON.parse(list.out)).toMatchObject([{path:'field/log',bytes:13,pinned:false}]);
  for(const text of ['--help','-h']){

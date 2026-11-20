@@ -45,3 +45,11 @@ it.each(['pin','unpin','delete'])('applies write and specific room denials to %s
   expect(port.call).not.toHaveBeenCalled();
  }
 });
+
+it('honors room denials when reading an attachment by name',async()=>{
+ for(const rule of ['mcp__loom__note_read','mcp__loom__loom_query','mcp__loom__loom_command','mcp__loom_secrets__note_f*']){
+  const port=fixture([rule]);
+  await expect(houseNoteRequest(port,{operation:'file',path:'plans/alpha',name:'a.bin'},signal)).rejects.toThrow();
+  expect(port.call).not.toHaveBeenCalled();
+ }
+});

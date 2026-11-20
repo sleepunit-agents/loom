@@ -23,6 +23,7 @@ import { DAY_MS } from './core/day.js';
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, constants, fstatSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { SHA256_HEX } from './core/sha256-hex.js';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 
 /** How long a note is kept, once: the store, the `memory.noteWrite` command and the terminal's `note_write` read this. */
@@ -206,6 +207,21 @@ export class Notes {
     return r ? blobPath(this.dir, r.sha256) : null;
   }
 
+  /** Return only bytes verified against this name's stored attachment manifest. */
+  fileContents(path: string, name: string): {sha256:string;bytes:Buffer}|null {
+    this.check(path);
+    if(!FILE_NAME.test(name))throw new NoteError('Invalid attachment name');
+    const file=this.db.prepare('SELECT sha256, bytes FROM note_files WHERE path = ? AND name = ?').get(path,name) as {sha256:string;bytes:number}|undefined;
+    if(!file)return null;
+    if(!SHA256_HEX.test(file.sha256)||!Number.isInteger(file.bytes)||file.bytes<0||file.bytes>MAX_FILE_BYTES)throw new NoteError('Invalid attachment manifest');
+    const bytes=readAttachment(blobPath(this.dir,file.sha256),constants.O_NOFOLLOW);
+    if(bytes.length!==file.bytes||createHash('sha256').update(bytes).digest('hex')!==file.sha256){
+      bytes.fill(0);
+      throw new NoteError('Attachment differs from its manifest');
+    }
+    return {sha256:file.sha256,bytes};
+  }
+
   pin(path: string, pinned: boolean): NoteRow {
     this.check(path);
     if (!this.db.prepare('UPDATE notes SET pinned = ? WHERE path = ?').run(pinned ? 1 : 0, path).changes) throw new NoteError(`no note ${path}`, 404);
@@ -267,8 +283,8 @@ export class Notes {
 }
 
 /** The metadata and blob must describe the same bytes even if a local producer changes its file. */
-function readAttachment(path: string): Buffer {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+function readAttachment(path: string, flags=0): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | flags);
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new NoteError(`${path} isn't a file`);

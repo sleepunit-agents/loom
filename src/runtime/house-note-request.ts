@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { NOTE_PATH, NOTE_PATH_MAX, MAX_NOTE_BYTES, LIFESPAN_NAMES } from '../notes.js';
+import { FILE_NAME, NOTE_PATH, NOTE_PATH_MAX, MAX_NOTE_BYTES, LIFESPAN_NAMES } from '../notes.js';
 import { harnessToolPrefix } from './body-harness.js';
 import { denialCoversTool } from './tool-denial.js';
 import { bodyDeniedTools } from './body-named-tools.js';
@@ -8,6 +9,7 @@ import type { BodyProgramToolResult } from './body-program-tools.js';
 const path = z.string().max(NOTE_PATH_MAX).regex(NOTE_PATH);
 const request = z.discriminatedUnion('operation', [
   z.object({ operation: z.enum(['pin','unpin','delete']), path, id:z.string().min(1).max(200) }).strict(),
+  z.object({ operation:z.literal('file'), path, name:z.string().regex(FILE_NAME) }).strict(),
   z.object({ operation: z.literal('read'), path }).strict(),
   z.object({ operation: z.literal('list'), prefix: z.string().max(NOTE_PATH_MAX).optional(),
     limit: z.number().int().min(1).max(500).optional() }).strict(),
@@ -32,6 +34,12 @@ export async function houseNoteRequest(port: NotePort, input: unknown, signal: A
   if (!parsed.success || signal.aborted || !port.agent || !port.allowsCall(parsed.data)) throw Error('House note request unavailable');
   const note = parsed.data;
   if (bodyDeniedTools(port.denied).includes(harnessToolPrefix + 'note_' + note.operation)) throw Error('House note operation denied');
+  if(note.operation==='file'){
+    const denied=bodyDeniedTools(port.denied);
+    if(denied.includes(harnessToolPrefix+'note_read')||port.denied.some(rule=>
+      ['mcp__loom__note_file','mcp__loom_secrets__note_file'].some(name=>denialCoversTool(rule,name))))throw Error('House note operation denied');
+    return port.call('loom_command',{operation:'memory.noteFile',input:{path:note.path,name:note.name},id:randomUUID()},signal);
+  }
   if(note.operation==='pin'||note.operation==='unpin'||note.operation==='delete'){
     const denied=bodyDeniedTools(port.denied);
     if(denied.includes(harnessToolPrefix+'note_write') ||
