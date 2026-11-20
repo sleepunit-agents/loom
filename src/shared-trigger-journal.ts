@@ -8,6 +8,10 @@ import { appendLesson, hasAgentJournal, readJournal, replaceJournalState } from 
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 
+export function isJournalRead(name: string) {
+  return name === 'tempo.readJournal' || name === 'tempo.wakeLessons';
+}
+
 type Scope = NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
 
 function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
@@ -18,22 +22,15 @@ function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
   if (trigger && hasAgentJournal(trigger) && trigger.to === job.agent && trigger.project === cv.project) return trigger.id;
 }
 
-/** The guarded body-input projection calls this only for the authenticated recipient's taken item. */
-export function wakeLessons(db: DataDatabase, viewer: Viewer, scope: Scope, item: typeof inbox.$inferSelect, refs: string[]) {
-  if (item.source !== 'trigger' || item.fromKind !== 'schedule' || item.fromId !== scope.job.agent || item.onWordKind
-      || item.volume !== 'full' || item.job !== scope.job.id || item.conversation !== scope.cv.id) return;
-  const id = ownTrigger(db, viewer, scope);
-  if (id && refs.includes(id)) return readJournal(db, id).lessons;
-}
-
 export function registerTriggerJournal(operations: Operations, db: DataDatabase,
   current: ReturnType<typeof conversationBodyScope>, hash: (text: string) => string) {
-  function mine(viewer: Viewer) {
+  function mine(viewer: Viewer, deliveries?: string[]) {
     const scope = current(viewer), id = ownTrigger(db, viewer, scope);
     if (!scope || !id) return;
     const { job, cv } = scope;
     const delivered = db.select({ item: inbox.id }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id))
       .innerJoin(triggerAcceptances, eq(triggerAcceptances.item, inbox.id)).where(and(
+        deliveries ? and(inArray(inbox.id, deliveries), eq(inbox.takenVolume, 'full')) : undefined,
         eq(inbox.job, job.id), eq(triggerAcceptances.job, job.id), inArray(inbox.state, ['taken', 'done']),
         eq(inbox.conversation, cv.id), eq(inboxRefs.ref, id), eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
         eq(inbox.fromKind, 'schedule'), eq(inbox.fromId, job.agent), eq(inbox.source, 'trigger'), isNull(inbox.member), isNull(inbox.onWordKind),
@@ -46,6 +43,12 @@ export function registerTriggerJournal(operations: Operations, db: DataDatabase,
     return id;
   }
   const defaults = { ...bodyOperationDefaults(current, hash, 'trigger-journal'), may: (viewer: Viewer) => !!mine(viewer), refuses: true };
+  // Acknowledged mail in the current model turn, checked again after the body reported receipt.
+  // Ineligible wakes have no lessons to attach and continue normally.
+  operations.register(operation({ ...defaults, write: false, name: 'tempo.wakeLessons', may: viewer => !!current(viewer),
+    input: z.object({ items: z.array(z.string().min(1)).min(1).max(100) }).strict(), output: z.string().nullable(),
+    run(ctx, { items }) { const id = mine(ctx.viewer, items); return id ? readJournal(db, id).lessons : null; },
+  }));
   operations.register(operation({ ...defaults, write: false, name: 'tempo.readJournal', input: z.object({}).strict(),
     output: z.object({trigger:z.string(), lessons:z.string(), state:z.string(), stateRevision:z.number(), stateChangedAt:z.string().nullable()}),
     run: ctx => readJournal(db, required(ctx.viewer)),

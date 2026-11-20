@@ -25,9 +25,7 @@ const input=z.object({input:z.object({historyKeys:z.literal(true).optional(),lim
 export function sameMailScope(item:{agent:string|null;member:string|null;project:string|null},cv:{agent:string;member:string|null;project:string|null}):boolean {
  return item.agent===cv.agent&&item.member===cv.member&&item.project===cv.project;
 }
-type BodyScope = NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
-type WakeLessons = (viewer: Authentication['viewer'], scope: BodyScope, item: typeof inbox.$inferSelect, refs: string[]) => string | undefined;
-export async function takeBodyInput(options:{wakeLessons?:WakeLessons;request:Request;service:CommsMessages;scope:ReturnType<typeof conversationBodyScope>;authenticate(request:Request):Authentication|undefined;admitted():boolean;version():number;writes:DataWrites;now():number;publicOrigin?:string;reportError(error:unknown):void}):Promise<Response>{
+export async function takeBodyInput(options:{request:Request;service:CommsMessages;scope:ReturnType<typeof conversationBodyScope>;authenticate(request:Request):Authentication|undefined;admitted():boolean;version():number;writes:DataWrites;now():number;publicOrigin?:string;reportError(error:unknown):void}):Promise<Response>{
  const refuse=(status:number,message:string)=>Response.json(failure(status===400?'invalid':status===403?'denied':'unavailable',message),{status,headers:{'cache-control':'no-store'}});
  if(!options.admitted())return refuse(503,'Loom is closing');
  const request=options.request;
@@ -69,9 +67,6 @@ export async function takeBodyInput(options:{wakeLessons?:WakeLessons;request:Re
   const days=commsKeepDays(db);
   let until=Infinity;
   const items=deliveries.map(({item,words,answerContext,history})=>{
-   const itemRefs = refs.filter(ref => ref.item === item.id).map(ref => ref.ref);
-   const lessons = words !== null && options.wakeLessons?.(auth.viewer, before, item, itemRefs);
-   if (lessons) words += '\n\nLessons recorded by earlier runs of this trigger:\n' + lessons;
    if(before.cv.venue==='discord'){
     if(item.source==='discord'&&words!==null)words=discordBodyWords(words);
     if(history)history=history.map(line=>({...line,words:discordBodyWords(line.words)}));
@@ -88,7 +83,7 @@ export async function takeBodyInput(options:{wakeLessons?:WakeLessons;request:Re
    if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
    if(answerContext){if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
    for(const line of history??[])if(line.keepUntil!==null)until=Math.min(until,Date.parse(line.keepUntil));
-   return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:itemRefs};
+   return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
   });
   const thread=db.select({stop:threads.stopRequested}).from(threads).where(eq(threads.conversation,before.cv.id)).get();
   const payload=JSON.stringify({ok:true,value:{job:before.job.id,conversation:before.cv.id,items,stopRequested:thread?.stop??false}});

@@ -24,6 +24,7 @@ export function readJournal(db: DataDatabase, trigger: string) {
 }
 
 export function appendLesson(db: DataDatabase, trigger: string, text: string) {
+  if (text.includes('\0')) throw new Error('A lesson cannot contain a null character');
   if (!text.trim()) throw new Error('A lesson needs text');
   db.transaction(() => {
     const prior = readJournal(db, trigger).lessons;

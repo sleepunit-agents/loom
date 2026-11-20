@@ -77,7 +77,8 @@ import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
-import { registerTriggerJournal, wakeLessons } from './shared-trigger-journal.js';
+import { guardedResponse } from './core/data/guarded-response.js';
+import { isJournalRead, registerTriggerJournal } from './shared-trigger-journal.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedNotices } from './shared-notices.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
@@ -485,7 +486,7 @@ export function sharedRoot(options: {
   // which of the two they came through.
   http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id,c.req.raw.signal):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
-  http.post('/api/conversation/take', async c => comms ? takeBodyInput({wakeLessons:(viewer,scope,item,refs)=>wakeLessons(db,viewer,scope,item,refs),request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
+  http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/kits/private',kitBroker({db,credentials,source:options.secretInputs?.source,now,write:secretCommit,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
@@ -500,7 +501,13 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer=await executeCommand(auth,`${c.req.param('piece')}.${c.req.param('operation')}`,parsed.data.input,parsed.data.id,request.signal);
+    const name = c.req.param('piece') + '.' + c.req.param('operation');
+    const epoch = isJournalRead(name) ? data.readVersion() : undefined;
+    const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,request.signal);
+    if (epoch !== undefined && answer.ok) {
+      return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
+        () => !closing && auth.valid() && data.readVersion() === epoch);
+    }
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });

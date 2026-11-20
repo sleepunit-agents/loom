@@ -148,12 +148,15 @@ export async function bodyProgram(input: {
     const continued:string[]=[];let oldestErased:string|undefined;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
+    const journalDeliveries: string[] = [];
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
       // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
+      if(job.venue === 'wake' && item.source === 'trigger' && item.fromKind === 'schedule' && item.words !== null)
+        journalDeliveries.push(item.id);
       if(bridge&&(item.source==='trigger'||item.source==='handoff')&&item.words!==null)placed=true;
       if(bridge&&(item.source==='discord'||item.source==='slack')){
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
@@ -186,6 +189,12 @@ export async function bodyProgram(input: {
     if(bridge&&!incoming.length&&!placed)throw new Error();
     exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,fetch:input.fetch,clock:input.clock});
+    if (journalDeliveries.length) {
+      const result = await memoryClient.command('tempo.wakeLessons', {items:journalDeliveries}, randomUUID());
+      if (!result.ok) throw new Error('Trigger lessons unavailable');
+      const lessons = z.string().nullable().parse(result.value);
+      if (lessons) context.push('Lessons recorded by earlier runs of this trigger:\n' + lessons);
+    }
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();
     // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.

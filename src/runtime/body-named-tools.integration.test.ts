@@ -259,9 +259,18 @@ it('carries a journal between actual trigger deliveries and confines body comman
  }, body:JSON.stringify({input:{}})});
  expect(taken.status).toBe(200);
  const items = (await taken.json()).value.items as {id:string;words:string}[];
- expect(items.find(item=>item.id===second.id)?.words).toBe(longInstructions+'\n\nLessons recorded by earlier runs of this trigger:\nCount each source once.');
+ expect(items.find(item=>item.id===second.id)?.words).toBe(longInstructions);
+ const carry = () => cmd('tempo.wakeLessons',{items:[second.id]},'carry');
+ expect(JSON.parse((await carry()).text).value).toBeNull();
+ expect((await b.fixture.call('accept',{items:[second.id]},'accept-second')).status).toBe(200);
+ expect(JSON.parse((await carry()).text).value).toBe('Count each source once.');
  expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
  expect((await read()).text).toContain('page 2');
- db.update(schema.jobs).set({state:'done'}).where(eq(schema.jobs.id,'job')).run();
+ const late = await root.http.request('/api/tempo/readJournal', {method:'POST', headers:{
+   'content-type':'application/json', authorization:'Bearer '+bodyCredentials.body,
+ }, body:JSON.stringify({input:{}})});
+ expect(late.status).toBe(200);
+ root.writes.run(() => db.update(schema.jobs).set({state:'done'}).where(eq(schema.jobs.id,'job')).run());
+ await expect(late.text()).rejects.toThrow('Data access ended');
  expect((await save()).text).toMatch(/denied|refused|unavailable/i);
 });

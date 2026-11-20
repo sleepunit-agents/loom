@@ -295,6 +295,7 @@ it('keeps lessons off the shared inbox and rejects a stale state revision', () =
       lifespan: 'until-stopped', targetKind: 'inbox', toKind: 'agent', to: 'art', instructions: 'Check', note: 'Recurring check' });
     appendLesson(db, id, 'Read both sources.');
     expect(() => appendLesson(db, id, '🐟'.repeat(4096))).toThrow(/bytes/);
+    expect(() => appendLesson(db, id, 'bad\0lesson')).toThrow(/null character/);
     const revision = replaceJournalState(db, id, 0, 'first page', at());
     expect(replaceJournalState(db, id, revision, '', at())).toBe(2);
     expect(() => replaceJournalState(db, id, 0, 'stale page', at())).toThrow(/changed/);
