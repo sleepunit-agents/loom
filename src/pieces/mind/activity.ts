@@ -4,7 +4,7 @@ import BetterSqlite3,{type Database} from 'better-sqlite3';
 import {AgentFiles} from './sources.js';
 import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
-import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
+import {episodeConversationId,plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
 import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {Clock} from '../../core/clock.js';
 import {DAY_MS} from '../../core/day.js';
@@ -65,10 +65,49 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
    links:[...r.links,...(theirs&&r.needsHref?[{label:'What it needs you for',href:r.needsHref}]:[])],...(theirs&&r.needs?{needs:r.needs}:{}),
    ...(entry.venue==='comms'&&r.steps?{steps:r.steps.filter(s=>s.tool!=='text')}:{}) ,more:r.more.slice(0,8)};
  }
- function episode(v:Viewer,agent:string,e:Episode):(ActivityOpen & {conversationId?:string})|undefined{
+ // Keep at most one candidate page in memory. A private or duplicate
+ // episode can push the visible lookahead into another batch.
+ function* visibleEpisodes(rows:Iterable<unknown>,v:Viewer,agent:string,size:number){
+  const role=options.conversations;
+  if(!role?.conversations){
+   for(const raw of rows){const row=raw as Episode,entry=episode(v,agent,row);if(entry)yield {entry,ref:row.ref};}
+   return;
+  }
+  const batchRead=role.conversations.bind(role);
+  function* project(batch:Episode[]){
+   const ids=new Set<string>();
+   for(const row of batch){
+    const id=episodeConversationId(row.title??'',row.content??'',parse(row.metadata));
+    if(id)ids.add(id);
+   }
+   let lookup=(id:string)=>conversation(v,agent,id);
+   if(ids.size){
+    try{
+     const facts=new Map(batchRead(v,agent,[...ids]).map(c=>[c.id,c]));
+     lookup=id=>{
+      const raw=facts.get(id);
+      if(!raw)return;
+      const c=conversationSchema.parse(raw);
+      return c.id===id&&seesConversation(v,c,agent)?c:undefined;
+     };
+    }catch{
+     // A later candidate can fail while an earlier one fills the page.
+     // Read each needed fact through the original scoped role in that case.
+    }
+   }
+   for(const row of batch){const entry=episode(v,agent,row,lookup);if(entry)yield {entry,ref:row.ref};}
+  }
+  let batch:Episode[]=[];
+  for(const raw of rows){
+   batch.push(raw as Episode);
+   if(batch.length===size){yield* project(batch);batch=[];}
+  }
+  if(batch.length)yield* project(batch);
+ }
+ function episode(v:Viewer,agent:string,e:Episode,lookup=(id:string)=>conversation(v,agent,id)):(ActivityOpen & {conversationId?:string})|undefined{
   const meta=parse(e.metadata),where=typeof meta.where==='string'?meta.where:e.project??'?';
-  const p=plainEpisode({title:e.title,content:e.content,where,meta},agent,id=>conversation(v,agent,id));
-  const venue=venueKey(p.where.split(/[:/]/)[0]),related=p.conversation?conversation(v,agent,p.conversation):undefined;
+  const p=plainEpisode({title:e.title,content:e.content,where,meta},agent,lookup);
+  const venue=venueKey(p.where.split(/[:/]/)[0]),related=p.conversation?lookup(p.conversation):undefined;
   if(venue==='comms'){
    const c=related;
    if(!c||venueKey(c.venue)!=='comms')return;
@@ -108,10 +147,11 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
     if(!has(db)){if(episodes!=='error')episodes='unavailable';continue;}
     // Bound only after visibility and deduplication: private Comms rows may not
     // crowd visible episodes out of the feed.
-    const query=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories WHERE ${active} AND julianday(created)>=julianday(?) AND julianday(created)<julianday(?) ORDER BY julianday(created) DESC,ref`);
+    const selection=`WHERE ${active} AND julianday(created)>=julianday(?) AND julianday(created)<julianday(?) ORDER BY julianday(created) DESC,ref`;
+    const args=[new Date(now).toISOString(),new Date(from).toISOString(),new Date(until).toISOString()];
+    const query=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories ${selection}`);
     let n=0;
-    for(const raw of query.iterate(new Date(now).toISOString(),new Date(from).toISOString(),new Date(until).toISOString())){
-     const row=raw as Episode,e=episode(v,agent,row);if(!e)continue;
+    for(const {entry:e} of visibleEpisodes(query.iterate(...args),v,agent,MAX_ENTRIES+1)){
      const cv=e.conversationId;
      if(cv&&covered.has(`${agent}:${cv}`))continue;
      if(runs.some(r=>r.agent===agent&&r.venue===e.venue&&Math.abs(r.at-Date.parse(e.at))<20*60000))continue;
@@ -131,16 +171,14 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   if(!db||!has(db))throw Error('Episode store unavailable');
   const now=clock.now(),entries:ActivityOpen[]=[];
   let last:string|undefined,expires:number|undefined;
-  const rows=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories
-   WHERE ${active} AND julianday(created)<=julianday(?) ${before==null?'':'AND ref < ?'} ORDER BY ref DESC`);
+  const selection=`WHERE ${active} AND julianday(created)<=julianday(?) ${before==null?'':'AND ref < ?'} ORDER BY ref DESC`;
+  const rows=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories ${selection}`);
   const args=[new Date(now).toISOString(),new Date(now+60000).toISOString()];
   if(before!=null)args.push(before);
-  for(const raw of rows.iterate(...args)){
-   const row=raw as Episode,visible=episode(v,agent,row);
-   if(!visible)continue;
+  for(const {entry:visible,ref} of visibleEpisodes(rows.iterate(...args),v,agent,first+1)){
    if(visible.expires!==undefined)expires=Math.min(expires??Infinity,visible.expires);
    if(entries.length===first)return {entries,nextBefore:last,expires};
-   entries.push(visible);last=row.ref;
+   entries.push(visible);last=ref;
   }
   return {entries,nextBefore:null,expires};
  }

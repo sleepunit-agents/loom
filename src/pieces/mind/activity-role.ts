@@ -22,5 +22,6 @@ export interface ActivityConversations {
  read(viewer:Viewer,agent:string,kind:'digest'|'conversation',key:string):ActivityRun|undefined;
  /** Only an authorized NEW conversation, including its member scope. Used to
   * authorize episodes about Comms even if it has no run in the current window. */
+ conversations?(viewer:Viewer,agent:string,ids:string[]):ActivityConversation[];
  conversation(viewer:Viewer,agent:string,id:string):ActivityConversation|undefined;
 }

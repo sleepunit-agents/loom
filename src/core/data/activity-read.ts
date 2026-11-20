@@ -23,6 +23,15 @@ export function readActivityWindow(db: DataDatabase, viewer: Viewer, query: { ag
   }).sync();
   return { digestRows, moved };
 }
+/** Only the conversation facts an episode can name. Keep scope inside the shared selection. */
+export function readEpisodeConversations(db:DataDatabase,viewer:Viewer,agent:string,ids:string[]) {
+  return db.query.conversations.findMany({
+    columns:{id:true,agent:true,venue:true,place:true,label:true,project:true,member:true},
+    with:{conversationPeopleByConversation:{columns:{who:true},orderBy:f=>asc(f.who)}},
+    where:f=>and(eq(f.agent,agent),inArray(f.id,sql`(select value from json_each(${JSON.stringify(ids)}))`),
+      protectedSQL(conversationVisibility(viewer).conversations!(f))),
+  }).sync();
+}
 export function readActivityConversation(db: DataDatabase, viewer: Viewer, agent: string, id: string) {
   return db.query.conversations.findFirst({ where: f => and(eq(f.id, id), eq(f.agent, agent), protectedSQL(conversationVisibility(viewer).conversations!(f))) }).sync();
 }

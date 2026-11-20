@@ -1,4 +1,4 @@
-import { readActivityAgents, readActivityWindow, readActivityConversation, readActivityDigest, readActivitySet, type ActivityReadSet } from '../../core/data/activity-read.js';
+import { readEpisodeConversations, readActivityAgents, readActivityWindow, readActivityConversation, readActivityDigest, readActivitySet, type ActivityReadSet } from '../../core/data/activity-read.js';
 /** Activity's read projection of the shared Conversations service's records.
  * No legacy database, copied content, or independent visibility policy. */
 import type { DataDatabase } from '../../core/data/database.js';
@@ -41,6 +41,12 @@ export function sharedActivityConversations(db: DataDatabase, options: {
         .map(d => ({ id: `d~${row.agent}~${d.id}`, at: d.at, title: d.summary })),
     };
   }
+  function episodeConversations(viewer:Viewer,agent:string,ids:string[]):ActivityConversation[]{
+    return readEpisodeConversations(db,viewer,agent,ids).map(({member,project,conversationPeopleByConversation,...row})=>({
+      ...row,people:conversationPeopleByConversation.map(p=>p.who),
+      ...(member===null?{}:{member}),...(project===null?{}:{project}),
+    }));
+  }
   return {
     nextDeadline(now) {
       let next=Infinity;
@@ -67,9 +73,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       const row = readActivityConversation(db, viewer, agent, digest?.conversation ?? key);
       if (row) return run(viewer, row, readActivitySet(db, viewer, [row.id], digest ? [digest.id] : [], digest?.inboxItem ? [digest.inboxItem] : []), digest);
     },
-    conversation(viewer, agent, id) {
-      const row = readActivityConversation(db, viewer, agent, id);
-      if (row) return conversation(row, readActivitySet(db, viewer, [row.id], [], []));
-    },
+    conversations:episodeConversations,
+    conversation(viewer,agent,id){return episodeConversations(viewer,agent,[id])[0];},
   };
 }

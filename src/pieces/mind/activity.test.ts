@@ -204,3 +204,44 @@ it('pages visible episodes past old date windows without dropping ties or spendi
  expect(last?.nextBefore).toBeNull();
  expect(app.reader.episodePage('art',{kind:'member',id:'outsider'},2)).toBeUndefined();
 });
+
+it('fills a page past a hidden link without looking up the rest of the archive',async()=>{
+ const store=source(),calls:string[][]=[];
+ const ids=Array.from({length:100},(_,i)=>'cv-'+String(i).padStart(12,'0'));
+ const visible=new Set(ids.slice(0,99));
+ const port:ActivityConversations={...role([]),
+  conversation(){throw Error('unexpected single lookup');},
+  conversations(_v,agent,wanted){
+   calls.push(wanted);
+   if(wanted.includes(ids[0]!))throw Error('unrelated old source failure');
+   return wanted.filter(id=>visible.has(id)).map(id=>conv(id,{agent}));
+  },
+ };
+ for(let i=0;i<ids.length;i++)store.add('m-'+String(i).padStart(2,'0'),{content:'Its conversation is '+ids[i],metadata:'{"where":"terminal"}'});
+ const app=await fixture(store.path,undefined,port);
+ const page=app.reader.episodePage('art',owner,2)!;
+ expect(page.entries.map(e=>e.title)).toEqual(['m-98','m-97']);
+ expect(page.nextBefore).toBe('m-97');
+ expect(calls.map(batch=>batch.length)).toEqual([3,3]);
+ expect(new Set(calls.flat())).toEqual(new Set(ids.slice(94)));
+ calls.length=0;
+ visible.delete(ids[96]!);
+ expect(app.reader.episodePage('art',owner,2,page.nextBefore)?.entries.map(e=>e.title)).toEqual(['m-95','m-94']);
+ expect(calls.map(batch=>batch.length)).toEqual([3,3]);
+});
+
+it('does not fail a readable page when an unused candidate causes its batch to fail',async()=>{
+ const store=source(),ids=Array.from({length:6},(_,i)=>'cv-'+String(i).padStart(12,'0'));
+ const single:string[]=[];
+ const port:ActivityConversations={...role([]),
+  conversation(_v,agent,id){single.push(id);if(id===ids[0])throw Error('unavailable');return conv(id,{agent});},
+  conversations(_v,agent,wanted){
+   if(wanted.includes(ids[0]!))throw Error('unavailable');
+   return wanted.filter(id=>id!==ids[5]).map(id=>conv(id,{agent}));
+  },
+ };
+ for(let i=0;i<ids.length;i++)store.add('m-'+i,{metadata:JSON.stringify({conversation:ids[i]})});
+ const app=await fixture(store.path,undefined,port);
+ expect(app.reader.episodePage('art',owner,2)?.nextBefore).toBe('m-3');
+ expect(single).toEqual([ids[2]]);
+});
