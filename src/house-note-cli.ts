@@ -68,11 +68,11 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     if(manage){
       const result=operation==='delete'
         ? z.object({deleted:z.boolean()}).parse(value.value)
-        : z.object({path:z.string(),pinned:z.boolean(),expires:z.string().nullable()}).parse(value.value);
+        : z.union([z.object({path:z.string(),pinned:z.boolean(),expires:z.string().nullable()}),z.object({missing:z.literal(true)})]).parse(value.value);
       if(value.ok!==true)throw Error();
-      const missing='deleted' in result&&!result.deleted;
+      const missing='missing' in result||('deleted' in result&&!result.deleted);
       io.stdout(json?JSON.stringify({...result,...(generatedReceipt?{id:generatedReceipt}:{})})+'\n':
-        ('deleted' in result?(missing?'No note ':'Deleted ')+input.path:result.path+(result.pinned?' pinned':' unpinned'))+'\n');
+        (missing?'No note '+input.path:'path' in result?result.path+(result.pinned?' pinned':' unpinned'):'Deleted '+input.path)+'\n');
       if(missing)return 3;
     }else if(operation==='write'){
       z.object({ok:z.literal(true),value:z.object({saved:z.literal(true)})}).parse(value);
@@ -89,7 +89,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     }
     return 0;
   }catch{
-    io.stderr('Loom note request failed.'+(mutates?' Check the note before retrying. '+(generatedReceipt?'Reuse --id '+generatedReceipt:'Reuse the supplied --id')+' for the same write.':'')+'\n');
+    io.stderr('Loom note request failed.'+(mutates?' Check the note before retrying. '+(generatedReceipt?'Reuse --id '+generatedReceipt:'Reuse the supplied --id')+' for the same '+operation+'.':'')+'\n');
     return 1;
   }
 }

@@ -62,13 +62,13 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
   const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],inputHash:(words:string)=>commands.hash(words),recover};
   const mayManage=(viewer:Viewer)=>!!selected(viewer)&&!commands.addsOnly?.(viewer);
   operations.register({...common,name:'memory.notePin',input:z.object({path,pinned:z.boolean()}).strict(),
-   output:z.object({path,pinned:z.boolean(),expires:z.string().nullable()}).strict(),may:mayManage,
+   output:z.union([z.object({path,pinned:z.boolean(),expires:z.string().nullable()}).strict(),z.object({missing:z.literal(true)}).strict()]),may:mayManage,
    run:(ctx,input)=>write(ctx,notes=>{
     try{
      const {path,pinned,expires}=notes.pin(input.path,input.pinned);
      return {path,pinned,expires};
     }catch(error){
-     if(error instanceof NoteError&&error.status===404)throw new OperationError('not-found','No such note');
+     if(error instanceof NoteError&&error.status===404)return {missing:true as const};
      throw error;
     }
    }),

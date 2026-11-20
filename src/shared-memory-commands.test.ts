@@ -641,6 +641,14 @@ it('runs the house note CLI against a running job and refuses the same shell han
  expect(await run('write','temporary','--body','new','--lifespan','short')).toMatchObject({code:0});
  expect(await run('delete','temporary','--id','delete-1')).toMatchObject({code:0});
  expect(await run('read','temporary')).toMatchObject({code:0,out:'new\n'});
+ for(const op of ['pin','unpin']){
+   const missing='receipt/'+op, id='missing-'+op;
+   expect(await run(op,missing,'--id',id)).toMatchObject({code:3});
+   expect(await run('write',missing,'--body','replacement','--lifespan','short')).toMatchObject({code:0});
+   if(op==='unpin')expect(await run('pin',missing)).toMatchObject({code:0});
+   expect(await run(op,missing,'--id',id)).toMatchObject({code:3});
+   expect(JSON.parse((await run('read',missing,'--json')).out).pinned).toBe(op==='unpin');
+ }
  const refused=await run(...write.slice(0,-1),sentinel);
  expect(refused.code).toBe(1);
  expect(refused.err).toContain('Reuse the supplied --id');
