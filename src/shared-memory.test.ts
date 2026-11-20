@@ -1,5 +1,6 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
 import {afterAll,afterEach,beforeAll,expect,it,vi} from 'vitest';
+import {memoryQueries} from '../web/src/memory/queries.js';
 import {memoryCall} from '../web/src/memory/commands.js';
 import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
@@ -240,4 +241,34 @@ it.each((['activity','activity-window','project','project-preview','person','peo
   const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'expiry',payload}));
   expect((await closed)[0]).toBe(1012);expect(frames.join(' ')).not.toContain('PRIVATE expiring words');
  }
+});
+
+it('selects shared tasks and changes once for each active project listing',async()=>{
+ const f=await preparedFixture();
+ const store=new ProjectsStore({dbPath:f.sources.agents[0].memories});
+ cleanup.push(()=>store.close());
+ const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'}});
+ cleanup.push(()=>app.close());
+ const selections=[f.db.query.tasks,f.db.query.taskComments,f.db.query.taskLinks,f.db.query.changes]
+   .map(table=>vi.spyOn(table,'findMany'));
+ async function list(size:number,reads:number[]){
+  for(const selection of selections)selection.mockClear();
+  const response=await app.http.request(app.url+'/graphql',{
+   method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},
+   body:JSON.stringify(memoryQueries.projects()),
+  });
+  const result=await response.json();
+  expect(result.errors).toBeUndefined();
+  expect(result.data.memoryProjects).toHaveLength(size);
+  selections.forEach((selection,index)=>expect(selection).toHaveBeenCalledTimes(reads[index]!));
+ }
+ store.write({slug:'quiet',name:'Quiet',status:'paused'});
+ await list(1,[0,0,0,0]);
+ for(let i=0;i<10;i++){
+  store.write({slug:'pond-'+i,name:'Pond '+i,status:'active'});
+  if(i===1||i===9)await list(i+2,[1,1,1,1]);
+ }
+ selections[1]!.mockImplementationOnce(()=>{throw new Error('comments unavailable');});
+ await list(11,[1,1,0,1]);
+ await list(11,[1,1,1,1]);
 });

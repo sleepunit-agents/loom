@@ -6,9 +6,12 @@ import {readProjectTasks,readProjectChanges} from './core/data/project-sections.
 import {taskGroups,type ProjectTask} from './pieces/mind/projects-tasks.js';
 import type {ProjectSectionRole} from './pieces/mind/projects-roles.js';
 import type {ProjectGroup} from './pieces/mind/projects-model.js';
+function byViewer(prepare:NonNullable<ProjectSectionRole['prepareForList']>):ProjectSectionRole {
+ return {prepareForList:prepare,read:(viewer,query)=>prepare(viewer)(query)};
+}
 export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole;changes:ProjectSectionRole;conversations:ProjectSectionRole}{
  return {
-  tasks:{read(viewer,q){
+  tasks:byViewer(viewer=>{
    const selected=readProjectTasks(db,viewer);
    const rows:ProjectTask[]=selected.rows.map(row=>({
     id:row.id,title:row.title,status:row.status,shelved:row.shelved,priority:row.priority,createdAt:row.createdAt,comments:selected.comments(row.id),description:row.description,goal:row.goal,why:row.why,
@@ -16,21 +19,25 @@ export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole
    }));
    const links=selected.links;
    const ready=selected.ready;
-   return {available:true,groups:taskGroups(rows,links,ready,q,new Set([viewer.id]))};
-  }},
-  changes:{read(viewer,q){
-   const repos=new Set((q.card.links.repos??[]).map(r=>(r.includes(':')?r:'github:'+r).toLowerCase())),groups:ProjectGroup[]=[];
-   const labels:Record<string,string>={you:'Waiting on you',agent:'Ready to merge',ci:'Waiting on CI',reviewer:'Waiting on a reviewer',author:'Waiting on its author',done:'Lately'};
-   for(const row of readProjectChanges(db,viewer)){
-    const repo=(row.repository.includes(':')?row.repository:'github:'+row.repository).toLowerCase();
-    if(!q.names.includes(row.project??'')&&!repos.has(repo))continue;
-    const title=labels[row.waitingOn],waiting=row.waitingOn==='you';let group=groups.find(g=>g.title===title);
-    if(!group){group={title,waiting,items:[]};groups.push(group);}
-    const status=row.state==='open'?row.checks==='failing'?'CI red':row.checks==='running'?'CI running':'open':row.state;
-    group.items.push({title:row.title,ref:row.id,when:row.updatedAt,status,who:[row.authorLogin],href:'/p/changes-preview/change/'+encodeURIComponent(row.id),...(waiting?{waiting:true}:{})});
-   }
-   return {available:true,groups};
-  }},
+   const owners=new Set([viewer.id]);
+   return q=>({available:true,groups:taskGroups(rows,links,ready,q,owners)});
+  }),
+  changes:byViewer(viewer=>{
+   const rows=readProjectChanges(db,viewer);
+   return q=>{
+    const repos=new Set((q.card.links.repos??[]).map(r=>(r.includes(':')?r:'github:'+r).toLowerCase())),groups:ProjectGroup[]=[];
+    const labels:Record<string,string>={you:'Waiting on you',agent:'Ready to merge',ci:'Waiting on CI',reviewer:'Waiting on a reviewer',author:'Waiting on its author',done:'Lately'};
+    for(const row of rows){
+     const repo=(row.repository.includes(':')?row.repository:'github:'+row.repository).toLowerCase();
+     if(!q.names.includes(row.project??'')&&!repos.has(repo))continue;
+     const title=labels[row.waitingOn],waiting=row.waitingOn==='you';let group=groups.find(g=>g.title===title);
+     if(!group){group={title,waiting,items:[]};groups.push(group);}
+     const status=row.state==='open'?row.checks==='failing'?'CI red':row.checks==='running'?'CI running':'open':row.state;
+     group.items.push({title:row.title,ref:row.id,when:row.updatedAt,status,who:[row.authorLogin],href:'/p/changes-preview/change/'+encodeURIComponent(row.id),...(waiting?{waiting:true}:{})});
+    }
+    return {available:true,groups};
+   };
+  }),
   conversations:{read(viewer,q){
    const result=readProjectConversations(db,viewer,q.names,q.card.links.venues??[]),rows=result.rows;
    return {available:true,total:rows.length,conversationIds:rows.map(row=>row.id),items:rows.slice(0,50).map(row=>({title:row.label,ref:row.id,when:row.lastAt,href:'/p/comms-preview/conversation/'+encodeURIComponent(row.id),who:result.people(row.id)}))};

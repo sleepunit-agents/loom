@@ -11,7 +11,7 @@ import {projectDeadline} from './project-deadlines.js';
 import {resolveCardReference} from './card-references.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
-import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
+import type {ProjectSectionRole,ProjectSectionRead,ProjectQuery} from './projects-roles.js';
 import {MAX_REVISIONS,fieldState} from '../../backends/cards.js';
 import {hottestIds} from '../../backends/salience.js';
 export type {ProjectRecord} from './projects-model.js';
@@ -72,12 +72,22 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as ProjectRow|undefined;
   return row && projectRecord(agent, db, row, viewer, readingHub);
  }
- function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean, agents=visibleAgents(viewer)):ProjectRecord{
+ function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean, agents=visibleAgents(viewer), prepared?:Map<ProjectSectionRole,ProjectSectionRead>):ProjectRecord{
   const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
   const q:ProjectQuery={agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
   const sections:ProjectSection[]=[];
   const section=(key:string,label:string,fn:()=>Omit<ProjectSection,'key'|'label'>)=>{try{const raw=fn();const {key:_key,label:_label,...data}=raw as ProjectSection;sections.push({...sectionSchema.parse(data),key,label});}catch{sections.push({key,label,available:true,error:`${label} couldn't answer`});}};
-  const role=(key:string,label:string,r:ProjectSectionRole|undefined)=>section(key,label,()=>r?.read(viewer,q)??{available:false});
+  const role=(key:string,label:string,r:ProjectSectionRole|undefined)=>section(key,label,()=>{
+   if (!r) return {available:false};
+   if (!prepared || !r.prepareForList) return r.read(viewer,q);
+   let reader = prepared.get(r);
+   if (!reader) {
+    try { reader = r.prepareForList(viewer); }
+    catch (error) { reader = () => { throw error; }; }
+    prepared.set(r,reader);
+   }
+   return reader(q);
+  });
   // Quiet cards don't run roles on the index; scoped hubs still compute their sections.
   if(!row.archived_at&&(card.status==='active'||readingHub)){
    role('conversations','Conversations',options.conversations);
@@ -112,13 +122,14 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const list = (viewer:Viewer) => once(viewer, () => {
   const projects:ProjectRecord[] = [];
+  const prepared = new Map<ProjectSectionRole,ProjectSectionRead>();
   let agents:string[]|undefined;
   for (const [agent, db] of sources) {
    if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
    const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
    if (!rows.length) continue;
    agents ??= visibleAgents(viewer);
-   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false, agents));
+   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false, agents, prepared));
   }
   return projects;
  });
