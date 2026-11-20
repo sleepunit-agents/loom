@@ -159,7 +159,7 @@ it('starts fresh, and never fails, when loom has none, loom is away, or what it 
     const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]); return operation === 'conversation.session' ? answer : { ok: true, value: { saved: false } }; } };
     expect(await keep(client, { base, root })!.take()).toBeUndefined();
     // Handed nothing it can continue, it says so at once: what loom keeps is of no use to this body and is removed.
-    expect(calls).toEqual([['conversation.session', {}], ['conversation.sessionSave', { session: null }]]);
+    expect(calls).toEqual([['conversation.session', {historyKeys:true}], ['conversation.sessionSave', { session: null }]]);
   }
   // Refused, or loom away: nothing more is asked, and nothing fails.
   const refused: string[] = [];

@@ -35,7 +35,7 @@ import type { WordsKey } from './words.js';
 
 export interface KeptSession { session: string; files: string }
 /** What `open` hands back: the session, when it was started (the row's `started_at`) and when it was last saved. */
-export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string };
+export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; covered?: string[] };
 /** A session sealed and ready to store: made outside the transaction that stores it. */
 export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string }
 
@@ -46,12 +46,12 @@ export class ConversationSessions {
    * stores as a removal. */
   /** `since` is the time of the oldest word this body was handed that is erased at the keep time (a direct
    * conversation's kept history): the session holds that word, so its count starts no later than then. */
-  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string }): Promise<SealedSession> {
+  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; covered?: string[] }): Promise<SealedSession> {
     const bytes = Buffer.byteLength(input.files, 'base64');
     const keep = SESSION_ID.test(input.session) && bytes > 0 && bytes <= SESSION_BYTES;
     return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}),
       // When it was last saved is sealed with it: the row's own time is when the session was started.
-      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now() })) : null };
+      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now(), covered:input.covered })) : null };
   }
 
   /** Replace the conversation's session for this harness, or remove it when there is nothing to keep. */
@@ -81,10 +81,10 @@ export class ConversationSessions {
     const row = this.kept(conversation, harness);
     if (!row) return null;
     try {
-      const value = JSON.parse(await this.key.open(row.files)) as { model?: unknown; files?: unknown; at?: unknown };
+      const value = JSON.parse(await this.key.open(row.files)) as { model?: unknown; files?: unknown; at?: unknown; covered?: string[] };
       if (typeof value.model !== 'string' || typeof value.files !== 'string' || typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))
         || modelFamily(value.model) !== modelFamily(model)) return null;
-      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at };
+      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ...(value.covered ? {covered:value.covered} : {}) };
     } catch { return null; }
   }
 

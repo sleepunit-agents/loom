@@ -335,7 +335,8 @@ it('gives a job on anybody else\'s word neither session door, and leaves the own
  const first=await hear('UOWNER','Use the deploy key'),cv=first.conversation!;work('body',cv);
  expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('owners');
  expect((await answer(first.id,token.body)).status).toBe(200);f.clock.advance(1000);
- expect(await save({session,files},token.body)).toMatchObject({status:200,body:{value:{saved:true}}});
+ const covered=['a'.repeat(64),'b'.repeat(64)];
+ expect(await save({session,files,covered},token.body)).toMatchObject({status:200,body:{value:{saved:true}}});
  const kept=f.db.select().from(conversationSessions).all();expect(kept).toMatchObject([{conversation:cv,session}]);
  // A guest writes in the same conversation. That job is on anybody else's word: it is refused the session at the door, and starts fresh.
  f.clock.advance(1000);const second=await hear('UUSER','What did you just do?');expect(second.conversation).toBe(cv);work('other',cv);
@@ -350,7 +351,8 @@ it('gives a job on anybody else\'s word neither session door, and leaves the own
  // The owner writes again. That job resumes the session the first one left: the guest's job in between took nothing from it and put nothing in.
  f.clock.advance(1000);const third=await hear('UOWNER','Go on');expect(third.conversation).toBe(cv);work('body',cv);
  expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('owners');
- expect(await take(token.body)).toMatchObject({status:200,body:{value:{session:{session,files}}}});
+ expect((await take(token.body)).body.value).toEqual({session:{session,files}});
+ expect((await f.call('conversation','session',{historyKeys:true},token.body)).body.value).toEqual({session:{session,files,covered}});
  // An answer by an owners' job after the save still leaves the session behind, as before.
  expect((await answer(third.id,token.body)).status).toBe(200);
  expect(await take(token.body)).toMatchObject({status:200,body:{value:{session:null}}});

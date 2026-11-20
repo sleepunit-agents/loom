@@ -31,7 +31,7 @@ import { harnessSessions } from './body-harnesses.js';
 import { BODY_OWN_HARNESS, type Harness } from './body-harness.js';
 import { HOUSE_HOME, houseSessions } from './house-layout.js';
 import { directoriesUnfollowed, readUnfollowed, removeUnfollowed, unmake, writeUnfollowed } from './unfollowed.js';
-import { SESSION_BYTES, SESSION_FILES, SESSION_ID, SESSION_UNPACKED_BYTES as UNPACKED_BYTES } from '../core/conversations/session-limit.js';
+import { SESSION_BYTES, SESSION_FILES, SESSION_HISTORY_KEYS, SESSION_ID, SESSION_UNPACKED_BYTES as UNPACKED_BYTES } from '../core/conversations/session-limit.js';
 
 const packed = z.array(z.object({ rel: z.string().min(1).max(1024), data: z.base64() }).strict()).min(1).max(SESSION_FILES);
 type Env = Readonly<Record<string, string | undefined>>;
@@ -66,10 +66,12 @@ export function unpackSession(layout: Layout, root: string, pack: string, sessio
 export interface BodySessions {
   /** Puts the kept session back and answers its id, or nothing: the body then starts fresh. */
   take(): Promise<string | undefined>;
-  /** Hands loom the session this run left (or says it left none) and removes its files from this machine. */
-  /** `since`: the time of the oldest word this run was handed that is erased at the keep time, when it
-   * started fresh with kept history; loom counts the session's keep time from no later than that. */
-  save(session: string | undefined, since?: string): Promise<void>;
+  /** A coordinator predating keyed history accepts the original take and save shapes only. */
+  historyKeys?: boolean;
+  /** Hashes of the bridge records already represented in the restored harness session. */
+  covered?: readonly string[];
+  /** Pack and remove the session files. Count retention from the oldest erasable input. */
+  save(session: string | undefined, since?: string, covered?: string[]): Promise<void>;
   /** Removes from this machine the session `take` put back, telling loom nothing: for a run that did not answer. */
   discard(): void;
 }
@@ -86,14 +88,20 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
   try { accessSync(place, constants.W_OK); } catch { return undefined; }
   const root = place;
   const remove = (session: string) => { for (const rel of layout.files(root, session).filter(file => layout.owns(file, session)).reverse()) removeUnfollowed(root, rel); };
-  let restored: string | undefined;
+  let restored: string | undefined, covered: string[] | undefined, historyKeys=true;
   return {
+    get historyKeys(){return historyKeys;},
+    get covered(){return covered;},
     async take() {
       try {
-        const reply = await client.command('conversation.session', {}, randomUUID());
+        let reply = await client.command('conversation.session', {historyKeys:true}, randomUUID());
+        if(!reply.ok && reply.code==='invalid'){
+          historyKeys=false;
+          reply=await client.command('conversation.session', {}, randomUUID());
+        }
         if (!reply.ok) return undefined;
-        const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string() }).strict().nullable() }).strict().parse(reply.value).session;
-        if (kept) { unpackSession(layout, root, kept.files, kept.session); return restored = kept.session; }
+        const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string(), covered:z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS).optional() }).strict().nullable() }).strict().parse(reply.value).session;
+        if (kept) { unpackSession(layout, root, kept.files, kept.session); covered=kept.covered;return restored = kept.session; }
       } catch { /* handed something this body cannot use */ }
       // Handed nothing it can continue: whatever loom keeps is of no use to this body and will be behind the
       // conversation once it answers. Say so now, so that it is removed (core/conversations/sessions.ts).
@@ -101,11 +109,11 @@ export function bodySessions(client: Client, harness: string, env: Env, place: s
       return undefined;
     },
     discard() { if (restored) remove(restored); },
-    async save(session, since) {
+    async save(session, since, knownKeys) {
       let pack: string | undefined;
       try { if (session && SESSION_ID.test(session)) pack = packSession(layout, root, session); } catch { pack = undefined; }
       try {
-        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(since ? { since } : {}) }, randomUUID()).catch(() => undefined) : undefined;
+        const sent = pack ? await client.command('conversation.sessionSave', { session: session!, files: pack, ...(historyKeys && knownKeys ? {covered:knownKeys} : {}), ...(since ? { since } : {}) }, randomUUID()).catch(() => undefined) : undefined;
         // Nothing to hand on, or loom did not take it: what loom keeps is then behind this run, and it is told so.
         if (!sent?.ok) await client.command('conversation.sessionSave', { session: null }, randomUUID());
       } catch { /* loom will see the session is behind the conversation's last answer */ }

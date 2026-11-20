@@ -15,3 +15,6 @@ export const SESSION_FILES = 64;
 export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{3,127}$/;
 /** Sessions are handed on within one family of models and not across: the first part of the model's name. */
 export const modelFamily = (model: string): string => model.toLowerCase().split(/[-.:/]/)[0];
+
+// Up to 100 retained history lines, 100 current messages, and the body's own reply.
+export const SESSION_HISTORY_KEYS = 201;

@@ -34,7 +34,7 @@ export class ConversationMail {
   /** Preparation has no durable effects. The returned commit is synchronous
    * and can join the caller's transaction after its current auth check. Mail
    * arriving later is left waiting for the next preparation. */
-  async prepareTake(conversation: string, job: string, limit = 50): Promise<() => Delivery[]> {
+  async prepareTake(conversation: string, job: string, limit = 50, historyKeys = false): Promise<() => Delivery[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid mail batch size');
     const { db, key, now, threads: { conversations } } = this.comms;
     if (db.$client.inTransaction) throw new Error('Prepare mail outside a transaction');
@@ -70,7 +70,7 @@ export class ConversationMail {
     // A firing or a note in a bridge's conversation starts a job there like any message, and that body is told what was said there too.
     const venue=conversations.conversation(conversation).venue,inBridge=venue==='discord'||venue==='slack';
     const bridged=(item:Item,words:string|null|undefined)=>(item.source==='discord'||item.source==='slack'||inBridge&&(item.source==='trigger'||item.source==='handoff'))&&!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
-    const earlier=items.some(item=>bridged(item,prepared.get(item.id)))?prepareBridgeHistory(db,now,conversation):()=>[];
+    const earlier=items.some(item=>bridged(item,prepared.get(item.id)))?prepareBridgeHistory(db,now,conversation,historyKeys):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
