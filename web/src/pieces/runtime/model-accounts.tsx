@@ -65,6 +65,7 @@ function AccountDetails({account,zone,active}:{account:Detail;zone?:string;activ
 export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  const feed=useDataQuery<{modelAccounts:RuntimeAccount[];agentModels:AgentModel[];agents?:{id:string;removedAt:string|null}[]|null;deskTime:{timezone:string}|null}>(runtimeAccountsQuery);
  const [search,setSearch]=useState('');
+ const [attentionOnly,setAttentionOnly]=useState(false);
  const rows=feed.status==='live'?feed.data?.modelAccounts:undefined;
  const zone=feed.data?.deskTime?.timezone,groups=new Map<string,AgentModel[]>();
  // Preferences are listed for agents in use; a removed agent keeps its rows for a restore.
@@ -75,7 +76,14 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  const needle=search.trim().toLowerCase();
  for(const account of rows??[]){
   const provider=account.__typename==='RuntimeAccountDetail'?account.provider:null;
-  if(![account.label,provider??''].some(value=>value.toLowerCase().includes(needle)))continue;
+  const searchable=[account.label];
+  if(account.__typename==='RuntimeAccountDetail'){
+   searchable.push(account.provider,account.owner,...account.signedInOn.map(box=>box.name),
+    ...(account.logins??[]).map(login=>login.box.name),...(account.pendingSignIns??[]).map(box=>box.name));
+  }
+  if(!searchable.some(value=>value.toLowerCase().includes(needle)))continue;
+  if(attentionOnly && account.level!=='almost full' &&
+    !(account.__typename==='RuntimeAccountDetail' && account.logins?.some(login=>login.needsSignIn)))continue;
   const group=services.get(provider)??[];
   group.push(account);
   services.set(provider,group);
@@ -83,6 +91,7 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  return <section aria-label="Subscriptions" className="grid gap-4">
   {feed.status==='loading'?<Loading label="Opening subscriptions…"/>:!rows?<ErrorView text="Subscriptions are unavailable. Check the connection."/>:<>
    <Search label="Search subscriptions" value={search} onChange={setSearch}/>
+   <label><input type="checkbox" checked={attentionOnly} onChange={event=>setAttentionOnly(event.target.checked)}/> Needs attention</label>
    {!rows.length?<p>No model accounts yet.</p>:!services.size?<p>No matching subscriptions.</p>:[...services].map(([provider,accounts])=>{
     const level=accounts.some(a=>a.level==='almost full')?'almost full':accounts.some(a=>a.level==='getting full')?'getting full':accounts[0].level;
     return <details open key={JSON.stringify(provider)} className="grid gap-2"><summary>{provider??'Shared summaries'} · {accounts.length} · {level}{accounts.some(a=>a.__typename==='RuntimeAccountDetail'&&a.logins?.some(l=>l.needsSignIn))&&' · Sign-in needed'}</summary>
