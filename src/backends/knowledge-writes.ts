@@ -21,7 +21,7 @@ export function enforceExcerptCap(excerpt: string): void {
 
 export interface NewKnowledgePage {
   slug: string; title: string; domain: string; body: string;
-  sourcing?: string; provenance?: string; verified_at?: string; freshness_anchor?: string;
+  sourcing?: string; provenance?: string; verified_at?: string | null; freshness_anchor?: string;
   sla_class?: string; created_by?: string; version?: string;
   /** Who wrote the first version. Kept for the life of the page. */
   actor?: string;
@@ -37,7 +37,7 @@ export function insertKnowledgePage(db: Database, page: NewKnowledgePage, at: st
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     uuid, page.slug, page.title, page.domain, page.body, page.sourcing ?? 'sourced', page.provenance ?? null,
-    page.verified_at ?? at, page.freshness_anchor ?? null,
+    page.verified_at === undefined ? at : page.verified_at, page.freshness_anchor ?? null,
     page.sla_class ?? deriveSlaClass(page.freshness_anchor ?? null, page.domain),
     page.created_by ?? null, page.version ?? null, page.actor ?? null, at, at,
   );

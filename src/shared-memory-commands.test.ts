@@ -444,6 +444,18 @@ it('lets a no-job agent credential read and write shared Knowledge through the r
  const denied=await fetch(f.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({id:'member-knowledge',input:{...input,title:'Forbidden member fact'}})});
  expect(denied.status).toBe(403);
 });
+it('imports a provisional document once at its original address and leaves reviewed or conflicting pages intact',async()=>{
+ const f=await fixture();
+ const input={title:'Pump setup',slug:'manual-pump-setup',domain:'manuals',body:'  Pump instructions.\n',provenance:'fixture manual, first revision'};
+ const send=async(id:string,data=input,token=raw.agent)=>fetch(f.url+'/api/mind/knowledgeImport',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input:data})});
+ expect((await send('denied',input,raw.member)).status).toBe(403);
+ expect(await (await send('first')).json()).toMatchObject({value:{created:true,slug:input.slug}});
+ expect(await (await send('first')).json()).toMatchObject({value:{created:true}});
+ expect(await (await send('again')).json()).toMatchObject({value:{created:false}});
+ expect((await send('changed',{...input,body:'Replacement'})).status).toBe(409);
+ const page=await f.query('{memoryKnowledgePage(slug:"manual-pump-setup"){title body verified_at sourcing sources{kind}}}',raw.agent);
+ expect(page.memoryKnowledgePage).toMatchObject({body:input.body,title:input.title,verified_at:null,sourcing:'provisional',sources:[]});
+});
 it('lists live memories newest first by category and project with sourcing, forgettable IDs and no recall heat',async()=>{
  const f=await fixture(),ids:string[]=[];
  for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other'],[4,'project','pond'],[5,'project','pond']] as const){
@@ -569,7 +581,7 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  for(const [path,id] of [['plans/pond','held-over'],['guests/door','held-again']])expect(await api('memory','noteWrite',{path,body:'Overwritten',lifespan:'keep'},id,token),path).toMatchObject({status:403,result:{message:HELD_REFUSALS.note}});
  expect(note('plans/pond')).toEqual({body:'The owner\'s plan',by:'art'});expect(note('guests/door').body).toBe('The code is 1234');
  // The household's knowledge and people: nothing.
- for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeAppend',{slug,body:'Unverified detail.'}],['knowledgeDispute',{slug,words:'different',evidence:'fixture'}],['knowledgeSupersede',{slug,expectedBody:'before',body:'after',reason:'fixture',evidence:'fixture'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
+ for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeImport',{slug:'guest-import',title:'Pump',domain:'test',provenance:'fixture',body:'Changed'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeAppend',{slug,body:'Unverified detail.'}],['knowledgeDispute',{slug,words:'different',evidence:'fixture'}],['knowledgeSupersede',{slug,expectedBody:'before',body:'after',reason:'fixture',evidence:'fixture'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
   expect(await api('mind',verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.knowledge}});
  // Adding a person is refused too. Here the people rule already refuses this agent's body before loom's line is reached.
  expect((await api('mind','personAdd',{name:'Mallory'},'held-person',token)).status).toBe(403);

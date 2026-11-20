@@ -97,6 +97,34 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       return answer;
     },
   }));
+  // Imported documents keep their own address and provenance until somebody checks them.
+  operations.register(operation({ name: 'mind.knowledgeImport', write: true, recover,
+    input: z.object({
+      slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(128), title: z.string().trim().min(1).max(200),
+      domain: z.string().trim().toLowerCase().min(1).max(200), body: z.string().min(1).max(MAX_PAGE_BODY_LENGTH),
+      provenance: z.string().trim().min(1).max(2000),
+    }).strict(), output: z.unknown(), may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
+    run(ctx, input) {
+      refuse(ctx.viewer);
+      if (!db || !mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
+      const result = db.transaction(() => {
+        mindReceipts.expire(db, ctx.now);
+        const replay = recover(ctx); if (replay) return replay;
+        const prior = db.prepare('SELECT title,domain,body,provenance,status FROM pages WHERE slug=?').get(input.slug) as
+          Pick<typeof input, 'title'|'domain'|'body'|'provenance'> & {status:string} | undefined;
+        if (prior && (prior.status !== 'active' || prior.title !== input.title || prior.domain !== input.domain ||
+          prior.body !== input.body || prior.provenance !== input.provenance))
+          throw new OperationError('conflict', 'This address already belongs to a different page or revision');
+        if (!prior) insertKnowledgePage(db, { ...input, actor: ctx.viewer.id, sourcing: 'provisional', verified_at: null,
+          ...(input.domain.startsWith('ours/') ? { created_by: ctx.viewer.id } : {}) }, new Date(ctx.now).toISOString());
+        const answer = { slug: input.slug, slugs: [input.slug], created: !prior };
+        mindReceipts.save(db, ctx.receipt!, answer, ctx.receipt!.expires);
+        return answer;
+      }).immediate();
+      if (!(result instanceof RecoveredWrite) && result.created) ctx.changed('knowledge', input.slug);
+      return result;
+    },
+  }));
   // Edit and restore both replace a page's body. Either saves the displaced
   // body as a version first, in the same transaction, and keeps the newest ten.
   type PageChange = { slug: string; reason?: string; evidence?: string };
