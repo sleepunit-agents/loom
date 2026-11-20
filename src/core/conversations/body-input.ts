@@ -77,7 +77,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
     if(!message)throw Error('Mail reference changed');verdict=message.verdict;
     if(words!==null){const deadline=wordsDeadline(message,days);until=Math.min(until,deadline);keepUntil=Number.isFinite(deadline)?new Date(deadline).toISOString():null;}
    }
-   if(item.source==='handoff'&&words!==null){const deadline=handoffDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();}
+   if(!item.thread&&item.source==='handoff'&&words!==null){const deadline=handoffDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();}
    if(hasPrivateInboxPayload(db,item)&&words!==null){const deadline=privateInboxDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();
    }
    if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 - Explain unavailable kits in job briefs and give household owners one actionable notice per cause. Name outside askers in owner questions and tell guest jobs to ask only for owner decisions.
+
+- A private Comms job can ask Loom for a Codex subagent. The result returns to the originating thread and wakes its coordinator. Update the server before its workers.
 - Keep older household proposals answerable, resolve workspace-qualified directory names, and load owner details only when a card is opened.
 
 - Household proposal cards use plain titles. Owners can open a preview of the requested changes, held names and exact input. Full-owner cards show the effective agent roster. Kit tools and arguments have individual display limits, long lists show how many items were omitted, and Exact request has a display limit. Older summaries appear in the owner’s Exact request disclosure. Discord thread records can supply a parent channel name.

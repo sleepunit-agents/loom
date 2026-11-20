@@ -35,6 +35,7 @@ export interface WorkerAssignment {
   /** Saved conversation venue for selecting a receiving adapter; not authority. */
   venue?: string | null;
   venueDescription?: string;
+  review?: true;
   model: string;
   account: string;
   /** How many accounts of this job's provider are signed in on this machine, the placed one included.
