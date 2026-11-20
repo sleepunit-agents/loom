@@ -6,7 +6,21 @@ export async function homeActions({page,tile,app,out}){
   const check=(yes,message)=>{if(!yes)throw Error(message);};
   const fern=tile.getByRole('region',{name:'Fern card',exact:true}),moss=tile.getByRole('region',{name:'Moss card',exact:true});
   await fern.getByText(/Three fit\. The quiet model/).waitFor();
-  await fern.getByRole('navigation',{name:'Fern conversations',exact:true}).getByRole('link',{name:/Repair the garden pump/}).first().waitFor();
+  const recent=await page.evaluate(async()=>{
+   const response=await fetch('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{recentConversations(agent:"fern",limit:3){id label venue place lastAt}}'})});
+   const result=await response.json();
+   if(!response.ok||result.errors)throw Error('Could not read Fern’s recent conversations');
+   return result.data.recentConversations;
+  });
+  check(recent.length>0,'Expected recent conversations for Fern');
+  const links=fern.getByRole('navigation',{name:'Fern conversations',exact:true}).getByRole('listitem').getByRole('link');
+  await links.first().waitFor();
+  check(await links.count()===recent.length,'Home displayed a different number of recent conversations');
+  for(const [index,row] of recent.sort((a,b)=>b.lastAt.localeCompare(a.lastAt)||a.id.localeCompare(b.id)).entries()){
+   const path=['loom','terminal'].includes(row.venue)?'/p/comms-preview/thread/'+encodeURIComponent(row.place.replace(/^th:/,'')):'/p/comms-preview/conversation/'+encodeURIComponent(row.id);
+   const link=links.nth(index);
+   check(await link.getAttribute('title')===(row.label||'Conversation')&&await link.getAttribute('href')===path,'Home recent conversation title or destination differs');
+  }
   for(const [card,name] of [[fern,'Message Fern'],[moss,'Message Moss']])check(await card.getByRole('textbox',{name,exact:true}).count()===1&&await card.getByRole('button',{name:'Send',exact:true}).count()===1,'An owned agent has no Home composer');
   const words='Fictitious Home request: check the garden latch.';
   await fern.getByRole('textbox',{name:'Message Fern',exact:true}).fill(words);

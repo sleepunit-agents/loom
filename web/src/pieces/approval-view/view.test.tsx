@@ -1,3 +1,4 @@
+vi.mock('../attention/setting-request',()=>({useSettingRequest:()=>({prepare:vi.fn(),clear:vi.fn(),disabled:false,reader:null})}));
 import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
@@ -154,8 +155,8 @@ it('opens a rule in the reader, starts a new one from the list\'s action, and li
   const rule = { kind: 'merge' as const, scope: 'project:pond', person: 'sam', tier: 'tell' as const, setBy: 'pat', setAt: '2026-11-15T00:00:00Z' };
   const live: ApprovalSnapshot = { ...snapshot, rules: [rule], notices: [{ id: 'n-1', agent: 'art', kind: 'command', target: 'run tests', what: 'Ran the tests', at: '2026-11-14T20:00:00Z' }] };
   const navigation = (folder: string) => ({ selected: undefined, select: vi.fn(), folder, openFolder: vi.fn() });
-  const setRule = vi.fn(async () => {});
-  await act(async () => { tree = create(h(Approvals, { snapshot: live, navigation: navigation('rules'), actions: { allow: vi.fn(), deny: vi.fn(), setRule } })); });
+  const openRuleConversation = vi.fn();
+  await act(async () => { tree = create(h(Approvals, { snapshot: live, navigation: navigation('rules'), actions: { allow: vi.fn(), deny: vi.fn(), openRuleConversation } })); });
   const forms = () => tree.root.findAllByType('form');
   expect(forms()).toHaveLength(0); expect(tree.root.findByType('Split').props.open).toBe(false);
   expect(tree.root.findByType('Row').props).toMatchObject({ title: 'Project pond', meta: 'Merging a pull request · for Sam', status: 'Tell me after' });

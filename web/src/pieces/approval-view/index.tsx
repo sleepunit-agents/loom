@@ -1,4 +1,4 @@
-import { RuleEditor, type SaveRule } from './rule-editor';
+import { RuleEditor } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
@@ -14,7 +14,7 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
  * Always is offered only when that door supplies its concrete scope and action.
  */
 export interface ApprovalActions {
-  setRule?: SaveRule;
+  openRuleConversation?(path:string):void;
   refreshProposal?(id: string): void;
   supports?(approval: Approval): boolean;
   /** confirm is the second, explicit yes a dangerous action needs. */
@@ -134,18 +134,18 @@ export function ApprovalCard({ id, snapshot, actions, renderChange, details, vie
   return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline details={details} viewer={viewer} name={id => displayName(id, names)} /> : <Empty title="Approval unavailable" />;
 }
 /** A standing rule, opened: what it is, and (for a household owner) its fields. */
-function RuleReader({ rule, rules, save, name, zone }: { rule?: Rule; rules: readonly Rule[]; save?: SaveRule; name: Name; zone: string }) {
+function RuleReader({ rule, rules, go, name, zone }: { rule?: Rule; rules: readonly Rule[]; go?: (path:string)=>void; name: Name; zone: string }) {
   return <Reader aria-label="Rule">
     <Meta>{rule ? 'standing rule' : 'new standing rule'}</Meta>
     <Title>{rule ? scopeWord(rule.scope) : 'New rule'}</Title>
     {rule && <Meta>{[kindChoice[rule.kind] ?? rule.kind, rule.person && `for ${name(rule.person)}`, tierWord[rule.tier] ?? rule.tier].filter(Boolean).join(' · ')}</Meta>}
-    {rule && !save && <Facts>
+    {rule && !go && <Facts>
       <Fact label="When asked about">{kindChoice[rule.kind] ?? rule.kind}</Fact>
       <Fact label="Scope">{rule.scope}</Fact>
       <Fact label="Person">{rule.person && name(rule.person)}</Fact>
       <Fact label="Answer">{tierWord[rule.tier] ?? rule.tier}</Fact>
     </Facts>}
-    {save ? <RuleEditor rules={rules} save={save} rule={rule} /> : <Body quiet>Ask an agent in chat to change a standing rule. Only a household owner can change rules.</Body>}
+    {go ? <RuleEditor rules={rules} go={go} rule={rule} /> : <Body quiet>Ask an agent in chat to change a standing rule. Only a household owner can change rules.</Body>}
     {rule && <Meta>Set by {name(rule.setBy)} · <time dateTime={rule.setAt} title={fullTime(rule.setAt, zone)}>{briefTime(rule.setAt, zone)}</time></Meta>}
   </Reader>;
 }
@@ -179,14 +179,14 @@ export default function Approvals({ snapshot, actions, renderChange, navigation,
     search={<Search label="Search approvals" value={query} onChange={setQuery} />}
     listTitle={folders.find(f => f.id === folder)?.label ?? 'Approvals'} listKey={JSON.stringify([folder, query])}
     listCount={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
-    listAction={live && rulesView && actions?.setRule && <Button onClick={() => setRuleOpen({ key: 'new' })}>New rule</Button>}
+    listAction={live && rulesView && actions?.openRuleConversation && <Button onClick={() => setRuleOpen({ key: 'new' })}>New rule</Button>}
     list={!live ? <Unavailable status={snapshot.status} />
       : rulesView ? rules.length ? <List label="Standing rules">{rules.map(r => <Row key={ruleKey(r)} title={scopeWord(r.scope)} meta={`${kindChoice[r.kind] ?? r.kind}${r.person ? ` · for ${name(r.person)}` : ''}`} status={tierWord[r.tier] ?? r.tier}
-          selected={openRule?.key === ruleKey(r)} onClick={() => setRuleOpen({ key: ruleKey(r), rule: r })} />)}</List> : <Empty title={query ? 'No matching rules' : 'No standing rules'} text={actions?.setRule ? undefined : 'Only a household owner can change standing rules.'} />
+          selected={openRule?.key === ruleKey(r)} onClick={() => setRuleOpen({ key: ruleKey(r), rule: r })} />)}</List> : <Empty title={query ? 'No matching rules' : 'No standing rules'} text={actions?.openRuleConversation ? undefined : 'Only a household owner can change standing rules.'} />
       : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <NoteRow key={n.id} title={n.what} meta={`${name(n.agent)} · ${kindWord[n.kind as Approval['kind']] ?? n.kind} · ${n.target}`} status={briefTime(n.at, snapshot.timezone)} />)}</List> : <Empty title={query ? 'No matching steps' : 'No reported steps'} />
       : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={approvalTitle(a)} meta={a.why} status={`${name(a.agent)} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
     reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} viewer={viewer} name={name} />
-      : openRule ? <RuleReader key={openRule.key} rule={openRule.rule} rules={snapshot.rules} save={actions?.setRule} name={name} zone={snapshot.timezone} /> : null}
+      : openRule ? <RuleReader key={openRule.key} rule={openRule.rule} rules={snapshot.rules} go={actions?.openRuleConversation} name={name} zone={snapshot.timezone} /> : null}
     open={!!approval || !!openRule} onBack={() => { setRuleOpen(undefined); if (approval) setSelected(undefined); }} backLabel="Back to Approvals"
-    blank={<Empty title={rulesView ? 'Open a rule' : noticesView ? 'Reported steps' : 'Open an approval'} text={rulesView ? (actions?.setRule ? 'Choose a rule to change it, or start a new one.' : 'Only a household owner can change standing rules.') : noticesView ? 'Each step is shown whole in the list.' : 'Choose a request to read exactly what it allows.'} />} />;
+    blank={<Empty title={rulesView ? 'Open a rule' : noticesView ? 'Reported steps' : 'Open an approval'} text={rulesView ? (actions?.openRuleConversation ? 'Choose a rule to change it, or start a new one.' : 'Only a household owner can change standing rules.') : noticesView ? 'Each step is shown whole in the list.' : 'Choose a request to read exactly what it allows.'} />} />;
 }

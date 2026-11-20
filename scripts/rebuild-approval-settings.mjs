@@ -1,14 +1,15 @@
 /** Standing rules, expiry and prepared operations in the actual example home. */
 import {join} from 'node:path';
+import {responseForAction} from './rebuild-response-capture.mjs';
+import {approveRequestedChange} from './rebuild-access-actions.mjs';
 import {requestApprovalWithRules} from '../dist/apps/approval-request.js';
 export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
  const screenshot='action-approvalRulesAndExpiry.png',s=app.services,write=fn=>app.writes.run(fn).value;
  const check=(v,m)=>{if(!v)throw Error(m);};
  const answerInTile=async(card,answer)=>{
-  await tile.getByRole('button',{name:'Go to Approvals',exact:true}).click();
-  await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(card.what,{exact:true})}).click();
-  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-  await tile.getByRole('group',{name:'Answer approval',exact:true}).getByRole('button',{name:answer,exact:true}).click();const response=await pending;
+  await page.goto(new URL('/p/approvals-preview/approval/'+encodeURIComponent(card.id),app.url).href);
+  const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.method()==='POST',
+   ()=>tile.getByRole('group',{name:'Answer approval',exact:true}).getByRole('button',{name:answer,exact:true}).click());
   check(response.ok()&&(await response.json()).ok===true,'Prepared tile answer refused');
  };
  try{
@@ -32,16 +33,30 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
   check(s.approvals.get(example.approval).conversation===example.conversation,'Approval lost its source conversation');
   await tile.getByRole('button',{name:'Go to Approvals',exact:true}).click();
   await tile.locator('button:visible').filter({hasText:/^Rules(?:\d+)?$/}).first().click();
-  const form=tile.getByRole('form',{name:'Standing rule',exact:true});await form.getByLabel('Kind',{exact:true}).selectOption('command');await form.getByLabel('Scope',{exact:true}).fill('fictitious:*');
+  const applyRule=async tier=>{
+   const input={kind:'command',scope:'fictitious:*',person:'',tier};
+   const before=()=>s.approvalRules.list().find(r=>r.kind===input.kind&&r.scope===input.scope&&r.person===input.person);
+   if(before())await tile.locator('[data-split-row]').filter({hasText:input.scope}).click();
+   else await tile.getByRole('button',{name:'New rule',exact:true}).click();
+   const form=tile.getByRole('form',{name:'Standing rule',exact:true});
+   await form.getByLabel('Kind',{exact:true}).selectOption(input.kind);
+   await form.getByLabel('Scope',{exact:true}).fill(input.scope);
+   if(tier!==null)await form.getByLabel('Answer',{exact:true}).selectOption(tier);
+   await form.getByRole('button',{name:tier===null?'Review removal':'Review rule change',exact:true}).click();
+   const matches=()=>tier===null?!before():before()?.tier===tier&&before()?.setBy==='alex';
+   await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Standing approval rule request'}),change:'rule',input,
+    expectedWords:words=>words==='Please propose this standing approval rule change.\n'+JSON.stringify(input,null,2),exists:matches});
+   check(matches(),'Approved rule did not persist');
+   await page.goto(new URL('/p/approvals-preview/rules',app.url).href);
+  };
   for(const tier of ['ask','tell','do']){
-   await form.getByLabel('Answer',{exact:true}).selectOption(tier);
-   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/setRule'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-   await form.getByRole('button',{name:'Save rule',exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Standing rule was refused');
+   await applyRule(tier);
    check(s.approvalRules.resolve({kind:'command',target:base.target,actingFor:'alex'})?.tier===tier,'Standing answer did not match its scope');
    const applied=write(()=>requestApprovalWithRules(s.comms.db,s.approvals,s.approvalRules,{...base,target:`fictitious:rule-${tier}`}));
    check(applied.state===(tier==='ask'?'pending':'allowed'),'The rule-consuming request service did not apply the standing answer');
    check(s.approvalRules.resolve({kind:'command',target:'outside:inspection',actingFor:'alex'})===undefined&&s.approvalRules.resolve({kind:'command',target:base.target,actingFor:'robin'})===undefined,'Standing rule escaped its target or person scope');
   }
+  await applyRule(null);
   let denied=false;try{write(()=>s.approvalRules.set({kind:'command',scope:'fictitious:*',tier:'tell'},'robin'));}catch{denied=true;}check(denied,'A nonowner edited standing rules');
   write(()=>{s.approvalRules.set({kind:'command',scope:'fictitious:*',tier:'tell'},'alex');s.approvalRules.set({kind:'command',scope:'fictitious:named',person:'robin',tier:'do'},'alex');});
   check(s.approvalRules.resolve({kind:'command',target:'fictitious:named',actingFor:'robin'})?.person==='robin','Named-person rule was not scoped to that person');
@@ -52,8 +67,8 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
   check(s.approvals.record(reported.id).map(row=>row.event).join(',')==='request,allow,use,use','Reported step lost its permanent request/answer/use history');
   await tile.locator('button:visible').filter({hasText:/^History/}).first().click();
   await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText('Fictitious reported inspection',{exact:true})}).click();
-  const history=tile.locator('section').filter({has:page.getByRole('heading',{name:'Permanent record',exact:true})}).last();
-  const words=await history.innerText();check(/\brequest\b/.test(words)&&/\ballow\b/.test(words)&&/\buse\b/.test(words)&&words.includes('Fern performed the fictitious inspection.'),'Browser permanent history omitted request/answer/use/report');
+  const history=tile.getByRole('region',{name:'History',exact:true});
+  const words=await history.innerText();check(/\bAsked\b/.test(words)&&/\bAllowed\b/.test(words)&&/\bUsed\b/.test(words)&&words.includes('Fern performed the fictitious inspection.'),'Browser permanent history omitted request/answer/use/report');
   const draft=write(()=>s.tasks.create({title:'Fictitious order draft',goal:'Discard an unused draft only on approval.',why:'Prove a prepared dangerous action.',owner:{kind:'household'}},{kind:'member',id:'alex'}));
   const deniedDraft=write(()=>s.approvals.request({agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,what:'Discard the fictitious order draft',why:'A fictitious prepared change.',ask:'Discard the fictitious order draft?',ifYes:'Loom cancels this draft.',ifNo:'Loom keeps the draft.'}));
   await answerInTile(deniedDraft,'Deny');

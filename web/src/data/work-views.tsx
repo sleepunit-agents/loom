@@ -9,7 +9,6 @@ import { displayName } from '../kit/words';
 import { useHouseholdZone } from './zone';
 import { refreshChanges } from './work-refresh';
 import { alwaysInput, alwaysLabel, sendWorkAlways, type WorkAlwaysInput, type RulePerson, type MergeRequest } from './work-always';
-import { sendApprovalRule } from './work-rule';
 import { sendWorkAnswer } from './work-answer';
 import { readProposal, type ProposalNow } from './work-proposal';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
@@ -24,7 +23,7 @@ function useWorkAccess() {
     members:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true ? snapshot.data?.members ?? [] : []};
 }
 function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): ApprovalActions | undefined {
-  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),setRule:sendApprovalRule,allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
 /** Read the owner preview for the open card and discard results when it closes or changes. */
@@ -110,7 +109,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
   };
   const standing=alwaysInput(snapshot.approvals.find(card=>card.id===selected),changes.status==='live'?changes.changes:[],access.members);
   const defaultActions=ownerApprovalActions(access.owner,standing);
-  const answerActions = actions ?? defaultActions;
+  const answerActions = actions ?? (defaultActions && { ...defaultActions, openRuleConversation: go ?? ((next:string)=>window.location.assign(next)) });
   return <Approvals snapshot={snapshot} actions={answerActions && { ...answerActions, refreshProposal: refresh }} names={names} viewer={viewer} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
