@@ -480,6 +480,7 @@ export const inbox = sqliteTable('inbox', {
   member: text('member').references((): AnySQLiteColumn => members.id),
   job: text('job').references((): AnySQLiteColumn => jobs.id),
   takenAt: text('taken_at'),
+  firstAcceptedAt: text('first_accepted_at'),
   // Internal lease metadata: current quiet volume can change after confirmation.
   takenVolume: text('taken_volume', {enum:['full','dim','mute']}),
   doneAt: text('done_at'),
@@ -516,6 +517,7 @@ export const inbox = sqliteTable('inbox', {
   check('inbox_at_utc', utc(t.at)),
   check('inbox_quiet_until_utc', utc(t.quietUntil)),
   check('inbox_taken_at_utc', utc(t.takenAt)),
+  check('inbox_first_accepted_at_utc', utc(t.firstAcceptedAt)),
   check('inbox_done_at_utc', utc(t.doneAt)),
   check('inbox_answered_at_utc', utc(t.answeredAt)),
   check('inbox_changed_at_utc', utc(t.changedAt)),

@@ -13,7 +13,7 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import { rules, type Viewer } from '../../policy.js';
 import { sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
-import { actionResults, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
+import { actionResults, bridgeIncoming, bridgeSends, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -60,6 +60,20 @@ export class InboxQueries {
     return this.db.select().from(inbox).where(and(eq(inbox.id, id), this.allowed(viewer))).get();
   }
   item(viewer: Viewer, id: string): Item | null { return this.current(viewer, id) ?? null; }
+  latestBridgeReceipt(viewer:Viewer,conversation:string){
+    if(viewer.kind!=='member'&&viewer.kind!=='agent')return null;
+    const item=this.db.select({id:inbox.id,agent:inbox.to,receivedAt:inbox.at,acceptedAt:inbox.firstAcceptedAt})
+      .from(inbox).where(and(this.allowed(viewer),eq(inbox.conversation,conversation),
+        eq(inbox.toKind,'agent'),inArray(inbox.source,['slack','discord']),
+        eq(inbox.fromKind,viewer.kind==='member'?'person':'agent'),eq(inbox.fromId,viewer.id)))
+      .orderBy(desc(inbox.seq)).limit(1).get();
+    if(!item)return null;
+    const sent=this.db.select({id:bridgeSends.id}).from(inboxRefs)
+      .innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))
+      .innerJoin(bridgeSends,eq(bridgeSends.incoming,bridgeIncoming.id))
+      .where(and(eq(inboxRefs.item,item.id),eq(bridgeIncoming.conversation,conversation),eq(bridgeSends.state,'sent'))).limit(1).get();
+    return {...item,replied:!!sent};
+  }
   canSetVolume(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
     return !!item && this.volumeAllowed(viewer, item);
@@ -356,7 +370,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   } });
   const item = new GraphQLObjectType<Item, { viewer: Viewer }>({ name: 'InboxItemView', fields: {
     ...Object.fromEntries(['id', 'toKind', 'to', 'source', 'fromKind', 'at', 'state', 'volume', 'changedAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
-    ...Object.fromEntries(['quietUntil', 'conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
+    ...Object.fromEntries(['quietUntil', 'firstAcceptedAt', 'conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
     seq: { type: GraphQLInt },
     bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'bodyKeepUntil',()=>service.bodyKeepUntil(context.viewer,row.id)) },
     answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'answerKeepUntil',()=>service.answerKeepUntil(context.viewer,row.id)) },
@@ -380,7 +394,12 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['needs', 'alerts', 'answered', 'fyi', 'all'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])),
     agents: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(agentCount))) },
   } });
-  return { inboxFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) }, inboxItem: {
+  const peerReceipt=new GraphQLObjectType({name:'BridgeMessageReceipt',fields:{
+    agent:{type:new GraphQLNonNull(GraphQLString)},receivedAt:{type:new GraphQLNonNull(GraphQLString)},
+    acceptedAt:{type:GraphQLString},replied:{type:new GraphQLNonNull(GraphQLBoolean)},
+  }});
+  return { latestBridgeReceipt:{type:peerReceipt,args:{conversation:{type:new GraphQLNonNull(GraphQLString)}},
+    resolve:(_row,args,context)=>service.latestBridgeReceipt(context.viewer,args.conversation)},inboxFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) }, inboxItem: {
     type: item, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
     resolve: async(_row,args,context,info)=>{const row=service.item(context.viewer,args.id);return row?(await service.project(context.viewer,[row],info,until=>keepReadUntil(context,until)))[0]:null;},
   }, inboxActionResults: {

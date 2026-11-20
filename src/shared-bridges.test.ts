@@ -1737,3 +1737,33 @@ it('answers on the linked bridge account and checks the current receipt, link an
  expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Hello');
  await refused('The message’s words are no longer kept.');
 });
+
+it('returns a peer acknowledgment for the body’s own posted message without exposing the peer conversation',async()=>{
+ const f=fixture(),source=await f.receive(),at=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:source.conversation}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(source.conversation!,'body');
+ });
+ const send=randomUUID(),peer='moss';
+ expect((await f.call('bridges','reply',{id:send,incoming:source.id,text:'Fictional question',model:'observed',outcome:'progressed'})).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ const receipt=async()=>(await f.call('bridges','peerReceipt',{send,peer})).body.value;
+ expect(await receipt()).toEqual({acceptedAt:null,replied:false});
+ f.db.insert(agents).values({id:peer,about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ f.db.insert(bridgeConnections).values({id:'moss-slack',platform:'slack',workspace:'TWORK',botUser:'UMOSS',agent:peer,tokenSecret:'TOKEN',enabled:false,state:'disconnected',stateAt:at}).run();
+ const cv=f.root.services.conversations.open({agent:peer,venue:'slack',place:'synthetic-peer-place',label:'Private fixture label'}).id;
+ const posted=f.db.select().from(bridgeSendParts).where(eq(bridgeSendParts.send,send)).get()!.postedId;
+ const incoming='bi:'+JSON.stringify(['moss-slack',posted]);
+ f.db.insert(bridgeIncoming).values({id:incoming,connection:'moss-slack',channel:'CROOM',user:'UBOT',isDm:false,text:'Private fixture words',postedAt:at,receivedAt:at,state:'delivered',conversation:cv}).run();
+ const mail=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:peer,source:'slack',sourceId:JSON.stringify(['TWORK','CROOM',posted]),fromKind:'agent',fromId:'art',refs:[incoming]});
+ expect(await receipt()).toEqual({acceptedAt:null,replied:false});
+ f.db.update(inbox).set({firstAcceptedAt:at}).where(eq(inbox.id,mail.id)).run();
+ expect(await receipt()).toEqual({acceptedAt:at,replied:false});
+ f.db.insert(bridgeSends).values({id:'peer-answer',incoming,connection:'moss-slack',channel:'CROOM',text:'Private reply',state:'sent',createdAt:at}).run();
+ expect(await receipt()).toEqual({acceptedAt:at,replied:true});
+ expect((await f.call('bridges','peerReceipt',{peer})).body.value).toEqual({acceptedAt:at,replied:true});
+ f.db.update(bridgeConnections).set({workspace:'ANOTHER'}).where(eq(bridgeConnections.id,'moss-slack')).run();
+ expect(await receipt()).toEqual({acceptedAt:null,replied:false});
+ expect((await f.call('bridges','peerReceipt',{send:randomUUID(),peer})).status).toBe(404);
+ expect((await f.call('bridges','peerReceipt',{send,peer},token.other)).status).not.toBe(200);
+});

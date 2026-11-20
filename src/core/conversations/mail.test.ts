@@ -211,3 +211,19 @@ it('leaves mail a person wrote after admission for the next job unless the compo
   // Only a composition that answers for the job's word lets it join.
   expect(new Conversations(db, now, () => () => true).pending(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id, late.id]);
 });
+
+it('records the first body acknowledgment independently of claim, retries and replies',async()=>{
+ const {mail,plain,at,comms,thread}=await fixture();
+ const service=comms.threads.conversations,item=plain('Fictional peer request');
+ expect(service.item(item.id).firstAcceptedAt).toBeNull();
+ service.take(thread.conversation,'job-1',[item.id]);
+ expect(service.item(item.id).firstAcceptedAt).toBeNull();
+ expect(()=>mail.accept(thread.conversation,'wrong-job',item.id)).toThrow();
+ const received='2026-11-14T18:02:00.000Z';
+ at(received);
+ expect(mail.accept(thread.conversation,'job-1',item.id)).toMatchObject({firstAcceptedAt:received,state:'taken'});
+ at('2026-11-14T18:03:00.000Z');
+ expect(mail.accept(thread.conversation,'job-1',item.id).firstAcceptedAt).toBe(received);
+ mail.confirm(thread.conversation,'job-1',item.id);
+ expect(service.item(item.id)).toMatchObject({state:'done',firstAcceptedAt:received});
+});

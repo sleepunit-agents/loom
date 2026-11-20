@@ -3,13 +3,13 @@
  * supplies the actual job; trusted modules use the shared queue directly.
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
-import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
+import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull,or,sql } from 'drizzle-orm';
 import { channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
 import { channelTarget, type ChannelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,bridgeSendParts,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { householdOwners,sharedSharing } from './shared-sharing.js';
 import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
@@ -110,6 +110,41 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   const rule=at.direct?undefined:db.select({brief:bridgeChannels.brief}).from(bridgeChannels).where(and(eq(bridgeChannels.platform,platform),eq(bridgeChannels.workspace,at.workspace),eq(bridgeChannels.channel,channel))).get();
   return{agent:found.cv.agent,brief:rule?.brief??null,channel,platform,workspace:at.workspace};
  };
+ operations.register({name:'bridges.peerReceipt',write:false,doors:['http'],recheckPolicy:true,
+  input:z.object({send:z.uuid().optional(),peer:z.string().min(1).max(100)}).strict().describe('Check whether a peer received or replied to your latest post from this bridge conversation. Supply a send id to check an earlier post.'),
+  output:z.object({acceptedAt:z.string().nullable(),replied:z.boolean()}).strict(),
+  may:viewer=>{const scope=current(viewer);return viewer.kind==='agent'&&!!scope&&viewer.id===scope.cv.agent&&isBridgeVenue(scope.cv.venue);},
+  run(ctx,input){
+   const scope=current(ctx.viewer);
+   if(!scope)throw new OperationError('denied','Current bridge body required');
+   const origin=db.select({send:bridgeSends,connection:bridgeConnections}).from(bridgeSends)
+    .innerJoin(bridgeConnections,eq(bridgeConnections.id,bridgeSends.connection))
+    .leftJoin(bridgeIncoming,eq(bridgeIncoming.id,bridgeSends.incoming))
+    .where(and(input.send?eq(bridgeSends.id,input.send):undefined,eq(bridgeConnections.agent,scope.cv.agent),
+     eq(bridgeConnections.platform,scope.cv.venue as 'discord'|'slack'),
+     or(and(isNull(bridgeSends.incoming),eq(bridgeSends.conversation,scope.cv.id)),
+        and(eq(bridgeIncoming.conversation,scope.cv.id),eq(bridgeIncoming.state,'delivered')))))
+    .orderBy(desc(bridgeSends.createdAt),desc(sql`bridge_sends.rowid`)).limit(1).get();
+   if(!origin||(origin.send.incoming?!inConversation(ctx.viewer,origin.send.incoming):origin.send.conversation!==scope.cv.id))
+    throw new OperationError('not-found','No such send in this conversation');
+   // Join acknowledged provider posts to the receiving connection's own ingestion records.
+   // Provider ids are scoped by workspace and channel. No body-supplied incoming id or words are used.
+   const rows=db.select({accepted:inbox.firstAcceptedAt,incoming:bridgeIncoming.id}).from(bridgeSendParts)
+    .innerJoin(bridgeConnections,and(eq(bridgeConnections.agent,input.peer),eq(bridgeConnections.platform,origin.connection.platform),eq(bridgeConnections.workspace,origin.connection.workspace)))
+    .innerJoin(bridgeIncoming,and(eq(bridgeIncoming.connection,bridgeConnections.id),
+     eq(bridgeIncoming.id,sql`'bi:' || json_array(${bridgeConnections.id},${bridgeSendParts.postedId})`),
+     eq(bridgeIncoming.channel,origin.send.channel),eq(bridgeIncoming.user,origin.connection.botUser),eq(bridgeIncoming.state,'delivered')))
+    .innerJoin(inboxRefs,eq(inboxRefs.ref,bridgeIncoming.id)).innerJoin(inbox,and(eq(inbox.id,inboxRefs.item),
+     eq(inbox.conversation,bridgeIncoming.conversation),eq(inbox.toKind,'agent'),eq(inbox.to,input.peer),
+     eq(inbox.fromKind,'agent'),eq(inbox.fromId,scope.cv.agent),eq(inbox.source,origin.connection.platform),
+     eq(inbox.sourceId,sql`json_array(${bridgeConnections.workspace},${bridgeIncoming.channel},${bridgeSendParts.postedId})`)))
+    .where(eq(bridgeSendParts.send,origin.send.id)).all();
+   const times=rows.flatMap(row=>row.accepted?[row.accepted]:[]).sort();
+   const replied=rows.length>0&&!!db.select({id:bridgeSends.id}).from(bridgeSends)
+    .where(and(inArray(bridgeSends.incoming,rows.map(row=>row.incoming)),eq(bridgeSends.state,'sent'))).limit(1).get();
+   return {acceptedAt:times[0]??null,replied};
+  },
+ });
  operations.register({name:'bridges.brief',write:false,doors:['http'],input:z.object({}).strict(),output:z.object({brief:z.string().nullable()}).strict(),
   may:viewer=>!!briefOf(viewer),
   run(ctx){const found=briefOf(ctx.viewer);if(!found)throw new OperationError('denied','Current bridge body required');return{brief:found.brief};},
