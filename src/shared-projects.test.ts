@@ -106,7 +106,7 @@ it('reads Sharing with fixed SQL work for two and ten projects through one API c
   const statement=Reflect.apply(prepare,this,[sql]);
   if(/\bfrom "project(?:s|_members|_agents|_repositories)"/.test(sql))for(const method of ['get','all'] as const){
    const original=statement[method];
-   statement[method]=function(...args:unknown[]){if(/readSharing|at Object.read \(.*shared-projects\.[jt]s:/.test(new Error().stack??''))statements.push(sql);return Reflect.apply(original,this,args);};
+   statement[method]=function(...args:unknown[]){if(/\breadSharing\b|at Object.read \(.*shared-projects\.[jt]s:/.test(new Error().stack??''))statements.push(sql);return Reflect.apply(original,this,args);};
   }
   return statement;
  } as typeof prepare;
