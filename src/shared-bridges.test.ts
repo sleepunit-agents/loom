@@ -79,6 +79,24 @@ it('mounts actual intake, committed Tempo admission, body reply door and current
  expect((await f.call('bridges','reply',input,token.body,receipt)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent'});expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{part:0,postedId:'1794432000.000009'}]);
  expect((await f.call('bridges','reply',input,token.body,receipt)).status).toBe(200);expect((await f.call('bridges','reply',input,token.body,randomUUID())).status).toBe(200);expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);expect(f.db.select().from(turns).all()).toMatchObject([{kind:'message'},{kind:'reply',run:'body',model:'observed',outcome:'progressed'}]);
 });
+it('reports only provider-confirmed parts of this running job’s intermediate post',async()=>{
+ const f=fixture();
+ const incoming=await f.receive(),cv=incoming.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const id=randomUUID(),status=(credential:string)=>f.call('bridges','sendStatus',{id},credential);
+ expect((await f.call('bridges','say',{id,text:'Progress from the body'},token.body)).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000009']}});
+ expect((await status(token.other)).status).not.toBe(200);
+ expect((await status(token.owner)).status).not.toBe(200);
+ f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run());
+ expect((await status(token.body)).status).not.toBe(200);
+ f.root.writes.run(()=>f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'other')).run());
+ expect((await status(token.other)).status).not.toBe(200);
+});
 it('retires actual sockets after committed owner disconnect and drains on root close',async()=>{
  const f=fixture();await f.receive();expect((await f.call('bridges','command',{action:'disconnect',id:'connection'},token.owner)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.closed).toHaveBeenCalledOnce();await expect(f.transports[0].receive({},Buffer.from('{}'))).rejects.toThrow();await f.root.close();expect((await f.call('bridges','reply',{id:randomUUID(),incoming:'in',text:'Late'})).status).toBe(503);
 });
@@ -560,6 +578,7 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
  // During its run such a job may also say more in the conversation (bridges.say), through the same queue.
  const more=randomUUID();expect((await f.call('bridges','say',{id:more,text:'One more thing'},token.other)).status).toBe(200);
  expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,more)).get()).toMatchObject({incoming:null,conversation:cv,state:'held'});
+ expect((await f.call('bridges','sendStatus',{id:more},token.other)).body).toMatchObject({ok:true,value:{state:'held',postedIds:[]}});
  // A held post that answers no message is seen and reviewed by whoever sees its conversation: the owner releases it; an agent never does.
  expect(mayReviewReply(f.db,{kind:'member',id:'owner'},reply.id)).toBe(true);expect(mayReviewReply(f.db,{kind:'agent',id:'art'},reply.id)).toBe(false);
  expect((await f.call('bridges','command',{action:'review',id:reply.id,decision:'release'},token.owner)).status).toBe(200);

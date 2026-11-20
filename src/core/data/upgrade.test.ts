@@ -283,7 +283,7 @@ describe('upgrading a household database', () => {
       { channel: 'general', answers: 'art', bots_may_talk: 1, brief: null }, { channel: 'pond', answers: 'art', bots_may_talk: 0, brief: null }]);
     const after = rows();
     // Every row of every table says what it said, once the columns the step added, all empty, are set aside.
-    const added = ['brief', 'reports_to', 'conversation', 'asked_by_kind', 'asked_by', 'asked_at', 'on_word_kind', 'on_word', 'chain', 'chain_started_at'];
+    const added = ['sending_job', 'brief', 'reports_to', 'conversation', 'asked_by_kind', 'asked_by', 'asked_at', 'on_word_kind', 'on_word', 'chain', 'chain_started_at'];
     const was = before.map(table => new Set(table.flatMap(row => Object.keys(row as object))));
     const without = after.map((table, index) => table.map(row => Object.fromEntries(Object.entries(row as Record<string, unknown>).filter(([name, value]) => was[index].has(name) || !(added.includes(name) && value === null)))));
     expect(without).toEqual(before);

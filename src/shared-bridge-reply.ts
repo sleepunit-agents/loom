@@ -182,6 +182,24 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   if(!latest)return place?{job:place.job,incoming:undefined,at:place.at,took:[] as string[],place}:undefined;
   return connection?.agent===found.cv.agent&&connection.platform===found.cv.venue?{job:found.job.id,incoming:latest.incoming,at:undefined,took:taken.map(row=>row.incoming),place}:undefined;
  };
+ // A job can follow its own intermediate post through the queue, including confirmations for
+ // individual parts of a long message. The bridge alone records the provider's message IDs.
+ operations.register({name:'bridges.sendStatus',write:false,doors:['http'],recheckPolicy:true,
+  input:z.object({id:z.uuid()}).strict(),
+  output:z.object({state:z.enum(bridgeSends.state.enumValues),postedIds:z.array(z.string())}).strict(),
+  may:viewer=>!!speaking(viewer),
+  run(ctx,input){
+   const scope=current(ctx.viewer);
+   if(!scope)throw new OperationError('denied','Current bridge body required');
+   const send=db.select({state:bridgeSends.state,incoming:bridgeSends.incoming,conversation:bridgeSends.conversation})
+    .from(bridgeSends).where(and(eq(bridgeSends.id,input.id),eq(bridgeSends.sendingJob,scope.job.id))).get();
+   if(!send||(send.incoming?!inConversation(ctx.viewer,send.incoming):send.conversation!==scope.cv.id))
+    throw new OperationError('not-found','No such post from this job');
+   const parts=db.select({id:bridgeSendParts.postedId}).from(bridgeSendParts)
+    .where(eq(bridgeSendParts.send,input.id)).orderBy(asc(bridgeSendParts.part)).all();
+   return {state:send.state,postedIds:parts.map(part=>part.id)};
+  },
+ });
  // A post may carry files, on Discord: their bytes are kept with the post until it is settled and go out with
  // its last part. The body program reads them from the body's own working area (runtime/body-files.ts);
  // what arrives here is a name and bytes, bounded by SEND_FILES and SEND_FILES_BYTES.
@@ -199,7 +217,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
    const files=(input.files??[]).map(file=>({name:file.name,contents:Buffer.from(file.contents,'base64')}));
-   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),...(files.length?{files}:{}),...(bound.incoming?{incoming:bound.incoming}:{at:bound.at!})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,sendingJob:bound.job,held:!effectsAllowed(),...(files.length?{files}:{}),...(bound.incoming?{incoming:bound.incoming}:{at:bound.at!})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
    finally{for(const file of files)file.contents.fill(0);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },

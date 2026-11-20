@@ -1224,8 +1224,10 @@ CREATE TABLE `bridge_sends` (
 	`text` text NOT NULL,
 	`state` text NOT NULL,
 	`created_at` text NOT NULL,
+	`sending_job` text,
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`sending_job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE set null,
 	CONSTRAINT "bridge_sends_created_at_utc" CHECK("bridge_sends"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_sends"."created_at") = "bridge_sends"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_sends"."created_at") = "bridge_sends"."created_at", 0)),
 	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')),
 	CONSTRAINT "bridge_sends_answers_or_placed" CHECK(coalesce("bridge_sends"."incoming", "bridge_sends"."conversation") is not null)

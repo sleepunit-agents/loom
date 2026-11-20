@@ -1378,6 +1378,8 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   text: text('text').notNull(),
   state: text('state', { enum: ["pending", "held", "sending", "sent", "uncertain", "dismissed"] }).notNull(),
   createdAt: text('created_at').notNull(),
+  /** The body that queued an intermediate post. Existing posts have no recorded authoring job. */
+  sendingJob: text('sending_job').references(() => jobs.id, { onDelete: 'set null' }),
 }, t => [
   check('bridge_sends_created_at_utc', utc(t.createdAt)),
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),

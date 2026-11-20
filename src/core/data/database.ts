@@ -367,6 +367,8 @@ const upgrades: readonly (readonly string[])[] = [
   ["ALTER TABLE job_usage ADD COLUMN first_context integer"],
   // 23: a private journal belongs to its trigger for its lifetime.
   ["CREATE TABLE `trigger_journals` (\n\t`trigger` text PRIMARY KEY NOT NULL,\n\t`lessons` text DEFAULT '' NOT NULL,\n\t`state` text DEFAULT '' NOT NULL,\n\t`state_revision` integer DEFAULT 0 NOT NULL,\n\t`state_changed_at` text,\n\tFOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE cascade\n);", "CREATE TABLE `trigger_acceptances` (\n\t`item` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\tFOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
+  // 24: keep the authoring job of a body's intermediate bridge post for its delivery receipt.
+  ['ALTER TABLE bridge_sends ADD COLUMN sending_job text REFERENCES jobs(id) ON DELETE SET NULL'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
