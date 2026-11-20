@@ -332,8 +332,8 @@ p{max-width:68ch}
 @keyframes blink{0%,95%,100%{transform:scaleY(1)}97.5%{transform:scaleY(.12)}}
 .desk__dock{display:flex;justify-content:center;gap:6px;padding:2px 12px 12px;flex-wrap:wrap}
 /* the dock is icon keys, as the app's is: an app's icon on its colour, its name shown on hover */
-.desk__dock span{display:grid;place-items:center;width:28px;height:28px;background:var(--t);color:var(--on-tint);clip-path:polygon(6px 0,100% 0,100% 100%,0 100%,0 6px)}
-.desk__dock svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.desk__glyph{display:block;width:28px;height:28px;background:var(--t);mask:var(--glyph) center/contain no-repeat;mask-mode:luminance}
+.desk .tile__key .desk__glyph{width:24px;height:24px;background:var(--on-tint)}
 .mini{padding:9px 11px 11px;display:grid;gap:7px;align-content:start}
 .mini .row{padding:0 0 7px;border-bottom:1px solid var(--line)} .mini .row:last-child{border:0;padding-bottom:0}
 .mini .msg{grid-template-columns:minmax(0,1fr)}

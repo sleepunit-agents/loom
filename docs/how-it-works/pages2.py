@@ -405,9 +405,9 @@ def changes():
              '<div class="sec"><span class="lbl">Merge answer</span><span class="sp__acts"><span class="mbtn mbtn--on">Yes, merge it</span><span class="mbtn">Not yet</span><span class="mbtn">Always for pond</span></span></div>'
              '<div class="sec"><span class="lbl">Tasks</span><span>Order the pump <span class="chip">t-2190</span></span></div>')
     mock = split_mock("Search changes", [("All changes", 2, True), ("Waiting on you", 1), ("Lately", ""), ("loom", ""), ("pond", 2)], "Changes", 2, "Refresh",
-        [("Add the pump order script", "github:owner/repo#12 · pond", "CI green, approved, Waiting on you", True),
-         ("Fix the winter checklist link", "github:owner/repo#13 · pond", "CI running")],
-        reader("github:owner/repo#12 · pond", "Add the pump order script", "CI green, approved, Waiting on you", [], [], extra),
+        [("Add the pump order script", "github:owner/repo#12 · pond", "Checks passing, approved, Waiting on you", True),
+         ("Fix the winter checklist link", "github:owner/repo#13 · pond", "Checks running")],
+        reader("github:owner/repo#12 · pond", "Add the pump order script", "Checks passing, approved, Waiting on you", [], [], extra),
         chips=["All changes 2", "Waiting on you 1", "Lately", "pond 2"])
     anat = anatomy("github:owner/repo#12 · change", "Add the pump order script", [
         ("repository, agent", "owner/repo · opened by art", "l", "People and projects", "Its repository files it under a project. An agent's GitHub login says which agent opened it."),
@@ -438,8 +438,8 @@ def changes():
          ("Checked at the door.", DOOR)],
         [("", ["changes", "change_checks", "change_people", "change_tasks", "change_sync"])],
         chat=(chat("Pond pump", c_art('The order script is up as <span class="chip">github:owner/repo#12</span>.')
-                   + c_ref("Pull request", "Add the pump order script", "CI green, approved, Waiting on you")
-                   + c_work(("Add the pump order script", "CI green, approved, Waiting on you · github:owner/repo#12 · Made here"))), "Changes"))
+                   + c_ref("Pull request", "Add the pump order script", "Checks passing, approved, Waiting on you")
+                   + c_work(("Add the pump order script", "Checks passing, approved, Waiting on you · github:owner/repo#12 · Made here"))), "Changes"))
 
 # ───────────────────────── 6 Inbox
 def inbox():
