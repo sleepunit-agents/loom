@@ -103,7 +103,7 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
       <ItemTitle className={`flex min-w-0 gap-2 ${whole ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
         {marked && <Who agent={i.agent} person={i.person} avatar={i.avatar} size={20} />}
-        <span className={whole ? 'font-medium leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]' : 'line-clamp-2 font-medium [overflow-wrap:anywhere]'}>{tidy(i.text)}</span>
+        <span className={whole ? 'font-medium leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]' : 'loom-wrap-label font-medium'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
       {i.meta && <ItemDescription className={whole ? '[overflow-wrap:anywhere]' : 'line-clamp-2 [overflow-wrap:anywhere]'}>{tidy(i.meta)}</ItemDescription>}

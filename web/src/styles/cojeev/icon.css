@@ -256,9 +256,6 @@
   font-size: var(--fs-lead);
   min-width: 0;
   flex: 1 1 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .v-icon-studio__name .v-btn {
   margin-left: auto;

@@ -80,10 +80,10 @@ function AgentRow({ c }: { c: AgentCard }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate font-semibold">{c.label}</span>
-            <span className={`shrink-0 truncate text-xs font-medium ${wrong ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{statusWords(c)}</span>
+            <span className="loom-wrap-label font-semibold">{c.label}</span>
+            <span className={`loom-wrap-label text-xs font-medium ${wrong ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{statusWords(c)}</span>
           </span>
-          {line && <span className="block truncate text-sm opacity-70">{line}</span>}
+          {line && <span className="block loom-wrap-label text-sm opacity-70">{line}</span>}
         </span>
         <span className="shrink-0 opacity-50"><AnimatedIcon name={iconFor('chevron-right')} size="sm" /></span>
       </a>
@@ -106,7 +106,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
         </span>
         <div className="min-w-0 flex-1">
           <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
-          <h3 className="truncate font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
+          <h3 className="loom-wrap-label font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
           {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="line-clamp-2 break-words text-sm opacity-70">{c.reason}</Arrive>}
         </div>
       </div>
@@ -121,13 +121,13 @@ function AgentIdentity({ c }: { c: AgentCard }) {
               <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${markColor(c.bg)} 22%, transparent)` }}>
                 <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
               <span className="min-w-0 flex-1"><span className="line-clamp-3 break-words font-medium">{d.text}</span>
-                {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{d.where}{d.where && d.since ? ' · ' : ''}{d.since && <span className="loom-data">{ago(d.since)}</span>}</span>}</span>
+                {(d.where || d.since) && <span className="block loom-wrap-label text-xs opacity-60">{d.where}{d.where && d.since ? ' · ' : ''}{d.since && <span className="loom-data">{ago(d.since)}</span>}</span>}</span>
             </Arrive>))}
         </ul>
       )}
       <div className="flex items-center gap-2 border-t px-5 py-3 text-sm">
         <span className="font-medium">Open {c.label}</span><AnimatedIcon name={iconFor('chevron-right')} size="sm" />
-        {c.seen && <span className="ml-auto truncate text-xs opacity-60">seen <span className="loom-data">{ago(c.seen.at)}</span>{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
+        {c.seen && <span className="ml-auto loom-wrap-label text-xs opacity-60">seen <span className="loom-data">{ago(c.seen.at)}</span>{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
       </div>
     </Card>
   );
@@ -261,7 +261,7 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
         <span className="min-w-0 flex-1">
           {/* The whole title, mostly (Jonathan liked reading it): three lines before it's cut. */}
           <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,var(--loom-unread))]" />}
-            <span className={`line-clamp-3 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
+            <span className={`loom-wrap-label ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
           {/* A quote (a memory's words, a reason) reads to three lines; the row opens it whole. */}
           {(p.why ?? i.outcome) && <span className="line-clamp-3 break-words text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
         </span>

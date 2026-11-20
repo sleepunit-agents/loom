@@ -62,7 +62,7 @@ export function AppHeader({ title, lead, context, more, crumb, go, actions, wher
             </BreadcrumbList></Breadcrumb>
           )}
           {/* A long title (a task's, a secret's name) wraps, a size down, rather than being cut. */}
-          {title && <h1 className={`line-clamp-3 break-words text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{title}</h1>}
+          {title && <h1 className={`loom-wrap-label text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{title}</h1>}
           {context && <p className="line-clamp-2 break-words text-sm opacity-70">{context}</p>}
         </div>
         {extra && <InfoButton open={open} toggle={toggle} />}
