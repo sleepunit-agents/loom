@@ -16,6 +16,7 @@ import * as bodyKits from './body-kit-tools.js';
 import {bodyProgram} from './body-program.js';
 import {kitPrivateClient} from './kit-private-client.js';
 import {kitBroker} from './kit-broker.js';
+import {kitUnavailableList} from './kit-availability.js';
 import {kitSocket} from './kit-socket.js';
 import {runKitContainer} from './kit-container.js';
 import type {DockerEngine} from './docker-engine.js';
@@ -49,7 +50,8 @@ function fixtureEngine(image:string,helper:string,finished:()=>void):DockerEngin
   }};
 }
 
-it.each([false,true])('keeps a held job fresh and runs exactly its granted mounted tools (granted=%s)',async granted=>{
+it.each(['ungranted','matching','different house'])('keeps a held job fresh and advertises its usable tools (%s)',async scenario=>{
+  const granted=scenario!=='ungranted',usable=scenario==='matching';
   const secret='fictional-pond-credential',read=vi.fn(async()=>Buffer.from(secret));
   const f=await bodyFixture(clean,{secretInputs:{source:{read}}});
   const dir=await mkdtemp(join(tmpdir(),'loom-kit-body-'));clean.push(()=>rm(dir,{force:true,recursive:true}));
@@ -78,15 +80,20 @@ it.each([false,true])('keeps a held job fresh and runs exactly its granted mount
   const helper=join(dir,'lookup');
   await writeFile(helper,'#!'+process.execPath+'\nif(!process.env.KIT_POND)process.exit(1);\nprocess.stdout.write(process.argv[2]==="leak"?process.env.KIT_POND:JSON.stringify(process.argv.slice(2)));',{mode:0o700});
   let launches=0;
-  const broker=kitBroker({...house,denials:[],post:kitPrivateClient({url,runner:bodyCredentials.runner,body,job:'job'}),
+  const pin=scenario==='different house'?{...house,commit:'d'.repeat(40)}:house;
+  const post=kitPrivateClient({url,runner:bodyCredentials.runner,body,job:'job'});
+  const broker=kitBroker({...pin,denials:[],post,
     run:input=>runKitContainer(fixtureEngine(house.image,helper,()=>{
       if(++launches===2)f.db.delete(s.projectOutsidePeople).run();
     }),{...input,job:'job',box:'box'})});
-  const signal=new AbortController().signal,socket=await kitSocket(dir,()=>broker,signal);clean.push(()=>socket.close());
+  const signal=new AbortController().signal,socket=await kitSocket(dir,()=>broker,signal,async(transport,signal)=>{
+    const reply=await post('availability',{pin,transport,offered:broker.offeredKits()},signal) as {unavailable:unknown};
+    return kitUnavailableList.parse(reply.unavailable);
+  });clean.push(()=>socket.close());
   // The engine mounts the worker socket at this fixed path. The test process
   // reaches the same UNIX listener at its host path without a mount namespace.
   const load=bodyKits.bodyKitTools;
-  vi.spyOn(bodyKits,'bodyKitTools').mockImplementation((path,signal)=>{expect(path).toBe(bodyKits.KIT_SOCKET);return load(socket.path,signal);});
+  vi.spyOn(bodyKits,'bodyKitTools').mockImplementation((path,signal,onUnavailable)=>{expect(path).toBe(bodyKits.KIT_SOCKET);return load(socket.path,signal,onUnavailable);});
   const job={id:'job',agent:'art',box:'box',conversation,venue:'wake',account:'fixture',model:'fixture',harness:'claude',brief:'',
     house:{repository:house.repository,file:'Housefile',branch:'main'},run:{nestedContainers:false,gpu:false,ports:[],policy:room}};
   const envelope=Buffer.from(JSON.stringify({job,build:house.image,kitSocket:true,bootstrap:{origin:url,job:'job',token:body}}));
@@ -101,15 +108,17 @@ it.each([false,true])('keeps a held job fresh and runs exactly its granted mount
   expect(report.args.slice(report.args.indexOf('--tools'),report.args.indexOf('--tools')+2)).toEqual(['--tools','']);
   expect(report.args.slice(report.args.indexOf('--disallowedTools'))).toEqual(expect.arrayContaining(['Bash','Read','WebFetch','Agent']));
   expect(report.names).not.toContain('request_secret');expect(report.names).not.toContain('use_secret');
-  expect(report.names.filter((name:string)=>name.startsWith('kit_'))).toEqual(granted?['kit_lookup']:[]);
-  if(granted){
+  expect(report.names.filter((name:string)=>name.startsWith('kit_'))).toEqual(usable?['kit_lookup']:[]);
+  expect(report.kitBrief).toBe(scenario==='different house'
+    ? 'Kit pond is unavailable because the job ran in a different house than the one pinned by the kit.' : null);
+  if(usable){
     expect(report.results[0]).toMatchObject({content:[{text:'["pond $(date); echo"]'}]});
     expect(report.results[1]).toMatchObject({isError:true});
     expect(report.results[2]).toMatchObject({isError:true,content:[{text:expect.stringContaining('The tool did not run')}]});
   }
   for(const value of [secret,Buffer.from(secret).toString('base64'),body,bodyCredentials.runner])expect(JSON.stringify(report)).not.toContain(value);
-  expect(read).toHaveBeenCalledTimes(granted?2:0);expect(launches).toBe(granted?2:0);
+  expect(read).toHaveBeenCalledTimes(usable?2:0);expect(launches).toBe(usable?2:0);
   const audit=f.db.select().from(s.kitUses).all();
-  expect(audit.map(row=>row.outcome)).toEqual(granted?['ran','failed','refused']:[]);
+  expect(audit.map(row=>row.outcome)).toEqual(usable?['ran','failed','refused']:[]);
   expect(JSON.stringify(audit)).not.toContain(secret);
 });

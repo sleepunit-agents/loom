@@ -8,6 +8,7 @@ import type { DockerEngine } from './docker-engine.js';
 import { HOUSE_NODE, HOUSE_REPOSITORY } from './house-layout.js';
 
 type Invocation = {
+  runtime?:string;
   job:string;
   box:string;
   image:string;

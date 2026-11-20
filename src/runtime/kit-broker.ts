@@ -17,7 +17,7 @@ const item=z.strictObject({reasons:z.array(z.string()).optional(),kit:z.string()
 const cursor=z.strictObject({kit:z.string().min(1).max(200),tool:z.string().min(1).max(32)});
 const catalog=z.strictObject({tools:z.array(item).max(1),next:cursor.optional()});
 const authorization=z.strictObject({use:z.string().min(1).max(200),tool:kitTool,secrets:z.record(z.string(),z.base64().max(Math.ceil(SECRET_VALUE_BYTES/3)*4))});
-export type KitPost=(verb:'list'|'authorize'|'refuse'|'finish',input:object,signal:AbortSignal)=>Promise<unknown>;
+export type KitPost=(verb:'availability'|'list'|'authorize'|'refuse'|'finish',input:object,signal:AbortSignal)=>Promise<unknown>;
 export type KitRun=(input:{image:string;entrypoint:string;argv:string[];secrets:Record<string,Buffer>;signal:AbortSignal;onStarted:()=>void})=>Promise<Buffer>;
 export type KitDescriptor=Pick<KitTool,'name'|'description'|'parameters'>;
 export function kitBroker(input:{repository:string;commit:string;image:string;denials:string[];post:KitPost;run:KitRun}){
@@ -54,6 +54,7 @@ export function kitBroker(input:{repository:string;commit:string;image:string;de
     return [...entries].map(([name,{tool}])=>({name,description:tool.description,parameters:tool.parameters}));
   };
   return {
+    offeredKits:()=>[...new Set([...entries.values()].map(entry=>entry.kit))],
     list:(signal:AbortSignal)=>listed??=list(signal).catch(error=>{listed=undefined;throw error;}),
     async call(name:string,args:unknown,signal:AbortSignal){
       const entry=entries.get(name);

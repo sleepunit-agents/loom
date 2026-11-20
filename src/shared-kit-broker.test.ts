@@ -140,3 +140,36 @@ it.each(['owner','member'] as const)('revokes a linked %s on the next call when 
   expect((await post('authorize',call)).status).toBe(403);
   expect(source.read).not.toHaveBeenCalled();
 });
+
+it('reports the mounted house mismatch once and closes it when a later job is offered the kit',async()=>{
+  const {db,post,root,source,at}=fixture();
+  const tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const different={...pin,commit:'2'.repeat(40)};
+  const changed=vi.fn();
+  const stop=root.writes.observe(changed);
+  clean.push(stop);
+  const notices=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all();
+
+  const report=async(pin:typeof different,offered:string[]=[],transport='ready')=>
+    (await (await post('availability',{pin,transport,offered})).json()).unavailable;
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toMatchObject([{to:'owner',state:'waiting',words:expect.stringContaining('different house')}]);
+  changed.mockClear();
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toHaveLength(1);
+  expect(changed).not.toHaveBeenCalled();
+
+  expect(await report(pin,[],'socket')).toEqual([{kit:'weather',reason:'socket'}]);
+  expect(notices()).toHaveLength(2);
+  expect((await (await post('list',pin)).json()).tools).toHaveLength(1);
+  expect(await report(pin,['weather'])).toEqual([]);
+  expect(notices().map(row=>row.state)).toEqual(['resolved','resolved']);
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toHaveLength(3);
+
+  db.insert(secretChanges).values({id:'removed',secret:'weather',action:'removed',at,by:'owner'}).run();
+  expect((await (await post('list',pin)).json()).tools).toEqual([]);
+  expect(await report(pin)).toEqual([{kit:'weather',reason:'credential'}]);
+  expect(source.read).not.toHaveBeenCalled();
+});

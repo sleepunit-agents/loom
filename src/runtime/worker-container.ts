@@ -7,6 +7,8 @@ import { bodyInput } from './body-bootstrap.js';
  * built on the core house, which the worker builds from its own install (house-core.ts). Nothing about any one
  * agent is set up on the machine but, where wanted, that agent's mounts. */
 import {canonicalKitImage} from './kit-manifest.js';
+import {kitUnavailableList,type KitUnavailable,type kitAvailabilityReport} from './kit-availability.js';
+import type {z} from 'zod';
 import {kitBroker} from './kit-broker.js';
 import {kitSocket} from './kit-socket.js';
 import {kitPrivateClient} from './kit-private-client.js';
@@ -430,6 +432,7 @@ export function containerWorkerExecutor(config: {
       const abort = new AbortController();
       let socket: Duplex | undefined, id: string | undefined, released = false, createRejected = false, createAsked = false;
       let kit:Awaited<ReturnType<typeof kitSocket>>|undefined, broker:ReturnType<typeof kitBroker>|undefined, houseId:string|undefined;
+      let reportKits:((transport:z.infer<typeof kitAvailabilityReport>['transport'],signal:AbortSignal)=>Promise<KitUnavailable[]>)|undefined;
       let logs: ReturnType<typeof output> | undefined;
       let stopping: Promise<void> | undefined;
       // Abort must begin reaping even while loom's running acknowledgement is
@@ -447,7 +450,7 @@ export function containerWorkerExecutor(config: {
           // A body on a machine that lends out its engine can inspect other containers there.
           // Such a machine never receives kit secrets. A new socket belongs to one job only.
           if(houseId&&dependencies.kitAccess){
-            kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal).catch(()=>undefined);
+            kit=await kitSocket(fixed.state??defaultWorkerState(fixed.box),()=>broker,abort.signal,(transport,signal)=>reportKits?.(transport,signal)??Promise.resolve([])).catch(()=>undefined);
             if(kit)mounts=[...mounts,{Type:'bind',Source:kit.path,Target:KIT_SOCKET,ReadOnly:true}];
           }
           const spec = createSpec(assignment, house,
@@ -501,12 +504,26 @@ export function containerWorkerExecutor(config: {
           released = true;
           if (bootstrap) logs!.discard();
           const payload = bodyInput(assignment, image, bootstrap, true);
-          if(kit&&dependencies.kitAccess&&payload.bootstrap&&houseId){
-            broker=kitBroker({repository:assignment.house.repository,commit:houseCommit(image),image:houseId,denials:deniedTools(assignment.run?.policy),
-              post:kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id}),
-              run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box})});
+          let kitUnavailable:KitUnavailable[]=[];
+          if(dependencies.kitAccess&&payload.bootstrap){
+            const post=kitPrivateClient({url:dependencies.kitAccess.url,runner:dependencies.kitAccess.runner,body:payload.bootstrap.token,job:assignment.id});
+            const pin=houseId ? {repository:assignment.house.repository,commit:houseCommit(image),image:houseId} : undefined;
+            reportKits=async(transport,signal)=>{
+              try{
+                const result=await post('availability',{pin,transport,offered:transport==='ready'?broker?.offeredKits()??[]:[]},signal);
+                return kitUnavailableList.parse((result as {unavailable:unknown}).unavailable);
+              }catch{
+                dependencies.say?.('Could not report kit availability for job '+assignment.id);
+                return [];
+              }
+            };
+            if(kit&&pin){
+              broker=kitBroker({...pin,denials:deniedTools(assignment.run?.policy),post,
+                run:invocation=>runKitContainer(engine,{...invocation,job:assignment.id,box:assignment.box,runtime:fixed.container.runtime})});
+            }else kitUnavailable=await reportKits(pin?'socket':'image',abort.signal);
           }
-          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({...payload,...(broker?{kitSocket:true}:{})}) + '\n',
+          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({...payload,...(broker?{kitSocket:true}:{}),
+            ...(kitUnavailable.length?{kitUnavailable}:{})}) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
         },
         stop,

@@ -5,12 +5,14 @@ import {createServer} from 'node:http';
 import {chmod,mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {z} from 'zod';
+import type {KitUnavailable,kitTransport} from './kit-availability.js';
 import type {kitBroker} from './kit-broker.js';
 
 // Sixteen 4096-code-unit strings may each need six JSON bytes per code unit.
 const REQUEST_BYTES=512*1024;
 const call=z.strictObject({name:z.string().max(64),args:z.record(z.string(),z.unknown())});
-export async function kitSocket(directory:string,broker:()=>ReturnType<typeof kitBroker>|undefined,lifetime:AbortSignal){
+export async function kitSocket(directory:string,broker:()=>Pick<ReturnType<typeof kitBroker>,'list'|'call'>|undefined,lifetime:AbortSignal,
+  availability?:(transport:z.infer<typeof kitTransport>,signal:AbortSignal)=>Promise<KitUnavailable[]>){
   const dir=await mkdtemp(join(directory,'kit-'));
   const path=join(dir,'s');
   const stop=new AbortController(),pending=new Set<Promise<void>>();
@@ -26,7 +28,18 @@ export async function kitSocket(directory:string,broker:()=>ReturnType<typeof ki
         for await(const chunk of request){size+=chunk.length;if(size>REQUEST_BYTES)throw Error();chunks.push(chunk);}
         const body:unknown=JSON.parse(Buffer.concat(chunks).toString());
         let result:unknown;
-        if(request.url==='/list'){z.strictObject({}).parse(body);result=await active.list(signal);}
+        if(request.url==='/list'){
+          z.strictObject({}).parse(body);
+          if(!availability)result=await active.list(signal);
+          else {
+            let transport:z.infer<typeof kitTransport>='ready';
+            const tools=await active.list(signal).catch((error:unknown)=>{
+              transport=error instanceof KitCapacity?'capacity':'catalog';
+              return [];
+            });
+            result={tools,unavailable:await availability(transport,signal)};
+          }
+        }
         else if(request.url==='/call'){const {name,args}=call.parse(body);result=await active.call(name,args,signal);}
         else throw Error();
         response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify(result));

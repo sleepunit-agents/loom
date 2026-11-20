@@ -2,6 +2,7 @@ import {KitRefused,KitCapacity} from './kit-refused.js';
 import {request} from 'node:http';
 import {z} from 'zod';
 import {kitInputSchema,kitParameter} from './kit-manifest.js';
+import {kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import type {BodyModelTool} from './body-model-tools.js';
 
 export const KIT_SOCKET='/run/loom/kit.sock';
@@ -20,8 +21,11 @@ function post(socketPath:string,path:'/list'|'/call',input:object,signal:AbortSi
     req.on('error',reject);req.end(JSON.stringify(input));
   });
 }
-export async function bodyKitTools(path:string,signal:AbortSignal):Promise<BodyModelTool[]>{
-  const list=descriptors.parse(await post(path,'/list',{},signal));
+const catalog=z.union([descriptors,z.strictObject({tools:descriptors,unavailable:kitUnavailableList})]);
+export async function bodyKitTools(path:string,signal:AbortSignal,onUnavailable?:(items:KitUnavailable[])=>void):Promise<BodyModelTool[]>{
+  const result=catalog.parse(await post(path,'/list',{},signal));
+  if(!Array.isArray(result))onUnavailable?.(result.unavailable);
+  const list=Array.isArray(result)?result:result.tools;
   return list.map(({name,description,parameters})=>({name,description,inputSchema:kitInputSchema(parameters),
     async execute(args,current){
       try{const words=z.string().parse(await post(path,'/call',{name,args},current));return {content:[{type:'text',text:words}]};}

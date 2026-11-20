@@ -12,6 +12,7 @@ import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
 import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
 import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
 import {KitCapacity} from './kit-refused.js';
 import { bodyProgramTools } from './body-program-tools.js';
@@ -40,7 +41,7 @@ import { BODY_START_BYTES } from './body-input-limit.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 /** What a body file is, for whoever writes one: the core house's own are held to it. */
 export const bodyFileSchema = config;
-const envelope = z.object({ kitSocket:z.literal(true).optional(), job: workerAssignment, build: z.string().min(1),
+const envelope = z.object({ kitSocket:z.literal(true).optional(), kitUnavailable:kitUnavailableList.optional(), job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();
 /** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
@@ -207,7 +208,7 @@ export async function bodyProgram(input: {
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
-    if(bridge || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(bridge || guest || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
     if(job.venue==='discord'&&job.venueDescription){
       const where='Current conversation: '+job.venueDescription+'. This is your location for this turn, including when your Discord role page describes the server in general.';
       context.unshift(where);continued.unshift(where);
@@ -226,8 +227,16 @@ export async function bodyProgram(input: {
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
-      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal).catch(error=>{
-        if(error instanceof KitCapacity){context.push(error.message);continued.push(error.message);}
+      const kitBrief=(items:KitUnavailable[])=>{
+        for(const {kit,reason} of items){
+          const line=`Kit ${kit} is unavailable because ${kitReasons[reason].why}.`;
+          context.push(line);continued.push(line);
+        }
+      };
+      if(!lateStranger)kitBrief(parsed.kitUnavailable??[]);
+      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal,kitBrief).catch(error=>{
+        const line=error instanceof KitCapacity?error.message:'The worker could not load kit tools for this job.';
+        context.push(line);continued.push(line);
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
