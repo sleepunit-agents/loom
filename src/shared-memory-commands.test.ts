@@ -555,6 +555,9 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  const page=await api('mind','knowledgeAdd',{title:'Pond pumps',domain:'pond',body:'Pumps run at night.'},'own-page');expect(page.status).toBe(200);const slug=page.result.value.slug as string;
  const kept=()=>JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories ORDER BY id').all(),f.source.prepare('SELECT count(*) AS n FROM proposals').get()]);
  const before=kept(),{token,conversation}=heldBody(f);
+ for(const [verb,args] of [['notePin',{path:'plans/pond',pinned:true}],['noteDelete',{path:'plans/pond'}]] as const){
+  expect((await api('memory',verb,args,'held-'+verb,token)).status).toBe(403);
+ }
  const line=`[From loom: written while working for the member bob in conversation ${conversation}, who is not one of art's owners.]`;
  // It adds a memory. loom writes whose word it was: first in its words, where every reader meets it, and in its
  // record, where the body's own claim of the same name is thrown away.
@@ -626,6 +629,18 @@ it('runs the house note CLI against a running job and refuses the same shell han
  const receipt=JSON.parse(edit.out).id;expect(receipt).toMatch(/^[a-f0-9-]{36}$/);
  expect(edit.err).toContain('--id '+receipt);
  expect(await run(...write)).toMatchObject({code:0});
+ // Replayed receipts cannot re-pin a note or delete its replacement.
+ expect(await run('pin','field/log','--id','pin-1')).toMatchObject({code:0});
+ expect(JSON.parse((await run('read','field/log','--json')).out)).toMatchObject({pinned:true,expires:null});
+ expect(await run('unpin','field/log','--id','unpin-1')).toMatchObject({code:0});
+ expect(await run('pin','field/log','--id','pin-1')).toMatchObject({code:0});
+ expect(JSON.parse((await run('read','field/log','--json')).out)).toMatchObject({pinned:false,expires:expect.any(String)});
+ expect(await run('write','temporary','--body','old','--lifespan','short')).toMatchObject({code:0});
+ expect(await run('delete','temporary','--id','delete-1')).toMatchObject({code:0});
+ expect(await run('delete','temporary','--id','delete-2')).toMatchObject({code:3});
+ expect(await run('write','temporary','--body','new','--lifespan','short')).toMatchObject({code:0});
+ expect(await run('delete','temporary','--id','delete-1')).toMatchObject({code:0});
+ expect(await run('read','temporary')).toMatchObject({code:0,out:'new\n'});
  const refused=await run(...write.slice(0,-1),sentinel);
  expect(refused.code).toBe(1);
  expect(refused.err).toContain('Reuse the supplied --id');

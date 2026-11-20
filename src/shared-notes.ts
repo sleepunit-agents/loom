@@ -2,7 +2,7 @@
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLBoolean,GraphQLList} from 'graphql/index.js';
-import {Notes,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
+import {Notes,NoteError,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
 import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
 import {maySee,type Sharing,type Viewer} from './policy.js';
@@ -47,9 +47,38 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
  register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   const recover=(ctx:Context)=>{const notes=selected(ctx.viewer),prior=notes&&ctx.receipt?receipt(notes,ctx.receipt,ctx.now):undefined;if(prior)ctx.changed('memory',ctx.viewer.id);return prior;};
-  operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:noteBody,expectedBody:noteBody.nullable().optional(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
-   run(ctx,input){const notes=selected(ctx.viewer),identity=ctx.receipt;if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
-    const result=notes.atomicWrite(db=>{const previous=receipt(notes,identity,ctx.now);if(previous)return previous;mindReceipts.expire(db,ctx.now);
+  const write=<T>(ctx:Context,apply:(notes:Notes)=>T)=>{
+   const notes=selected(ctx.viewer),identity=ctx.receipt;
+   if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
+   const result=notes.atomicWrite(db=>{
+    const previous=receipt(notes,identity,ctx.now);if(previous)return previous;
+    mindReceipts.expire(db,ctx.now);
+    const value=apply(notes);
+    mindReceipts.save(db,identity,value,identity.expires);
+    return value;
+   });
+   commands.committed();ctx.changed('memory',ctx.viewer.id);return result;
+  };
+  const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],inputHash:(words:string)=>commands.hash(words),recover};
+  const mayManage=(viewer:Viewer)=>!!selected(viewer)&&!commands.addsOnly?.(viewer);
+  operations.register({...common,name:'memory.notePin',input:z.object({path,pinned:z.boolean()}).strict(),
+   output:z.object({path,pinned:z.boolean(),expires:z.string().nullable()}).strict(),may:mayManage,
+   run:(ctx,input)=>write(ctx,notes=>{
+    try{
+     const {path,pinned,expires}=notes.pin(input.path,input.pinned);
+     return {path,pinned,expires};
+    }catch(error){
+     if(error instanceof NoteError&&error.status===404)throw new OperationError('not-found','No such note');
+     throw error;
+    }
+   }),
+  });
+  operations.register({...common,name:'memory.noteDelete',input:z.object({path}).strict(),
+   output:z.object({deleted:z.boolean()}).strict(),may:mayManage,
+   run:(ctx,input)=>write(ctx,notes=>({deleted:notes.delete(input.path)})),
+  });
+  operations.register({...common,name:'memory.noteWrite',input:z.object({path,body:noteBody,expectedBody:noteBody.nullable().optional(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:viewer=>!!selected(viewer),
+   run:(ctx,input)=>write(ctx,notes=>{
      const only=commands.addsOnly?.(ctx.viewer);
      if(only&&(input.expectedBody!==undefined||input.path.startsWith('lane-state/')||input.path.startsWith('alert-verdicts/')))
       throw new OperationError('denied','Only an owner-authorized job can claim or install lane state');
@@ -58,10 +87,8 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
       if(only&&current)throw new OperationError('denied',only.overwrite);
       if(input.expectedBody!==undefined&&(current?.body??null)!==input.expectedBody)throw new OperationError('conflict','The note has changed');
      }
-     notes.write(input.path,input.body,{lifespan:input.lifespan,by:only?.by??ctx.viewer.id});const value={saved:true};
-     mindReceipts.save(db,identity,value,identity.expires);return value;
-    });commands.committed();ctx.changed('memory',ctx.viewer.id);return result;
-   },
+     notes.write(input.path,input.body,{lifespan:input.lifespan,by:only?.by??ctx.viewer.id});return {saved:true as const};
+   }),
   });
  }};
 }

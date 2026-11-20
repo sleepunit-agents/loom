@@ -27,7 +27,7 @@ const USAGE = `Usage:
   loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
   loom signin --home <dir> [--member <id>] [--agent]
   loom mcp --url <origin> --token-file <file> [--agent <id>]
-  loom note read|list|write [options]
+  loom note read|list|write|pin|unpin|delete [options]
   loom --version
 `;
 
