@@ -2239,7 +2239,14 @@ export const triggerJournals = sqliteTable('trigger_journals', {
   stateChangedAt: text('state_changed_at'),
 });
 
+/** The job that acknowledged this trigger delivery, including after reassignment. */
+export const triggerAcceptances = sqliteTable('trigger_acceptances', {
+  item: text('item').primaryKey().references(() => inbox.id, { onDelete: 'cascade' }),
+  job: text('job').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
+});
+
 export const plumbing = {
+  triggerAcceptances,
   triggerJournals,
   agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,
   programFirings,

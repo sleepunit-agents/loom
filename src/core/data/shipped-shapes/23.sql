@@ -1360,6 +1360,13 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `trigger_acceptances` (
+	`item` text PRIMARY KEY NOT NULL,
+	`job` text NOT NULL,
+	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `trigger_journals` (
 	`trigger` text PRIMARY KEY NOT NULL,
 	`lessons` text DEFAULT '' NOT NULL,

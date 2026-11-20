@@ -285,7 +285,7 @@ it('refreshes watched answers after shared commits without repeating a durable o
   } finally { tempo.close(); client.close(); }
 });
 
-it('carries standing wake lessons into the next delivery and rejects a stale state revision', () => {
+it('keeps lessons off the shared inbox and rejects a stale state revision', () => {
   const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
   const at = () => new Date(clock.now()).toISOString();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
@@ -300,6 +300,6 @@ it('carries standing wake lessons into the next delivery and rejects a stale sta
     expect(() => replaceJournalState(db, id, 0, 'stale page', at())).toThrow(/changed/);
     expect(readJournal(db, id)).toMatchObject({ state: '', stateRevision: 2, lessons: 'Read both sources.' });
     tempo.triggers.event('answer', 'approval:1', 'allowed');
-    expect(db.select().from(inbox).all()).toMatchObject([{ words: 'Check\n\nLessons recorded by earlier runs of this trigger:\nRead both sources.' }]);
+    expect(db.select().from(inbox).all()).toMatchObject([{ words: 'Check' }]);
   } finally { tempo.close(); client.close(); }
 });

@@ -1,29 +1,44 @@
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { bodyOperationDefaults, type conversationBodyScope } from './core/conversations/body-scope.js';
 import type { DataDatabase } from './core/data/database.js';
-import { inbox, inboxRefs, triggers } from './core/data/schema.js';
+import { inbox, inboxRefs, triggerAcceptances, triggers } from './core/data/schema.js';
 import { operation, OperationError, type Operations } from './core/operations/index.js';
 import { appendLesson, hasAgentJournal, readJournal, replaceJournalState } from './core/tempo/journal.js';
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 
-/** Resolve the trigger from an accepted delivery in the credential's own live wake. */
+type Scope = NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
+
+function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
+  if (!scope || viewer.kind !== 'agent' || viewer.workingFor || scope.cv.venue !== 'wake' || scope.cv.member) return;
+  const { job, cv } = scope;
+  if (viewer.id !== job.agent || jobWord(db, job).woke !== 'own') return;
+  const trigger = db.select().from(triggers).where(eq(triggers.id, cv.place)).get();
+  if (trigger && hasAgentJournal(trigger) && trigger.to === job.agent && trigger.project === cv.project) return trigger.id;
+}
+
+/** The guarded body-input projection calls this only for the authenticated recipient's taken item. */
+export function wakeLessons(db: DataDatabase, viewer: Viewer, scope: Scope, item: typeof inbox.$inferSelect, refs: string[]) {
+  if (item.source !== 'trigger' || item.fromKind !== 'schedule' || item.fromId !== scope.job.agent || item.onWordKind
+      || item.volume !== 'full' || item.job !== scope.job.id || item.conversation !== scope.cv.id) return;
+  const id = ownTrigger(db, viewer, scope);
+  if (id && refs.includes(id)) return readJournal(db, id).lessons;
+}
+
 export function registerTriggerJournal(operations: Operations, db: DataDatabase,
   current: ReturnType<typeof conversationBodyScope>, hash: (text: string) => string) {
   function mine(viewer: Viewer) {
-    const scope = current(viewer);
-    if (!scope || viewer.kind !== 'agent' || viewer.workingFor || scope.cv.venue !== 'wake' || scope.cv.member) return;
+    const scope = current(viewer), id = ownTrigger(db, viewer, scope);
+    if (!scope || !id) return;
     const { job, cv } = scope;
-    if (viewer.id !== job.agent || jobWord(db, job).woke !== 'own') return;
-    const trigger = db.select().from(triggers).where(eq(triggers.id, cv.place)).get();
-    if (!trigger || !hasAgentJournal(trigger) || trigger.to !== job.agent || trigger.project !== cv.project) return;
-    const delivered = db.select({ item: inbox.id }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id)).where(and(
-      eq(inbox.job, job.id), eq(inbox.conversation, cv.id), eq(inboxRefs.ref, trigger.id),
-      eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent), eq(inbox.fromKind, 'schedule'), eq(inbox.fromId, job.agent),
-      eq(inbox.source, 'trigger'), isNull(inbox.member), isNull(inbox.onWordKind), isNotNull(inbox.firstAcceptedAt),
-    )).limit(1).get();
-    if (delivered) return trigger.id;
+    const delivered = db.select({ item: inbox.id }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id))
+      .innerJoin(triggerAcceptances, eq(triggerAcceptances.item, inbox.id)).where(and(
+        eq(inbox.job, job.id), eq(triggerAcceptances.job, job.id), inArray(inbox.state, ['taken', 'done']),
+        eq(inbox.conversation, cv.id), eq(inboxRefs.ref, id), eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
+        eq(inbox.fromKind, 'schedule'), eq(inbox.fromId, job.agent), eq(inbox.source, 'trigger'), isNull(inbox.member), isNull(inbox.onWordKind),
+      )).limit(1).get();
+    if (delivered) return id;
   }
   function required(viewer: Viewer) {
     const id = mine(viewer);

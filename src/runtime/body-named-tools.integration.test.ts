@@ -240,15 +240,27 @@ it('carries a journal between actual trigger deliveries and confines body comman
  db.update(schema.jobs).set({conversation:first.conversation, member:null}).where(eq(schema.jobs.id,'job')).run();
  expect((await read()).text).toContain('denied');
  db.update(schema.inbox).set({state:'taken', job:'job', firstAcceptedAt:new Date(clock.now()).toISOString()}).where(eq(schema.inbox.id,first.id)).run();
+ expect((await read()).text).toContain('denied');
+ expect((await b.fixture.call('accept',{items:[first.id]},'accept-first')).status).toBe(200);
  expect((await read()).text).toContain('"stateRevision":0');
  const save = () => cmd('tempo.appendLesson',{lesson:'Count each source once.'},'lesson');
  expect((await save()).text).toContain('"saved":true');
  expect((await save()).text).toContain('"saved":true');
  expect((await cmd('tempo.replaceJournalState',{revision:0,state:'page 2'},'state')).text).toContain('"revision":1');
  expect((await cmd('tempo.replaceJournalState',{revision:0,state:'old'},'other-write')).text).toContain('changed since');
+ const longInstructions = 'x'.repeat(100000);
+ engine.edit(t.id,{instructions:longInstructions},{kind:'agent',id:'art'});
  engine.event('answer','approval:example','second');
  const second = db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,t.id+':second')).get()!;
- expect(second.words?.split('Count each source once.')).toHaveLength(2);
+ expect(second.words).toBe(longInstructions);
+ db.update(schema.inbox).set({job:'job'}).where(eq(schema.inbox.id,second.id)).run();
+ const taken = await root.http.request('/api/conversation/take', {method:'POST', headers:{
+   'content-type':'application/json', authorization:'Bearer '+bodyCredentials.body,
+ }, body:JSON.stringify({input:{}})});
+ expect(taken.status).toBe(200);
+ const items = (await taken.json()).value.items as {id:string;words:string}[];
+ expect(items.find(item=>item.id===second.id)?.words).toBe(longInstructions+'\n\nLessons recorded by earlier runs of this trigger:\nCount each source once.');
+ expect(db.select().from(schema.inbox).where(eq(schema.inbox.conversation,first.conversation!)).all()).toHaveLength(2);
  expect((await read()).text).toContain('page 2');
  db.update(schema.jobs).set({state:'done'}).where(eq(schema.jobs.id,'job')).run();
  expect((await save()).text).toMatch(/denied|refused|unavailable/i);
