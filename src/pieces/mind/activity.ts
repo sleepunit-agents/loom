@@ -24,7 +24,9 @@ export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;s
  github?:string|(()=>string|undefined)}
 /** Read-only sources and the shared Conversations port; no legacy registry or transport. */
 export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOptions){
- const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone,github=()=>typeof options.github==='function'?options.github():options.github;isoDay(clock.now(),tz());
+ const readTimezone=()=>typeof options.timezone==='function'?options.timezone():options.timezone;
+ const readGithub=()=>typeof options.github==='function'?options.github():options.github;
+ isoDay(clock.now(),readTimezone());
  const sourceErrors=new Set<string>();
  const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>{
   try{if(existsSync(a.memories))return new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0});}catch{sourceErrors.add(a.agent);}
@@ -33,9 +35,15 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  // One window asks who may see what for every agent and every conversation row. The sharing facts are a read
  // of whole tables and nothing in a read writes, so one synchronous call of this reader reads them once.
  // Nothing is kept past the call: the next one asks afresh.
- let held:Sharing|undefined;
- const sharing=()=>held??options.sharing();
- const once=<T>(work:()=>T):T=>{if(held)return work();held=options.sharing();try{return work();}finally{held=undefined;}};
+ let held:{sharing:Sharing;timezone?:string;github?:string|null}|undefined;
+ const sharing=()=>held?.sharing??options.sharing();
+ const tz=()=>held?(held.timezone??=readTimezone()):readTimezone();
+ const github=()=>{
+  if(!held)return readGithub();
+  if(held.github===undefined)held.github=readGithub()??null;
+  return held.github??undefined;
+ };
+ const once=<T>(work:()=>T):T=>{if(held)return work();held={sharing:options.sharing()};try{return work();}finally{held=undefined;}};
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},sharing());
  const conversationAllowed=(v:Viewer,agent:string)=>allowed(v,agent,'conversation')||!!options.conversations?.agents?.(v).includes(agent);
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||conversationAllowed(v,a.agent));
@@ -159,8 +167,8 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  // viewer or list limit. The listener owns one timer for every projection.
  function nextDeadline():number|undefined {
   if(closed||!options.agents.length)return;
-  const now=clock.now();
-  let next=startOf(dayBefore(isoDay(now,tz()),-1),tz());
+  const now=clock.now(),zone=tz();
+  let next=startOf(dayBefore(isoDay(now,zone),-1),zone);
   try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}
   for(const db of sources.values())try{
    if(!has(db))continue;

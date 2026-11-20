@@ -99,12 +99,21 @@ it('reads the sharing facts once for a whole window of activity, and afresh for 
     conversation: { id: `cv-${String(n).padStart(12, '0')}`, agent: 'fiction', venue: 'terminal', place: 'terminal', label: `Fictional run ${n}`, people: ['owner'] },
     summary: 'Did a fictional thing.', asked: [], decided: [], tasks: [], links: [], more: [] }));
   const { state, sharing } = facts();
-  const reader = createActivityReader(new FakeClock(now), { agents: [{ agent: 'fiction', memories }], sharing, timezone: 'UTC', owner: 'owner',
+  let timezone='UTC', timezoneReads=0, githubReads=0;
+  const reader = createActivityReader(new FakeClock(now), { agents: [{ agent: 'fiction', memories }], sharing, timezone: () => { timezoneReads++; return timezone; }, github: () => { githubReads++; return undefined; }, owner: 'owner',
     conversations: { list: () => ({ available: true, rows: runs }), read: (_viewer, _agent, _kind, key) => runs.find(run => run.key === key), conversation: (_viewer, _agent, id) => runs.find(run => run.conversation.id === id)?.conversation } });
   closes.push(() => reader.close());
+  timezoneReads=0;
   const window = reader.window('recent', viewer);
   expect(window?.entries.length).toBeGreaterThanOrEqual(12);
   expect(state.asked).toBe(1);
+  expect(timezoneReads).toBe(1);
+  expect(githubReads).toBe(1);
+  timezone='Pacific/Honolulu';
+  const changed=reader.window('recent',viewer);
+  expect(changed?.entries[0]?.hour).not.toBe(window?.entries[0]?.hour);
+  expect(timezoneReads).toBe(2);
+  expect(githubReads).toBe(2);
   state.asked = 0;
   expect(reader.read(window!.entries[0]!.id, viewer)).toMatchObject({ agent: 'fiction' }); expect(state.asked).toBe(1);
   state.asked = 0;
