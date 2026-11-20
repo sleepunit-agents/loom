@@ -7,6 +7,6 @@ export const runtimeAccountsQuery=`query RuntimeModelAccounts {
  modelAccounts {
   __typename
   ... on RuntimeAccount { label level }
-  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } }
+  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } windows { window usage usageReadAt resetsAt reserve } logins { box { id name } harness place state expiresAt checkedAt } }
  }
 }`;
