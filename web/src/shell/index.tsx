@@ -4,7 +4,6 @@ import { ContextMenu, type MenuAt } from '../tiling/menu';
 import { layout, railWidth, type Rect } from '../tiling/layout';
 import { Loading, Error, Button, Empty } from '../kit';
 import './shell.css';
-import Preferences from './preferences';
 import { Dock } from '../components/ui/dock';
 import { AppIcon } from '../app-icon';
 import { tintOf } from '../tint';
@@ -15,6 +14,8 @@ import { RailContext } from '../desk-rail';
 import { useMemberPreferences } from './member-preferences';
 import { buzz, HapticLabel, useHaptics } from '../haptic';
 import { oneWindowKept } from '../look';
+import { recency, useShortcuts } from './shortcuts';
+import Switcher from './switcher';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -26,7 +27,7 @@ function Screen({ app, tile, router, active, visible }: { app: RegisteredApp; ti
   const View = app.Screen;
   return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} visible={visible} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
-export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Signals?: ComponentType<{ go(path:string):void; onAttention:(value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Signals?: ComponentType<{ go(path:string):void; onAttention:(value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
@@ -62,6 +63,14 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
+  // Open apps are the route's tiles, shown or minimized: what the dock marks as open. Most recently in front first;
+  // kept here for this visit only, and seeded from the router's own use order for apps not yet seen in front.
+  const [recent,setRecent] = useState<readonly string[]>([]);
+  const recentNow = recency(recent,[...route.tiles].sort((a,b)=>b.used-a.used).map(t=>t.id),focused?.id);
+  if (recentNow !== recent) setRecent(recentNow);
+  // Where the caret was in each app, so landing on an app puts typing back where it was.
+  const carets = useRef(new Map<string,HTMLElement>());
+  const [landed,setLanded] = useState<{id:string}>();
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
   const open = (id: string, tap = false) => {
@@ -70,10 +79,20 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
     if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
   };
+  const keys = useShortcuts({
+    toggleLauncher: () => setLauncher(v => !v),
+    apps: () => ({ order: recentNow, focused: focused?.id }),
+    land: id => { open(id); setLanded({id}); },
+  });
+  // The switcher takes no focus; a landing moves it, once the app is on the page, to where it last was in that app.
+  useEffect(() => {
+    if (!landed) return;
+    const tile = document.querySelector<HTMLElement>(`[data-tile="${landed.id}"]`), caret = carets.current.get(landed.id);
+    (caret?.isConnected && tile?.contains(caret) ? caret : tile)?.focus();
+  },[landed]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable=true]');
-      if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.code==='Space'){e.preventDefault();setLauncher(v=>!v);return;}
       if (!typing && e.key === 'Escape') setLauncher(false);
       if(typing||document.querySelector('[role=dialog],[role=menu]')||!e.altKey) return;
       if(!e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();router.home();return;}
@@ -101,7 +120,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       if(path === '/') {router.home();return;}
       const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
       if(app){open(app.id);router.go(app.id,path);}
-    }} actions={<Preferences />} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
+    }} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
       {!phone && Rail && visible.length>0 && <>
@@ -117,32 +136,31 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         const app = apps.find(a => a.id === tile.id)!;
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
-          style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={() => { if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
-          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button,summary'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
-            <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon label={app.title} name={app.icon} size="sm" /></button>
-            <Button variant="ghost" size="sm" aria-label={`Back in ${app.title}`} disabled={!tile.at} onClick={() => router.travel(tile.id,-1)}>←</Button>
-            <Button variant="ghost" size="sm" aria-label={`Forward in ${app.title}`} disabled={tile.at===tile.trail.length-1} onClick={() => router.travel(tile.id,1)}>→</Button>
+          style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={e => { if(e.target!==e.currentTarget) carets.current.set(tile.id,e.target as HTMLElement); if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
+          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+            <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon app={app.id} name={app.icon} size="sm" house={24} /></button>
             <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
-            <details><summary aria-label={`${app.title} history`}>Trail</summary><ol>{tile.trail.map((path,i) => <li key={i}><Button variant="ghost" size="sm" aria-current={i===tile.at?'page':undefined} onClick={() => router.travel(tile.id,i-tile.at)}>{path.slice(app.path.length)||app.title}</Button></li>)}</ol></details>
             <span className="next-spacer" />
-            {!phone && <Button variant="ghost" size="sm" aria-label={`Make ${app.title} big`} onClick={() => router.big(tile.id)}>↗</Button>}
-            <Button variant="ghost" size="sm" aria-label={`Minimize ${app.title}`} onClick={() => router.remove(tile.id,true)}>−</Button>
-            <Button variant="ghost" size="sm" aria-label={`Close ${app.title}`} onClick={() => router.remove(tile.id)}>×</Button>
+            {/* The three window controls, drawn as the how-it-works site draws them: a square, a line, a cross. */}
+            {!phone && <button type="button" className="next-win" data-act="big" aria-label={`Make ${app.title} big`} title="Make big" onClick={() => router.big(tile.id)}><i aria-hidden="true" /></button>}
+            <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => router.remove(tile.id,true)}><i aria-hidden="true" /></button>
+            <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => router.remove(tile.id)}><i aria-hidden="true" /></button>
           </header>
           <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
         </section>;
       })}
     </div>
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
-    <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
+    <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
+    <Switcher apps={apps} switching={keys.switching} pick={keys.pick} />
     {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}
       onClick={()=>hiding.show('dock',true)} onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('dock',true);}} onContextMenu={e=>setMenu(hiding.menu('dock',e))}><span aria-hidden="true">⌃</span></button>}
     <div className="next-dock-bar loom-dock-bar" data-hide-part="dock" data-peek={hiding.peek.dock||undefined} inert={!phone&&hiding.modes.dock!=='always'&&!hiding.peek.dock}
       onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerLeave={e=>{if(hiding.modes.dock==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('dock',false);}}
       onContextMenu={e=>{if(!phone&&(!(e.target as Element).closest('button')||(e.target as Element).closest('button[aria-label="Home"],button[aria-label="All apps"]')))setMenu(hiding.menu('dock',e));}}><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
-      {value:'home',label:'Home',tint:'pink',icon:<><AppIcon label="Home" name="home" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);router.home();}},
-      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<><AppIcon label={app.title} name={app.icon} /><HapticLabel on={haptics}/></>,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>{if(route.focused===app.id){buzz(haptics,true);router.remove(app.id,true);}else open(app.id,true);}})),
-      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<><AppIcon label="Places" name="grid-2x2" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);setLauncher(true);}},
+      {value:'home',label:'Home',tint:'pink',icon:<><AppIcon app="home" name="home" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);router.home();}},
+      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:app.title,name:`Open ${app.title}`,tint:tintOf(app.title),icon:<><AppIcon app={app.id} name={app.icon} /><HapticLabel on={haptics}/></>,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>{if(route.focused===app.id){buzz(haptics,true);router.remove(app.id,true);}else open(app.id,true);}})),
+      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<><AppIcon app="launcher" name="grid-2x2" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);setLauncher(true);}},
     ]} /></div>
     {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
     <p className="next-notice" role="status" aria-live="polite">{notice}</p>

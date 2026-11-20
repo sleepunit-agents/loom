@@ -2,8 +2,8 @@
  * JSON loading is kept separate so the server entry owns file access. */
 import { z } from 'zod';
 import type { ModelRole } from './placement.js';
-const name = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\0\r\n]/.test(value));
-const catalog = z.array(z.object({ model:name, provider:name, harness:name, series:name }).strict())
+import { lineName as name } from '../core/line-name.js';
+const catalog = z.array(z.object({ model:name, provider:name, harness:name, series:name, tag:name.optional() }).strict())
   .refine(rows => new Set(rows.map(row => row.model)).size === rows.length);
 export function modelCatalog(input: unknown): readonly Readonly<ModelRole>[] {
   const parsed = catalog.safeParse(input);

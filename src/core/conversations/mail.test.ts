@@ -3,10 +3,11 @@ import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { generateX25519Identity } from 'age-encryption';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, inbox, inboxRefs, jobs, members, messages } from '../data/schema.js';
+import { agents, household, inbox, inboxRefs, jobs, members, messages } from '../data/schema.js';
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
+import { Conversations, lateMailWaits } from './index.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -19,7 +20,6 @@ async function fixture() {
   const key = wordsKey(await generateX25519Identity()), comms = new CommsMessages(db, key, now);
   const thread = comms.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: thread.conversation, title: 'Pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, thread.conversation)).run();
   const plain = (words: string) => comms.threads.conversations.send({ conversation: thread.conversation, toKind: 'agent', to: 'art', source: 'trigger', fromKind: 'schedule', words });
   const send = (words: string) => comms.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words });
   return { client, db, key, comms, thread, plain, send, mail: new ConversationMail(comms), at: (value: string) => { time = value; } };
@@ -91,7 +91,7 @@ it.each(['ended', 'replaced', 'mute', 'recipient', 'content', 'delete'] as const
   const mail = new ConversationMail(new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, comms.now));
   const pending = mail.prepareTake(thread.conversation, 'job-1');
   if (change === 'ended') db.update(jobs).set({ state: 'lost' }).where(eq(jobs.id, 'job-1')).run();
-  if (change === 'replaced') db.update(conversations).set({ job: null }).where(eq(conversations.id, thread.conversation)).run();
+  if (change === 'replaced') db.update(jobs).set({ conversation: null }).where(eq(jobs.id, 'job-1')).run();
   if (change === 'mute') db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, message.inboxItem!)).run();
   if (change === 'recipient') db.update(inbox).set({ toKind: 'person', to: 'jonathan' }).where(eq(inbox.id, message.inboxItem!)).run();
   if (change === 'content') db.update(messages).set({ words: await key.seal('Replacement') }).where(eq(messages.thread, thread.id)).run();
@@ -195,4 +195,19 @@ it.each(['\n','\r','\v','\f','\u0085','\u2028','\u2029'])('delivers one line for
  const {db,thread,plain,send,mail}=await fixture();const ordinary=plain(separator+'  First line  '+separator+'Hidden line'),secret=await send(separator+'  Private line  '+separator+'Private hidden');
  for(const id of [ordinary.id,secret.inboxItem!])db.update(inbox).set({volume:'dim'}).where(eq(inbox.id,id)).run();
  expect((await mail.prepareTake(thread.conversation,'job-1'))().map(row=>row.words)).toEqual(['First line','Private line']);
+});
+
+it('leaves mail a person wrote after admission for the next job unless the composition says it joins: the default is closed', async () => {
+  const { db, thread } = await fixture(), now = () => '2026-11-14T18:00:00.000Z';
+  const write = (service: Conversations, sourceId: string) => service.send({ conversation: thread.conversation, toKind: 'agent', to: 'art', source: 'notice', sourceId, fromKind: 'person', fromId: 'jonathan', words: sourceId });
+  const closed = new Conversations(db, now), first = write(closed, 'first');
+  // Admission marked the first piece for the job; the second came after.
+  db.update(inbox).set({ job: 'job-1' }).where(eq(inbox.id, first.id)).run();
+  const late = write(closed, 'late');
+  // With nothing said, and with the named default, what came later is not offered and not taken.
+  for (const service of [closed, new Conversations(db, now, lateMailWaits)]) expect(service.pending(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id]);
+  expect(closed.take(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id]);
+  expect(closed.item(late.id)).toMatchObject({ state: 'waiting', job: null });
+  // Only a composition that answers for the job's word lets it join.
+  expect(new Conversations(db, now, () => () => true).pending(thread.conversation, 'job-1').map(item => item.id)).toEqual([first.id, late.id]);
 });

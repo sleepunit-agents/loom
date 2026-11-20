@@ -1,3 +1,4 @@
+import {DAY_MS} from '../../core/day.js';
 import {readBridgeActivity} from '../../core/data/bridge-activity-read.js';
 /** Installed read service. Outside visibility comes from root's shared policy;
  * this module neither grants access nor invents a second authentication model. */
@@ -6,7 +7,7 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { Viewer } from '../../core/index.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeIncoming } from '../../core/data/schema.js';
-const day = 86400_000;
+const day = DAY_MS;
 export interface BridgeActivityScope { connections: SQL; incoming: SQL }
 export class BridgeQueries {
   constructor(readonly db: DataDatabase, readonly now: () => number) {}

@@ -2,16 +2,15 @@ import { useDeskWaitingCounts } from './waiting';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
-import type { ReactNode } from 'react';
 import { Ticker, type TickPart } from '../../ticker';
 import { agentPath, latestStatus, namedAgents, orderedAgents } from './home-model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
 import { useDeskStats } from './bar-stats';
 
-export interface BarProps { title: string; go(path: string): void; actions: ReactNode }
+export interface BarProps { title: string; go(path: string): void }
 /** The bar reads the same policy-filtered facts as Home. No legacy shell or saved copy. */
-export default function AttentionBar({ title, go, actions }: BarProps) {
+export default function AttentionBar({ title, go }: BarProps) {
   const stats = useDeskStats();
   const roster = useDeskRoster();
   const people = useDeskAgentDirectory();
@@ -37,7 +36,6 @@ export default function AttentionBar({ title, go, actions }: BarProps) {
         <span className="next-system-separator" aria-hidden="true">·</span>
         <BarStatus boxes={stats.enrolled} roster={agents} statuses={statuses.status==='live'?statuses.records:[]} available={roster.status==='live'&&statuses.status==='live'} live={live} go={go} />
         <a className="loom-pbar__needs loom-data" href="/p/inbox-preview" aria-label={count===undefined?'Needs you: unavailable':`${count} need${count===1?'s':''} you`} onClick={e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();go('/p/inbox-preview');}}>{count??'?'}</a>
-        {actions}
       </div>
     </div>
   </header>;

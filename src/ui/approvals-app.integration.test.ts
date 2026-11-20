@@ -13,8 +13,14 @@ import { createDataSchema } from '../core/data/database.js';
 import { sharedRoot } from '../shared-root.js';
 import { tmpdir } from 'node:os';
 import * as s from '../core/data/schema.js';
-import { tempoSettingsService } from '../core/tempo/settings.js';
 import { approvalsQuery } from '../../web/src/data/work-query.js';
+/** A pending card for a change to art's Tempo timings, in the shape the app's Approvals card reads.
+ * The words on it are this fixture's; what the test proves is who sees the card, not how one is filed. */
+function settingCard(settleSeconds: number) {
+  const who = { kind: 'agent', id: 'art' }, before = { settleSeconds: 5, dimDays: 1, muteDays: 7 }, after = { ...before, settleSeconds };
+  return { kind: 'setting' as const, target: 'tempo:agent:art', operation: 'tempo.settings', details: JSON.stringify({ who, before, after }),
+    changeSummary: `Tempo for agent art: settle ${before.settleSeconds} → ${after.settleSeconds} seconds; dim 1 → 1 days; mute 7 → 7 days` };
+}
 
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
@@ -37,7 +43,7 @@ async function fixture() {
   db.insert(s.tokens).values({ fingerprint: token, label: 'Disposable browser fixture', kind: 'owner', member: 'sam', createdAt: at }).run();
   db.insert(s.sessions).values({ id: session, token, device: 'Fixture', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
   for (const [id, what, member] of [['shared', title, null], ['private', hidden, 'lee']] as const) {
-    const prepared=tempoSettingsService(db,clock).prepare({kind:'agent',id:'art'},{settleSeconds:60});
+    const prepared=settingCard(60);
     db.insert(s.approvals).values({ ...prepared, id, what, why: what, agent: 'art', project: 'pond', member,
       askedFrom: 'fixture', actingFor: 'unknown', state: 'pending', minutes: 5, ask: id === 'shared' ? ask : hidden,
       ifYes: 'Apply this exact setting.', ifNo: 'Keep the current setting.', details: prepared.details, changeSummary: prepared.changeSummary, askedAt: at }).run();
@@ -107,16 +113,18 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => row(page).count()).toBe(1);
       expect(await page.getByText(hidden, { exact: true }).count()).toBe(0);
       await row(page).click();
-      await expect.poll(() => page.getByRole('heading', { name: ask, exact: true }).count()).toBe(1);
+      // One title in the row and the reader; the question itself is said under it.
+      await expect.poll(() => page.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
+      expect(await page.getByText(ask, { exact: true }).count()).toBe(1);
       expect(await page.getByText('60 seconds', { exact: true }).count()).toBe(1);
       expect(await page.getByText('Apply this exact setting.', { exact: true }).count()).toBe(1);
       expect(await page.getByText('Keep the current setting.', { exact: true }).count()).toBe(1);
       expect(await page.getByText(record, { exact: false }).count()).toBe(1);
     }
     await b.reload();
-    await expect.poll(() => b.getByRole('heading', { name: ask, exact: true }).count()).toBe(1);
+    await expect.poll(() => b.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
     app.data.writes.run(() => {
-      app.db.update(s.approvals).set(tempoSettingsService(app.db,new FakeClock(Date.parse('2026-11-14T20:00:00.000Z'))).prepare({kind:'agent',id:'art'},{settleSeconds:90})).where(eq(s.approvals.id, 'shared')).run();
+      app.db.update(s.approvals).set(settingCard(90)).where(eq(s.approvals.id, 'shared')).run();
       app.db.insert(s.approvalRecord).values({ seq: 3, at: '2026-11-14T20:01:00.000Z', event: 'request', approval: 'shared', agent: 'art', note: 'Updated shared request' }).run();
     });
     for (const page of [a, b]) {
@@ -126,7 +134,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
     for (const page of [a, b]) {
       await expect.poll(() => row(page).count()).toBe(0);
-      expect(await page.getByRole('heading', { name: ask, exact: true }).count()).toBe(0);
+      expect(await page.getByRole('heading', { name: title, exact: true }).count()).toBe(0);
       expect(await page.getByText('Updated shared request', { exact: false }).count()).toBe(0);
     }
     app.data.writes.run(() => app.db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run());
@@ -162,6 +170,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(app.db.select().from(s.changes).where(eq(s.changes.id,mergeId)).get()!.state).toBe('open');
     await c.setViewportSize({width:390,height:900});
     await Promise.all([c.goto(`${app.url}/p/approvals-preview/rules`),d.goto(`${app.url}/p/approvals-preview/rules`)]);
+    // A rule is edited in the reader: New rule, the list's one action, opens a blank one there.
+    await c.getByRole('button',{name:'New rule',exact:true}).click();
     const form=c.getByRole('form',{name:'Standing rule',exact:true});
     await form.getByLabel('Scope',{exact:true}).fill('github:acme/*');
     await form.getByLabel('Answer',{exact:true}).selectOption('tell');
@@ -170,7 +180,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     const ruleRow=(page:typeof c)=>page.locator('[data-split-row]').filter({hasText:'github:acme/*'});
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Tell me after');
     expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'github:acme/*',person:'',tier:'tell',setBy:'pat'})]));
-    await d.getByRole('form',{name:'Standing rule',exact:true}).getByLabel('Rule',{exact:true}).selectOption(JSON.stringify(['merge','github:acme/*','']));
+    await ruleRow(d).click();
+    await expect.poll(()=>d.getByRole('form',{name:'Standing rule',exact:true}).getByLabel('Scope',{exact:true}).inputValue()).toBe('github:acme/*');
     const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-approvals-piece'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       await d.setViewportSize({ width, height: 900 });
@@ -191,4 +202,4 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(errors).toEqual([]);
     await context.close();
   } finally { await browser?.close(); await app.close(); }
-}, 60_000);
+});

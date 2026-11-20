@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sharedSigninLinks } from './shared-links.js';
+import { endBrowser } from './shared-browser.js';
+import { currentMemberToken } from './shared-tokens.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createServer } from 'node:http';
@@ -48,6 +50,16 @@ it('mints only for the admitted bearer and spends one link into a shared fingerp
   const html = await page.text();
   expect(html).not.toContain(code);
   expect(html).toContain('<form method="post">'); expect(html).toContain('<button>Sign in</button>');
+  // The page is whole in one answer and knows nobody: no script, nothing to fetch, no handler or style attribute, no
+  // member, token label or household word; its one style block is the only thing its policy lets in.
+  expect(html).toContain('<h1>Sign in to loom</h1>'); expect(html).toContain('LOOM<i>//</i>OS');
+  expect(html).not.toMatch(/<script|<link|<img|<iframe|@import|url\((?!#weave\))|\son\w+=|\sstyle=|\ssrc=|\shref=|javascript:/i);
+  for (const word of ['other', 'owner', credential, other, hash(credential), 'household']) expect(html, word).not.toContain(word);
+  expect(html.replace(/<style>[\s\S]*?<\/style>|<svg[\s\S]*?<\/svg>|<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()).toBe('Sign in to loom LOOM // OS Sign in to loom Sign in This link works once and signs in this browser.');
+  const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+  expect(html.match(/<style>/g)).toHaveLength(1);
+  expect(page.headers.get('content-security-policy')).toBe(`default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`);
+  expect(style).toContain('prefers-color-scheme:light'); expect(style).not.toMatch(/animation|transition/);
   expect(f.db.select().from(signinLinks).all()).toEqual(before); // navigation/prefetch spends nothing
   const signed = await f.redeem(path);
   expect(signed.status).toBe(303); expect(signed.headers.get('cache-control')).toBe('no-store');
@@ -97,7 +109,7 @@ it('refuses cross-origin requests or fingerprints as minting authority, admits m
   expect((await f.mint({ authorization: 'Bearer ' + hash(credential) })).status).toBe(401);
   const path = await f.link(), signed = await f.redeem(path), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
   expect((await f.mint({ cookie })).status).toBe(200);
-  f.root.writes.run(() => f.db.delete(sessions).run());
+  f.root.writes.run(() => endBrowser(f.db, hash(cookie.slice(8))));
   expect((await f.read(cookie)).status).toBe(401);
   const next = await f.link(); expect((await f.redeem(next, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
   await f.root.close(); expect((await f.redeem(next)).status).toBe(503);
@@ -153,11 +165,81 @@ it.each(['code', 'token'])('stores a recognized device name rather than a raw cr
   expect(stored).not.toContain(code); expect(stored).not.toContain(credential);
 });
 
-it('lets trusted callers explicitly create an agent session with a six-hour lifetime', () => {
+it('takes the link maker\'s word that a link is for an automated browser, whatever the browser calls itself', async () => {
   const f = fixture(), signin = sharedSigninLinks(f.db, f.clock);
-  const path = f.root.writes.run(() => signin.makeLink(hash(credential))).value.path;
-  const result = f.root.writes.run(() => signin.redeem(path.split('/').at(-1)!, 'Agent browser', true)).value;
-  expect(result.maxAge).toBe(21600); expect(f.db.select().from(sessions).get()?.isAgent).toBe(true);
+  const path = f.root.writes.run(() => signin.makeLink(hash(credential), { agent: true })).value.path;
+  // The link is made by one service and spent at the door: an ordinary User-Agent changes nothing.
+  const signed = await f.redeem(path, { 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36' }), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(signed.headers.get('set-cookie')).toContain('Max-Age=21600'); expect(f.db.select().from(sessions).get()).toMatchObject({ isAgent: true, device: 'Chrome on Mac' });
+  // An automated browser makes no link, so it cannot pass itself on as a person's.
+  expect((await f.mint({ cookie })).status).toBe(403);
+});
+
+it('carries a browser\'s proof to the device its link signs in, and gives that device no new proof and no new thirty days', async () => {
+  const f = fixture(), first = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  f.root.services.runtime.close();
+  const original = f.db.select().from(sessions).get()!;
+  f.clock.advance(5 * 60_000);
+  const minted = await f.mint({ cookie: first }); expect(minted.status).toBe(200);
+  const path = (await minted.json() as { value: { path: string } }).value.path;
+  const signed = await f.redeem(path), second = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(signed.headers.get('set-cookie')).toContain('Max-Age=' + (2592000 - 300));
+  expect(f.db.select().from(sessions).where(eq(sessions.id, hash(second.slice(8)))).get()).toMatchObject({ issuedAt: original.issuedAt, provedAt: original.provedAt, isAgent: false, via: 'link' });
+  // Ten minutes after the one real proof, neither browser can make a link: passing the cookie on renewed nothing.
+  f.clock.advance(5 * 60_000);
+  expect((await f.mint({ cookie: second })).status).toBe(403); expect((await f.mint({ cookie: first })).status).toBe(403);
+  // And both end thirty days after that proof.
+  f.clock.advance(30 * 86400_000 - 10 * 60_000 - 1); expect((await f.read(second)).status).toBe(200);
+  f.clock.advance(1); expect((await f.read(second)).status).toBe(401);
+});
+
+it('ends a browser\'s unused link with that browser', async () => {
+  const f = fixture(), cookie = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  const path = (await (await f.mint({ cookie })).json() as { value: { path: string } }).value.path;
+  expect((await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } })).status).toBe(200);
+  expect(f.db.select().from(signinLinks).all()).toEqual([]);
+  expect((await f.redeem(path)).status).toBe(401); expect(f.db.select().from(sessions).all()).toEqual([]);
+});
+
+it('keeps a link, with the browser that made it and what its maker said, when the program starts again', async () => {
+  const f = fixture(), first = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  f.root.services.runtime.close();
+  const original = f.db.select().from(sessions).get()!;
+  const fromBrowser = (await (await f.mint({ cookie: first })).json() as { value: { path: string } }).value.path;
+  const forAgent = f.root.writes.run(() => sharedSigninLinks(f.db, f.clock).makeLink(hash(credential), { agent: true })).value.path;
+  await f.root.close();
+  const again = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} }); cleanup.push(() => again.close());
+  again.services.runtime.close();
+  f.clock.advance(60_000);
+  // The browser's link still carries that browser's proof, and no new one: the facts are in the row.
+  const signed = await again.http.request('http://loom' + fromBrowser, { method: 'POST' }); expect(signed.status).toBe(303);
+  const second = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(f.db.select().from(sessions).where(eq(sessions.id, hash(second.slice(8)))).get()).toMatchObject({ issuedAt: original.issuedAt, provedAt: original.provedAt, madeBy: original.id });
+  // The link made for an automated browser still signs one in for hours, whatever it calls itself.
+  const agent = await again.http.request('http://loom' + forAgent, { method: 'POST', headers: { 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36' } });
+  expect(agent.headers.get('set-cookie')).toContain('Max-Age=21600');
+});
+
+it('ends, with a browser, every browser its links signed in, and the ones those signed in', async () => {
+  const f = fixture(), cookieOf = (response: Response) => response.headers.get('set-cookie')!.split(';', 1)[0];
+  const pass = async (cookie: string) => cookieOf(await f.redeem((await (await f.mint({ cookie })).json() as { value: { path: string } }).value.path));
+  const first = cookieOf(await f.redeem(await f.link())), unrelated = cookieOf(await f.redeem(await f.link()));
+  const second = await pass(first), third = await pass(second);
+  for (const cookie of [first, second, third, unrelated]) expect((await f.read(cookie)).status).toBe(200);
+  // The second browser's own unused link goes with it too.
+  const unused = (await (await f.mint({ cookie: second })).json() as { value: { path: string } }).value.path;
+  f.root.writes.run(() => endBrowser(f.db, hash(first.slice(8))));
+  for (const cookie of [first, second, third]) expect((await f.read(cookie)).status).toBe(401);
+  expect((await f.read(unrelated)).status).toBe(200);
+  expect((await f.redeem(unused)).status).toBe(401);
+  expect(f.db.select({ id: sessions.id }).from(sessions).all()).toEqual([{ id: hash(unrelated.slice(8)) }]);
+});
+
+it('drops links that ran out when the next one is made', async () => {
+  const f = fixture(); await f.link(); await f.link();
+  expect(f.db.select().from(signinLinks).all()).toHaveLength(2);
+  f.clock.advance(5 * 60_000); await f.link();
+  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
 });
 
 it.each([false, true])('keeps one committed session and reports notification failure without retry, even if reporter throws=%s', async throws => {
@@ -231,6 +313,21 @@ it('keeps confirmation POST origin checks strict and accepts the same-origin bro
   expect(accepted.status).toBe(303);
   expect(accepted.headers.get('set-cookie')).toContain('HttpOnly');
   expect(f.db.select().from(sessions).all()).toHaveLength(1);
+});
+
+it('judges a browser\'s origin by one rule at the sign-in routes, the data door and the operation door', async () => {
+  const f = fixture('https://loom');
+  // Behind the TLS proxy the program sees plain HTTP, but none of its pages is served at that origin.
+  for (const [origin, allowed] of [['https://loom', true], ['http://loom', false], ['https://elsewhere.test', false]] as const) {
+    const headers = { authorization: 'Bearer ' + credential, 'content-type': 'application/json', origin };
+    const answers = [
+      (await f.mint(headers)).status,
+      (await f.root.http.request('http://loom/graphql', { method: 'POST', headers, body: JSON.stringify({ query: '{ tasks { id } }' }) })).status,
+      (await f.root.http.request('http://loom/api/tasks/list', { method: 'POST', headers, body: JSON.stringify({ input: {} }) })).status,
+      (await f.root.http.request('http://loom/logout', { method: 'POST', headers })).status,
+    ];
+    expect(answers.map(status => status === 403)).toEqual(answers.map(() => !allowed));
+  }
 });
 
 it('limits the origin-only referrer policy to the valid confirmation document', async () => {
@@ -308,12 +405,13 @@ it.each(['ended','aged','agent'])('withholds a one-time link if post-commit publ
  const f=fixture(),signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];let observed=false,insideTransaction=true;
  const stop=f.root.writes.observe(()=>{
   if(observed||!f.db.select().from(signinLinks).get())return;observed=true;insideTransaction=f.client.inTransaction;
-  if(change==='ended')f.db.delete(sessions).where(eq(sessions.id,hash(cookie.slice(8)))).run();
+  if(change==='ended')f.client.transaction(()=>endBrowser(f.db,hash(cookie.slice(8))))();
   else f.db.update(sessions).set(change==='aged'?{provedAt:new Date(f.clock.now()-660000).toISOString()}:{isAgent:true}).where(eq(sessions.id,hash(cookie.slice(8)))).run();
  });cleanup.push(stop);
  const response=await f.mint({cookie});expect(observed).toBe(true);expect(insideTransaction).toBe(false);
  expect(response.status).toBe(change==='ended'?401:403);expect(await response.json()).toEqual({error:change==='ended'?'Member authentication required':'Sign in again before making a sign-in link'});
- expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+ // A browser that ended took its unused link with it; one that only aged keeps a link nobody was shown.
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(change==='ended'?0:1);
 });
 it('withholds a committed one-time link if publication starts shutdown',async()=>{
  const f=fixture();let stopped=false;
@@ -326,4 +424,49 @@ it.each(['revoke','expire'])('withholds a committed link when publication ends i
  const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(signinLinks).get())return;ended=true;f.db.update(tokens).set(change==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();});cleanup.push(stop);
  const response=await f.mint();expect(ended).toBe(true);expect(response.status).toBe(401);expect(await response.json()).toEqual({error:'Member authentication required'});
  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});
+it('signs nobody in on a removed member\'s token, by link or by the rule a passkey sign-in uses', async () => {
+  const f = fixture(), path = await f.link(), service = sharedSigninLinks(f.db, f.clock);
+  f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'sam')).run();
+  expect((await f.redeem(path)).status).toBe(401);
+  expect(() => service.makeLink(hash(credential))).toThrow('Sign-in refused');
+  expect(currentMemberToken(f.db, f.clock, hash(credential))).toBeUndefined();
+  expect(currentMemberToken(f.db, f.clock, hash(other))).toMatchObject({ member: 'other' });
+  expect(f.db.select().from(sessions).all()).toEqual([]);
+});
+it('adds a passkey only for the browser that is itself the presented credential', async () => {
+  const f = fixture('https://loom'), secure = (path: string, headers: Record<string, string>) => f.root.http.request('https://loom' + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://loom', ...headers }, body: '{}' });
+  const signedIn = await f.root.http.request('https://loom' + await f.link(), { method: 'POST', headers: { origin: 'https://loom' } });
+  const cookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0];
+  expect((await secure('/passkeys/options', { cookie })).status).toBe(200);
+  // Another member's bearer beside sam's cookie is that other member, not sam's browser.
+  expect((await secure('/passkeys/options', { cookie, authorization: 'Bearer ' + other })).status).toBe(403);
+});
+
+it.each(['aged','agent'])('mints no lasting token and no program token from an %s owner browser; a bearer and a fresh browser may',async how=>{
+ const f=fixture();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+ const signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const issue=(path:string,headers:Record<string,string>,label:string)=>f.root.http.request('http://loom'+path,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify({kind:'owner',member:'sam',label})});
+ expect((await issue('/api/signin/token',{cookie},'fresh')).status).toBe(200);
+ f.db.update(sessions).set(how==='agent'?{isAgent:true}:{provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+ const before=f.db.select().from(tokens).all();
+ for(const path of ['/api/signin/token','/api/signin/program']){
+  const response=await issue(path,{cookie},'kept');
+  expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Sign in again before making a token'});
+ }
+ expect(f.db.select().from(tokens).all()).toEqual(before);
+ // The browser is still signed in, and the owner's own bearer is its own proof.
+ expect((await f.read(cookie)).status).toBe(200);
+ expect((await issue('/api/signin/token',{authorization:'Bearer '+credential},'kept')).status).toBe(200);
+});
+it('rechecks the browser\'s proof inside the token write',async()=>{
+ const f=fixture();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+ const signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes),before=f.db.select().from(tokens).all();
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+  return original(action);
+ });
+ const response=await f.root.http.request('http://loom/api/signin/token',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({kind:'owner',member:'sam',label:'kept'})});
+ expect(response.status).toBe(403);expect(f.db.select().from(tokens).all()).toEqual(before);
 });

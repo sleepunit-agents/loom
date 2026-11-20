@@ -10,11 +10,11 @@ import { useTint } from './tint';
 import { AppIcon } from './app-icon';
 
 /** An app's icon in its tile, in the app's one colour (tint.ts): the same as its tile in Places or Setup, in the dock and in Find. */
-export function AppTile({ label, icon, size = 44 }: { label: string; icon: string; size?: number }) {
+export function AppTile({ app, label, icon, size = 44 }: { /** the app's id: its house icon's name */ app?: string; label: string; icon: string; size?: number }) {
   const tint = useTint();
   return (
     <span aria-hidden className="loom-app-tile grid shrink-0 place-items-center rounded-[var(--loom-r-tile)]" data-tint={tint(label)} style={{ width: size, height: size }}>
-      <AppIcon label={label} name={iconFor(icon)} size="sm" />
+      <AppIcon app={app} name={iconFor(icon)} size="sm" />
     </span>
   );
 }

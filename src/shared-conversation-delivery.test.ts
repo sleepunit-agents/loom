@@ -12,7 +12,10 @@ it.each(['failed','lost','stopped','done'] as const)('shows actual %s delivery o
  expect((await f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+'b'.repeat(64),'content-type':'application/json'},body:JSON.stringify({input:{}})})).status).toBe(200);
  const finish=()=>{if(outcome==='failed'||outcome==='done')jobs.finish('job','box',outcome==='failed'?1:0);else if(outcome==='stopped')jobs.stop('job','alice','reset');else{f.db.update(s.jobs).set({heardAt:new Date(f.clock.now()-120001).toISOString()}).where(eq(s.jobs.id,'job')).run();jobs.sweep();}};
  expect(()=>f.root.writes.run(()=>{finish();throw Error('Rollback');})).toThrow('Rollback');expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered','sending','sending']);
- f.root.writes.run(finish);expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',outcome==='failed'||outcome==='lost'?'failed':'held','sending']);expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['done','waiting','waiting']);
+ f.root.writes.run(finish);// A failed or lost body that left this mail unconfirmed is tried again (Jobs.retry), so the mail is held for the next attempt; it shows failed only when the attempts run out.
+ expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered','held','sending']);
+ // A job its member ended by hand settles that request: its mail is closed with the reason and waits for nothing (Jobs.stop).
+ expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['done',outcome==='stopped'?'resolved':'waiting','waiting']);
 });
 it('holds queued and retrying original mail, sends on claim and shows failure only after the actual exhausted start chain',async()=>{
  const f=await bodyFixture(clean),jobs=new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());f.db.insert(s.agentModels).values({agent:'art',model:'fixture',position:0}).run();f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();

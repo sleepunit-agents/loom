@@ -2,6 +2,8 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {FakeClock} from '../core/clock.js';
 import {bodyStartupSecrets} from './body-secrets.js';
 import type {WorkerAssignment} from './worker.js';
+import {claude,claudeToolSettings} from './claude-body.js';
+import {isHouseSecretAlias} from '../pieces/secrets/input.js';
 const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:'cv',model:'model',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
 const clean:(()=>void)[]=[];afterEach(()=>{for(const close of clean.splice(0).reverse())close();vi.restoreAllMocks();});
 function fixture(values=new Map([['GITHUB_TOKEN',Buffer.from('PRIVATE_STARTUP')]]),base:NodeJS.ProcessEnv={PATH:'/usr/bin',ACCOUNT_PROFILE:'/account'}){
@@ -17,8 +19,15 @@ it('injects confirmed aliases into only the private environment, erases byte buf
 it('preserves Unicode and a leading BOM instead of changing credential text',async()=>{
  const value='\uFEFF clé\nvalue',f=fixture(new Map([['API_TOKEN',Buffer.from(value)]]));await f.start();expect(f.environment.API_TOKEN).toBe(value);f.abort.abort();expect(f.environment.API_TOKEN).toBeUndefined();
 });
-it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','OPENAI_API_KEY','CODEX_HOME','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS'])('refuses %s without partially modifying the environment',async alias=>{
+it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS','LOOM_BODY_SCRATCH'])('refuses %s without partially modifying the environment',async alias=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],[alias,Buffer.from('SECOND_PRIVATE')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);expect(JSON.stringify(f.environment)).not.toContain('PRIVATE');
+});
+it('reserves every name the Claude adapter sets for its child, from the adapter\'s own list',async()=>{
+ expect(Object.keys(claudeToolSettings)).toContain('MAX_MCP_OUTPUT_TOKENS');
+ for(const alias of Object.keys(claudeToolSettings)){
+  const f=fixture(new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);
+  expect(claude.reservesEnv(alias,{})).toBe(true);
+ }
 });
 it.each([Buffer.from([255]),Buffer.from('before\0after')])('refuses an unrepresentable environment value %j',async value=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],['BINARY_TOKEN',value]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);
@@ -51,7 +60,32 @@ it.each(['failure','abort','close'])('erases already acquired buffers when a lat
  if(mode!=='failure')release(new Response(new Blob(['PRIVATE_SECOND'])));
 });
 it('erases the completed SDK batch when environment validation rejects it',async()=>{
- const f=fixture(new Map([['FIRST_TOKEN',Buffer.from('PRIVATE_FIRST')],['bad-name',Buffer.from('PRIVATE_SECOND')]])),copies:Buffer[]=[],concat=Buffer.concat;
+ const f=fixture(new Map([['FIRST_TOKEN',Buffer.from('PRIVATE_FIRST')],['ACCOUNT_PROFILE',Buffer.from('PRIVATE_SECOND')]])),copies:Buffer[]=[],concat=Buffer.concat;
  vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const bytes=concat(list,total);if(bytes.toString().startsWith('PRIVATE_'))copies.push(bytes);return bytes;});
  await expect(f.start()).rejects.toThrow();expect(copies.length).toBeGreaterThan(0);expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.environment).toEqual(f.base);
+});
+// The names that sign a harness in to its account are refused for a body on that harness, and each harness lists its own.
+it.each([['claude','ANTHROPIC_API_KEY'],['claude','claude_config_dir'],['codex','OPENAI_API_KEY'],['codex','CODEX_HOME'],['agy','GEMINI_API_KEY'],['agy','GOOGLE_API_KEY'],['agy','GOOGLE_APPLICATION_CREDENTIALS']])('refuses a %s body the account name %s, and gives it to a body on another harness',async(harness,alias)=>{
+ const values=()=>new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]);
+ const own=fixture(values());await expect(own.hook.startup({...job,harness},own.bootstrap,own.abort.signal)).rejects.toThrow(/^Startup secret environment unavailable$/);expect(own.environment).toEqual(own.base);
+ const other=fixture(values());await other.hook.startup({...job,harness:harness==='agy'?'claude':'agy'},other.bootstrap,other.abort.signal);expect(other.environment[alias]).toBe('PRIVATE_STARTUP');
+});
+
+it('takes exactly the aliases the door that stores them takes, when its own machine and harness add nothing',async()=>{
+ // One rule (isHouseSecretAlias) for both: an alias the owner's door accepted must never be what stops a body.
+ for(const alias of ['DEPLOY_KEY','_x','a1','A'.repeat(200),'deploy-key','a.b','1A','A'.repeat(201),'PATH','home','NODE_OPTIONS','mcp_x','LD_PRELOAD','LOOM_BODY_SCRATCH']){
+  const f=fixture(new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]),{});
+  expect([alias,await f.start().then(()=>true,()=>false)]).toEqual([alias,isHouseSecretAlias(alias)]);
+ }
+});
+it('knows the values a body was started with, so they can be looked for in what it says, and forgets them on close',async()=>{
+ const f=fixture(new Map([['GITHUB_TOKEN',Buffer.from('PRIVATE_STARTUP')],['AWS_REGION_NAME',Buffer.from('eu-1')]]));
+ expect(f.hook.allowsReply('PRIVATE_STARTUP')).toBe(true);await f.start();
+ expect(f.hook.allowsReply('the token is PRIVATE_STARTUP.')).toBe(false);
+ // As its bytes and as their base64, like a secret it used: a model that encodes it has still said it.
+ const encoded=Buffer.from('PRIVATE_STARTUP').toString('base64');
+ expect(f.hook.allowsReply(`decode this: ${encoded}`)).toBe(false);expect(f.hook.values().map(value=>value.toString())).toEqual(['PRIVATE_STARTUP',encoded]);
+ // A value too short to tell from ordinary words is not looked for: it would fail ordinary answers.
+ expect(f.hook.allowsReply('it runs in eu-1')).toBe(true);
+ const held=[...f.hook.values()];f.hook.close();expect(f.hook.values()).toEqual([]);expect(held.every(value=>value.every(byte=>byte===0))).toBe(true);
 });

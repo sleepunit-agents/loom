@@ -2,6 +2,7 @@
  * Descriptor-relative walks refuse links even if a directory is replaced while
  * reading. Linux /proc is required; unsupported hosts fail closed. */
 import fs, { constants as F } from 'node:fs';
+import { laneFile } from './lane-file.js';
 
 export const MAX_LANE_FILE_BYTES = 1_048_576;
 export function repositoryInstructions(repository: string): (file: string) => string {
@@ -9,7 +10,7 @@ export function repositoryInstructions(repository: string): (file: string) => st
     const roots = repository.split('/'), parts = file.split('/');
     if (process.platform !== 'linux' || roots.shift() !== '' || !roots.length ||
       roots.some(p => !p || p === '.' || p === '..') ||
-      !file || file.includes('\\') || parts.some(p => !p || p === '.' || p === '..' || p.includes('\0')))
+      !laneFile(file))
       throw new Error('Lane instructions need a relative file in the configured repository');
     const opened: number[] = [];
     try {

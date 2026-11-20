@@ -2,7 +2,7 @@ import { readAll } from '../data/execution.js';
 import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readCommsHome } from '../data/comms-home.js';
-import { wordsDeadline } from './retention.js';
+import { wordsDeadline, wordsKept } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
 import { and, eq, getTableColumns, is, SQL, type AnyColumn } from 'drizzle-orm';
@@ -12,6 +12,7 @@ import type { DataDatabase } from '../data/database.js';
 import { conversations, household, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
+import { commsKeepDays } from '../data/comms-days.js';
 type Message = typeof messages.$inferSelect;
 const projected=Symbol('Comms message projection');
 type MessageView = Omit<Message, 'words'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string } & { [projected]?: Record<string,unknown> };
@@ -43,8 +44,8 @@ export class CommsQueries {
     const current = this.readSet?this.readSet.entry(expected.seq)?.conversation===expected.conversation?this.readSet.entry(expected.seq)?.message:undefined:this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), eq(conversations.id, expected.conversation), this.allowed(viewer))).get();
-    const days = this.readSet?.days??this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-    if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
+    const days = this.readSet?.days??commsKeepDays(this.db);
+    if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil) return null;
     const deadline = wordsDeadline(current, days);
     return Number.isFinite(deadline) ? new Date(deadline).toISOString() : null;
   }
@@ -95,10 +96,8 @@ export class CommsQueries {
     const row = () => this.readSet?this.readSet.entry(expected.seq):this.db.select({ message: messages, agent: conversations.agent, project: conversations.project, member: conversations.member, conversation: conversations.id })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
-    const days = () => this.readSet?.days??this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-    const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && !!entry.message.keepUntil
-      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && Date.parse(entry.message.keepUntil) > Date.parse(this.now())
-      && Date.parse(entry.message.at) + keep * 86400000 > Date.parse(this.now());
+    const days = () => this.readSet?.days??commsKeepDays(this.db);
+    const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && wordsKept(entry.message, keep, this.now());
     const same = (message: Message) => ['at', 'sender', 'kind', 'keepUntil', 'inboxItem'].every(key => message[key as keyof Message] === expected[key as keyof typeof expected]);
     const scope = (entry: ReturnType<typeof row>) => !!entry && entry.agent === expected.agent && entry.project === expected.project && entry.member === expected.member && entry.conversation === expected.conversation;
     const before = row(), keep = days();
@@ -115,7 +114,7 @@ export class CommsQueries {
 
 export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const thread = new GraphQLObjectType({ name: 'CommsThreadView', fields: {
-    ...Object.fromEntries(['id', 'conversation', 'title', 'titledBy', 'agent', 'openedAt', 'lastAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
+    ...Object.fromEntries(['id', 'conversation', 'venue', 'title', 'titledBy', 'agent', 'openedAt', 'lastAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['project', 'member', 'archivedAt', 'workingSince', 'workingBeat'].map(name => [name, { type: GraphQLString }])),
     ...Object.fromEntries(['pinned', 'working', 'stopRequested'].map(name => [name, { type: new GraphQLNonNull(GraphQLBoolean) }])),
     readSeq: { type: new GraphQLNonNull(GraphQLInt) },

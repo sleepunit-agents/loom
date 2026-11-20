@@ -79,3 +79,82 @@ for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\rfact'], ['bad\nlin
   expect(() => f.service.heartbeat('worker', facts)).toThrow();
   expect({ boxes: f.db.select().from(boxes).all(), facts: f.db.select().from(boxFacts).all(), notices: f.db.select().from(inbox).all() }).toEqual(before);
 });
+
+it('keeps taking reports after the server clock is set back, stamped with the present time', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('worker'); advance(60_000); service.heartbeat('worker');
+  advance(-3_600_000);
+  expect(service.heartbeat('worker').lastSeenAt).toBe(now());
+  expect(db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(now());
+  // Silence is then measured on the same clock again: quiet for the interval, and only then an alert.
+  advance(120_000); expect(service.sweep()).toEqual([]);
+  advance(1); expect(service.sweep()).toHaveLength(1);
+});
+
+it('counts a machine stamped later than now from now, so a clock set back does not hide a silent machine', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('worker'); service.heartbeat('worker'); advance(-3_600_000);
+  expect(service.sweep()).toEqual([]);
+  expect(db.select().from(boxes).get()?.lastSeenAt).toBe(now());
+  advance(120_001);
+  expect(service.sweep().map(row => row.words)).toEqual(['Machine worker has stopped reporting.']);
+});
+
+it('says a report moved only the last-seen time when the machine was already reporting the same facts and room', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('box');
+  // The first report, new facts, new room and a fact withdrawn are each a change that is shown.
+  expect(service.report('box', ['os:linux'], 2).stampOnly).toBe(false);
+  advance(1000);
+  expect(service.report('box', ['os:linux'], 2)).toMatchObject({ stampOnly: true, box: { lastSeenAt: now(), slots: 2 } });
+  expect(service.report('box').stampOnly).toBe(true);
+  expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(false);
+  expect(service.report('box', ['gpu', 'os:linux'], 2).stampOnly).toBe(true);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(db.select().from(boxFacts).all().map(row => row.fact)).toEqual(['gpu']);
+  expect(service.report('box', ['gpu'], 3).stampOnly).toBe(false);
+  expect(service.report('box', ['gpu'], null).stampOnly).toBe(false);
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  // An owner's label is not the worker's to report, and is not counted against what it reports.
+  db.insert(boxFacts).values({ box: 'box', fact: 'quiet', fromOwner: true }).run();
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  expect(db.select().from(boxFacts).all()).toEqual([{ box: 'box', fact: 'quiet', fromOwner: true }]);
+  // Heard from again after a silence, with its notice closed: a change. So is a stamp left ahead by a clock set back.
+  advance(120_001); expect(service.sweep()).toHaveLength(1);
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+  expect(db.select().from(inbox).all().map(item => item.state)).not.toContain('waiting');
+  expect(service.report('box', [], null).stampOnly).toBe(true);
+  advance(120_000); expect(service.report('box', [], null).stampOnly).toBe(false);
+  db.update(boxes).set({ lastSeenAt: new Date(Date.parse(now()) + 5000).toISOString() }).where(eq(boxes.id, 'box')).run();
+  expect(service.report('box', [], null).stampOnly).toBe(false);
+});
+
+it('writes nothing for a report that repeats a fact the owner labelled, and stores the fact once the label is gone', () => {
+  const { db, service, add, advance } = fixture();
+  add('box');
+  db.insert(boxFacts).values({ box: 'box', fact: 'gpu', fromOwner: true }).run();
+  const stored = () => db.select().from(boxFacts).all().map(row => `${row.fact}:${row.fromOwner ? 'owner' : 'worker'}`).sort();
+  const written = () => (db.$client.prepare('SELECT total_changes()').pluck().get() as number);
+  expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:owner', 'os:linux:worker']);
+  // The same report again, poll after poll: the label and the worker's row stay as they are, and only the
+  // machine's own row (its last-seen time) is written.
+  for (let poll = 0; poll < 3; poll++) {
+    advance(1000); const before = written();
+    expect(service.report('box', ['os:linux', 'gpu'], 2).stampOnly).toBe(true);
+    expect(written() - before).toBe(1);
+  }
+  expect(stored()).toEqual(['gpu:owner', 'os:linux:worker']);
+  // A fact that is the worker's alone still changes as before.
+  expect(service.report('box', ['os:linux', 'gpu', 'arm64'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['arm64:worker', 'gpu:owner', 'os:linux:worker']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:owner']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(true);
+  // The owner takes the label away: the worker's next report stores the fact as its own, which is a change.
+  db.delete(boxFacts).where(eq(boxFacts.fact, 'gpu')).run();
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(false);
+  expect(stored()).toEqual(['gpu:worker']);
+  expect(service.report('box', ['gpu'], 2).stampOnly).toBe(true);
+});

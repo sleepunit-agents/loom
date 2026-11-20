@@ -1,10 +1,11 @@
-import { afterEach, expect, it } from 'vitest';
+import {testProgramPin} from '../../runtime/pinned-program.fixture.js';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, household, inbox, members, triggerLog, triggers } from '../data/schema.js';
-import { FakeClock } from '../clock.js';
-import { TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
+import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
+import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
 const stops: (() => void)[] = [];
 afterEach(() => { for (const stop of stops.splice(0).reverse()) stop(); });
@@ -88,14 +89,80 @@ it('skips missing DST wall times and runs a repeated time at its first instant o
   expect(new Date(nextTime('02:30', null, Date.parse('2026-03-08T00:00:00Z'), 'America/Chicago')).toISOString()).toBe('2026-03-09T07:30:00.000Z');
   expect(new Date(nextTime('01:30', null, Date.parse('2026-11-01T06:31:00Z'), 'America/Chicago')).toISOString()).toBe('2026-11-02T07:30:00.000Z');
 });
-it('holds an agent-owned operation with no inbox recipient and coalesces missed calendar occurrences', () => {
-  const { engine, clock, base, operations, row } = fixture();
+it('holds an agent-owned operation with no inbox recipient, and skips the times it was held through', () => {
+  const { engine, clock, base, operations, row, db } = fixture();
   const t = engine.set({ ...base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01', lifespan: 'until-stopped' });
   engine.pause('art'); clock.advance(2 * 86_400_000); expect(operations).toEqual([]);
-  engine.resume('art'); expect(operations).toEqual(['tasks.reconcile']);
-  expect(row(t.id).nextDueAt).toBe('2026-11-16T18:01:00.000Z');
+  engine.resume('art'); expect(operations).toEqual([]);
+  expect(row(t.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-16T18:01:00.000Z', lastFiredAt: null });
+  expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().map(l => [l.event, l.note])).toContainEqual(['missed', 'time:2026-11-14T18:01:00.000Z']);
+  clock.advance(60_000); expect(operations).toEqual(['tasks.reconcile']);
 });
-
+// The missed-time rule (stated on TriggerEngine): a standing trigger's time fires at most MISSED_GRACE_MS late,
+// however it came to be late; a once-only trigger fires late, however late, and is never dropped.
+it.each(['pause', 'restart', 'slow clock'] as const)('fires a time up to the grace late after a %s; beyond that skips a standing time and still fires a once-only one', how => {
+  for (const late of [MISSED_GRACE_MS, MISSED_GRACE_MS + 1]) {
+    const f = fixture(), due = f.clock.now() + 60_000;
+    const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+    const once = f.engine.set({ ...f.base, times: new Date(due).toISOString(), instructions: 'Once' });
+    let engine = f.engine;
+    if (how === 'pause') f.engine.pause('art'); else f.engine.close();
+    if (how === 'slow clock') {
+      // The timer that should have woken the engine never ran; the next scan finds the time already behind it.
+      const stuck = new FakeClock(due + late); engine = new TriggerEngine(f.db, stuck, f.effects); stops.push(() => engine.close());
+    } else f.clock.advance(60_000 + late);
+    expect(f.items()).toEqual([]);
+    if (how === 'pause') f.engine.resume('art');
+    else if (how === 'restart') { engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); }
+    engine.tick();
+    const events = (id: string) => f.db.select().from(triggerLog).where(andTrigger(id)).all().map(l => l.event);
+    if (late <= MISSED_GRACE_MS) {
+      expect(f.items().map(i => i.words).sort()).toEqual(['Do the work', 'Once']);
+      expect(f.row(once.id)).toMatchObject({ state: 'fired', enabled: false });
+      expect(events(lane.id)).not.toContain('missed');
+    } else {
+      expect(f.items().map(i => i.words)).toEqual(['Once']);
+      expect(f.row(once.id)).toMatchObject({ state: 'fired', enabled: false, nextDueAt: null });
+      expect(events(lane.id).at(-1)).toBe('missed'); expect(events(once.id)).not.toContain('missed');
+    }
+    // Either way the lane stands for tomorrow, and nothing fires a second time to catch up.
+    expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-15T18:01:00.000Z' });
+    engine.tick(); expect(f.items()).toHaveLength(late <= MISSED_GRACE_MS ? 2 : 1);
+  }
+});
+it.each(['pause', 'restart'] as const)('fires a once-only trigger exactly once after a %s of days, and skips every standing time that passed meanwhile', how => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+  const once = f.engine.set({ ...f.base, instructions: 'Once' }), wall = f.engine.set({ ...f.base, times: '12:02', instructions: 'Once by wall time' });
+  let engine = f.engine;
+  if (how === 'pause') f.engine.pause('art'); else f.engine.close();
+  f.clock.advance(9 * 86_400_000); expect(f.items()).toEqual([]);
+  if (how === 'pause') f.engine.resume('art');
+  else { engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick(); }
+  expect(f.items().map(i => i.words).sort()).toEqual(['Once', 'Once by wall time']);
+  for (const id of [once.id, wall.id]) {
+    expect(f.row(id)).toMatchObject({ state: 'fired', enabled: false, nextDueAt: null });
+    expect(f.db.select().from(triggerLog).where(andTrigger(id)).all().map(l => l.event).filter(e => e === 'fired' || e === 'missed')).toEqual(['fired']);
+  }
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-23T18:01:00.000Z' });
+  // Nothing fires again: not at the next scan, not after another restart.
+  engine.tick(); engine.close(); const again = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => again.close()); again.tick();
+  expect(f.items()).toHaveLength(2);
+});
+it('says which step of a firing failed', () => {
+  const failures = (f: ReturnType<typeof fixture>) => f.db.select().from(triggerLog).all().filter(l => l.event === 'failure').map(l => l.note);
+  const file = fixture({ instructions: () => { throw new Error('ENOENT: routines/check.md\nstack line'); } });
+  file.engine.set({ ...file.base, instructions: null, file: 'routines/check.md' }); file.clock.advance(10_000);
+  expect(failures(file)).toEqual(['instructions: ENOENT: routines/check.md']);
+  const inboxWrite = fixture({ inbox: () => { throw new Error('inbox is full'); } });
+  inboxWrite.engine.set(inboxWrite.base); inboxWrite.clock.advance(10_000);
+  expect(failures(inboxWrite)).toEqual(['inbox: inbox is full']);
+  const operation = fixture({ operation: () => { throw new Error('x'.repeat(500)); } });
+  const t = operation.engine.set({ ...operation.base, targetKind: 'operation', target: 'tasks.reconcile' }); operation.clock.advance(10_000);
+  expect(failures(operation)).toEqual(['operation: ' + 'x'.repeat(200)]);
+  // The failed row still carries the event id alone, so the same event is not tried again.
+  expect(operation.db.select().from(triggerLog).where(andTrigger(t.id)).all().filter(l => l.event === 'failed').map(l => l.note)).toEqual(['time:2026-11-14T18:00:10.000Z']);
+});
 it.each(['stop', 'pause'] as const)('honors an operation that will %s another due trigger without reentering itself', action => {
   const f = fixture();
   const calls: string[] = [];
@@ -195,4 +262,161 @@ it('rejects half-specified operation recipients and holds a recipient-free opera
  const t=f.engine.set({...f.base,targetKind:'operation',target:'test',toKind:null,to:null});
  f.engine.pause('art');expect(f.row(t.id).state).toBe('held');
  f.engine.resume('art');expect(f.row(t.id).state).toBe('standing');
+});
+it('keeps a standing lane alive after one failed firing, and fires it again at its next time', () => {
+  const f = fixture(); let broken = true;
+  const send = f.effects.inbox;
+  f.effects.inbox = (t, id, words) => { if (broken) throw new Error('could not read the instructions'); send(t, id, words); };
+  const lane = f.engine.set({ ...f.base, times: '12:05', days: null, lifespan: 'until-stopped' });
+  f.clock.advance(5 * 60_000);
+  expect(f.items()).toEqual([]);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true });
+  expect(Date.parse(f.row(lane.id).nextDueAt!)).toBeGreaterThan(f.clock.now());
+  expect(f.db.select().from(triggerLog).all().map(row => row.event)).toContain('failed');
+  broken = false; f.clock.advance(24 * 3600_000);
+  expect(f.items()).toHaveLength(1);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true });
+});
+it('refuses an operation target the program cannot run, when the trigger is set', () => {
+  const f = fixture({ knows: name => name === 'tempo.sweep' });
+  expect(() => f.engine.set({ ...f.base, targetKind: 'operation', target: 'nothing.here', toKind: undefined, to: undefined, instructions: undefined })).toThrow('Unknown operation');
+  expect(f.engine.set({ ...f.base, targetKind: 'operation', target: 'tempo.sweep', instructions: undefined }).state).toBe('standing');
+});
+it('turns one stopped lane back on from now, without firing what it missed, and leaves the agent\'s others alone', () => {
+  const { engine, clock, base, items, row, db } = fixture();
+  const lane = engine.set({ ...base, times: '12:10', lifespan: 'until-stopped', instructions: 'Triage' });
+  const other = engine.set({ ...base, times: '12:20', lifespan: 'until-stopped', instructions: 'Tend' });
+  engine.stop(lane.id); expect(row(lane.id)).toMatchObject({ enabled: false, state: 'stopped', nextDueAt: null });
+  clock.advance(15 * 60_000); expect(items()).toEqual([]);
+  expect(() => engine.start(other.id)).toThrow('already on');
+  engine.start(lane.id);
+  expect(row(lane.id)).toMatchObject({ enabled: true, state: 'standing', nextDueAt: '2026-11-15T18:10:00.000Z' });
+  expect(items()).toEqual([]);
+  clock.advance(5 * 60_000); expect(items().map(i => i.words)).toEqual(['Tend']);
+  expect(db.select().from(triggerLog).where(eq(triggerLog.trigger, lane.id)).all().map(l => l.event)).toEqual(['set', 'stopped', 'started']);
+  engine.stop(lane.id); engine.pause('art'); engine.start(lane.id); expect(row(lane.id).state).toBe('held');
+});
+it('refuses to start a one-off whose time has passed or a trigger that has fired', () => {
+  const { engine, clock, base, row } = fixture();
+  const passed = engine.set(base), fired = engine.set({ ...base, times: '2026-11-14T18:00:05Z' });
+  engine.stop(passed.id); clock.advance(60_000);
+  expect(() => engine.start(passed.id)).toThrow('Time is in the past'); expect(row(passed.id).enabled).toBe(false);
+  expect(() => engine.start(fired.id)).toThrow('Only a stopped trigger');
+});
+it('edits a lane\'s words and times, keeps what they said before and who changed them, and fires the new words', () => {
+  const { engine, clock, base, items, row, db } = fixture();
+  const lane = engine.set({ ...base, times: '12:10', lifespan: 'until-stopped', instructions: 'Triage' });
+  const edits = () => db.select().from(triggerEdits).all().map(e => ({ ...e, before: JSON.parse(e.before) }));
+  engine.edit(lane.id, { instructions: 'Triage' }, { kind: 'agent', id: 'art' }); expect(edits()).toEqual([]);
+  engine.edit(lane.id, { instructions: 'Triage carefully', times: '12:05' }, { kind: 'member', id: 'jonathan' });
+  expect(row(lane.id)).toMatchObject({ instructions: 'Triage carefully', times: '12:05', nextDueAt: '2026-11-14T18:05:00.000Z', state: 'standing' });
+  clock.advance(60_000);
+  engine.edit(lane.id, { note: 'Nightly triage' }, { kind: 'agent', id: 'art' });
+  expect(edits()).toEqual([
+    { seq: 1, trigger: lane.id, at: '2026-11-14T18:00:00.000Z', byKind: 'member', by: 'jonathan', before: { instructions: 'Triage', times: '12:10' } },
+    { seq: 2, trigger: lane.id, at: '2026-11-14T18:01:00.000Z', byKind: 'agent', by: 'art', before: { note: 'Test' } }]);
+  expect(db.select().from(triggerLog).where(eq(triggerLog.event, 'edited')).all().map(l => l.note)).toEqual(['instructions, times', 'note']);
+  clock.advance(4 * 60_000); expect(items().map(i => i.words)).toEqual(['Triage carefully']);
+  engine.edit(lane.id, { file: 'routines/triage.md' }, { kind: 'agent', id: 'art' });
+  expect(row(lane.id)).toMatchObject({ instructions: null, file: 'routines/triage.md' });
+  expect(() => engine.edit(lane.id, { file: '../x', instructions: null }, { kind: 'agent', id: 'art' })).toThrow('relative repository file');
+  expect(() => engine.edit(lane.id, { file: 'a.md', instructions: 'b' }, { kind: 'agent', id: 'art' })).toThrow('Give instructions or a file');
+  expect(() => engine.edit(lane.id, { times: 'never' }, { kind: 'agent', id: 'art' })).toThrow();
+  expect(row(lane.id)).toMatchObject({ times: '12:05', file: 'routines/triage.md' });
+  engine.stop(lane.id); engine.edit(lane.id, { times: '12:30' }, { kind: 'agent', id: 'art' });
+  expect(row(lane.id)).toMatchObject({ times: '12:30', enabled: false, nextDueAt: null });
+  // What the lane wants to run on is set with it, edited like its words, and kept in the history.
+  const tagged = engine.set({ ...base, times: '12:40', lifespan: 'until-stopped', wantsModel: 'best' }); expect(row(tagged.id).wantsModel).toBe('best');
+  engine.edit(tagged.id, { wantsModel: 'normal' }, { kind: 'agent', id: 'art' }); engine.edit(tagged.id, { wantsModel: null }, { kind: 'agent', id: 'art' });
+  expect(row(tagged.id).wantsModel).toBeNull(); expect(edits().filter(e => e.trigger === tagged.id).map(e => e.before)).toEqual([{ wantsModel: 'best' }, { wantsModel: 'normal' }]);
+  const answer = engine.set({ ...base, sourceKind: 'answer', watches: 'approval:a', times: undefined });
+  expect(() => engine.edit(answer.id, { times: '12:00' }, { kind: 'agent', id: 'art' })).toThrow('Only a time trigger');
+});
+
+// Chicago is six hours behind UTC in November: 12:01 there is 18:01Z.
+it('judges every listed time a gap swallowed by the one rule: fires those within the grace, and logs each one beyond it', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,12:04,12:30,12:33,13:00', days: null, lifespan: 'until-stopped' });
+  f.engine.close();
+  // The program is down from before 12:01 until 12:34: two times are far behind, two are a few minutes late, one is ahead.
+  f.clock.advance(34 * 60_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  const log = () => f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event !== 'set').map(l => [l.event, l.note]);
+  expect(log()).toEqual([['missed', 'time:2026-11-14T18:01:00.000Z'], ['missed', 'time:2026-11-14T18:04:00.000Z'],
+    ['fired', 'time:2026-11-14T18:30:00.000Z'], ['fired', 'time:2026-11-14T18:33:00.000Z']]);
+  expect(f.items()).toHaveLength(2);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-14T19:00:00.000Z' });
+  f.clock.advance(26 * 60_000); expect(f.items()).toHaveLength(3);
+});
+it('does not drop a listed time that passes while an earlier one fires late', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,12:03', days: null, lifespan: 'until-stopped' });
+  f.engine.close(); f.clock.advance(4 * 60_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  expect(f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event !== 'set').map(l => [l.event, l.note]))
+    .toEqual([['fired', 'time:2026-11-14T18:01:00.000Z'], ['fired', 'time:2026-11-14T18:03:00.000Z']]);
+  expect(f.row(lane.id).nextDueAt).toBe('2026-11-15T18:01:00.000Z');
+});
+it('records a long gap in a bounded number of rows that still say how many times were skipped and the last of them', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,18:01', days: null, lifespan: 'until-stopped' });
+  f.engine.close(); f.clock.advance(400 * 86_400_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  const missed = f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event === 'missed').map(l => l.note);
+  expect(missed).toHaveLength(MISSED_ROWS + 1);
+  expect(missed[0]).toBe('time:2026-11-14T18:01:00.000Z');
+  expect(missed.at(-1)).toMatch(new RegExp(`^${800 - MISSED_ROWS} more, the last at time:2027-12-1[89]T`));
+  expect(f.items()).toEqual([]);
+  expect(Date.parse(f.row(lane.id).nextDueAt!)).toBeGreaterThan(f.clock.now());
+});
+it('leaves a lane\'s times alone when it is run by hand, and a failed firing has used its time', () => {
+  const failing = { fail: false };
+  const f = fixture({ operation: () => { if (failing.fail) throw new Error('reconcile is broken'); } });
+  const lane = f.engine.set({ ...f.base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01,12:10', days: null, lifespan: 'until-stopped' });
+  f.engine.runNow(lane.id);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', nextDueAt: '2026-11-14T18:01:00.000Z' });
+  failing.fail = true; f.clock.advance(60_000);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-14T18:10:00.000Z' });
+});
+it('works its times out again when the household moves to another timezone', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+  const once = f.engine.set({ ...f.base, times: '2026-11-14T20:00:00Z' });
+  expect(f.row(lane.id).nextDueAt).toBe('2026-11-14T18:01:00.000Z');
+  f.db.update(household).set({ timezone: 'America/New_York' }).run(); f.engine.tick();
+  // 12:01 in New York has already passed today: the lane stands for tomorrow there, with nothing fired or logged as missed.
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', nextDueAt: '2026-11-15T17:01:00.000Z' });
+  expect(f.row(once.id).nextDueAt).toBe('2026-11-14T20:00:00.000Z');
+  expect(f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().map(l => l.event)).toEqual(['set', 'rezoned']);
+  expect(f.items()).toEqual([]);
+});
+
+// A forward step of the host's wall clock while the program runs. A time that comes after the step is
+// reached by the clock while the engine is looking, so it fires at its time. A time the step passed over
+// never came on this program's clock: it meets the missed-time rule like any other time found behind.
+it('fires a standing time that comes due after the wall clock was stepped forward, and skips one the step passed over', () => {
+  const f = fixture(), start = Date.parse('2026-11-14T18:00:00Z'), minute = 60_000;
+  f.engine.close();
+  vi.useFakeTimers(); vi.setSystemTime(start); stops.push(() => vi.useRealTimers());
+  const engine = new TriggerEngine(f.db, realClock, f.effects); stops.push(() => engine.close());
+  // 19:00 and 21:00 UTC, in the household's zone.
+  const lane = engine.set({ ...f.base, times: '13:00,15:00', days: null, lifespan: 'until-stopped' });
+  const events = () => f.db.select().from(triggerLog).where(eq(triggerLog.trigger, lane.id)).all().map(row => row.event).filter(event => event === 'fired' || event === 'missed');
+  vi.advanceTimersByTime(5 * minute);
+  // Set forward by 45 minutes, to 18:50: the 19:00 time is still ahead.
+  vi.setSystemTime(start + 50 * minute);
+  vi.advanceTimersByTime(10 * minute + STEP_CHECK_MS);
+  expect(events()).toEqual(['fired']); expect(f.items()).toHaveLength(1);
+  expect(Date.now() - (start + 60 * minute)).toBeLessThanOrEqual(STEP_CHECK_MS + 1);
+  // Set forward again, from just after 19:00 to 21:30: the 21:00 time was passed over, half an hour ago.
+  vi.setSystemTime(start + 210 * minute);
+  vi.advanceTimersByTime(STEP_CHECK_MS);
+  expect(events()).toEqual(['fired', 'missed']); expect(f.items()).toHaveLength(1);
+});
+
+it('only admits programs for time schedules addressed to an agent', () => {
+  const { engine, base } = fixture();
+  const program = { ...testProgramPin, name: 'forecast', args: [], secrets:{}, timeoutMs: 1000 };
+  expect(() => engine.set({ ...base, sourceKind: 'job', watches: 'job:one', program })).toThrow(/time/i);
+  expect(() => engine.set({ ...base, toKind: 'person', to: 'jonathan', program })).toThrow(/agent/i);
 });

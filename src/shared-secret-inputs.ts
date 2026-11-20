@@ -1,22 +1,41 @@
-import {startupRequestId} from './pieces/secrets/requests.js';
+import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
+import {startupRequestId,repositoryRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
- * bytes here. Runtime parent access is limited to its configured repo input. */
+ * bytes here. Runtime parent access is limited to its configured repo input.
+ *
+ * These routes are not registered operations, on purpose: an operation's result is saved as a receipt and
+ * replayed, and secret bytes must not be. Who may call is proof of assignment (a body's own job, a worker's
+ * own machine), not a sharing rule, so it is checked here and not in policy.ts. The reasoning and the full
+ * list of checks: docs/accepted-tradeoffs.md, "The private secret-input routes are not registered operations".
+ *
+ * Two things here are policy.ts's and are asked of it, each time a hand-off is checked: a body is still
+ * its agent in the household, for the member its work is for (rules.agentItself); and whether a standing
+ * answer serves that work (standingSecretAnswerServes). A worker's read of the repository secret is the
+ * worker's, before any body runs, and is not narrowed by the member the job is for; its grant has its own
+ * request (repositoryRequestId) and is counted for no body's read.
+ *
+ * And one thing is asked of the job, not of the viewer: a body whose job works on anybody else's word is
+ * refused every route here (policy.ts, loomToolsOnly). The worker's repository read is no body's and is not. */
 import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
+import {jobs,programFirings,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
-import {secretName} from './pieces/secrets/input.js';
+import {secretName,houseSecretAlias} from './pieces/secrets/input.js';
+import {holds,rules,standingSecretAnswerServes} from './policy.js';
+import {jobHeld} from './shared-place-mail.js';
+import {sharedSharing} from './shared-sharing.js';
 type Credentials=ReturnType<typeof sharedCredentials>;
 const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('request'),id:z.uuid(),secret:secretName}).strict(),
- z.object({kind:z.literal('startup'),alias:z.string().min(1).max(200)}).strict(),
+ z.object({kind:z.literal('startup'),alias:houseSecretAlias}).strict(),
+ z.object({kind:z.literal('program'),job:z.string().min(1).max(200),alias:houseSecretAlias}).strict(),
  z.object({kind:z.literal('repository'),job:z.string().min(1).max(200)}).strict(),
 ]);
-const confirmInput=z.object({use:z.string().regex(/^use-input-[a-f0-9]{64}$/),job:z.string().min(1).max(200).optional()}).strict();
+const confirmInput=z.object({use:z.string().regex(SECRET_USE_ID),job:z.string().min(1).max(200).optional()}).strict();
 const binding=(row:typeof jobs.$inferSelect)=>JSON.stringify([row.id,row.agent,row.box,row.conversation,row.member,row.project,row.houseRepository,row.houseFile,row.houseBranch]);
 export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPrivateInputs;credentials:Credentials;
  readJson(request:Request,abort:AbortController):Promise<unknown>;available():boolean}){
@@ -28,16 +47,21 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   if(!body&&!runner)throw new PrivateInputError('denied');
   return {auth,body,runner,signal:request.signal};
  };
+ const itself=(caller:ReturnType<typeof actor>)=>!caller.body||holds(rules.agentItself,caller.auth.viewer,{agent:caller.body.agent},sharedSharing(db));
+ // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): its body is handed no
+ // secret here, at start or on request, whatever was granted. Asked of the job, by the mail it is offered
+ // (shared-place-mail.ts, jobHeld), each time, so a body program that asked anyway gets nothing.
+ const standing=(caller:ReturnType<typeof actor>)=>!caller.body||standingSecretAnswerServes(caller.auth.viewer,sharedSharing(db));
  const target=(caller:ReturnType<typeof actor>,id?:string)=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
-  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&(caller.body?job.agent===caller.body.agent&&['running','waiting'].includes(job.state):job.box===caller.runner?.box&&job.state==='starting');
+  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&jobHeld(db,job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
   if(!valid())throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
-   if(caller.signal.aborted||!caller.auth.valid()||!options.available())return false;
+   if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;
    const now=db.select().from(jobs).where(eq(jobs.id,job!.id)).get();
-   return !!now&&binding(now)===stamp&&(caller.body?['running','waiting'].includes(now.state):now.state==='starting'&&now.box===caller.runner?.box);
+   return !!now&&binding(now)===stamp&&!(caller.body&&jobHeld(db,now))&&(caller.body?now.state==='running':now.state==='starting'&&now.box===caller.runner?.box);
   }};
  };
  app.onError((error,c)=>{const code=error instanceof PrivateInputError?error.code:'unavailable';return c.json({ok:false,message:'Private secret input unavailable'},code==='denied'?403:code==='conflict'?409:503);});
@@ -48,21 +72,36 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  app.post('/startup',async c=>{
   const caller=actor(c.req.raw);if(!caller.body)throw new PrivateInputError('denied');
   if(!z.object({}).strict().safeParse(await json(c.req.raw,c.get('shutdown'))).success)return c.json({ok:false,message:'Private secret input unavailable'},400);
-  const selected=target(caller),plan=inputs.startup(selected.job.id);if(!selected.current())throw new PrivateInputError('denied');return c.json(plan);
+  const selected=target(caller),plan=inputs.startup(selected.job.id,standing(caller));if(!selected.current())throw new PrivateInputError('denied');return c.json(plan);
  });
  app.post('/read',async c=>{
   const caller=actor(c.req.raw),parsed=readInput.safeParse(await json(c.req.raw,c.get('shutdown')));
   if(!parsed.success)return c.json({ok:false,message:'Private secret input unavailable'},400);
   const input=parsed.data;
-  if(input.kind==='repository'?!caller.runner:!caller.body)throw new PrivateInputError('denied');
-  const selected=target(caller,input.kind==='repository'?input.job:undefined),job=selected.job;
-  let secret:string,attempt:string,current=selected.current;
+  const forWorker = input.kind==='program' || input.kind==='repository';
+  if(forWorker?!caller.runner:!caller.body)throw new PrivateInputError('denied');
+  const selected=target(caller,forWorker?input.job:undefined),job=selected.job;
+  let secret:string,attempt:string,request:string|undefined,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
-  else if(input.kind==='startup'){
-   if(!inputs.startup(job.id).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
+  else if(input.kind==='program'){
+   const allowed = () => {
+    if(job.startedByKind!=='program')return false;
+    const firing=db.select().from(programFirings).where(eq(programFirings.job,job.id)).get();
+    const house=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
+    return firing?.status==='pending' && Object.hasOwn(firing.program.secrets,input.alias) && firing.program.secrets[input.alias]===aliasRow()?.secret && firing.program.repository===job.houseRepository
+     && house?.houseRepository===job.houseRepository && house?.houseFile===job.houseFile && house?.houseBranch===job.houseBranch;
+   };
+   const aliasRow=()=>db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();
+   const alias=aliasRow();
+   if(!alias||!allowed())throw new PrivateInputError('denied');
+   secret=alias.secret;attempt='program:'+input.alias;request=startupRequestId(job.id,secret);
+   inputs.programGrant(job.id,secret);
+   current=()=>selected.current()&&allowed()&&aliasRow()?.secret===secret;
+  }else if(input.kind==='startup'){
+   if(!inputs.startup(job.id,standing(caller)).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
-   secret=row.secret;attempt='startup:'+input.alias;
-   current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
+   secret=row.secret;attempt='startup:'+input.alias;request=startupRequestId(job.id,secret);
+   current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret),standing(caller))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
   }else{
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
    if(!row?.repositorySecret)return new Response(null,{status:204});
@@ -72,12 +111,12 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    };
    if(!repositoryCurrent())throw new PrivateInputError('denied');
    if(!job.houseRepository.trim())return new Response(null,{status:204});
-   inputs.startGrants(job.id,[row.repositorySecret]);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
-   if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
+   inputs.repositoryGrant(job.id,row.repositorySecret);secret=row.repositorySecret;attempt='repository';request=repositoryRequestId(job.id,secret);current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,repositoryRequestId(job.id,secret));
+   if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,repositoryRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }
   if(!current())throw new PrivateInputError('denied');
   // Blob snapshots bytes before erasure; Node's fast Response retains views.
-  return inputs.dispatch({job:job.id,secret,attempt},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
+  return inputs.dispatch({job:job.id,secret,attempt,request,standing:()=>standing(caller)},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
    headers:{'content-type':'application/octet-stream','cache-control':'no-store','content-length':String(copy.byteLength),'x-loom-secret-use':use},
   });}finally{copy.fill(0);}});
  });

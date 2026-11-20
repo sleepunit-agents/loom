@@ -1,16 +1,20 @@
 /** Read-only projection of the existing commons knowledge store. No schema writes. */
+import { DAY_MS } from '../../core/day.js';
 import type { Database } from 'better-sqlite3';
 import {maySee,mayAct,type Viewer,type Sharing} from '../../core/index.js';
 /** The same current capability projection for GraphQL and legacy clients. */
 export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowledge',allowed:maySee(viewer,{type:'knowledge'},sharing),
- canAdd:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeAdd'),
- canVerify:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeVerify'),
- canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeRecheck')};}
+ canAdd:mayAct(viewer,{type:'knowledge'},sharing,'act'),
+ canVerify:mayAct(viewer,{type:'knowledge'},sharing,'act'),
+ canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act')};}
 
-interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null }
-const CHECK_DAYS = 30;
+interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null; freshness_anchor?: string | null; sla_class?: string | null }
+/** How long a check of a page stands. The page shows it as due after this, and the sweep raises it then. */
+export const CHECK_DAYS = 30;
+/** A page is shown as aging for the last third of that time. */
+export const AGING_DAYS = (CHECK_DAYS * 2) / 3;
 export type Freshness = 'fresh' | 'aging' | 'due';
-export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; fresh: Freshness; by?: string;
+export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; freshness_anchor?: string; sla_class?: string; fresh: Freshness; by?: string;
   /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
   recent?: true }
 export interface KnowledgeOpen extends KnowledgeRow {
@@ -24,7 +28,7 @@ export interface KnowledgeOpen extends KnowledgeRow {
 export interface KnowledgeView { total: number; checkDays: number; recentDays: number; pages: KnowledgeRow[]; open?: KnowledgeOpen }
 
 /** How many days back "Recently verified" reaches. */
-const RECENT_DAYS = 7;
+export const RECENT_DAYS = 7;
 
 /** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
 export function knowledgeView(db: Database | undefined, nowMs: number, open?: string, detailOnly = false): KnowledgeView {
@@ -37,21 +41,21 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
       last = new Map((db.prepare('SELECT v.page_id AS id, v.verified_at AS at, v.outcome AS outcome, v.verifier AS by FROM verifications v JOIN (SELECT page_id, MAX(id) AS m FROM verifications GROUP BY page_id) x ON x.m = v.id WHERE (? IS NULL OR v.page_id = (SELECT id FROM pages WHERE slug = ?))').all(detailOnly ? open : null, detailOnly ? open : null) as Array<{ id: number; at: string; outcome: string; by: string | null }>)
         .map((r) => [r.id, { at: r.at, outcome: r.outcome, ...(r.by ? { by: r.by } : {}) }]));
     } catch { /* an older store: no verifications table */ }
-    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC, slug`)
+    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, freshness_anchor, sla_class, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC, slug`)
       .all(detailOnly ? open : null, detailOnly ? open : null) as Array<PageRow & { id: number }>;
-    const day = 86_400_000;
+    const day = DAY_MS;
     const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {
       const at = Date.parse(r.verified_at ?? r.updated);
       const age = (nowMs - at) / day;
       if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
-      return age >= (CHECK_DAYS * 2) / 3 ? 'aging' : 'fresh';
+      return age >= AGING_DAYS ? 'aging' : 'fresh';
     };
     const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
     const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
-      ...(r.verified_at ? { verified_at: r.verified_at } : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
+      ...(r.verified_at ? { verified_at: r.verified_at } : {}), ...(r.freshness_anchor ? { freshness_anchor: r.freshness_anchor } : {}), ...(r.sla_class ? { sla_class: r.sla_class } : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
     const out: KnowledgeView = { total: (db.prepare("SELECT COUNT(*) AS n FROM pages WHERE status = 'active'").get() as { n: number }).n, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
     if (open) {
-      const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
+      const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at, freshness_anchor, sla_class FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
       if (r) {
         let sources: KnowledgeOpen['sources'] = [];
         try {

@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import type { MeasuringSettings } from './index.js';
+import { KEEP_DAYS_MAX, type MeasuringSettings } from './index.js';
 
 export const measuringValues = z.object({
   on: z.boolean(), send_outside: z.boolean(), outside_address: z.string(),
-  keep_days: z.number().int().min(0).max(3650),
+  keep_days: z.number().int().min(0).max(KEEP_DAYS_MAX),
 }).strict().superRefine((value, ctx) => {
   if (value.on && value.keep_days === 0 && !value.send_outside) ctx.addIssue({code:'custom',path:['keep_days'],message:'Keep local history or send to an outside monitoring tool'});
   if (!value.outside_address && !value.send_outside) return;

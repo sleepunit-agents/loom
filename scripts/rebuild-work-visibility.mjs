@@ -68,7 +68,7 @@ export async function workVisibility({page,app,example,out}){
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return outcome={workVisibility:{ok:false,error:errorText(error),screenshot}};}
  finally{
   let failures=0;
-  if(machine){const owner=tokens[0];if(owner)try{await request('/api/runtime/boxRevoke',{box:machine.id},owner.token,'work-visibility-machine-revoke');}catch{failures++;}}
+  if(machine){const owner=tokens[0];if(owner)try{write(()=>s.setup.revokeMachine(machine.id));}catch{failures++;}}
   for(const issued of tokens)try{write(()=>s.signin.revoke(issued.fingerprint));}catch{failures++;}
   if(failures&&outcome){outcome.workVisibility.ok=false;outcome.workVisibility.error='Disposable credential cleanup failed';outcome.workVisibility.cleanupFailures=failures;}
  }

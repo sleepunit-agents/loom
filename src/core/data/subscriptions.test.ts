@@ -21,11 +21,11 @@ it('keeps Memory viewer context isolated across concurrent subscriptions and ref
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { SqliteKnowledgeBackend } = await import('../../backends/sqlite-knowledge.js');
+  const { KnowledgePages } = await import('../../../test/fixtures/knowledge-pages.js');
   const { knowledgeQueryFields } = await import('../../pieces/mind/knowledge-query.js');
   const home = mkdtempSync(join(tmpdir(), 'memory-live-context-'));
-  const backend = new SqliteKnowledgeBackend({dbPath:join(home,'knowledge.db')});
-  const sharing = { members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{},services:{} };
+  const backend = new KnowledgePages({dbPath:join(home,'knowledge.db')});
+  const sharing = { members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{}};
   const fields = knowledgeQueryFields({path:join(home,'knowledge.db'),sharing:()=>sharing,now:()=>Date.parse('2026-11-14T18:00:00Z')});
   const peerReads: unknown[] = [];
   const readPage = fields.fields.memoryKnowledgePage.resolve!;

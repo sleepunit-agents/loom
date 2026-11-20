@@ -1,12 +1,12 @@
 /** One two-window proof; CI alone runs Chrome. LOOM_SHOTS retains six look/width images. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import { expect, it } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, type Route } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
-import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import Database from 'better-sqlite3';
 import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
@@ -15,7 +15,7 @@ if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
 
-  const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
+  const source=new KnowledgePages({dbPath:join(home,'commons/knowledge.db')});
   await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
@@ -60,13 +60,17 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await row(a,'Six voices').click();await row(b,'Six voices').click();
     await expect.poll(()=>b.locator('article strong').textContent()).toBe('six voices');
     await expect.poll(()=>b.locator('article a').filter({hasText:'https://example.com/voices'}).getAttribute('href')).toBe('https://example.com/voices');
-    expect(await b.locator('article dd').textContent()).toContain('Six voices');
+    expect(await b.getByRole('region',{name:'Sources'}).locator('dd').textContent()).toContain('Six voices');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     await b.reload({waitUntil:'domcontentloaded'});await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     expect(await source.getVerifications('six-voices')).toHaveLength(1);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
+    const checks=b.getByRole('region',{name:'Recent checks'}).locator('li');
+    await expect.poll(()=>checks.count()).toBe(2);
+    expect(await checks.first().innerText()).toMatch(/Asked to check again/);
+    expect(await checks.last().innerText()).toMatch(/Still true/);
     // Trace only this fixture's citation, never arbitrary links or page words.
     // A successful Playwright click can still lose its target between down/up.
     await b.evaluate(()=>{
@@ -145,7 +149,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('backup');
     await expect.poll(()=>row(b,'Six voices').count()).toBe(0);expect(await row(b,'Nightly backup').count()).toBe(1);
-    await source.archivePage({slug:'six-voices'});
+    await source.archivePage({slug:'six-voices'});app.changed();
     await expect.poll(()=>a.getByText('This page is no longer available',{exact:true}).count()).toBe(1);
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
@@ -153,7 +157,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     // Age this fictional source record through the same backend notification
     // path as the archive above. Advancing the whole program by a month would
     // replay every Runtime sweep; exact clock boundaries have Node coverage.
-    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});
+    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});app.changed();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
     await b.getByRole('button',{name:'Add a fact',exact:true}).click();
     await b.getByRole('textbox',{name:'Title',exact:true}).fill('A shared new fact');
@@ -199,4 +203,4 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       console.error('Knowledge fixture diagnostics',diagnostics);throw error;
     }
   }finally{await browser.close();await fixture.close();source.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+});

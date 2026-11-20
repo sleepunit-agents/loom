@@ -7,7 +7,15 @@ node scripts/example-home.mjs /tmp/loom-example-new
 node dist/index.js serve --next --home /tmp/loom-example-new --port 8789
 ```
 
-Open the one-time link printed by normal startup. Alex and Robin, Fern and Moss,
+Startup prints no sign-in link. Ask for one from the same machine, as the OS
+user who owns the home, while the program runs:
+
+```sh
+node dist/index.js signin --home /tmp/loom-example-new
+```
+
+It prints a link that is good once, for five minutes; `--member <id>` asks for
+another current household owner than the configured one. Alex and Robin, Fern and Moss,
 and the garden pump story are entirely fictitious. No GitHub, provider, worker,
 or bridge is contacted by the example command. No body is launched.
 

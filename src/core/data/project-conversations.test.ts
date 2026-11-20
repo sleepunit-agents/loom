@@ -14,7 +14,7 @@ it('bounds the Project hub conversation section at two and ten rows and rechecks
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:now},{id:'peer',role:'member',joinedAt:now}]).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values({project:'pond',member:'peer'}).run();
- const mail=new Conversations(db,()=>now),section=sharedProjectSections(db,{ready:()=>[]}).conversations;
+ const mail=new Conversations(db,()=>now),section=sharedProjectSections(db).conversations;
  const query={names:['pond'],card:{links:{venues:[]}}} as unknown as ProjectQuery;
  const viewer={kind:'member' as const,id:'peer'};let small=0;
  for(let n=0;n<10;n++){

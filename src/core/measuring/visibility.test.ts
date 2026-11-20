@@ -97,14 +97,15 @@ it('does not consult the supplied object after capturing its identity', async ()
   const reads: PropertyKey[] = [];
   const caller = Proxy.revocable<Viewer>({ kind: 'agent', id: 'art' }, {
     get(target, key, receiver) {
-      if (key !== 'kind' && key !== 'id') throw new Error('Non-identity read');
+      // What the rules read of a viewer: who it is and, for an agent, the member its body works for or whose terminal its session is at.
+      if (key !== 'kind' && key !== 'id' && key !== 'workingFor' && key !== 'atTerminalOf') throw new Error('Non-identity read');
       reads.push(key);
       return Reflect.get(target, key, receiver);
     },
     ownKeys() { throw new Error('Caller enumeration'); },
   });
   const visibility = measuringVisibility(caller.proxy);
-  expect(reads).toEqual(['kind', 'id']);
+  expect(reads).toEqual(['kind', 'kind', 'id', 'workingFor', 'atTerminalOf']);
   caller.revoke();
   const schema = dataQueries(client, { tables: ['timingDays', 'measuringSettings'], visibility });
   const result = await graphql({ schema, source });

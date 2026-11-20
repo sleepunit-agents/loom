@@ -1,7 +1,9 @@
+import type {KitTool} from '../../runtime/kit-manifest.js';
 /** Approved how-it-works model. SQL names match model.py; application names use camelCase.
  * Times are UTC ISO-8601 text. Words already encrypted by Comms are opaque bytes.
  * This is the only authored database shape; drizzle-kit emits the fresh database DDL.
  */
+import type { HouseProgram } from '../../runtime/house-program.js';
 import { relations, sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, real, blob, primaryKey, check, index, uniqueIndex, foreignKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
@@ -17,8 +19,10 @@ export const members = sqliteTable('members', {
   fullOwner: integer('full_owner', { mode: 'boolean' }).notNull().default(false),
   position: integer('position').notNull().default(0),
   joinedAt: text('joined_at').notNull(),
+  removedAt: text('removed_at'),
 }, t => [
   check('members_joined_at_utc', utc(t.joinedAt)),
+  check('members_removed_at_utc', utc(t.removedAt)),
   check('members_role_choice', sql`${t.role} in ('owner', 'member')`),
   check('members_full_owner_boolean', sql`${t.fullOwner} in (0, 1)`),
   check('members_full_owner_role', sql`not ${t.fullOwner} or ${t.role} = 'owner'`),
@@ -35,8 +39,10 @@ export const agents = sqliteTable('agents', {
   faceShape: text('face_shape', { enum: ["pebble", "trefoil", "clover", "drop"] }).notNull(),
   faceEyes: text('face_eyes', { enum: ["dot", "oval"] }).notNull(),
   spriteVersion: text('sprite_version'),
+  removedAt: text('removed_at'),
 }, t => [
   check('agents_about_asked_at_utc', utc(t.aboutAskedAt)),
+  check('agents_removed_at_utc', utc(t.removedAt)),
   check('agents_about_length', sql`length(${t.about}) <= 600`),
   check('agents_face_shape_choice', sql`${t.faceShape} in ('pebble', 'trefoil', 'clover', 'drop')`),
   check('agents_face_eyes_choice', sql`${t.faceEyes} in ('dot', 'oval')`),
@@ -54,7 +60,13 @@ export const memberAgents = sqliteTable('member_agents', {
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey().notNull(),
   name: text('name').notNull(),
-});
+  removedAt: text('removed_at'),
+  /** When the project was retired, if it is: kept whole and readable, with its unfinished tasks shelved. */
+  retiredAt: text('retired_at'),
+}, t => [
+  check('projects_removed_at_utc', utc(t.removedAt)),
+  check('projects_retired_at_utc', utc(t.retiredAt)),
+]);
 
 /** Who is on a project. */
 export const projectMembers = sqliteTable('project_members', {
@@ -197,6 +209,9 @@ export const sessions = sqliteTable('sessions', {
   issuedAt: text('issued_at').notNull(),
   seenAt: text('seen_at').notNull(),
   provedAt: text('proved_at').notNull(),
+  passkey: text('passkey').references((): AnySQLiteColumn => passkeys.id),
+  // The browser whose sign-in link signed this one in. Ending that browser ends this one.
+  madeBy: text('made_by').references((): AnySQLiteColumn => sessions.id),
 }, t => [
   check('sessions_issued_at_utc', utc(t.issuedAt)),
   check('sessions_seen_at_utc', utc(t.seenAt)),
@@ -211,8 +226,13 @@ export const signinLinks = sqliteTable('signin_links', {
   token: text('token').notNull().references((): AnySQLiteColumn => tokens.fingerprint),
   label: text('label').notNull(),
   expiresAt: text('expires_at').notNull(),
+  // The browser that made the link, when a browser did. The link is good only while that browser is signed in.
+  session: text('session').references((): AnySQLiteColumn => sessions.id),
+  // Whoever made the link said it is for an automated browser.
+  isAgent: integer('is_agent', { mode: 'boolean' }).notNull().default(false),
 }, t => [
   check('signin_links_expires_at_utc', utc(t.expiresAt)),
+  check('signin_links_is_agent_boolean', sql`${t.isAgent} in (0, 1)`),
 ]);
 
 /** Passkeys people have registered. */
@@ -331,17 +351,18 @@ export const conversations = sqliteTable('conversations', {
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   project: text('project').references((): AnySQLiteColumn => projects.id),
   member: text('member').references((): AnySQLiteColumn => members.id),
-  venue: text('venue', { enum: ["loom", "discord", "slack", "wake", "handoff"] }).notNull(),
+  venue: text('venue', { enum: ["loom", "discord", "slack", "wake", "handoff", "terminal"] }).notNull(),
   place: text('place').notNull(),
   label: text('label').notNull(),
-  job: text('job').references((): AnySQLiteColumn => jobs.id),
+  direct: integer('direct', { mode: 'boolean' }).notNull().default(false),
   startedAt: text('started_at').notNull(),
   lastAt: text('last_at').notNull(),
   turnCount: integer('turn_count').notNull(),
 }, t => [
+  check('conversations_direct_boolean', sql`${t.direct} in (0, 1)`),
   check('conversations_started_at_utc', utc(t.startedAt)),
   check('conversations_last_at_utc', utc(t.lastAt)),
-  check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff')`),
+  check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff', 'terminal')`),
   uniqueIndex('conversations_place_unique').on(t.agent, t.venue, t.place),
   index('conversations_project_idx').on(t.project),
   index('conversations_member_idx').on(t.member),
@@ -477,7 +498,21 @@ export const inbox = sqliteTable('inbox', {
   answeredAt: text('answered_at'),
   resolution: text('resolution'),
   changedAt: text('changed_at').notNull(),
+  /** The person on whose word this mail was sent, when that is not who sent it: the asker of a trigger's
+   * firing, and the person a body was working for when it handed a note on. A member's id or an outside
+   * account's key. The job this mail starts counts them as in the room (runtime/body-policy.ts). */
+  onWordKind: text('on_word_kind', { enum: ["member", "outside"] }),
+  onWord: text('on_word'),
+  /** For a note one body of an agent hands to another: the conversations the chain of hand-offs has run
+   * through, oldest first, as a JSON list of ids ending with the one this note came from; and when the
+   * first note of the chain was sent. Its length is json_array_length(chain). */
+  chain: text('chain'),
+  chainStartedAt: text('chain_started_at'),
 }, t => [
+  check('inbox_chain_started_at_utc', utc(t.chainStartedAt)),
+  check('inbox_on_word_kind_choice', sql`${t.onWordKind} in ('member', 'outside')`),
+  check('inbox_on_word_pair', sql`(${t.onWordKind} is null) = (${t.onWord} is null)`),
+  check('inbox_chain_pair', sql`(${t.chain} is null) = (${t.chainStartedAt} is null) and (${t.chain} is null or (json_valid(${t.chain}) and json_type(${t.chain}) = 'array'))`),
   check('inbox_at_utc', utc(t.at)),
   check('inbox_quiet_until_utc', utc(t.quietUntil)),
   check('inbox_taken_at_utc', utc(t.takenAt)),
@@ -709,7 +744,28 @@ export const triggers = sqliteTable('triggers', {
   lastFiredAt: text('last_fired_at'),
   createdAt: text('created_at').notNull(),
   changedAt: text('changed_at').notNull(),
+  wantsModel: text('wants_model'),
+  /** The member whose work a firing is, when the trigger puts an agent to work: apart from who set it
+   * (owner). Absent for the agent's own. */
+  member: text('member').references((): AnySQLiteColumn => members.id),
+  /** The bridge conversation a firing is mail in, instead of a wake of its own (src/shared-place-triggers.ts).
+   * Not a reference: a conversation that is gone stops the trigger at its next firing. */
+  conversation: text('conversation'),
+  /** Who asked for it, for a trigger that names a conversation: the person on whose word a firing's job
+   * runs. A member's id, an outside account's key, or the agent itself. */
+  askedByKind: text('asked_by_kind', { enum: ["member", "outside", "agent"] }),
+  askedBy: text('asked_by'),
+  askedAt: text('asked_at'),
+  needs: text('needs', { mode: 'json' }).$type<string[]>(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  program: text('program', { mode: 'json' }).$type<Omit<HouseProgram, 'state' | 'payload'>>(),
+  programPeriod: text('program_period', { enum: ['day'] }),
+  readStateFrom: text('read_state_from').references((): AnySQLiteColumn => triggers.id),
+  programState: text('program_state', { mode: 'json' }).$type<HouseProgram['state']>(),
 }, t => [
+  check('triggers_asked_at_utc', utc(t.askedAt)),
+  check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
+  check('triggers_asker_with_conversation', sql`(${t.conversation} is null) = (${t.askedByKind} is null) and (${t.askedByKind} is null) = (${t.askedBy} is null) and (${t.askedByKind} is null) = (${t.askedAt} is null)`),
   check('triggers_next_due_at_utc', utc(t.nextDueAt)),
   check('triggers_last_fired_at_utc', utc(t.lastFiredAt)),
   check('triggers_created_at_utc', utc(t.createdAt)),
@@ -727,6 +783,21 @@ export const triggers = sqliteTable('triggers', {
 ]);
 
 /** What happened to each trigger, in order. */
+export const programFirings = sqliteTable('program_firings', {
+  id: text('id').primaryKey().notNull(),
+  trigger: text('trigger').notNull().references(() => triggers.id),
+  at: text('at').notNull(),
+  period: text('period'),
+  job: text('job').notNull().references(() => jobs.id),
+  program: text('program', { mode: 'json' }).$type<HouseProgram>().notNull(),
+  status: text('status', { enum: ['pending', 'done', 'failed'] }).notNull(),
+  line: text('line'),
+}, t => [
+  uniqueIndex('program_firings_job').on(t.job),
+  uniqueIndex('program_firings_pending').on(t.trigger).where(sql`${t.status} = 'pending'`),
+  uniqueIndex('program_firings_period').on(t.trigger, t.period),
+]);
+
 export const triggerLog = sqliteTable('trigger_log', {
   seq: integer('seq').primaryKey().notNull(),
   trigger: text('trigger').notNull().references((): AnySQLiteColumn => triggers.id),
@@ -735,6 +806,20 @@ export const triggerLog = sqliteTable('trigger_log', {
   note: text('note').notNull(),
 }, t => [
   check('trigger_log_at_utc', utc(t.at)),
+]);
+
+/** What a trigger said before each edit, and who made it. */
+export const triggerEdits = sqliteTable('trigger_edits', {
+  seq: integer('seq').primaryKey().notNull(),
+  trigger: text('trigger').notNull().references((): AnySQLiteColumn => triggers.id),
+  at: text('at').notNull(),
+  byKind: text('by_kind', { enum: ["member", "agent"] }).notNull(),
+  by: text('by').notNull(),
+  before: text('before').notNull(),
+}, t => [
+  check('trigger_edits_at_utc', utc(t.at)),
+  check('trigger_edits_by_kind_choice', sql`${t.byKind} in ('member', 'agent')`),
+  index('trigger_edits_trigger_idx').on(t.trigger),
 ]);
 
 /** Agents whose triggers are being held. */
@@ -845,6 +930,11 @@ export const boxes = sqliteTable('boxes', {
   enrolledAt: text('enrolled_at').notNull(),
   lastSeenAt: text('last_seen_at'),
   revokedAt: text('revoked_at'),
+  slots: integer('slots'),
+  readers: text('readers', { mode: 'json' }).$type<string[]>(),
+  readingSequence: integer('reading_sequence').notNull().default(0),
+  readingsLeftOut: integer('readings_left_out').notNull().default(0),
+  readingSilenceSequence: integer('reading_silence_sequence').notNull().default(0),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -876,6 +966,63 @@ export const boxFacts = sqliteTable('box_facts', {
   check('box_facts_from_owner_boolean', sql`${t.fromOwner} in (0, 1)`),
 ]);
 
+/** Latest reading and condition for each machine and watched thing. Each disk path has its own row.
+ * The last successful values stay on the row while it is unknown. Durations accrue between reports
+ * on Loom's process clock. The sequence records which report updated the row. */
+export const boxReadings = sqliteTable('box_readings', {
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
+  thing: text('thing').notNull(),
+  generation: text('generation').notNull(),
+  occasion: integer('occasion').notNull().default(0),
+  urgentOccasion: integer('urgent_occasion').notNull().default(0),
+  ordinaryLine: text('ordinary_line', { enum: ['percent', 'floor', 'engine'] }),
+  ordinaryLineValue: integer('ordinary_line_value'),
+  urgentLineValue: integer('urgent_line_value'),
+  lastLines: text('last_lines', { mode: 'json' }).$type<{ diskPercent: number; diskUrgentPercent: number; diskFreeMib: number; memoryFreeMib: number }>(),
+  usedPercent: integer('used_percent'),
+  sizeMib: integer('size_mib'),
+  freeMib: integer('free_mib'),
+  engineStatus: integer('engine_status'),
+  level: text('level', { enum: ["ok", "raised", "urgent"] }).notNull(),
+  since: text('since'),
+  urgentSince: text('urgent_since'),
+  readAt: text('read_at'),
+  unknownSince: text('unknown_since'),
+  observedAt: text('observed_at'),
+  unknownMs: integer('unknown_ms').notNull().default(0),
+  absentMs: integer('absent_ms'),
+  reportSequence: integer('report_sequence').notNull().default(0),
+  stale: integer('stale', { mode: 'boolean' }).notNull().default(false),
+}, t => [
+  primaryKey({ columns: [t.box, t.kind, t.thing] }),
+  check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
+  check('box_readings_level', sql`${t.level} in ('ok', 'raised', 'urgent')`),
+  check('box_readings_used_percent_range', sql`${t.usedPercent} is null or ${t.usedPercent} between 0 and 100`),
+  check('box_readings_engine_status_range', sql`${t.engineStatus} is null or ${t.engineStatus} = 200 or ${t.engineStatus} between 300 and 599`),
+  check('box_readings_since_utc', utc(t.since)),
+  check('box_readings_urgent_since_utc', utc(t.urgentSince)),
+  check('box_readings_read_at_utc', utc(t.readAt)),
+  check('box_readings_unknown_since_utc', utc(t.unknownSince)),
+  check('box_readings_stale_boolean', sql`${t.stale} in (0, 1)`),
+]);
+
+/** The household’s effective alert lines. Installation and upgrade seed the singleton with defaults. */
+export const boxAlertSettings = sqliteTable('box_alert_settings', {
+  singleton: integer('singleton').primaryKey().default(1).notNull(),
+  diskPercent: integer('disk_percent').notNull().default(85),
+  diskUrgentPercent: integer('disk_urgent_percent').notNull().default(95),
+  diskFreeMib: integer('disk_free_mib').notNull().default(5120),
+  memoryFreeMib: integer('memory_free_mib').notNull().default(512),
+}, t => [
+  check('box_alert_settings_singleton', sql`${t.singleton} = 1`),
+  // A line clears a few points under itself (machine-conditions.ts, CLEAR_POINTS): one too low could never clear.
+  check('box_alert_settings_disk_percent_range', sql`typeof(${t.diskPercent}) = 'integer' and ${t.diskPercent} between 10 and 99`),
+  check('box_alert_settings_disk_urgent_percent_range', sql`typeof(${t.diskUrgentPercent}) = 'integer' and ${t.diskUrgentPercent} > ${t.diskPercent} and ${t.diskUrgentPercent} <= 100`),
+  check('box_alert_settings_disk_free_mib_range', sql`typeof(${t.diskFreeMib}) = 'integer' and ${t.diskFreeMib} between 0 and 1000000000`),
+  check('box_alert_settings_memory_free_mib_range', sql`typeof(${t.memoryFreeMib}) = 'integer' and ${t.memoryFreeMib} between 0 and 1000000000`),
+]);
+
 /** One row per run of an agent. */
 export const jobs = sqliteTable('jobs', {
   id: text('id').primaryKey().notNull(),
@@ -885,7 +1032,7 @@ export const jobs = sqliteTable('jobs', {
   box: text('box').references((): AnySQLiteColumn => boxes.id),
   conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
   title: text('title').notNull(),
-  state: text('state', { enum: ["queued", "starting", "running", "waiting", "done", "failed", "stopped", "lost"] }).notNull(),
+  state: text('state', { enum: ["queued", "starting", "running", "done", "failed", "stopped", "lost"] }).notNull(),
   brief: text('brief').notNull(),
   model: text('model').notNull(),
   // Actual placement, absent until an account/harness has been selected.
@@ -900,25 +1047,51 @@ export const jobs = sqliteTable('jobs', {
   houseBranch: text('house_branch').notNull(),
   build: text('build'),
   exitCode: integer('exit_code'),
+  // Who chose exit_code: loom's body program, the worker, loom itself, or a machine's own runner. Absent
+  // when nobody said (a job ended before this column, or reported by a worker from before it).
+  exitBy: text('exit_by', { enum: ["body", "worker", "loom", "runner"] }),
   logTail: text('log_tail'),
   endedBy: text('ended_by').references((): AnySQLiteColumn => members.id),
-  endedReason: text('ended_reason').$type<'reset' | 'write-off'>(),
+  // Why a person ended it: stuck work reset, work given up on, or Stop pressed in its conversation.
+  endedReason: text('ended_reason').$type<'reset' | 'write-off' | 'stop'>(),
+  // loom's own line on an ending it decided itself (lost, never placed). A runner's output is log_tail.
+  endedNote: text('ended_note'),
   queuedAt: text('queued_at').notNull(),
   claimedAt: text('claimed_at'),
   heardAt: text('heard_at'),
   endedAt: text('ended_at'),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
 }, t => [
   check('jobs_retry_at_utc', utc(t.retryAt)),
   check('jobs_queued_at_utc', utc(t.queuedAt)),
   check('jobs_claimed_at_utc', utc(t.claimedAt)),
   check('jobs_heard_at_utc', utc(t.heardAt)),
   check('jobs_ended_at_utc', utc(t.endedAt)),
-  check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')`),
-  check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off')`),
-  uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running', 'waiting')`),
+  check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')`),
+  check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off', 'stop')`),
+  check('jobs_exit_by_choice', sql`${t.exitBy} in ('body', 'worker', 'loom', 'runner')`),
+  uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running')`),
   index('jobs_agent_state_idx').on(t.agent, t.state),
   index('jobs_box_state_idx').on(t.box, t.state),
 ]);
+
+/** Counts for one attempt. An absent counter is unknown, including for jobs with no report. */
+export const jobUsage = sqliteTable('job_usage', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  source: text('source', {enum: ['report', 'transcript', 'none', 'program']}).notNull(),
+  tokensIn: integer('tokens_in'),
+  tokensOut: integer('tokens_out'),
+  cacheRead: integer('cache_read'),
+  cacheWritten: integer('cache_written'),
+  modelCalls: integer('model_calls'),
+  toolCalls: integer('tool_calls'),
+  tools: text('tools', {mode: 'json'}).$type<Record<string, number>>(),
+  largestContext: integer('largest_context'),
+  wallMs: integer('wall_ms'),
+  harness: text('harness'),
+  model: text('model'),
+}, t => [check('job_usage_source_choice', sql`${t.source} in ('report','transcript','none','program')`)]);
 
 /** What a job needs from a machine. */
 export const jobNeeds = sqliteTable('job_needs', {
@@ -937,6 +1110,7 @@ export const agentRunSettings = sqliteTable('agent_run_settings', {
   repositorySecret: text('repository_secret').references((): AnySQLiteColumn => secrets.name),
   nestedContainers: integer('nested_containers', { mode: 'boolean' }).notNull(),
   gpu: integer('gpu', { mode: 'boolean' }).notNull(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
 }, t => [
   check('agent_run_settings_nested_containers_boolean', sql`${t.nestedContainers} in (0, 1)`),
   check('agent_run_settings_gpu_boolean', sql`${t.gpu} in (0, 1)`),
@@ -1037,6 +1211,34 @@ export const modelAccountBoxes = sqliteTable('model_account_boxes', {
   primaryKey({ columns: [t.account, t.box] }),
 ]);
 
+/** One sign-in of a model account: which account, on which machine, for which harness, in which place.
+ * A place is where the token lives on that machine: `containers` is the directory every house there mounts,
+ * `host` is the machine user's own sign-in. Tokens are never copied between places, so each is its own
+ * sign-in with its own end. A row is the last thing loom learned about that sign-in; nothing here is a
+ * credential. `expires_at` is absent where the provider's files do not say. */
+export const modelAccountLogins = sqliteTable('model_account_logins', {
+  account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  harness: text('harness').notNull(),
+  place: text('place', { enum: ["containers", "host"] }).notNull(),
+  state: text('state', { enum: ["signed-in", "signed-out"] }).notNull(),
+  expiresAt: text('expires_at'),
+  // When the state last changed: how long a sign-in has been gone, and which time it was found gone.
+  since: text('since').notNull(),
+  checkedAt: text('checked_at').notNull(),
+  learnedFrom: text('learned_from', { enum: ["check", "job"] }).notNull(),
+  why: text('why'),
+}, t => [
+  primaryKey({ columns: [t.account, t.box, t.harness, t.place] }),
+  check('model_account_logins_harness', sql`length(trim(${t.harness})) > 0`),
+  check('model_account_logins_place', sql`${t.place} in ('containers', 'host')`),
+  check('model_account_logins_state', sql`${t.state} in ('signed-in', 'signed-out')`),
+  check('model_account_logins_learned_from', sql`${t.learnedFrom} in ('check', 'job')`),
+  check('model_account_logins_expires_at_utc', utc(t.expiresAt)),
+  check('model_account_logins_checked_at_utc', utc(t.checkedAt)),
+  check('model_account_logins_since_utc', utc(t.since)),
+]);
+
 /** An agent's allowed and preferred models, in order. */
 export const agentModels = sqliteTable('agent_models', {
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
@@ -1044,6 +1246,26 @@ export const agentModels = sqliteTable('agent_models', {
   position: integer('position').notNull(),
 }, t => [
   primaryKey({ columns: [t.agent, t.model] }),
+]);
+
+/** A request to sign a model account in on a worker machine, and how far it has got. */
+export const accountSignins = sqliteTable('account_signins', {
+  id: text('id').primaryKey().notNull(),
+  account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  askedByKind: text('asked_by_kind', { enum: ["member", "agent"] }).notNull(),
+  askedBy: text('asked_by').notNull(),
+  state: text('state', { enum: ["asked", "started", "waiting", "done", "failed"] }).notNull(),
+  item: text('item'),
+  why: text('why'),
+  askedAt: text('asked_at').notNull(),
+  changedAt: text('changed_at').notNull(),
+}, t => [
+  check('account_signins_asked_at_utc', utc(t.askedAt)),
+  check('account_signins_changed_at_utc', utc(t.changedAt)),
+  check('account_signins_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'agent')`),
+  check('account_signins_state_choice', sql`${t.state} in ('asked', 'started', 'waiting', 'done', 'failed')`),
+  index('account_signins_box_state_idx').on(t.box, t.state),
 ]);
 
 /** One row per bot signed in to a server or workspace. */
@@ -1058,8 +1280,10 @@ export const bridgeConnections = sqliteTable('bridge_connections', {
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   state: text('state', { enum: ["connecting", "connected", "backoff", "disconnected"] }).notNull(),
   stateAt: text('state_at').notNull(),
+  removedAt: text('removed_at'),
 }, t => [
   check('bridge_connections_state_at_utc', utc(t.stateAt)),
+  check('bridge_connections_removed_at_utc', utc(t.removedAt)),
   check('bridge_connections_platform_choice', sql`${t.platform} in ('discord', 'slack')`),
   check('bridge_connections_enabled_boolean', sql`${t.enabled} in (0, 1)`),
   check('bridge_connections_state_choice', sql`${t.state} in ('connecting', 'connected', 'backoff', 'disconnected')`),
@@ -1082,6 +1306,12 @@ export const bridgeChannels = sqliteTable('bridge_channels', {
   channel: text('channel').notNull(),
   answers: text('answers').notNull().references((): AnySQLiteColumn => agents.id),
   botsMayTalk: integer('bots_may_talk', { mode: 'boolean' }).notNull(),
+  /** The name of a role page of the answering agent, given to the body of every conversation in this
+   * channel beside the venue's own. Empty: the channel has no brief of its own. */
+  brief: text('brief'),
+  /** Where a body working here for somebody who is neither an owner nor has the agent may hand a note:
+   * one channel on any of the agent's bridges, as bridgePlaceKey writes a place. Empty: nowhere. */
+  reportsTo: text('reports_to'),
 }, t => [
   primaryKey({ columns: [t.platform, t.workspace, t.channel] }),
   check('bridge_channels_bots_may_talk_boolean', sql`${t.botsMayTalk} in (0, 1)`),
@@ -1113,7 +1343,16 @@ export const bridgeIncoming = sqliteTable('bridge_incoming', {
   state: text('state', { enum: ["pending", "held", "dropped", "delivered"] }).notNull(),
   reason: text('reason'),
   conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
+  mentions: text('mentions'),
+  repliesTo: text('replies_to'),
+  parent: text('parent'),
+  groupDm: integer('group_dm', { mode: 'boolean' }),
+  bot: integer('bot', { mode: 'boolean' }),
+  webhook: integer('webhook', { mode: 'boolean' }),
 }, t => [
+  check('bridge_incoming_group_dm_boolean', sql`${t.groupDm} in (0, 1)`),
+  check('bridge_incoming_bot_boolean', sql`${t.bot} in (0, 1)`),
+  check('bridge_incoming_webhook_boolean', sql`${t.webhook} in (0, 1)`),
   check('bridge_incoming_posted_at_utc', utc(t.postedAt)),
   check('bridge_incoming_received_at_utc', utc(t.receivedAt)),
   check('bridge_incoming_delivered_at_utc', utc(t.deliveredAt)),
@@ -1124,24 +1363,28 @@ export const bridgeIncoming = sqliteTable('bridge_incoming', {
 /** Replies sent out to Discord and Slack. */
 export const bridgeSends = sqliteTable('bridge_sends', {
   id: text('id').primaryKey().notNull(),
-  incoming: text('incoming').notNull().references((): AnySQLiteColumn => bridgeIncoming.id),
+  /** The message this post answers. Absent for a post that answers none: a firing's or a note's reply,
+   * and an agent's own work posting to a channel; `conversation` then says where it belongs. */
+  incoming: text('incoming').references((): AnySQLiteColumn => bridgeIncoming.id),
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   channel: text('channel').notNull(),
   thread: text('thread'),
+  /** The conversation a post that answers no message was made in. Not a reference: the post's record
+   * outlives its conversation. */
+  conversation: text('conversation'),
   text: text('text').notNull(),
   state: text('state', { enum: ["pending", "held", "sending", "sent", "uncertain", "dismissed"] }).notNull(),
-  postedId: text('posted_id'),
   createdAt: text('created_at').notNull(),
 }, t => [
   check('bridge_sends_created_at_utc', utc(t.createdAt)),
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
+  check('bridge_sends_answers_or_placed', sql`coalesce(${t.incoming}, ${t.conversation}) is not null`),
 ]);
 
-/** Attachments fetched from Slack, kept for 14 days. */
+/** Attachments fetched from Slack and Discord, kept for 14 days. Which messages carried one is bridge_file_messages. */
 export const bridgeFiles = sqliteTable('bridge_files', {
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   file: text('file').notNull(),
-  incoming: text('incoming').notNull().references((): AnySQLiteColumn => bridgeIncoming.id),
   name: text('name').notNull(),
   contents: blob('contents', { mode: 'buffer' }).notNull(),
   fetchedAt: text('fetched_at').notNull(),
@@ -1285,6 +1528,7 @@ export const membersRelations = relations(members, ({ many }) => ({
   approvalRulesBySetBy: many(approvalRules, { relationName: 'approval_rules_set_by' }),
   boxesByOwner: many(boxes, { relationName: 'boxes_owner' }),
   jobsByMember: many(jobs, { relationName: 'jobs_member' }),
+  triggersByMember: many(triggers, { relationName: 'triggers_member' }),
   jobsByEndedBy: many(jobs, { relationName: 'jobs_ended_by' }),
   modelAccountsByOwner: many(modelAccounts, { relationName: 'model_accounts_owner' }),
   bridgePeopleByMember: many(bridgePeople, { relationName: 'bridge_people_member' }),
@@ -1387,11 +1631,15 @@ export const tokensRelations = relations(tokens, ({ one, many }) => ({
 
 export const sessionsRelations = relations(sessions, ({ one, many }) => ({
   tokenRow: one(tokens, { fields: [sessions.token], references: [tokens.fingerprint], relationName: 'sessions_token' }),
+  madeByRow: one(sessions, { fields: [sessions.madeBy], references: [sessions.id], relationName: 'sessions_made_by' }),
+  sessionsByMadeBy: many(sessions, { relationName: 'sessions_made_by' }),
+  signinLinksBySession: many(signinLinks, { relationName: 'signin_links_session' }),
   notificationDevicesBySession: many(notificationDevices, { relationName: 'notification_devices_session' }),
 }));
 
 export const signinLinksRelations = relations(signinLinks, ({ one }) => ({
   tokenRow: one(tokens, { fields: [signinLinks.token], references: [tokens.fingerprint], relationName: 'signin_links_token' }),
+  sessionRow: one(sessions, { fields: [signinLinks.session], references: [sessions.id], relationName: 'signin_links_session' }),
 }));
 
 export const passkeysRelations = relations(passkeys, ({ one }) => ({
@@ -1424,7 +1672,6 @@ export const conversationsRelations = relations(conversations, ({ one, many }) =
   agentRow: one(agents, { fields: [conversations.agent], references: [agents.id], relationName: 'conversations_agent' }),
   projectRow: one(projects, { fields: [conversations.project], references: [projects.id], relationName: 'conversations_project' }),
   memberRow: one(members, { fields: [conversations.member], references: [members.id], relationName: 'conversations_member' }),
-  jobRow: one(jobs, { fields: [conversations.job], references: [jobs.id], relationName: 'conversations_job' }),
   conversationPeopleByConversation: many(conversationPeople, { relationName: 'conversation_people_conversation' }),
   turnsByConversation: many(turns, { relationName: 'turns_conversation' }),
   digestsByConversation: many(digests, { relationName: 'digests_conversation' }),
@@ -1537,11 +1784,17 @@ export const approvalRecordRelations = relations(approvalRecord, ({ one }) => ({
 
 export const triggersRelations = relations(triggers, ({ one, many }) => ({
   projectRow: one(projects, { fields: [triggers.project], references: [projects.id], relationName: 'triggers_project' }),
+  memberRow: one(members, { fields: [triggers.member], references: [members.id], relationName: 'triggers_member' }),
   triggerLogByTrigger: many(triggerLog, { relationName: 'trigger_log_trigger' }),
+  triggerEditsByTrigger: many(triggerEdits, { relationName: 'trigger_edits_trigger' }),
 }));
 
 export const triggerLogRelations = relations(triggerLog, ({ one }) => ({
   triggerRow: one(triggers, { fields: [triggerLog.trigger], references: [triggers.id], relationName: 'trigger_log_trigger' }),
+}));
+
+export const triggerEditsRelations = relations(triggerEdits, ({ one }) => ({
+  triggerRow: one(triggers, { fields: [triggerEdits.trigger], references: [triggers.id], relationName: 'trigger_edits_trigger' }),
 }));
 
 export const agentPausesRelations = relations(agentPauses, ({ one }) => ({
@@ -1574,9 +1827,12 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   ownerRow: one(members, { fields: [boxes.owner], references: [members.id], relationName: 'boxes_owner' }),
   boxAgentsByBox: many(boxAgents, { relationName: 'box_agents_box' }),
   boxFactsByBox: many(boxFacts, { relationName: 'box_facts_box' }),
+  boxReadingsByBox: many(boxReadings, { relationName: 'box_readings_box' }),
   jobsByBox: many(jobs, { relationName: 'jobs_box' }),
   agentBoxesByBox: many(agentBoxes, { relationName: 'agent_boxes_box' }),
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
+  modelAccountLoginsByBox: many(modelAccountLogins, { relationName: 'model_account_logins_box' }),
+  accountSigninsByBox: many(accountSignins, { relationName: 'account_signins_box' }),
 }));
 
 export const boxAgentsRelations = relations(boxAgents, ({ one }) => ({
@@ -1588,9 +1844,12 @@ export const boxFactsRelations = relations(boxFacts, ({ one }) => ({
   boxRow: one(boxes, { fields: [boxFacts.box], references: [boxes.id], relationName: 'box_facts_box' }),
 }));
 
+export const boxReadingsRelations = relations(boxReadings, ({ one }) => ({
+  boxRow: one(boxes, { fields: [boxReadings.box], references: [boxes.id], relationName: 'box_readings_box' }),
+}));
+
 export const jobsRelations = relations(jobs, ({ one, many }) => ({
   tokensByJob: many(tokens, { relationName: 'tokens_job' }),
-  conversationsByJob: many(conversations, { relationName: 'conversations_job' }),
   inboxByJob: many(inbox, { relationName: 'inbox_job' }),
   agentRow: one(agents, { fields: [jobs.agent], references: [agents.id], relationName: 'jobs_agent' }),
   projectRow: one(projects, { fields: [jobs.project], references: [projects.id], relationName: 'jobs_project' }),
@@ -1643,15 +1902,27 @@ export const modelAccountsRelations = relations(modelAccounts, ({ one, many }) =
   modelAccountWindowsByAccount: many(modelAccountWindows, { relationName: 'model_account_windows_account' }),
   ownerRow: one(members, { fields: [modelAccounts.owner], references: [members.id], relationName: 'model_accounts_owner' }),
   modelAccountBoxesByAccount: many(modelAccountBoxes, { relationName: 'model_account_boxes_account' }),
+  modelAccountLoginsByAccount: many(modelAccountLogins, { relationName: 'model_account_logins_account' }),
+  accountSigninsByAccount: many(accountSignins, { relationName: 'account_signins_account' }),
 }));
 
 export const modelAccountWindowsRelations = relations(modelAccountWindows, ({ one }) => ({
   accountRow: one(modelAccounts, { fields: [modelAccountWindows.account], references: [modelAccounts.id], relationName: 'model_account_windows_account' }),
 }));
 
+export const accountSigninsRelations = relations(accountSignins, ({ one }) => ({
+  accountRow: one(modelAccounts, { fields: [accountSignins.account], references: [modelAccounts.id], relationName: 'account_signins_account' }),
+  boxRow: one(boxes, { fields: [accountSignins.box], references: [boxes.id], relationName: 'account_signins_box' }),
+}));
+
 export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one }) => ({
   accountRow: one(modelAccounts, { fields: [modelAccountBoxes.account], references: [modelAccounts.id], relationName: 'model_account_boxes_account' }),
   boxRow: one(boxes, { fields: [modelAccountBoxes.box], references: [boxes.id], relationName: 'model_account_boxes_box' }),
+}));
+
+export const modelAccountLoginsRelations = relations(modelAccountLogins, ({ one }) => ({
+  accountRow: one(modelAccounts, { fields: [modelAccountLogins.account], references: [modelAccounts.id], relationName: 'model_account_logins_account' }),
+  boxRow: one(boxes, { fields: [modelAccountLogins.box], references: [boxes.id], relationName: 'model_account_logins_box' }),
 }));
 
 export const agentModelsRelations = relations(agentModels, ({ one }) => ({
@@ -1685,7 +1956,6 @@ export const bridgeIncomingRelations = relations(bridgeIncoming, ({ one, many })
   memberRow: one(members, { fields: [bridgeIncoming.member], references: [members.id], relationName: 'bridge_incoming_member' }),
   conversationRow: one(conversations, { fields: [bridgeIncoming.conversation], references: [conversations.id], relationName: 'bridge_incoming_conversation' }),
   bridgeSendsByIncoming: many(bridgeSends, { relationName: 'bridge_sends_incoming' }),
-  bridgeFilesByIncoming: many(bridgeFiles, { relationName: 'bridge_files_incoming' }),
 }));
 
 export const bridgeSendsRelations = relations(bridgeSends, ({ one }) => ({
@@ -1695,7 +1965,6 @@ export const bridgeSendsRelations = relations(bridgeSends, ({ one }) => ({
 
 export const bridgeFilesRelations = relations(bridgeFiles, ({ one }) => ({
   connectionRow: one(bridgeConnections, { fields: [bridgeFiles.connection], references: [bridgeConnections.id], relationName: 'bridge_files_connection' }),
-  incomingRow: one(bridgeIncoming, { fields: [bridgeFiles.incoming], references: [bridgeIncoming.id], relationName: 'bridge_files_incoming' }),
 }));
 
 export const secretsRelations = relations(secrets, ({ one, many }) => ({
@@ -1765,18 +2034,6 @@ export const operationResults = sqliteTable('operation_results', {
   expiresAt: text('expires_at').notNull(),
 }, t => [
   check('operationResults_expiresAt_utc', utc(t.expiresAt)),primaryKey({ columns: [t.caller, t.id] }), index('operation_results_expiry_idx').on(t.expiresAt)]);
-export const outsideEffects = sqliteTable('outside_effects', {
-  id: text('id').primaryKey().notNull(),
-  operation: text('operation').notNull(),
-  target: text('target').notNull(),
-  createdAt: text('created_at').notNull(),
-  releasedAt: text('released_at'),
-  completedAt: text('completed_at'),
-}, t => [
-  check('outsideEffects_createdAt_utc', utc(t.createdAt)),
-  check('outsideEffects_releasedAt_utc', utc(t.releasedAt)),
-  check('outsideEffects_completedAt_utc', utc(t.completedAt)),
-]);
 export const notificationQueue = sqliteTable('notification_queue', {
   id: text('id').primaryKey().notNull(),
   device: text('device').notNull().references(() => notificationDevices.endpoint),
@@ -1788,14 +2045,44 @@ export const notificationQueue = sqliteTable('notification_queue', {
   check('notificationQueue_queuedAt_utc', utc(t.queuedAt)),
   check('notificationQueue_sentAt_utc', utc(t.sentAt)),
 ]);
-export const signinChallenges = sqliteTable('signin_challenges', {
-  id: text('id').primaryKey().notNull(),
-  token: text('token').notNull().references(() => tokens.fingerprint),
-  challenge: text('challenge').notNull(),
-  expiresAt: text('expires_at').notNull(),
-}, t => [
-  check('signinChallenges_expiresAt_utc', utc(t.expiresAt)),
-]);
+/** Each part of a reply the platform confirmed, in order. A long reply is posted in parts; the rows say how
+ * far it got and which outside messages are the bot's, so a thread under any part addresses it. */
+export const bridgeSendParts = sqliteTable('bridge_send_parts', {
+  send: text('send').notNull().references(() => bridgeSends.id),
+  part: integer('part').notNull(),
+  postedId: text('posted_id').notNull(),
+}, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
+/** Which messages carried a kept Slack or Discord file. The same file shared in a second message is listed under
+ * both and its bytes are kept once; a file with no message left is removed. */
+export const bridgeFileMessages = sqliteTable('bridge_file_messages', {
+  connection: text('connection').notNull(),
+  file: text('file').notNull(),
+  incoming: text('incoming').notNull().references(() => bridgeIncoming.id),
+}, t => [primaryKey({ columns: [t.connection, t.file, t.incoming] }),
+  foreignKey({ columns: [t.connection, t.file], foreignColumns: [bridgeFiles.connection, bridgeFiles.file] }),
+  index('bridge_file_messages_incoming_idx').on(t.incoming)]);
+/** The files a post carries, until the post is settled. Written with the post; removed when it is sent,
+ * dismissed or left in doubt (a post in doubt is never sent again), so nothing here outlives its post. */
+export const bridgeSendFiles = sqliteTable('bridge_send_files', {
+  send: text('send').notNull().references(() => bridgeSends.id),
+  position: integer('position').notNull(),
+  name: text('name').notNull(),
+  contents: blob('contents', { mode: 'buffer' }).notNull(),
+}, t => [primaryKey({ columns: [t.send, t.position] })]);
+/** A harness's own record of a conversation, kept between bodies so the next body of the same harness
+ * resumes it. One for a conversation and harness; `files` is sealed with the household's words key and
+ * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. `started_at` is the
+ * time of the oldest erasable word the session holds: when it was first saved, or earlier when its first
+ * body was handed older words of a direct conversation. It is erased when the household's keep time has
+ * passed since then, however often it has been saved again (core/conversations/sessions.ts). */
+export const conversationSessions = sqliteTable('conversation_sessions', {
+  conversation: text('conversation').notNull().references(() => conversations.id),
+  harness: text('harness').notNull(),
+  session: text('session').notNull(),
+  files: blob('files', { mode: 'buffer' }).notNull(),
+  bytes: integer('bytes').notNull(),
+  startedAt: text('started_at').notNull(),
+}, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_started_at_utc', utc(t.startedAt))]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),
@@ -1810,6 +2097,7 @@ export const bridgeResume = sqliteTable('bridge_resume', {
   session: text('session').notNull(),
   sequence: integer('sequence').notNull(),
   resumeUrl: text('resume_url').notNull(),
+  identity: text('identity').notNull(),
 });
 export const secretWriteJournal = sqliteTable('secret_write_journal', {
   id: text('id').primaryKey().notNull(),
@@ -1831,8 +2119,122 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   // SQLite trim defaults to ASCII spaces; include Unicode whitespace too.
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
+/** A grant pins the enrolled machine and its owner at issuance. */
+export const terminalCredentials = sqliteTable('terminal_credentials', {
+  fingerprint: text('fingerprint').primaryKey().notNull().references(() => tokens.fingerprint, {onDelete:'cascade'}),
+  machine: text('machine').notNull().references(() => boxes.id),
+  member: text('member').notNull().references(() => members.id),
+  // Who made the binding. Only one its own member made puts the agent at that member's terminal for reading
+  // their private talk and answering for them (policy.ts, Viewer.atTerminalOf); any binding reports the
+  // sessions of its machine. Absent on a binding made before this was recorded.
+  issuedBy: text('issued_by').references(() => members.id),
+});
+
+/** One observed harness session inside its authenticated machine, agent and member scope. */
+export const terminalSessions = sqliteTable('terminal_sessions', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  thread: text('thread').references(() => threads.id, {onDelete:'set null'}),
+  sessionId: text('session_id').notNull(),
+  instanceId: text('instance_id'),
+  machine: text('machine').notNull().references(() => boxes.id),
+  member: text('member').notNull().references(() => members.id),
+  agent: text('agent').notNull().references(() => agents.id),
+  harness: text('harness').notNull(),
+  cwd: text('cwd').notNull(),
+}, t => [uniqueIndex('terminal_sessions_identity').on(t.machine,t.member,t.agent,t.harness,t.sessionId)]);
+
+/** Each transcript has its own byte revision and one cumulative job_usage snapshot. */
+export const terminalRuns = sqliteTable('terminal_runs', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  parent: text('parent').notNull().references(() => terminalSessions.job),
+  runId: text('run_id').notNull(),
+  revision: integer('revision').notNull(),
+}, t => [uniqueIndex('terminal_runs_identity').on(t.parent,t.runId)]);
+
+export const agentKits = sqliteTable('agent_kits', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  tools: text('tools', {mode:'json'}).$type<KitTool[]>().notNull(),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit]}),
+]);
+
+export const agentKitProjects = sqliteTable('agent_kit_projects', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  project: text('project').notNull().references((): AnySQLiteColumn => projects.id),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.project]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const agentKitMembers = sqliteTable('agent_kit_members', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  member: text('member').notNull().references((): AnySQLiteColumn => members.id),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.member]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const agentKitOutsidePeople = sqliteTable('agent_kit_outside_people', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  kit: text('kit').notNull(),
+  platform: text('platform').notNull(),
+  workspace: text('workspace').notNull(),
+  user: text('user').notNull(),
+}, t => [
+  primaryKey({columns:[t.agent, t.kit, t.platform, t.workspace, t.user]}),
+  foreignKey({columns:[t.agent,t.kit],foreignColumns:[agentKits.agent,agentKits.kit]}).onDelete('cascade'),
+]);
+
+export const projectOutsidePeople = sqliteTable('project_outside_people', {
+  project: text('project').notNull().references((): AnySQLiteColumn => projects.id),
+  platform: text('platform').notNull(),
+  workspace: text('workspace').notNull(),
+  user: text('user').notNull(),
+}, t => [
+  primaryKey({columns:[t.project, t.platform, t.workspace, t.user]}),
+]);
+
+export const kitUses = sqliteTable('kit_uses', {
+  agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
+  conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
+  personKind: text('person_kind', {enum:['member','outside']}),
+  person: text('person'),
+  id: text('id').notNull(),
+  job: text('job').notNull().references((): AnySQLiteColumn => jobs.id),
+  kit: text('kit').notNull(),
+  tool: text('tool').notNull(),
+  at: text('at').notNull(),
+  outcome: text('outcome').notNull(),
+}, t => [
+  primaryKey({columns:[t.id]}),
+]);
+
+export const machineReads = sqliteTable('machine_reads', {
+  id: text('id').primaryKey().notNull(),
+  machine: text('machine').notNull(),
+  agent: text('agent').notNull(),
+  job: text('job').notNull(),
+  conversation: text('conversation'),
+  word: text('word').notNull(),
+  person: text('person'),
+  read: text('read').notNull(),
+  args: text('args').notNull(),
+  askedAt: text('asked_at').notNull(),
+  bytes: integer('bytes').notNull(),
+  outcome: text('outcome').notNull(),
+}, t => [index('machine_reads_machine_time').on(t.machine,t.askedAt)]);
+
 export const plumbing = {
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, outsideEffects, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
+  agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,
+  programFirings,
+  machineReads,
+  terminalCredentials, terminalSessions, terminalRuns,
+  jobUsage,
+  modelAccountLogins,
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {
   members,
@@ -1877,6 +2279,7 @@ export const tables = {
   approvalRecord,
   triggers,
   triggerLog,
+  triggerEdits,
   agentPauses,
   tempoSettings,
   changes,
@@ -1887,6 +2290,8 @@ export const tables = {
   boxes,
   boxAgents,
   boxFacts,
+  boxReadings,
+  boxAlertSettings,
   jobs,
   jobNeeds,
   agentRunSettings,
@@ -1898,6 +2303,7 @@ export const tables = {
   modelAccounts,
   modelAccountWindows,
   modelAccountBoxes,
+  accountSignins,
   agentModels,
   bridgeConnections,
   bridgeChannelFilters,
@@ -1958,6 +2364,7 @@ export const schema = { ...tables, ...plumbing,
   approvalRecordRelations,
   triggersRelations,
   triggerLogRelations,
+  triggerEditsRelations,
   agentPausesRelations,
   changesRelations,
   changeChecksRelations,
@@ -1966,6 +2373,7 @@ export const schema = { ...tables, ...plumbing,
   boxesRelations,
   boxAgentsRelations,
   boxFactsRelations,
+  boxReadingsRelations,
   jobsRelations,
   jobNeedsRelations,
   agentRunSettingsRelations,
@@ -1977,6 +2385,8 @@ export const schema = { ...tables, ...plumbing,
   modelAccountsRelations,
   modelAccountWindowsRelations,
   modelAccountBoxesRelations,
+  modelAccountLoginsRelations,
+  accountSigninsRelations,
   agentModelsRelations,
   bridgeConnectionsRelations,
   bridgeChannelFiltersRelations,
@@ -2008,6 +2418,8 @@ export const polymorphicReferences = [
   { table: inbox, kind: 'to_kind', id: 'to', targets: { person: members, agent: agents } },
   { table: tempoSettings, kind: 'who_kind', id: 'who', targets: { person: members, agent: agents } },
   { table: approvalRules, id: 'person', targets: { '': members }, emptyIsAbsent: true },
+  { table: triggerEdits, kind: 'by_kind', id: 'by', targets: { member: members, agent: agents } },
+  { table: accountSignins, kind: 'asked_by_kind', id: 'asked_by', targets: { member: members, agent: agents } },
 ] as const;
 
 /** Lifecycle constraints that need triggers rather than static SQLite CHECKs. */

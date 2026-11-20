@@ -19,13 +19,13 @@ export function sharedPeopleConversations(db:DataDatabase, sharing:()=>Sharing,
  return {list(viewer,person) {
   const current=sharing();
   const rows=db.select({id:conversations.id,title:conversations.label,
-   agent:conversations.agent,project:conversations.project,member:conversations.member})
+   agent:conversations.agent,project:conversations.project,member:conversations.member,direct:conversations.direct})
    .from(conversations).innerJoin(conversationPeople,
     and(eq(conversationPeople.conversation,conversations.id),
      eq(conversationPeople.whoKind,'person'),eq(conversationPeople.who,person)))
    .orderBy(desc(conversations.lastAt),conversations.id).all();
   return {available:true,rows:rows.filter(row=>maySee(viewer,{type:'conversation',agent:row.agent,
-   ...(row.project!==null?{project:row.project}:{}),...(row.member!==null?{member:row.member}:{})},current))
+   ...(row.project!==null?{project:row.project}:{}),...(row.member!==null?{member:row.member}:{}),direct:row.direct},current))
    .map(row=>({id:row.id,title:row.title,href:href(row.id)}))};
  }};
 }

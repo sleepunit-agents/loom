@@ -25,7 +25,7 @@ it('reads minimal progress and SQL readiness, including a hidden blocker, and re
     const read = () => graphql({schema,source:deskTasksQuery});
     const result = await read();
     expect(result.errors).toBeUndefined();
-    expect(result.data?.inProgress).toEqual([{id:'working'}]);
+    expect(result.data?.inProgress).toEqual([{id:'working',isShelved:false}]);
     expect(result.data?.readyTasks).toEqual(expect.arrayContaining([{id:'ready'},{id:'parented'}]));
     expect(result.data?.readyTasks).toHaveLength(2);
     db.update(tasks).set({status:'closed'}).where(sql`${tasks.id} = 'hidden'`).run();

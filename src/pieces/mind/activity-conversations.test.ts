@@ -6,6 +6,7 @@ import { agents, members, projects, projectMembers, conversations, digestItems }
 import { Conversations } from '../../core/conversations/index.js';
 import type { Sharing, Viewer } from '../../policy.js';
 import { sharedActivityConversations } from './activity-conversations.js';
+import { taskService } from '../../apps/tasks.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -19,7 +20,7 @@ function fixture() {
  db.insert(agents).values({ id:'fiction',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot' }).run();
  db.insert(projects).values({ id:'pond',name:'Pond' }).run();
  db.insert(projectMembers).values({ project:'pond',member:'teammate' }).run();
- const sharing: Sharing = { members:{ owner:{owner:true,agents:[]},teammate:{owner:false,agents:[]} },projects:{ pond:{members:['teammate'],agents:['fiction']} },services:{} };
+ const sharing: Sharing = { members:{ owner:{owner:true,agents:[]},teammate:{owner:false,agents:[]} },projects:{ pond:{members:['teammate'],agents:['fiction']} }};
  const service = new Conversations(db, () => now);
  const reader = sharedActivityConversations(db, { conversationHref:id=>`/conversation/${id}` });
  const query = { agent:'fiction',from:Date.parse('2026-11-14T00:00:00Z'),until:Date.parse('2026-11-15T00:00:00Z'),limit:601 };
@@ -68,7 +69,9 @@ it('keeps moved conversations without a digest in the interval and reads more th
  expect(f.reader.list(owner,{...q,until:q.from}).rows).toEqual([]);
  expect(f.reader.list(owner,{...q,limit:0}).rows).toEqual([]);
  f.db.update(conversations).set({member:'teammate'}).where(eq(conversations.id,cv.id)).run();
- expect(f.reader.conversation(owner,'fiction',cv.id)).toMatchObject({member:'teammate'});
+ // Once it is a member's own, that member reads it and the household owner does not.
+ expect(f.reader.conversation(teammate,'fiction',cv.id)).toMatchObject({member:'teammate'});
+ expect(f.reader.conversation(owner,'fiction',cv.id)).toBeUndefined();
 });
 
 it('schedules the earliest future digest or conversation timestamp at both skew boundaries',()=>{
@@ -95,4 +98,16 @@ it('keeps Activity SQL fixed for two and ten conversations with real digest chil
  }
  f.statements.length=0;const rows=f.reader.list(teammate,f.query).rows;expect(rows).toHaveLength(10);expect(rows.every(row=>row.replies===1&&row.decided.length===1)).toBe(true);
  expect(f.statements.length).toBe(small);expect(small).toBe(5);
+});
+
+it('shows what a run needs of the viewer by the Inbox rule: not once the record the question waits on is no longer theirs to read', () => {
+ const f=fixture(),cv=f.service.open({agent:'fiction',venue:'discord',place:'channel',label:'Fit the hose',project:'pond'});
+ const task=taskService(f.db).create({title:'Hose',goal:'Fits',why:'Pond',project:'pond',owner:{kind:'member',id:'owner'}},{kind:'member',id:'owner'});
+ const dg=f.service.digest({conversation:cv.id,run:'run-1',summary:'Asked about the hose',items:[],question:{to:'teammate',words:'Order it?',answers:'yes-no',waitsOnKind:'task',waitsOnId:task.id}});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({needs:'Order it?',needsForMember:'teammate'});
+ // The task leaves the project and is its owner's alone. The conversation is still the teammate's to read; the question is not.
+ taskService(f.db).edit(task.id,{project:null},{kind:'member',id:'owner'});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({summary:'Asked about the hose'});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).not.toHaveProperty('needs');
+ expect(f.reader.list(teammate,f.query).rows[0]).not.toHaveProperty('needs');
 });

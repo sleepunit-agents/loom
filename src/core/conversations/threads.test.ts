@@ -1,7 +1,9 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, deletedThreads, members, messages } from '../data/schema.js';
+import { agents, conversations, deletedThreads, jobs, members, messages, threads } from '../data/schema.js';
+import { eq } from 'drizzle-orm';
+import { CommsMessages } from './messages.js';
 import { Threads } from './threads.js';
 
 const clients: Database.Database[] = [];
@@ -75,4 +77,37 @@ it('advances read position only through existing messages and keeps stop pending
   expect(service.requestStop(thread.id).stopRequested).toBe(true);
   expect(service.takeStop(thread.id)).toBe(true);
   expect(service.takeStop(thread.id)).toBe(false);
+});
+
+it('stamps a thread and its conversation from one clock read', async () => {
+  const client = new Database(':memory:'); clients.push(client);
+  // A clock that never gives the same answer twice, as a real one does not.
+  let tick = Date.parse('2026-11-14T18:00:00.000Z');
+  const now = () => new Date(tick++).toISOString();
+  const db = createDataSchema(client, now);
+  db.insert(members).values({ id: 'jonathan', role: 'member', joinedAt: now() }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const comms = new CommsMessages(db, { seal: async (words: string) => Buffer.from(words), open: async (bytes: Uint8Array) => Buffer.from(bytes).toString(), hash: (words: string) => words }, now);
+  const same = () => {
+    const thread = db.select().from(threads).get()!, cv = db.select().from(conversations).get()!;
+    expect(thread.lastAt).toBe(cv.lastAt);
+    return thread;
+  };
+  const opened = comms.threads.open({ id: 'th:clock', member: 'jonathan', agent: 'art', title: 'Pond pump' });
+  expect(same().openedAt).toBe(db.select().from(conversations).get()!.startedAt);
+  const message = await comms.send({ thread: opened.id, sender: 'jonathan', kind: 'message', words: 'Is it running?' });
+  expect(same().lastAt).toBe(message.at);
+});
+
+it('carries a rename to the thread, its conversation and its unfinished job together', () => {
+  const { db, service, open } = fixture();
+  const thread = open('th:rename');
+  const job = (id: string, state: typeof jobs.$inferInsert.state) => db.insert(jobs).values({ id, agent: 'art', conversation: thread.conversation, member: 'jonathan', title: 'Pond pump', brief: '', model: 'm', state,
+    startedByKind: 'agent', startedBy: 'art', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
+  job('finished', 'done'); job('running', 'running');
+  service.rename(thread.id, 'Pump order', 'member');
+  const title = (id: string) => db.select({ title: jobs.title }).from(jobs).where(eq(jobs.id, id)).get()!.title;
+  expect(db.select().from(conversations).get()!.label).toBe('Pump order');
+  // A job still to run or running shows what its thread is called now; a finished one keeps its record.
+  expect([title('running'), title('finished')]).toEqual(['Pump order', 'Pond pump']);
 });

@@ -5,12 +5,11 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
-import type {WorkAnswerAuthority} from './shared-work-commands.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const stop of clean.splice(0).reverse())await stop();});
 const change='github:acme/app#1',head='a'.repeat(40),request={kind:'merge',target:change+'@'+head,what:'Merge pump',why:'Ready',ask:'Merge?',ifYes:'Agent merges exact head',ifNo:'Wait'};
-async function fixture(authority?:WorkAnswerAuthority){
- const f=await bodyFixture(clean,{workAnswerAuthority:authority}),at=new Date(f.clock.now()).toISOString();
+async function fixture(_gates?:unknown){
+ const f=await bodyFixture(clean,{}),at=new Date(f.clock.now()).toISOString();
  f.db.insert(s.members).values({id:'pat',role:'owner',joinedAt:at}).run();const owner='o'.repeat(64);f.db.insert(s.tokens).values({fingerprint:hash(owner),label:'Standing owner',kind:'owner',member:'pat',createdAt:at}).run();
  f.db.insert(s.changes).values({id:change,repository:'acme/app',number:1,title:'Pump',body:'',url:'',state:'open',draft:false,authorLogin:'art',agent:'art',project:'pond',branch:'work',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:at,updatedAt:at}).run();
  const call=(name:string,input:unknown,id:string=randomUUID(),token=raw.body)=>f.root.http.request('/api/approvals/'+name,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input,id})});
@@ -38,9 +37,6 @@ it.each(['unknown','other-person','ask','stale-setter'] as const)('keeps a pendi
 });
 it('uses household rules only for a concrete current household-owner principal',async()=>{
  const f=await fixture();f.grant('do','');expect((await f.ask('member')).state).toBe('pending');f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run());expect((await f.ask('owner')).state).toBe('allowed');
-});
-it.each(['approval','change'] as const)('honors the optional %s narrowing callback before a standing answer',async gate=>{
- const f=await fixture({approval:()=>gate!=='approval',change:()=>gate!=='change'});f.grant('do');expect((await f.ask()).state).toBe('pending');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);
 });
 it('applies command rules without executing command text or changing unrelated Changes',async()=>{
  const f=await fixture();f.root.services.approvalRules.set({kind:'command',scope:'box:box:*',person:'alice',tier:'do'},'pat');const result=await f.ask('command',{...request,kind:'command',target:'box:box:echo fictitious'});expect(result.state).toBe('allowed');expect(f.root.services.approvals.get(result.id)).toMatchObject({kind:'command',operation:null});expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');
@@ -71,10 +67,6 @@ it('refuses blank targets at the outside schema before any request or standing a
  const f=await fixture();f.root.services.approvalRules.set({kind:'command',scope:'*',person:'alice',tier:'do'},'pat');expect((await f.call('request',{...request,kind:'command',target:' \t '})).status).toBe(400);expect((await f.call('rule',{kind:'command',target:' \t '})).status).toBe(400);expect(f.db.select().from(s.approvals).all()).toEqual([]);
 });
 
-it.each(['approval','change'] as const)('requires explicit true from a configured %s callback',async gate=>{
- // A JavaScript adapter can violate the static boolean contract at runtime.
- const missing=undefined as unknown as boolean,f=await fixture({approval:()=>gate==='approval'?missing:true,change:()=>gate==='change'?missing:true});f.grant('do');expect((await f.ask()).state).toBe('pending');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);
-});
 
 it.each(['merge','command'] as const)('keeps an explicit No for the exact %s target despite a new do/tell intent',async kind=>{
  const f=await fixture(),input=kind==='merge'?request:{...request,kind:'command',target:'box:box:echo'};

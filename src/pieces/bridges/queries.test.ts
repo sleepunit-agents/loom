@@ -31,7 +31,7 @@ it('batches metadata, retaining visible zero-message connections and excluding b
   f.receive('boundary', start - day); f.receive('old', start - day - 1); f.receive('future', start + 1);
   f.statements.length = 0;
   expect(f.queries.activity(f.scope)).toEqual([{ id: 'c', received: 4, delivered: 1, held: 1 }, { id: 'empty', received: 0, delivered: 0, held: 0 }]);
-  expect(f.statements).toHaveLength(2);
+  expect(f.statements).toHaveLength(1);
   for(const statement of f.statements){expect(statement).not.toContain('"text"');expect(statement).not.toMatch(/insert|update|delete/i);}
 });
 it('requires both SQL scopes before executing any query', () => {
@@ -84,13 +84,15 @@ it('counts receipt time rather than platform-post time and schedules the matchin
   expect(f.queries.nextDeadline()).toBe(start + day - 1000);
 });
 
-it.each(['receipts','connections'])('keeps two activity statements when %s grow from two to ten',kind=>{
- const f=fixture();let small=0;
+it.each(['receipts','connections'])('keeps one activity statement when %s grow from two to ten',kind=>{
+ const f=fixture();let small=0,visits=0;
+ f.db.$client.function('count_receipt',(_id:string)=>{visits++;return 1;});
+ const scope={...f.scope,incoming:sql`(${f.scope.incoming} and count_receipt(${bridgeIncoming.id}))`};
  for(let n=0;n<10;n++){
   const connection=kind==='connections'?'extra-'+n:'c';
   if(kind==='connections')f.db.insert(bridgeConnections).values({id:connection,platform:'slack',agent:'art',workspace:'workspace',botUser:'bot-'+n,tokenSecret:'token',enabled:true,state:'connected',stateAt:new Date(start).toISOString()}).run();
   f.receive('row-'+n,start,'delivered',connection);
-  if(n===1||n===9){f.statements.length=0;expect(f.queries.activity(f.scope).reduce((n,row)=>n+row.received,0)).toBe(n+1);if(n===1)small=f.statements.length;else expect(f.statements.length).toBe(small);}
+  if(n===1||n===9){f.statements.length=0;visits=0;expect(f.queries.activity(scope).reduce((n,row)=>n+row.received,0)).toBe(n+1);expect(visits).toBe(n+1);if(n===1)small=f.statements.length;else expect(f.statements.length).toBe(small);}
  }
- expect(small).toBe(2);
+ expect(small).toBe(1);
 });

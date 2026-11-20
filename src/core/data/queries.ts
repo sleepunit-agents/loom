@@ -1,11 +1,14 @@
 import type Database from 'better-sqlite3';
+import { taskReadiness } from './task-readiness.js';
+import { taskShelved } from './project-in-use.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
-import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
+import { type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
-import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
+import { GraphQLError, GraphQLSchema, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { dataValue } from './subscriptions.js';
+import { schema, tables, taskComments } from './schema.js';
 
 type TableName = keyof typeof tables;
 type Fields = Record<string, AnyColumn>;
@@ -68,22 +71,23 @@ export function dataQueries(client: Database.Database, options: {
       Object.entries(value.config(createTableRelationsHelpers(value.table))).map(([key, relation]) => [key, names.get(getTableName(relation.referencedTable))!]),
     ));
   }
-  const readiness = (fields: Fields) => {
-    const blocker = alias(tasks, 'data_ready_blocker');
-    return sql`${fields.status} = 'open' and ${fields.type} <> 'epic' and not exists (select 1 from ${taskLinks} inner join ${tasks} as ${sql.identifier("data_ready_blocker")} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} <> 'closed')`;
-  };
+
   function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? [], root = true): ReadConfig {
     const config = input === true ? {} : input;
     const predicate = visibility[name]!;
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
-      ...(name === 'tasks' && (fieldsSelected.has('isReady') || selected.has('taskComments') && fieldsSelected.has('commentCount')) ? {
+      ...(name === 'tasks' && (fieldsSelected.has('isReady') || fieldsSelected.has('isShelved') || selected.has('taskComments') && fieldsSelected.has('commentCount')) ? {
         extras: (fields: Fields) => {
           const extras: Record<string, SQL.Aliased> = {};
           if (fieldsSelected.has('isReady')) {
-            const ready = readiness(fields);
+            const ready = taskReadiness(fields);
             extras.isReady = sql`${{ getSQL: () => ready }}`.mapWith(Boolean).as('data_is_ready');
+          }
+          if (fieldsSelected.has('isShelved')) {
+            const shelved = taskShelved({ status: fields.status, project: fields.project });
+            extras.isShelved = sql`${{ getSQL: () => shelved }}`.mapWith(Boolean).as('data_is_shelved');
           }
           if (selected.has('taskComments') && fieldsSelected.has('commentCount')) {
             const allowed = visibility.taskComments!(getTableColumns(taskComments));
@@ -107,7 +111,7 @@ export function dataQueries(client: Database.Database, options: {
         // Readiness is a property of the visible task, not of the subset of
         // blockers the caller can read. Never return hidden blocker rows/IDs.
         const ready = root && name === 'tasks' && querySelection.getStore()?.fieldName === 'readyTasks'
-          ? readiness(fields) : undefined;
+          ? taskReadiness(fields) : undefined;
         return and(sql`${{ getSQL: () => allowed }}`, ready ? sql`${{ getSQL: () => ready }}` : undefined, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {
@@ -134,15 +138,40 @@ export function dataQueries(client: Database.Database, options: {
   const generated = buildSchema(db, { mutations: false, relationsDepthLimit: depth }).schema;
   // Relation output types are distinct generated objects. Walk their actual
   // edges rather than guessing type names or defining a second task shape.
+  // A trigger's ordinary read rule is wider than its program's. Hide private values from predicates
+  // and ordering as well as from every relation projection. tempoProgram checks their narrower rule.
+  const programColumns = ['program', 'readStateFrom', 'programState', 'programPeriod'];
+  if (selected.has('triggers')) for (const name of ['TriggersOrderBy', 'TriggersFilters', 'TriggersFiltersOr']) {
+    const type = generated.getType(name);
+    if (isInputObjectType(type)) for (const key of programColumns) delete type.getFields()[key];
+  }
   const visited = new Set<object>();
   function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'triggers') for (const key of programColumns) delete fields[key];
+    // drizzle-graphql returns SQLite JSON arrays intact but declares them as scalar strings.
+    if (name === 'triggers' || name === 'jobs' || name === 'agentRunSettings' || name === 'boxes') {
+      for (const key of name === 'triggers' ? ['needs', 'prefers'] : name === 'boxes' ? ['readers'] : ['prefers']) {
+        fields[key].type = new GraphQLList(new GraphQLNonNull(GraphQLString));
+      }
+    }
+    if (name === 'boxReadings') {
+      fields.lastLines.type = dataValue;
+      // drizzle-graphql may stringify SQLite JSON objects before field resolution.
+      fields.lastLines.resolve = row => typeof row.lastLines === 'string' ? JSON.parse(row.lastLines) : row.lastLines;
+    }
     if (name === 'tasks') fields.isReady = {
       name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
       description: 'Open non-epic task with no unclosed blocker, computed in this SQL statement.',
       resolve: row => row.isReady,
+      extensions: {}, astNode: undefined, deprecationReason: undefined,
+    };
+    if (name === 'tasks') fields.isShelved = {
+      name: 'isShelved', type: new GraphQLNonNull(GraphQLBoolean), args: [],
+      description: 'Unfinished task of a retired project: kept as it is, and not work until the project is revived. Computed in this SQL statement.',
+      resolve: row => row.isShelved,
       extensions: {}, astNode: undefined, deprecationReason: undefined,
     };
     if (name === 'tasks' && selected.has('taskComments')) fields.commentCount = {
@@ -162,7 +191,7 @@ export function dataQueries(client: Database.Database, options: {
   // Reuse the generator's Tasks shape and arguments; this is another SQL
   // selection of the same table, not a separately maintained row definition.
   if (selected.has('tasks')) rootFields.readyTasks = { ...rootFields.tasks, name: 'readyTasks',
-    description: 'Visible open non-epic tasks with no unclosed blocker, filtered in SQL before pagination.' };
+    description: 'Visible open non-epic tasks with no unclosed blocker, none of them shelved, filtered in SQL before pagination.' };
   for (const field of Object.values(rootFields)) {
     const resolve = field.resolve!;
     field.resolve = (source, args, context, info) => {
@@ -170,7 +199,8 @@ export function dataQueries(client: Database.Database, options: {
       return querySelection.run(info, () => resolve(source, args, context, info));
     };
   }
-  return generated;
+  // Register the JSON scalar introduced on the generated reading types.
+  return selected.has('boxReadings') ? new GraphQLSchema(generated.toConfig()) : generated;
 }
 
 /** Merge field selections by schema field name: scalar aliases, directives

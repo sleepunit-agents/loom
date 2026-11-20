@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import { knowledgeQueryFields } from './pieces/mind/knowledge-query.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
@@ -243,10 +243,10 @@ it('keeps project and agent-owner Work grants independent on retained root reads
 it('serves real Memory and Work through the same HTTP and socket caller, including demotion', async () => {
   const home = mkdtempSync(join(tmpdir(), 'root-memory-work-'));
   clean.push(() => rmSync(home, { recursive: true, force: true }));
-  const knowledge = new SqliteKnowledgeBackend({ dbPath: join(home, 'knowledge.db') });
+  const knowledge = new KnowledgePages({ dbPath: join(home, 'knowledge.db') });
   clean.push(() => knowledge.close());
   await knowledge.writePage({ slug: 'pump', title: 'Fictional pump', domain: 'pond', body: 'Fictional hose instructions.' });
-  const sharing = { members: { sam: { owner: true, agents: [] } }, projects: {}, services: {} };
+  const sharing = { members: { sam: { owner: true, agents: [] } }, projects: {}};
   const reader = knowledgeQueryFields({ path: join(home, 'knowledge.db'), sharing: () => sharing, now: () => 0 });
   clean.push(reader.close);
   const f = await setup(reader.fields);
@@ -472,4 +472,68 @@ it('refuses unsupported installed coercion at startup before admitting reads', a
   const installed = new GraphQLScalarType({ name: 'Installed', serialize() { callbacks++; return 'private'; } });
   await expect(setup({ installed: { type: installed, resolve() { callbacks++; return 'private'; } } })).rejects.toThrow('Unsupported read scalar');
   expect(callbacks).toBe(0);
+});
+
+it('reads open selections again for stamp-only writes once in a minute, however many there were', async () => {
+  const f = await setup(), ws = await f.open();
+  await read(ws, () => ws.send(JSON.stringify(selection)));
+  const frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  const quiet = async () => { await new Promise(resolve => setTimeout(resolve, 40)); return frames.length; };
+  const before = f.pending.size;
+  for (const title of ['One', 'Two', 'Later']) f.data.writes.run(() => f.client.prepare('UPDATE tasks SET title=?').run(title), () => true);
+  expect(f.pending.size).toBe(before + 1);
+  expect(await quiet()).toBe(0);
+  f.clock.advance(59_999); expect(await quiet()).toBe(0);
+  const late = await read(ws, () => f.clock.advance(1));
+  expect(late.payload.data.observe.patches).toMatchObject([{ path: ['tasks', 0, 'title'], value: 'Later' }]);
+  expect(f.pending.size).toBe(before);
+  // Nothing was written since: no timer is left and nothing is read.
+  f.clock.advance(600_000); expect(await quiet()).toBe(1);
+  // An ordinary commit is told at once, also while stamps wait for their minute.
+  f.data.writes.run(() => f.client.prepare('UPDATE tasks SET title=?').run('Waiting'), () => true);
+  expect(await quiet()).toBe(1);
+  const now = await read(ws, () => f.data.writes.run(() => f.client.exec("UPDATE tasks SET title='Now'")));
+  expect(now.payload.data.observe.patches[0].value).toBe('Now');
+  await f.data.close();
+  expect(f.pending.size).toBe(0);
+});
+
+// Each from a quiet state, with no other stamp waiting: a row written outside the write boundary stands for the
+// credential's or the timing's own row, which those callers write themselves before they call.
+it.each(['credentialUsageChanged', 'timingsChanged'] as const)('reads open selections again within a minute of %s alone', async told => {
+  const f = await setup(), ws = await f.open();
+  await read(ws, () => ws.send(JSON.stringify(selection)));
+  const frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  const quiet = async () => { await new Promise(resolve => setTimeout(resolve, 40)); return frames.length; };
+  const before = f.pending.size;
+  f.client.exec("UPDATE tasks SET title='Stamped'");
+  f.data[told](); f.data[told]();
+  expect(f.pending.size).toBe(before + 1);
+  f.clock.advance(59_999); expect(await quiet()).toBe(0);
+  const late = await read(ws, () => f.clock.advance(1));
+  expect(late.payload.data.observe.patches).toMatchObject([{ path: ['tasks', 0, 'title'], value: 'Stamped' }]);
+  expect(f.pending.size).toBe(before);
+});
+
+it('sets the waiting stamp wake again when the wall clock was set back, so it is never more than a minute off', async () => {
+  const f = await setup(), ws = await f.open();
+  await read(ws, () => ws.send(JSON.stringify(selection)));
+  const frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  const quiet = async () => { await new Promise(resolve => setTimeout(resolve, 40)); return frames.length; };
+  const before = f.pending.size;
+  f.client.exec("UPDATE tasks SET title='Before'"); f.data.credentialUsageChanged();
+  // The wall clock is set back ten minutes: the wake that waits is now eleven minutes off.
+  (f.clock as unknown as { time: number }).time -= 600_000;
+  f.clock.advance(30_000); expect(await quiet()).toBe(0);
+  f.client.exec("UPDATE tasks SET title='After'"); f.data.credentialUsageChanged();
+  expect(f.pending.size).toBe(before + 1);
+  f.clock.advance(59_999); expect(await quiet()).toBe(0);
+  const late = await read(ws, () => f.clock.advance(1));
+  expect(late.payload.data.observe.patches).toMatchObject([{ path: ['tasks', 0, 'title'], value: 'After' }]);
+  expect(f.pending.size).toBe(before);
+  // A wake that is due within the minute is left as it is: a stamp does not push it further off.
+  f.client.exec("UPDATE tasks SET title='First'"); f.data.timingsChanged();
+  f.clock.advance(40_000); f.client.exec("UPDATE tasks SET title='Second'"); f.data.timingsChanged();
+  f.clock.advance(19_999); expect(await quiet()).toBe(1);
+  expect((await read(ws, () => f.clock.advance(1))).payload.data.observe.patches).toMatchObject([{ value: 'Second' }]);
 });

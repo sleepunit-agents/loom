@@ -1,6 +1,21 @@
 /** The normalized Change contract, ported from loom-changes. No forge writes. */
+import { DAY_MS } from '../../core/day.js';
 import { z } from 'zod';
-export const week = 7 * 86400_000;
+import { TASK_ID, taskId } from '../../slug.js';
+import { changes } from '../../core/data/schema.js';
+export const week = 7 * DAY_MS;
+/** One repository, one identity. GitHub reads `Acme/App`, `acme/app` and `acme/app.git` as the same
+ * repository, so loom must too, or another spelling of a repository it reads would pass for one it does not.
+ *  - `repositoryKey` is what two spellings are compared by: lower case, without a leading `github:` and
+ *    without one trailing `.git`. It is for what is already stored or was given by GitHub.
+ *  - `canonicalRepository` says whether a name is already in the one spelling loom writes: `owner/repo`, lower
+ *    case, no trailing `.git`, neither part `.` or `..`. A name a caller types (a merge target, a project's
+ *    repository) is refused unless it is canonical; nothing guesses what was meant.
+ * A repository that was renamed on GitHub still answers to its old name there. loom cannot know that from the
+ * words: it knows the names it reads, and the old name of one of them is to loom a repository it does not read. */
+export const repositoryKey = (raw: string): string => (raw.startsWith('github:') ? raw.slice(7) : raw).toLowerCase().replace(/\.git$/, '');
+export const canonicalRepository = (name: string): boolean =>
+  /^[a-z0-9._-]+\/[a-z0-9._-]+$/.test(name) && name === repositoryKey(name) && !name.split('/').some(part => part === '.' || part === '..');
 export const repoId = (raw: string): string => {
   const value = raw.startsWith('github:') ? raw.slice(7) : raw;
   if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(value)) throw new Error('A GitHub repository must be owner/repo');
@@ -9,24 +24,19 @@ export const repoId = (raw: string): string => {
 const stamp = z.string().nullable();
 export const changeSchema = z.object({
   id: z.string(), repo: z.string(), number: z.number().int().positive(), page: z.string(), title: z.string(), url: z.string(),
-  state: z.enum(['open','merged','closed']), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
+  state: z.enum(changes.state.enumValues), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
   created: stamp, updated: stamp, closed: stamp,
   head: z.object({ ref: z.string(), id: z.string() }), base: z.object({ ref: z.string() }), body: z.string(),
-  checks: z.object({ state: z.enum(['passing','failing','running','none']), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
-  review: z.object({ state: z.enum(['approved','changes_requested','required','not_required']), by: z.array(z.string()) }),
-  mergeable: z.enum(['yes','no','unknown']), conflicts: z.boolean(),
+  checks: z.object({ state: z.enum(changes.checks.enumValues), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
+  review: z.object({ state: z.enum(changes.review.enumValues), by: z.array(z.string()) }),
+  mergeable: z.enum(changes.mergeable.enumValues), conflicts: z.boolean(),
   people: z.array(z.object({ login: z.string(), name: z.string().optional(), role: z.string() })),
 });
 export type Change = z.infer<typeof changeSchema> & { project?: string; agent?: string; mine?: boolean; syncError?: string };
 export interface Project { slug: string; name: string; repos: string[] }
 export interface Attribution { agents: Record<string, { logins: string[]; branches: string[] }>; ownerLogins: string[]; taskOwner?: string }
-export function currentAttribution(settings:Attribution, knownAgents:string[]):Attribution {
- const known=new Set(knownAgents);return {...settings,agents:Object.fromEntries(Object.entries(settings.agents).filter(([id])=>known.has(id)))};
-}
 export interface Rule { tier: 'do'|'tell'|'ask'; approval?: { state: string }; for?: { slug: string; name: string; state: string } }
-export const targetOf = (c: Change) => `${c.id}@${c.head.id}`;
-export const short = (c: Change) => `${c.repo.split('/').at(-1)}#${c.number}`;
-export const groups = ['you','agent','ci','reviewer','author','done'] as const;
+export const groups = changes.waitingOn.enumValues;
 export function attribute(c: Change, settings: Attribution) {
   const mine = settings.ownerLogins.some(login=>login.toLowerCase()===c.author.login.toLowerCase());
   const agent = Object.entries(settings.agents).find(([, how]) => how.logins.some(login=>login.toLowerCase()===c.author.login.toLowerCase()) || (mine && how.branches.some(p => p && c.head.ref.startsWith(p))))?.[0];
@@ -57,10 +67,13 @@ export function stateLine(c: Change, words: string) {
   if (!parts.some(p => p.toLowerCase() === words.toLowerCase()) && !(words === 'CI red' && c.checks.state === 'failing')) parts.push(words);
   return parts.join(', ') || words;
 }
+/** A task id standing by itself in words: not the tail of another word, and not cut short of its number. */
+const CITED_TASK = new RegExp(`(?<![A-Za-z0-9])${TASK_ID}(?![0-9])`, 'g');
 export function tasksCited(c: Change): string[] {
   const ids = new Set<string>();
-  for (const text of [c.title,c.head.ref,c.body]) for (const m of text.matchAll(/(?<![A-Za-z0-9])t-([0-9]{1,7})(?![0-9])/g)) ids.add(`t-${m[1]}`);
-  for (const m of c.head.ref.matchAll(/(?:^|\/)t-?([0-9]{2,7})(?=[-_/]|$)/g)) ids.add(`t-${m[1]}`);
+  for (const text of [c.title,c.head.ref,c.body]) for (const m of text.matchAll(CITED_TASK)) ids.add(m[0]);
+  // A branch may also name its task loosely, with no dash: `t123-fix`, `fix/t123`.
+  for (const m of c.head.ref.matchAll(/(?:^|\/)t([0-9]{2,})(?=[-_/]|$)/g)) ids.add(taskId(m[1]));
   return [...ids].slice(0,20);
 }
 export function citations(text: string): string[] {
@@ -68,14 +81,5 @@ export function citations(text: string): string[] {
   for (const m of text.matchAll(/(?<![A-Za-z0-9._/-])(?:(github):)?([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#([1-9][0-9]{0,9})(?![0-9A-Za-z])/g)) refs.add(`${repoId(m[2])}#${m[3]}`);
   for (const m of text.matchAll(/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)/g)) refs.add(`${repoId(m[1])}#${m[2]}`);
   return [...refs];
-}
-export interface CitingTask { id: string; title: string; description?: string; source?: string; comments?: { actor: string; text: string }[] }
-/** Caller passes only tasks visible through the Tasks role. Forge text never vouches for a conversation. */
-export function taskLinks(c: Change, tasks: CitingTask[], trusted: string[]) {
-  const named = new Set(tasksCited(c));
-  const citing = tasks.filter(t => named.has(t.id) || citations([t.description,...(t.comments ?? []).map(x=>x.text)].join('\n')).includes(c.id));
-  const made = tasks.filter(t => citations([t.description,...(t.comments ?? []).filter(x=>trusted.includes(x.actor)).map(x=>x.text)].join('\n')).includes(c.id));
-  const conversation = made.map(t => /^conversation:(cv-[0-9a-f]{12})$/.exec(t.source ?? '')?.[1]).find(Boolean);
-  return { tasks: citing.map(t => ({ id:t.id,title:t.title })), ...(conversation ? { conversation } : {}) };
 }
 export const active = (c: Change, now: number) => c.state === 'open' || (!!c.closed && Date.parse(c.closed) + week > now);

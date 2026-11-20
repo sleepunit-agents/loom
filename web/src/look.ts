@@ -18,7 +18,7 @@ export const modeOf = (l: Look): 'light' | 'dark' => LOOKS.find((x) => x.look ==
 /**
  * A saved look as loom wears it now. 000h was a look of its own until 2026-11-05; whoever chose it gets the look nearest
  * it: Daylight if they'd chosen light, else Low Light. Anything else unknown is Neon Noir. (boot.js does the same, before
- * first paint; src/ui/sessions.ts does too, for what loom keeps.)
+ * first paint.)
  */
 export function lookOf(saved: string | null | undefined, mode?: string | null): Look {
   if (saved === 'lowlight' || saved === 'daylight' || saved === 'neon') return saved;
@@ -26,9 +26,9 @@ export function lookOf(saved: string | null | undefined, mode?: string | null): 
   return 'neon';
 }
 
-/** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. `mode` is
+/** The person's Appearance, as loom keeps it (src/shared-preferences.ts): whatever they've chosen, nothing else. `mode` is
  * 000h's light or dark, read only to bring a 000h choice across (lookOf). */
-export type Prefs = { look?: Look | '000h'; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** pixel icons, where the household has a set (off unless turned on: app-icon.tsx) */ icons?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** One window at a time on the tiled desktop (Accessibility; off unless turned on: oneWindowKept) */ oneWindow?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look | '000h'; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** One window at a time on the tiled desktop (Accessibility; off unless turned on: oneWindowKept) */ oneWindow?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 
@@ -57,8 +57,7 @@ export function keep(key: string, v: string): void {
 }
 
 /** One window at a time, as this device last had it (`loom-one-window`), for first paint. A device that kept Appearance's
- * old Desktop choice (`loom-tiling`, before 2026-11-06) as One window at a time starts with it on, as loom serves it
- * (src/ui/sessions.ts oneWindowOf, the same rule). */
+ * old Desktop choice (`loom-tiling`, before 2026-11-06) as One window at a time starts with it on. */
 export function oneWindowKept(): boolean {
   try {
     const v = localStorage.getItem('loom-one-window');
@@ -78,8 +77,8 @@ export async function savePrefs(csrf: string, p: Prefs): Promise<number | undefi
 /** Whether an agent with a pixel sheet wears it (Appearance's "Pixel faces", the person's; on unless turned off). */
 export const PixelContext = createContext(true);
 
-/** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (looks/looks.css --mark-*). */
-const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
+/** loom's six agent marks, by their colour: a look can re-point each (looks/looks.css --mark-*). */
+export const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
 /** Which of loom's six marks a colour is, if it is one. */
 export const markName = (bg: string): string | undefined => MARKS[bg.toLowerCase()];
 /** An agent's mark colour as the look wears it: the look's own for one of loom's marks (looks.css --mark-*), else the mark's. */

@@ -3,7 +3,8 @@ import { afterEach, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { members, modelAccounts } from '../core/data/schema.js';
-import { recordAccountUsage, accountUsageUnavailable } from './account-usage.js';
+import { accountUsageUnavailable } from './account-usage.js';
+import { recordAccountWindows } from './account-windows.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
 const now = '2026-11-14T20:00:00.000Z';
@@ -14,7 +15,9 @@ function fixture() {
   const db = createDataSchema(client);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now }).run();
   db.insert(modelAccounts).values({ id: 'shared', owner: 'jonathan', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
-  return { db, read: () => db.select().from(modelAccounts).get()!, record: (windows = [window()], at = now) => recordAccountUsage(db, { ...identity, windows, now: at }) };
+  return { db, read: () => db.select().from(modelAccounts).get()!, 
+    // The summary is only ever written with its windows, so it is tested through that one writer.
+    record: (windows = [window()], at = now) => ({ recorded: recordAccountWindows(db, identity, windows, at) }) };
 }
 it('records shared account capacity from every provider window', () => {
   const f = fixture();

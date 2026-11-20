@@ -78,6 +78,17 @@ shared, and what's one agent's. Owners follow them.
 
 ## Several owners on one agent
 
+- **A body working for a member reaches no further than that member.** When an
+  agent's body runs a job that is for one member (their private thread with
+  the agent), each way the agent reaches a record counts only while that member
+  has the same reach: a project only if the member is in it too or is a
+  household owner, what is labelled with the agent only while the member has the
+  agent on their own list, and nothing once the member has left. The body is
+  still the agent, never the member: it gains nothing that only a member holds.
+  A terminal session, and a job that is for no member, is the agent alone. The
+  rule is stated at `Viewer.workingFor` in `src/policy.ts`; what stays the
+  agent's own whoever it works for is in `docs/accepted-tradeoffs.md`.
+
 - **The first answer wins.** An ask goes to every owner of its agent, and
   the first Allow or Deny decides it (Jonathan: "yes"). The others see it
   answered, and by whom.
@@ -171,6 +182,115 @@ Each step ships on its own and leaves everything working.
    an agent owner's agents, boxes household-only), approvals, the clock (an
    agent owner's clock and lanes for their agents), subscriptions, shuttle.
    Each records `by: <who>`.
+
+## Moving a task, and merging or splitting projects
+
+*Added 2026-11-17, for the move of old tasks into loom: they are sorted into projects by a first guess, and
+the household needs the tools to put right what lands in the wrong place.*
+
+A task belongs to a project, and everyone on that project sees it. A task with no project is its owner's
+alone. Three things change where work is filed.
+
+- **Move a task** (`tasks.command`, action `moveToProject`, with `ids` and `project`; the named tool
+  `task_move_to_project`).
+  Up to 500 tasks go to another project, or with `project: null` out of every project.
+  - *Who may.* The mover must be able to act on each task where it is now, and must be someone who could
+    have filed a task where it is going: a member or agent on that project, or a household owner. Out of
+    every project a task becomes its owner's alone, so only its owner or a household owner may do that. So
+    nobody gains sight of a task by a move who could not already have been given it. The rule is `moveTask`
+    in `src/policy.ts`, with the other task rules.
+  - *All or nothing.* If one task named cannot be moved, none is. A project that is removed, or is not
+    there, is refused.
+  - *What goes with the task.* Its own project, and the labels of mail that was filed under the task's
+    labels: a question put to a person about it, and the answer sent on from one. Mail filed in a
+    conversation keeps that conversation's labels, with one exception: an answer sent on to the agent that
+    asked, in a thread that is not a member's own, carries the task's project and so follows the task.
+  - *What stays.* Links stay: a parent and its children may be in different projects. Comments stay.
+  - *The record.* One comment on each moved task, by the mover, saying from where to where. A task already
+    in the project is left alone and gets no comment.
+  - *A waiting question stays with someone who can read it.* A question about a task is put only to a
+    person who can read the task (a household owner always can). So a move is refused while the task carries
+    an unanswered question for someone who could not read it where it is going: have it answered, or put
+    the question to someone who can, first. Both ask the one rule, `mayBeAskedAbout` in `src/policy.ts`.
+    Nothing is handled when the answer comes.
+  - *One way.* An `edit` that names another project is this same move for one task: the same rule, the
+    same mail, the same comment. Before 2026-11-17 such an edit left no comment and left the task's mail
+    under the old project. `move` still means only a task's place in the hand-kept order.
+- **Merge two projects** (a household change, `projectMerge`, with `from` and `into`). An agent proposes it
+  and a household owner allows the card. A merge cannot be undone, so the card is a dangerous one: the owner
+  must also confirm, and no standing approval rule answers it, not one for dangerous actions either. In one write:
+  - every record filed under `from` is filed under `into`: its tasks, conversations, inbox items, approval
+    cards, triggers, jobs and pull requests. `projectLabelled` in `src/shared-projects.ts` lists every table
+    that names a project and what the merge does with it, and a test fails when a table is missing from it;
+  - the members and agents of `from` are added to `into`, and its repositories move to `into`, since a
+    repository has one project;
+  - `from` is marked removed. Its row is kept, like any removed project, with its own lists of people and
+    agents, which grant nothing while it is removed.
+
+  It is refused for a project merged into itself, for one that is removed or not there, and when a
+  repository would be left with two projects. The card is the record: who asked, who allowed it, and the
+  two projects. Tasks get no comment. A merge is not undone by restoring `from`, which puts back an empty
+  project. A standing approval rule whose scope is `project:<from>` is not carried over. It was an owner's
+  word about that one project; carried over, it would answer for every card of the project merged into.
+- **Split a project.** There is no command for it. It is two steps that already exist:
+  1. make the new project (a household owner in the app, or an agent with `propose` and `change: "project"`);
+  2. move the chosen tasks into it (`moveToProject`).
+- **Ask to be let onto a project** (a household change, `projectJoin`): see [projects.md](projects.md),
+  "Asking to work on a project".
+- **Retire a project, or revive it** (`projectRetire`, `projectRevive`): see [projects.md](projects.md),
+  "Retiring a project". A retired project takes no task by creation, move or merge; tasks may be moved out
+  of one, and it may be merged into another.
+
+## An agent's own work, and what it may raise
+
+*Added 2026-11-17, so the agent's own scripts can ask loom what a standing rule says and tell its owners
+when something is wrong.*
+
+- **Whose standing rules answer.** A standing approval rule with no person is the household's own: a household
+  owner's answer, given ahead of time, for work done for a household owner. A rule that names a person
+  answers for that person's work only. Every piece of an agent's work has a principal, kept on its card:
+  - work for a member (their own thread, their trigger) is that member's, as it always was;
+  - the agent's own work is a terminal session, or a lane for no member. It reads the household's own rules
+    while a current household owner has the agent on their own list, and none otherwise. So an agent that only
+    members who are not owners have gets nothing from an owner's rule through its lane or its terminal;
+  - a handoff carries the member it was opened for, so work handed on for a person is still that person's
+    and reads that person's rules;
+  - a room on Discord or Slack, and a handoff for no member, are nobody's and always ask: people outside the
+    household talk to an agent in a shared place.
+
+  The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. The agent's own account is for merges
+  and commands: for any other kind of card it reads no rule, from a terminal and from a lane alike, and a
+  household change proposed with no member behind it always asks.
+- **Asking, filing and spending from a terminal.** `approvals.rule`, `approvals.request`, `approvals.use`,
+  `approvals.report` and `approvals.withdraw` take an agent's terminal credential as well as a body's. A
+  terminal credential acts on its own agent's merge and command cards that were filed from no conversation.
+  Nothing lists the rule table for an agent: it asks about one kind and one target.
+- **A merge target.** `github:<owner>/<repo>#<n>@<commit>` names one pull request at one exact commit. A
+  repository has one spelling in it: lower case, with no trailing `.git`. Another spelling of the same
+  repository is refused, so it is never taken for a repository loom does not read. For
+  a repository loom reads, the target must be the agent's own open change at that commit, and a card carries
+  that change's project; a rule read is held to the same target, so a wrong commit, another agent's change
+  or a closed one is refused and never answered on its words. For a repository loom does not read, loom has nothing to hold it to: the rule is
+  read, and a card filed, allowed and spent, on the target's own words. Such a card has no project, so a
+  project's rule never answers for it. Whoever merges must merge that commit and no other.
+- **Raising a notice.** `notices.raise` puts one waiting notice in the Inbox of each member who has the
+  calling agent (the household owners when nobody has it; `agentsPeople` in `src/policy.ts`), private to
+  each, and pushes to their devices. One notice per agent, key and person while it waits.
+  - *Who has the agent is read on every raise.* Someone who still has it and has the notice waiting gets its
+    words brought up to date, and is not told twice. Someone who has gained the agent gets the notice.
+    Someone who no longer has it has theirs settled as it stood.
+  - *Two things are filed without a push, then or ever:* a notice raised `quiet`, and a notice for a person
+    whose notice of that key was settled within the last ten minutes. An alert that flaps must not buzz a
+    phone each time. Such a notice is in the Inbox like any other; it is not dimmed, so no quiet time runs
+    out and pushes it later.
+  - `notices.clear` resolves the waiting notices of a key with a reason. It reads who has the agent too: the
+    agent's reason is written only for the people who have it now, and a notice still waiting for anyone
+    else is settled with a line of loom's own.
+  - Only the agent's own credential raises or clears one, for itself. The agent may learn whether its own
+    notice is still waiting, which it needs so as not to raise it twice. It is told its own key, whether the
+    notice was news, and whether any push was queued. It is told nothing else of anyone's Inbox: not who has
+    the notice, how many people or phones, who settled it or when.
+  - The limits are in `src/shared-notices.ts`.
 
 ## What the tests must pin
 

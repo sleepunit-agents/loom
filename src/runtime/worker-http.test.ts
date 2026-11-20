@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
+import { SILENCE_MS } from './silence.js';
 vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn((size: number) => actual.randomBytes(size)) }; });
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
@@ -14,10 +15,10 @@ describe('worker operation client', () => {
     expect(await control.next()).toEqual(assignment);
     await control.started('j1', 'image');
     expect(await control.heartbeat('j1', 'running')).toBe(false);
-    await control.finish('j1', 0, 'done');
+    await control.finish('j1', 0, 'done', 'body');
     const requests = fetcher.mock.calls.map(([url, init]) => ({ url: String(url), ...init, data: JSON.parse(String(init?.body)) }));
     expect(requests.map(r => r.url)).toEqual(['next', 'started', 'heartbeat', 'finish'].map(n => `https://loom.example/api/runtime/${n}`));
-    expect(requests.map(r => r.data.input)).toEqual([{}, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done' }]);
+    expect(requests.map(r => r.data.input)).toEqual([{ execution: 'container', reviewResults:true }, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done', exitBy: 'body' }]);
     expect(new Set(requests.map(r => r.data.id)).size).toBe(4);
     expect(requests.every(r => r.redirect === 'error' && r.signal && (r.headers as Record<string,string>).authorization === 'Bearer private-token')).toBe(true);
   });
@@ -28,10 +29,83 @@ describe('worker operation client', () => {
     await expect(control.next()).rejects.toThrow('outcome may be uncertain');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
-  it('discards error diagnostics and never retries uncertain writes', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error('private-token private-url private-brief'));
+  it('discards error diagnostics and stops on an explicit rejection', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('private-token private-url private-brief', { status: 403 }));
     await expect(client(fetcher).started('j1', 'image')).rejects.toThrow(/^Worker started failed; outcome may be uncertain$/);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it.each(['started', 'finish'] as const)('survives refusal and a starting server when reporting %s, with the same receipt', async name => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockImplementationOnce(async () => new Response(null, { status: 503 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 429 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 500 }))
+      .mockResolvedValueOnce(response({ ok: true }));
+    const pause = vi.fn(async () => {});
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal: new AbortController().signal, pause });
+    if (name === 'started') await control.started('j1', 'image');
+    else await control.finish('j1', 0, 'done', 'body');
+    const sent = fetcher.mock.calls.map(([, init]) => init?.body);
+    expect(sent).toHaveLength(5); expect(new Set(sent).size).toBe(1);
+  });
+  it('retries enrollment when the socket refused the connection before delivery', async () => {
+    const refused = Object.assign(new Error(), { code: 'ECONNREFUSED' });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed', { cause: refused }))
+      .mockResolvedValueOnce(response({ registered: true }));
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal: new AbortController().signal, pause: async () => {} });
+    const bootstrap = await control.enrollBody!('job', new AbortController().signal);
+    expect(fetcher.mock.calls[0][1]?.body).toEqual(fetcher.mock.calls[1][1]?.body);
+    bootstrap.erase?.();
+  });
+  it.each([401, 403])('ceases claiming authority when Loom explicitly rejects the heartbeat (HTTP %i)', async status => {
+    expect(await client(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: false, code: 'denied', message: 'Not permitted' }, { status }))).heartbeat('j1', 'running')).toBe(false);
+  });
+  it.each([200, 401, 403, 429, 500])('treats an unrecognized heartbeat reply (HTTP %i) as unanswered', async status => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('malformed', { status }));
+    await expect(client(fetcher).heartbeat('j1', 'running')).rejects.toThrow('Worker heartbeat failed');
+  });
+  it('retries a repository secret read only after the initial connection was refused', async () => {
+    const refused = new TypeError('fetch failed', { cause: Object.assign(new Error(), { code: 'ECONNREFUSED' }) });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(refused).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'synthetic', fetch: fetcher, signal: new AbortController().signal, pause: async () => {} });
+    expect(await control.repositoryInput!('j1', new AbortController().signal)).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fetcher.mockRejectedValueOnce(new TypeError('socket reset'));
+    await expect(control.repositoryInput!('j1', new AbortController().signal)).rejects.toThrow('Private secret input unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    fetcher.mockResolvedValueOnce(new Response('synthetic', { headers: {
+      'content-type': 'application/octet-stream', 'x-loom-secret-use': 'use-input-' + 'a'.repeat(64),
+    } })).mockRejectedValueOnce(refused);
+    await expect(control.repositoryInput!('j1', new AbortController().signal)).rejects.toThrow('Private secret input unavailable');
+    expect(fetcher.mock.calls.slice(3).map(([url]) => new URL(String(url)).pathname))
+      .toEqual(['/api/secrets/private/read', '/api/secrets/private/confirm']);
+  });
+  it('keeps every try of a finish report inside the budget the silence interval leaves, whatever the request deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
+    try {
+      const began = performance.now(), gaveUp: number[] = [];
+      // loom never answers: each request ends only when its own deadline aborts it.
+      const silent = vi.fn<typeof fetch>((_url, init) => new Promise((_, reject) => init!.signal!.addEventListener('abort', () => { gaveUp.push(performance.now() - began); reject(new Error('aborted')); })));
+      const finished = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: silent, signal: new AbortController().signal, timeoutMs: 60_000, pause: async () => {} }).finish('j1', 0, 'done', 'body');
+      const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
+      await vi.advanceTimersByTimeAsync(300_000); await refused;
+      expect(gaveUp.length).toBeGreaterThan(0);
+      expect(Math.max(...gaveUp)).toBe(60_000 + SILENCE_MS + 1000);
+    } finally { vi.useRealTimers(); }
+  });
+  it.each(['started', 'finish'] as const)('delivers %s when a 119-second outage begins during its first request', async name => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const fetcher = vi.fn<typeof fetch>(async () => {
+        if (performance.now() === 0) await new Promise(resolve => setTimeout(resolve, 15_000));
+        if (performance.now() < 124_000) throw Error('offline');
+        return response({ ok: true });
+      });
+      const control = httpWorkerControl({ url: 'https://loom.example', token: 'synthetic', signal: new AbortController().signal,
+        fetch: fetcher, pause: ms => new Promise(resolve => setTimeout(resolve, ms)) });
+      const pending = name === 'finish' ? control.finish('j1', 0, 'done', 'body') : control.started('j1', 'build'); void pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(135_000); await pending;
+      expect(new Set(fetcher.mock.calls.map(([, init]) => init?.body)).size).toBe(1);
+    } finally { vi.useRealTimers(); }
   });
   it('rejects an oversized body and cancels its stream', async () => {
     const cancel = vi.fn();
@@ -144,7 +218,7 @@ it('snapshots configured machine facts for each poll without caller-supplied mac
   const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
   const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
   facts[0] = 'changed'; await control.next(); await control.next();
-  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ execution: 'container', reviewResults:true, facts: ['gpu:5090'] }, { execution: 'container', reviewResults:true, facts: ['gpu:5090'] }]);
 });
 
 it('uses the existing bounded authenticated operation door for health without claiming work', async () => {
@@ -215,4 +289,23 @@ it('uses32randombytes per locally generated token and never reuses a constant cr
   const first = await control.enrollBody!('first', new AbortController().signal), second = await control.enrollBody!('second', new AbortController().signal);
   expect(Buffer.from(first.token).toString()).toBe('body_'+'11'.repeat(32)); expect(Buffer.from(second.token).toString()).toBe('body_'+'22'.repeat(32));
   expect(source.mock.calls.slice(before)).toEqual([[32], [32]]); first.erase?.(); second.erase?.();
+});
+
+it('sends the validated program result on the retried finish receipt', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('lost reply')).mockResolvedValueOnce(response({ ok: true }));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'fixture', signal: new AbortController().signal, fetch: fetcher, pause: async () => {} });
+  const result = { version: 1 as const, wake: false, state: { count: 1 } };
+  await control.finish('program', 0, '', 'body', result);
+  const reports = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+  expect(reports[0].input.programResult).toEqual(result);
+  expect(reports[1]).toEqual(reports[0]);
+});
+
+it('keeps its container witness when an older server refuses the claim schema', async () => {
+ const fetcher=vi.fn<typeof fetch>()
+   .mockResolvedValueOnce(new Response(JSON.stringify({ok:false,code:'invalid',message:'Input does not match operation schema'}),{status:400}))
+   .mockResolvedValueOnce(response(assignment));
+ const control=httpWorkerControl({url:'https://loom.example',token:'fixture',signal:new AbortController().signal,fetch:fetcher,programs:true});
+ expect(await control.next()).toEqual(assignment);
+ expect(fetcher.mock.calls.map(([,init])=>JSON.parse(String(init?.body)).input)).toEqual([{execution:'container',reviewResults:true,programs:true},{execution:'container',programs:true}]);
 });

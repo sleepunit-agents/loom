@@ -10,7 +10,6 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, jobs, members, memberAgents, projects, projectMembers, projectAgents, tokens, boxes, agentModels, agentBoxes, agentRunSettings, modelAccounts, modelAccountBoxes, modelAccountWindows } from '../core/data/schema.js';
 import { httpWorkerControl } from './worker-http.js';
-import { Jobs } from './jobs.js';
 import { sharedRoot } from '../shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -44,12 +43,26 @@ function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
 }
 it('mounts current jobs through the real root with canonical private-member precedence', async () => {
   const f = fixture();
-  for (const [who, ids] of [['alice', ['owned', 'private-alice']], ['bob', ['private-bob']], ['house', ['owned', 'private-alice', 'private-bob', 'private-house']], ['guest', []], ['art', ['owned']]] as const) {
+  // A member's private conversation is that member's alone: the household owner sees the job of their own
+  // private thread and not Alice's or Bob's.
+  for (const [who, ids] of [['alice', ['owned', 'private-alice']], ['bob', ['private-bob']], ['house', ['owned', 'private-house']], ['guest', []], ['art', ['owned']]] as const) {
     const response = await f.post(who); expect(response.status).toBe(200);
     const body = await response.json(); expect(body.errors).toBeUndefined(); expect(body.data.currentJobs.map((row: { id: string }) => row.id)).toEqual(ids);
     expect(JSON.stringify(body)).not.toMatch(/Never query|private repo|Housefile/);
   }
   for (const who of ['bob', 'art'] as const) expect((await (await f.post(who, f.query('mark'))).json()).data.currentJobs.map((row: {id:string}) => row.id)).toEqual(['project']);
+});
+it('mounts what an agent is doing through the real root, each viewer by the household’s own rules', async () => {
+  const f = fixture(), source = '{ agentDoing(agent:"art") { more items { id kind title with machine href } } }';
+  const ids = async (who: keyof typeof keys) => { const response = await f.post(who, source), body = await response.json(); expect(body.errors).toBeUndefined();
+    return (body.data.agentDoing.items as { id: string; kind: string; machine: string | null }[]).map(item => [item.id, item.kind, item.machine].join(' ')); };
+  f.db.update(jobs).set({ box: 'worker' }).run();
+  // The machine is the household owner's: nobody else is told its name.
+  expect(await ids('alice')).toEqual(['owned job ', 'private-alice job ']);
+  expect(await ids('house')).toEqual(['owned job Worker', 'private-house job Worker']);
+  expect(await ids('bob')).toEqual(['private-bob job ']);
+  expect(await ids('guest')).toEqual([]);
+  expect(await ids('art')).toEqual(['owned job ']);
 });
 for (const revoked of ['project', 'owned-agent', 'household-owner'] as const) it(`rechecks ${revoked} after a public await and never releases stale titles`, async () => {
   let began!: () => void, release!: () => void;
@@ -68,21 +81,29 @@ for (const revoked of ['project', 'owned-agent', 'household-owner'] as const) it
   const fresh = (await (await f.post(who, f.query(agent))).json()).data.currentJobs.map((row: { id: string }) => row.id);
   expect(fresh).toEqual(revoked === 'project' ? [] : revoked === 'owned-agent' ? ['private-alice'] : ['owned', 'private-house']);
 });
+it('reads placement on a visible job and keeps private decisions with their jobs', async () => {
+  const f = fixture(), decision = [{box: 'worker', outcome: 'taken' as const, reason: 'Preferred facts matched'}];
+  f.db.update(jobs).set({prefers: ['fast'], placementDecision: decision}).where(eq(jobs.id, 'private-bob')).run();
+  const query = '{ jobHistory(agent:"art", id:"private-bob", first:1) { id prefers placementDecision { box outcome reason } } }';
+  expect(await (await f.post('bob', query)).json()).toEqual({data: {jobHistory: [{id: 'private-bob', prefers: ['fast'], placementDecision: decision}]}});
+  expect(await (await f.post('alice', query)).json()).toEqual({data: {jobHistory: []}});
+  const older = '{ jobHistory(agent:"art", id:"owned", first:1) { id prefers placementDecision { box } } }';
+  expect(await (await f.post('alice', older)).json()).toEqual({data: {jobHistory: [{id: 'owned', prefers: null, placementDecision: null}]}});
+});
 it('offers only Home summary columns and does not accept raw execution fields', async () => {
   const f = fixture(), body = await (await f.post('house', '{ __type(name:"CurrentJobSummary") { fields { name } } }')).json();
-  expect(body.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['agent', 'box', 'id', 'queuedAt', 'state', 'title']);
+  expect(body.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['agent', 'box', 'id', 'kind', 'queuedAt', 'state', 'title']);
   const invalid = await (await f.post('house', '{ currentJobs(agent:"art") { brief logTail account build } }')).json();
   expect(invalid.errors).toHaveLength(4); expect(invalid.data).toBeUndefined();
 });
-it('updates a real live selection as jobs run, wait and finish', async () => {
+it('updates a real live selection as jobs start, run and finish', async () => {
   const f = fixture(), ws = await openSocket(f, 'alice'); let next: ReturnType<typeof once>;
   next = once(ws, 'message'); ws.send(JSON.stringify({type:'subscribe',id:'jobs',payload:{query:`subscription { observe(query:${JSON.stringify('{ currentJobs(agent:"art") { id state } }')}) { revision patches { path value removed } } }`}}));
   expect(String((await next)[0])).toContain('owned');
-  for (const state of ['starting', 'running', 'waiting', 'done'] as const) {
+  for (const state of ['starting', 'running', 'done'] as const) {
     next = once(ws, 'message');
     if (state === 'starting') expect((await f.control.next())?.id).toBe('owned');
     else if (state === 'running') await f.control.started('owned', 'image');
-    else if (state === 'waiting') f.root.writes.run(() => new Jobs(f.db, f.now).heartbeat('owned', 'worker', 'waiting'));
     else await f.control.finish('owned', 0, '');
     const patches = JSON.parse(String((await next)[0])).payload.data.observe.patches;
     if (state === 'done') expect(patches).toEqual([

@@ -1,6 +1,8 @@
 /** Account column privacy at the shared GraphQL door. No credentials are read. */
 import { GraphQLBoolean, GraphQLFloat, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, GraphQLUnionType, type GraphQLFieldConfigMap, type GraphQLOutputType } from 'graphql/index.js';
-import type { Viewer } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
+import { LOGIN_ENDING_MS, loginMachineReporting } from './account-logins.js';
+import { holds, rules, type Viewer } from '../policy.js';
 import type { DataDatabase } from '../core/data/database.js';
 import { accountCapacity } from './quota.js';
 import { allowedModelAccounts, modelAccountAuthority, readModelAccounts } from '../core/data/model-account-read.js';
@@ -9,17 +11,29 @@ const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
   resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
+const machine = new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: { id: { type: text }, name: { type: text } } });
+/** One sign-in of the account as loom last learned it (account-logins.ts). Usage is the account's, not a sign-in's. */
+const login = new GraphQLObjectType({ name: 'RuntimeAccountLogin', fields: {
+  box: { type: new GraphQLNonNull(machine) }, harness: { type: text }, place: { type: text }, state: { type: text },
+  reporting: { type: GraphQLBoolean }, needsSignIn: { type: GraphQLBoolean }, canRequest: { type: GraphQLBoolean },
+  expiresAt: { type: GraphQLString }, checkedAt: { type: text }, since: { type: text }, learnedFrom: { type: text }, why: { type: GraphQLString },
+} });
+const windowReading = new GraphQLObjectType({ name: 'RuntimeAccountWindow', fields: {
+  window: { type: text }, usage: { type: GraphQLFloat }, usageReadAt: { type: GraphQLString },
+  resetsAt: { type: GraphQLString }, reserve: { type: GraphQLFloat },
+} });
 const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces: [account], fields: {
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
   hasRoom: column('hasRoom', new GraphQLNonNull(GraphQLBoolean)),
-  signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(new GraphQLObjectType({ name: 'RuntimeAccountBox', fields: {
-    id: { type: text }, name: { type: text },
-  } }))))),
+  pendingSignIns: column('pendingSignIns',new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
+  signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
+  windows: column('windows', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(windowReading)))),
+  logins: column('logins', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(login)))),
 } });
 // The union registers both concrete types with the generated schema. Their
 // shared interface lets clients select label/level with one common fragment.
@@ -36,6 +50,7 @@ export function modelAccountQueries(db: DataDatabase, now: () => string) {
       // Public order must not expose the ordering of hidden account identifiers.
       const selected = readModelAccounts(db, viewer);
       const current = modelAccountAuthority(db, viewer);
+      let sharing: ReturnType<typeof sharedSharing> | undefined;
       return selected.rows.map(row => {
         let capacity;
         try { capacity = accountCapacity(row.modelAccountWindowsByAccount.map(window => ({ name: window.window, usage: window.usage, readAt: window.usageReadAt, resetsAt: window.resetsAt, durationMs: window.durationMs, reserve: window.reserve })), at); }
@@ -44,7 +59,14 @@ export function modelAccountQueries(db: DataDatabase, now: () => string) {
         const publicFields = { label: row.label, level: capacity.hasRoom ? capacity.level : 'almost full' };
         const privateRow = selected.privateRows.get(row.id);
         if (!privateRow) return { __typename: summary.name, ...publicFields };
-        const values = { ...privateRow, hasRoom: capacity.hasRoom };
+        const nowMs=Date.parse(at);
+        const logins=privateRow.logins.map(login=>{
+          const reporting=!login.box.revokedAt&&loginMachineReporting(login.box.lastSeenAt,nowMs);
+          const needsSignIn=reporting&&(login.state==='signed-out'||login.expiresAt!==null&&Date.parse(login.expiresAt)-nowMs<=LOGIN_ENDING_MS);
+          const canRequest=needsSignIn&&viewer.kind==='member'&&holds(rules.asksSignIn,viewer,{accountOwner:privateRow.owner,boxOwner:login.box.owner},sharing??=sharedSharing(db));
+          return {...login,reporting,needsSignIn,canRequest};
+        });
+        const values = { ...privateRow, logins, hasRoom: capacity.hasRoom, windows: row.modelAccountWindowsByAccount };
         return { __typename: detail.name, ...publicFields, read(name: PrivateColumn, actor: Viewer) {
           if (actor !== viewer) throw new Error('Account access ended');
           // Public-only selections never acquire a private witness. Record an

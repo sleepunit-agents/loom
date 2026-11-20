@@ -29,7 +29,10 @@ it('filters every generated history root and nested child by current ordered con
  const http=async(query:string)=>{const r=await data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query})});expect(r.status).toBe(200);const result=await r.json() as {data:Record<string,unknown>;errors?:unknown[]};expect(result.errors).toBeUndefined();return result.data;};
  const read=(schema:GraphQLSchema,query:string)=>graphql({schema,source:query});
  const roots='{conversations{label conversationPeopleByConversation{who} turnsByConversation{seq} digestsByConversation{summary digestItemsByDigest{text}} findingsByConversation{text}} conversationPeople{who} turns{seq} digests{summary} digestItems{text} findings{text conversationRow{label}}}';
- const owner=await read(retained,roots);expect(owner.errors).toBeUndefined();expect(JSON.stringify(owner.data)).toContain('private');
+ const owner=await read(retained,roots);expect(owner.errors).toBeUndefined();
+ // A household owner reads the household's conversations, never another member's private one; its member does.
+ expect(JSON.stringify(owner.data)).not.toContain('private');expect(JSON.stringify(owner.data)).toContain('ordinary');expect(JSON.stringify((await read(schema('alice'),roots)).data)).toContain('private');
+
  expect(await http(roots)).toEqual(owner.data);viewer='bob';
  const bob=await read(retainedBob,roots);expect(bob.errors).toBeUndefined();expect(JSON.stringify(bob.data)).not.toContain('private');expect(bob.data?.turns).toHaveLength(1);expect(bob.data?.conversationPeople).toHaveLength(1);expect(bob.data?.digestItems).toEqual([{text:'ordinary'}]);expect(bob.data?.findings).toEqual([{text:'ordinary',conversationRow:{label:'ordinary'}}]);expect(await http(roots)).toEqual(bob.data);
  db.update(s.members).set({role:'member'}).where(eq(s.members.id,'owner')).run();expect((await read(retained,roots)).data).toEqual({conversations:[],conversationPeople:[],turns:[],digests:[],digestItems:[],findings:[]});

@@ -4,10 +4,11 @@ import { act, create } from '../../web/node_modules/react-test-renderer/index.js
 import type { CallState, Snapshot } from '../../web/src/data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,access:{records:[{id:'knowledge',allowed:true,canVerify:true,canRecheck:true}],status:'live'} as Snapshot,call:vi.fn()}));
 vi.mock('../../web/src/memory/commands',()=>({memoryCall:f.call}));
-vi.mock('../../web/src/memory/query',()=>({useMemoryQuery:(s:any)=>s?.query.includes('MemoryKnowledgeAccess')?{status:f.access.status,value:f.access.records[0]}:s?.query.includes('query MemoryKnowledge {')?{status:f.feed.status,value:{pages:f.feed.records}}:{status:f.detail.status,value:f.detail.records[0]??null}}));
+vi.mock('../../web/src/memory/query',()=>({useMemoryQuery:(s:any)=>s?.query.includes('MemoryKnowledgeAccess')?{status:f.access.status,value:f.access.records[0]}:s?.query.includes('query MemoryKnowledge {')?{status:f.feed.status,value:{pages:f.feed.records,timezone:'America/Chicago'}}:{status:f.detail.status,value:f.detail.records[0]??null}}));
 vi.mock('../../web/src/kit',()=>({
+  Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:'section',Facts:'dl',Fact:'dd',
   Markdown:(p:{text:string})=>h('div',null,p.text),
-  Split:(p:{list:unknown;reader:unknown;listTop:unknown})=>h('div',null,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),
+  Split:(p:{list:unknown;reader:unknown;listAction:unknown})=>h('div',null,p.listAction,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;meta?:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title,p.meta),
   Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',
 }));
 import Knowledge from '../../web/src/pieces/knowledge/index';
@@ -66,4 +67,13 @@ it('keeps an uncertain Add request frozen until an explicit same-request retry',
  expect(tree!.root.findByType('fieldset').props.disabled).toBe(true);await act(async()=>submit());expect(f.call).toHaveBeenCalledTimes(1);
  await act(async()=>tree!.root.findAllByType('button').find(b=>b.props.children==='Retry this save')!.props.onClick());expect(retry).toHaveBeenCalledTimes(1);
  state={pending:false,status:'done',result:{ok:true,value:{slug:'fact'}}};await act(async()=>listener());await act(async()=>submit());expect(f.call).toHaveBeenCalledTimes(1);
+});
+
+it('uses the household day in both the list and the open page at midnight UTC',async()=>{
+  const entry={...page,verified_at:page.updated,checked:{outcome:'stale',at:page.updated}};
+  f.feed={records:[entry],status:'live'};
+  f.detail={records:[entry],status:'live'};
+  await act(async()=>{tree=create(h(Knowledge,props));});
+  expect(text().match(/verified Nov 11/g)).toHaveLength(2);
+  expect(text()).toContain('Asked to be checked again Nov 11');
 });

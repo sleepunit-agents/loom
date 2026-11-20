@@ -184,5 +184,5 @@ describe('remember() dedup under concurrency (PR120 review)', () => {
       .all() as { content: string; times_seen: number }[];
     expect(rows.map((r) => r.content)).toEqual(['alpha 0', 'alpha 1', 'alpha 2']);
     expect(rows.reduce((sum, r) => sum + r.times_seen, 0)).toBe(PROCS * PER_PROC);
-  }, 60_000);
+  });
 });

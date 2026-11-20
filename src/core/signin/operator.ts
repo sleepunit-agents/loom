@@ -1,18 +1,18 @@
 /** Local OS-owner capability: one bounded link request per connection, no database client. */
+import { LOGIN_PATH } from '../sha256-hex.js';
 import { createServer, createConnection, type Socket } from 'node:net';
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { userInfo } from 'node:os';
 import { z } from 'zod';
-import type { Foundation } from '../app.js';
-import { signin, hash } from './index.js';
-import { HouseholdRows } from '../household/rows.js';
-import { publishBootstrapContext } from '../household/bootstrap.js';
-import { HouseholdDatabase } from '../household/document.js';
 import { assertHomeReady } from '../home-state.js';
+import { LINK_MS } from './link-lifetime.js';
+/** `member` may be left out: the issuer then signs in a current household owner (src/shared-startup.ts).
+ * `ttl` is in seconds, at most a link's own lifetime. `agent` says the link is for an automated browser,
+ * which gets the short session and may not make links or add passkeys, whatever it calls itself. */
 export const operatorRequest = z.strictObject({
-  request: z.literal('link'), member: z.string().min(1).max(200),
-  label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(900).default(300),
+  request: z.literal('link'), member: z.string().min(1).max(200).optional(),
+  label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(LINK_MS / 1000).default(LINK_MS / 1000),
+  agent: z.boolean().default(false),
 });
 const LIMIT = 4096;
 function owned(path: string, mode: number | undefined, directory: boolean) {
@@ -28,11 +28,8 @@ export function prepareOperatorHome(home: string) {
   chmodSync(home, 0o700); checkOperatorHome(home);
 }
 function checkSocket(home: string) { checkOperatorHome(home); owned(join(home, 'operator.sock'), 0o600, false); }
-/** The home lifetime lock has already excluded any other daemon before stale cleanup. */
-export async function listenOperator(app: Foundation, home: string, url: string) {
-  return listenOperatorLinks(home, url, input => localLink(app, input));
-}
-/** The OS-owned transport is shared by both compositions; the issuer owns data. */
+/** The OS-owned transport; the issuer owns data. The home lifetime lock has already excluded any other
+ * program on this home, so a socket left at the path is stale and is removed. */
 export async function listenOperatorLinks(home: string, url: string, issue: (input: z.infer<typeof operatorRequest>) => string) {
   const dir = resolve(home), path = join(dir, 'operator.sock');
   checkOperatorHome(dir);
@@ -69,16 +66,6 @@ export async function listenOperatorLinks(home: string, url: string, issue: (inp
   } catch (e) { await close(); throw e; }
   return { close };
 }
-function localLink(app: Foundation, input: z.infer<typeof operatorRequest>) {
-  const s = signin(app), os = userInfo();
-  return app.db.transaction(() => {
-    const path = s.link(input.member, input.label, false, undefined, input.ttl);
-    const link = s.sessions.get('links', hash(path.slice('/login/'.length)))!;
-    app.db.prepare('INSERT INTO signin_audit (at, os_uid, os_user, member, label, expires) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(s.now(), os.uid, os.username, input.member, link.label ?? '', link.expires);
-    return path;
-  }).immediate();
-}
 /** No retry: an interrupted response may already have made a link. */
 export async function requestLocalLink(home: string, input: unknown): Promise<{ path: string; url: string }> {
   const dir = resolve(home); checkSocket(dir);
@@ -97,35 +84,9 @@ export async function requestLocalLink(home: string, input: unknown): Promise<{ 
       if (!data.includes(10)) return;
       try {
         const answer = JSON.parse(data.toString('utf8'));
-        if (!answer.ok || typeof answer.path !== 'string' || !/^\/login\/[0-9a-f]{64}$/.test(answer.path) || typeof answer.url !== 'string') throw new Error();
+        if (!answer.ok || typeof answer.path !== 'string' || !LOGIN_PATH.test(answer.path) || typeof answer.url !== 'string') throw new Error();
         finished = true; socket.destroy(); ok({ path: answer.path, url: answer.url });
       } catch { fail(); }
     });
   });
-}
-/** Persist the print marker with the link, so restarts never print a second bootstrap credential. */
-export function firstSignin(app: Foundation, home: string, url: string, stdout: (text: string) => void) {
-  const settings = new HouseholdRows<boolean>(app.db, 'settings'), s = signin(app);
-  const path = app.db.transaction(() => {
-    if (!s.household()) {
-      const username = userInfo().username;
-      const member = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(username) ? username : 'owner';
-      // An initial registry entry must have a complete portable context. Use the
-      // same exclusive publication/recovery protocol as Setup before committing
-      // any household or credential. Defaults contain no chosen personality.
-      const input = { agent: 'assistant', name: 'Assistant', purpose: 'Help with the work you are given.', voice: 'Use clear, direct language.', rules: '', ask: '' };
-      publishBootstrapContext(home, input, member, {
-        viewer: `local-os-owner:${userInfo().uid}`, id: 'household-first-start-v1', inputHash: hash(JSON.stringify(input)),
-      }, { requireCompleteRecovery: true });
-      new HouseholdDatabase(app.db).replace(home, { v: 1, agents: ['assistant'], owner: member, members: [{ person: member, role: 'owner', agents: '*' }] });
-    }
-    if (!s.tokens.document()) s.tokens.replace({ v: 1, tokens: [] }, {});
-    if (settings.get('signin-first-link-printed')) return;
-    if (Object.keys(s.sessions.read().sessions).length) { settings.put('signin-first-link-printed', true); return; }
-    const member = s.household()!.members.find(m => m.agents === '*')!.person;
-    const path = localLink(app, { request: 'link', member, label: 'First sign-in', ttl: 300 });
-    settings.put('signin-first-link-printed', true);
-    return path;
-  }).immediate();
-  if (path) stdout(new URL(path, url).href + '\n');
 }

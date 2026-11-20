@@ -3,11 +3,13 @@ import {isPrivateInboxQuestion} from './private-inbox-words.js';
 /** Shared-schema mutation adapters. Composition supplies CURRENT authorization;
  * these adapters do not grant access, load keys or expose a private read door. */
 import { z } from 'zod';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, sql } from 'drizzle-orm';
 import { Operations, OperationError, operation, type Context } from '../operations/index.js';
-import type { Viewer } from '../../policy.js';
-import { actionResults, deletedThreads, threads, type conversations, type inbox } from '../data/schema.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlRule } from '../../policy-sql.js';
+import { actionResults, deletedThreads, inbox, threads, type conversations } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
+import { MESSAGE_WORDS_MAX } from './words.js';
 
 type Conversation = typeof conversations.$inferSelect;
 type Thread = typeof threads.$inferSelect;
@@ -26,7 +28,7 @@ export interface ConversationOperationOptions {
 
 const target = z.object({ thread: z.string().min(1) }).strict();
 const acknowledgement = z.object({ saved: z.literal(true) }).strict();
-const answerInput = z.object({ item: z.string().min(1), answer: z.enum(['yes', 'no', 'words', 'replied', 'done', 'dismiss']), words: z.string().max(100_000).optional() }).strict();
+const answerInput = z.object({ item: z.string().min(1), answer: z.enum(inbox.answer.enumValues), words: z.string().max(MESSAGE_WORDS_MAX).optional() }).strict();
 const changeInput = z.discriminatedUnion('change', [
   target.extend({ change: z.literal('rename'), title: threadTitle }),
   target.extend({ change: z.literal('pin'), pinned: z.boolean() }),
@@ -69,7 +71,9 @@ export function registerConversationOperations(operations: Operations, service: 
     ctx.changed('conversations', service.threads.thread(thread).conversation);
   };
   const common = {
-    doors: ['socket', 'http'] as ['socket', 'http'], windowOnly: true, write: true, recheckPolicy: true,
+    refuses: true,
+    // A member's own token may do these as well as a signed-in window: answering and sending are not browser-only.
+    doors: ['http'] as ['http'], write: true, recheckPolicy: true,
     inputHash: (value: string) => service.key.hash(`conversation-operation\0${value}`),
   };
 
@@ -85,7 +89,7 @@ export function registerConversationOperations(operations: Operations, service: 
   }));
 
   operations.register(operation({ ...common, name: 'comms.send',
-    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().min(1).max(100_000) }),
+    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().min(1).max(MESSAGE_WORDS_MAX) }),
     output: z.object({ thread: z.string(), seq: z.number().int(), item: z.string() }).strict(),
     may: (v, i) => threadAccess(v, i.thread),
     prepare: (i, ctx) => service.prepareSend({ thread: i.thread, clientId: i.clientId, words: i.words, sender: member(ctx.viewer), kind: 'message' }),
@@ -139,8 +143,8 @@ export function registerConversationOperations(operations: Operations, service: 
   }));
   operations.register(operation({ ...common, name: 'inbox.dismissResult',
     input: z.object({ id: z.string().min(1) }).strict(), output: acknowledgement,
-    may: (viewer, input) => viewer.kind === 'member' && !!service.db.select({ id: actionResults.id }).from(actionResults)
-      .where(and(eq(actionResults.id, input.id), eq(actionResults.member, viewer.id))).get(),
+    may: (viewer, input) => !!service.db.select({ id: actionResults.id }).from(actionResults)
+      .where(and(eq(actionResults.id, input.id), sqlRule(rules.ownNotice, viewer, getTableColumns(actionResults)))).get(),
     run(ctx, input) {
       service.db.update(actionResults).set({ readAt: sql`coalesce(${actionResults.readAt}, ${new Date(ctx.now).toISOString()})` })
         .where(and(eq(actionResults.id, input.id), eq(actionResults.member, member(ctx.viewer)))).run();

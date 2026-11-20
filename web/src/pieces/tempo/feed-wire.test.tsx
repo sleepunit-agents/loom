@@ -8,12 +8,13 @@ vi.mock('graphql-ws', () => ({ createClient: (options: {on: {closed: (event: {co
 } }));
 vi.mock('./index', () => ({ default: (props: unknown) => h('tempo', props), TempoCard: (props: unknown) => h('card', props) }));
 import { TempoApp, tempoQuery } from './feed';
+import { liveAgentsQuery } from '../../data/live-agents';
 import { useDataQuery } from '../../data/graphql';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 it('shares the window connection with another app and clears both readers on access loss', async () => {
   vi.stubGlobal('location', {protocol: 'https:', host: 'loom.test'});
   const sinks = new Map<string, {next(value: unknown): void}>();
-  wire.subscribe.mockImplementation((request, sink) => { sinks.set(request.variables.query.includes('query Tempo') ? tempoQuery : 'other', sink); return () => {}; });
+  wire.subscribe.mockImplementation((request, sink) => { sinks.set(request.variables.query.includes('query Tempo') ? tempoQuery : request.variables.query.includes('query LiveAgents') ? liveAgentsQuery : 'other', sink); return () => {}; });
   const other = 'query OtherApp { agents { id } }';
   function OtherApp() { const feed = useDataQuery(other); return h('other-app', {status: feed.status, data: feed.data}); }
   let tree: ReturnType<typeof create> | undefined;
@@ -21,12 +22,14 @@ it('shares the window connection with another app and clears both readers on acc
     await act(async () => { tree = create(h('div', null, h(TempoApp, {timezone: 'UTC'}), h(OtherApp))); });
     await act(async () => { await vi.dynamicImportSettled(); });
     expect(wire.create).toHaveBeenCalledOnce();
-    expect(sinks.size).toBe(2);
+    expect(sinks.size).toBe(3);
     const push = (query: string, value: unknown) => sinks.get(query)!.next({data: {observe: {revision: 1, patches: [{path: [], removed: false, value}]}}});
     await act(async () => {
       push(tempoQuery, {__typename: 'Query', tempoTimezone: 'UTC', triggers: [], triggerLog: [{__typename: 'TriggerLogSelectItem', seq: 1, trigger: 't', event: 'set', at: '2026-11-14T00:00:00Z', note: 'Private'}], agentPauses: []});
+      push(liveAgentsQuery, {__typename: 'Query', agents: [{__typename: 'AgentsSelectItem', id: 'art', removedAt: null}, {__typename: 'AgentsSelectItem', id: 'mark', removedAt: '2026-11-14'}]});
       push('other', {__typename: 'Query', agents: [{__typename: 'AgentsSelectItem', id: 'art'}]});
     });
+    expect([...tree!.root.findByType('tempo').props.inUse]).toEqual(['art']);
     expect(tree!.root.findByType('tempo').props.snapshot.events).toHaveLength(1);
     expect(tree!.root.findByType('other-app').props.data).toEqual({agents: [{id: 'art'}]});
     await act(async () => wire.close!({code: 4403}));

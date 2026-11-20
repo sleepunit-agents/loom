@@ -1,8 +1,13 @@
-/** Current consent for public agent-to-agent work, at enqueue and release. */
-import {and,eq,inArray} from 'drizzle-orm';
+/** Current consent for agent-to-agent work, at enqueue and release. The rule is the household's
+ * (policy.ts, mayHandOff), read on current household facts: a removed member or agent consents to nothing. */
 import type {DataDatabase} from '../data/database.js';
-import {memberAgents,projectAgents} from '../data/schema.js';
+import {mayHandOff} from '../../policy.js';
+import {sharedSharing} from '../../shared-sharing.js';
+/** Open work, with no member's private thread around it: the two agents must be peers now. */
 export function handoffPeersAssigned(db:DataDatabase,from:string,to:string,project:string|null):boolean {
- if(project!==null)return [from,to].every(agent=>!!db.select().from(projectAgents).where(and(eq(projectAgents.project,project),eq(projectAgents.agent,agent))).get());
- return !!db.select().from(memberAgents).where(and(eq(memberAgents.agent,to),inArray(memberAgents.member,db.select({member:memberAgents.member}).from(memberAgents).where(eq(memberAgents.agent,from))))).get();
+ return mayHandOff(from,to,project,sharedSharing(db));
+}
+/** Is this an agent of the household now, and so somebody work can be handed to at all? */
+export function handoffTarget(db:DataDatabase,agent:string):boolean {
+ return !!sharedSharing(db).agents?.includes(agent);
 }

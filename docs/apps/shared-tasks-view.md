@@ -28,7 +28,9 @@ the selected action and row, using the same snapshot status. Supply authorized
 people, projects and task choices, the current conversation ID if creating from
 a thread, and `submit(command): Promise<void>`, `done()` and `cancel()`. There is
 no actor field: the authenticated adapter supplies it. Commands map to the
-trusted TaskService methods (`edit` also handles Priority and Project); link
+trusted TaskService methods (`edit` also handles Priority and Project; a change
+of Project is the same move as the `moveToProject` command makes for several
+tasks at once, which this form does not offer); link
 commands retain the explicit relationship type and direction. Changing a parent
 uses removal followed by adding the new relation, respecting the service's
 single-parent constraint. Creation defaults to household ownership and P2.

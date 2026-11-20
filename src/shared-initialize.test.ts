@@ -18,6 +18,8 @@ import {initializeSharedHome} from './shared-initialize.js';
 import {startSharedHome} from './shared-startup.js';
 import {startSharedHolder} from './shared-holder-process.js';
 import {inProcessSharedHolder} from '../test/fixtures/shared-holder.js';
+// The household's first owner: who it is is in the household database, not in program.json.
+const ownerOf=(database:string)=>{const db=new Database(database,{readonly:true});try{return (db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;}finally{db.close();}};
 const sqlite=vi.hoisted(()=>({opened:[]as Array<{name:string;open:boolean}>}));
 vi.mock('better-sqlite3',async original=>{const real=await original<{default:typeof import('better-sqlite3')}>();return {...real,default:new Proxy(real.default,{construct(target,args,newTarget){const db=Reflect.construct(target,args,newTarget);sqlite.opened.push(db);return db;}})};});
 vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:vi.fn((await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder)}));
@@ -29,10 +31,11 @@ afterEach(async()=>{vi.restoreAllMocks();const real=await vi.importActual<typeof
 function fixture(){const root=mkdtempSync(join(tmpdir(),'empty-shared-')),home=join(root,'home');mkdirSync(home);clean.push(()=>rmSync(root,{recursive:true,force:true}));return home;}
 it('first install publishes a private prepared inventory and the ordinary startup link admits HTTP and GraphQL',async()=>{
  const home=fixture(),webRoot=fixture(),clock=new FakeClock();writeFileSync(join(webRoot,'next.html'),'Shared app');let link='';
- const app=await startSharedHome({home,webRoot,port:0,clock,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  const program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  for(const name of ['program.json','comms.key','loom.db'])expect(statSync(join(home,name)).mode&0o777).toBe(0o600);
- expect(program.memory.sources.agents[0].agent).toBe('assistant');
+ // Where things are, and nobody's name: the first owner and agent are rows in the database below.
+ expect(program).not.toHaveProperty('signinMember');expect(program.memory.sources).not.toHaveProperty('agents');
  const audit=new Database(program.database,{readonly:true});try{expect(audit.prepare('SELECT count(*) AS n FROM members').get()).toEqual({n:1});expect(audit.prepare('SELECT count(*) AS n FROM agents').get()).toEqual({n:1});}finally{audit.close();}
  const response=await fetch(link,{method:'POST',redirect:'manual'});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
  const secretValue='fictional-normal-startup-value-172';
@@ -115,12 +118,12 @@ it('keeps Root admission closed and home owned while the original holder is drai
  const unlock=await ownHome(home);await unlock();
 });
 
-async function receiveGrantedValue(app:Awaited<ReturnType<typeof startSharedHome>>,program:{database:string;signinMember:string},clock:FakeClock,cookie:string,secretValue:string){
+async function receiveGrantedValue(app:Awaited<ReturnType<typeof startSharedHome>>,program:{database:string},clock:FakeClock,cookie:string,secretValue:string){
  // Seed only fictional worker identity; the real Root issues the body proof,
  // then the actual Owner command answers its request and the SDK takes bytes.
  const fixtureDb=new Database(program.database),db=schema.dataDatabase(fixtureDb),at=new Date(clock.now()).toISOString(),runner=randomBytes(32).toString('hex'),body='body_'+randomBytes(32).toString('hex'),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  try{
-  db.insert(rows.boxes).values({id:'worker',name:'Worker',owner:program.signinMember,sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+  db.insert(rows.boxes).values({id:'worker',name:'Worker',owner:ownerOf(program.database),sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
   db.insert(rows.jobs).values({id:'secret-job',box:'worker',agent:'assistant',state:'starting',title:'Private input',brief:'',model:'fiction',startedByKind:'agent',startedBy:'assistant',houseRepository:'',houseFile:'',houseBranch:'next',queuedAt:at}).run();
   db.insert(rows.tokens).values({fingerprint:hash(runner),label:'Fixture worker',kind:'runner',box:'worker',createdAt:at}).run();
  }finally{fixtureDb.close();}
@@ -140,7 +143,7 @@ it.each([false,true])('keeps explicit adapter Secret ports and refuses a competi
  globals[Symbol.for(key)]=()=>({secretWrites:{holder:selected.holder,fingerprintKey:selected.fingerprintKey},secretInputs:{source:selected.source},close:()=>selected.close()});
  clean.push(()=>{delete globals[Symbol.for(key)];});program.adapters=join(home,'adapters.mjs');writeFileSync(program.adapters,`export default globalThis[Symbol.for(${JSON.stringify(key)})];`,{mode:0o600});writeFileSync(file,JSON.stringify(program),{mode:0o600});
  if(competing){await expect(startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}})).rejects.toThrow('ports already configured');expect(selected.fingerprintKey.every(byte=>byte===0)).toBe(true);return;}
- let link='';const app=await startSharedHome({home,webRoot,port:0,clock,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());const admitted=await fetch(link,{method:'POST',redirect:'manual'}),cookie=admitted.headers.get('set-cookie')!.split(';')[0];
+ let link='';const app=await startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());const admitted=await fetch(link,{method:'POST',redirect:'manual'}),cookie=admitted.headers.get('set-cookie')!.split(';')[0];
  const value='fictional-explicit-adapter-value';const saved=await fetch(app.url+'/api/secrets/set',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:randomUUID(),name:'EXAMPLE',mode:'add',value}})});expect(saved.status).toBe(200);await receiveGrantedValue(app,program,clock,cookie,value);
  await app.close();expect(selected.fingerprintKey.every(byte=>byte===0)).toBe(true);
 });

@@ -69,11 +69,10 @@ it('reports notification failures while preserving committed success and safe re
   expect(s.run).toHaveBeenCalledOnce();
 });
 
-it('keeps refusal of unrelated outer transactions and rejects a shared boundary without shared receipts', () => {
+it('keeps refusal of unrelated outer transactions', () => {
   const s = fixture();
   expect(s.client.transaction(() => s.call())()).toMatchObject({ code: 'unavailable' });
   expect(s.run).not.toHaveBeenCalled();
-  expect(() => new Operations(s.client, s.clock, () => {}, { writes: s.writes })).toThrow('Shared writes require shared receipts');
 });
 
 it('requires a reporter for shared writes and reports committed callback failures without retrying', () => {
@@ -84,4 +83,36 @@ it('requires a reporter for shared writes and reports committed callback failure
   expect(s.reportError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'committed publication failed' }));
   expect(s.call()).toEqual({ ok: true, value: 't-1' });
   expect(s.run).toHaveBeenCalledOnce();
+});
+
+it('wakes nobody at once for a write that says it moved only a stamp, and does not believe one that also announces a change', () => {
+  const client = new Database(':memory:'), clock = new FakeClock();
+  const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
+  db.insert(members).values({ id: 'sam', role: 'member', joinedAt: new Date(clock.now()).toISOString() }).run();
+  const told: string[] = [], committed = vi.fn();
+  const writes = new DataWrites(db, { refreshAccess() { told.push('access'); }, changed() { told.push('data'); }, stamped() { expect(client.inTransaction).toBe(false); told.push('stamp'); } });
+  const operations = new Operations(client, clock, committed, { receipts: new OperationResults(db), writes, reportError: vi.fn() });
+  closes.push(() => client.close(), () => operations.close());
+  const input = z.object({ announce: z.boolean().optional(), nested: z.boolean().optional(), fail: z.boolean().optional() });
+  operations.register({ name: 'boxes.seen', input, output: z.null(), write: true, may: () => true, run(ctx, asked) {
+    ctx.stampOnly?.();
+    if (asked.announce) ctx.changed('box', 'one');
+    if (asked.nested) operations.call('direct', ctx.viewer, 'boxes.renamed', {}, `inner-${ctx.receipt!.id}`);
+    if (asked.fail) throw new Error('storage');
+    return null;
+  } });
+  operations.register({ name: 'boxes.renamed', input: z.object({}), output: z.null(), write: true, may: () => true, run: () => null });
+  const call = (id: string, asked: z.infer<typeof input> = {}) => operations.call('http', { kind: 'member', id: 'sam' }, 'boxes.seen', asked, id);
+  expect(call('one')).toEqual({ ok: true, value: null });
+  expect(told).toEqual(['stamp']); expect(committed).not.toHaveBeenCalled();
+  // A retry is answered from its receipt and writes nothing: nobody is told.
+  expect(call('one')).toEqual({ ok: true, value: null });
+  expect(told).toEqual(['stamp']);
+  expect(call('two', { announce: true })).toEqual({ ok: true, value: null });
+  expect(told).toEqual(['stamp', 'access', 'data']); expect(committed).toHaveBeenCalledOnce();
+  // An operation run inside it that did not say so makes the whole commit an ordinary one.
+  expect(call('three', { nested: true })).toEqual({ ok: true, value: null });
+  expect(told).toEqual(['stamp', 'access', 'data', 'access', 'data']);
+  expect(call('four', { fail: true })).toMatchObject({ ok: false });
+  expect(told).toHaveLength(5);
 });
