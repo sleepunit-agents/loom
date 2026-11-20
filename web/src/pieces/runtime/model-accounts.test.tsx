@@ -75,3 +75,17 @@ it('shows each provider window and sign-in only while detail remains visible',as
  expect(tree.root.findAllByType('meter')).toHaveLength(0);
  expect(JSON.stringify(tree.toJSON())).not.toContain('Workshop');
 });
+
+it('marks an open usage reading stale after one hour and clears the warning on refresh',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-15T12:59:59Z'));
+ try{
+  f.snapshot={status:'live',data:{modelAccounts:[detail]}};
+  await act(async()=>{tree=create(h(RuntimeAccounts));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Stale reading');
+  await act(async()=>{vi.advanceTimersByTime(1002);});
+  expect(JSON.stringify(tree.toJSON())).toContain('Stale reading');
+  f.snapshot={status:'live',data:{modelAccounts:[{...detail,usageReadAt:new Date().toISOString()}]}};
+  await act(async()=>tree.update(h(RuntimeAccounts)));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Stale reading');
+ }finally{vi.useRealTimers();}
+});

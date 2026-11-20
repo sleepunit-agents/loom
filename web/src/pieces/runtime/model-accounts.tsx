@@ -1,5 +1,6 @@
 import {memberOperation} from '../../data/operation';
 import {useState} from 'react';
+import {useDeadline} from '../comms/use-deadline';
 import {fullTime} from '../../kit/time';
 import {useDataQuery} from '../../data/graphql';
 import {liveAgents} from '../../data/live-agents';
@@ -27,6 +28,13 @@ function SignInButton({account,box}:{account:string;box:string}){
   {state==='sent'&&<p role="status">Sign-in requested. The subscription owner will receive the provider’s instructions in Inbox.</p>}
   {state==='failed'&&<p role="status">Could not confirm the request. Check Inbox or retry.</p>}</div>;
 }
+function UsageReadTime({at,zone}:{at:string|null;zone?:string}){
+ const read=Date.parse(at??'');
+ const deadline=Number.isFinite(read)?new Date(read+3_600_001).toISOString():null;
+ const now=useDeadline([deadline]);
+ if(!deadline)return <>Not available</>;
+ return <>{time(at,zone)}{now-read>3_600_000&&' · Stale reading (over an hour old)'}</>;
+}
 function AccountDetails({account,zone,active}:{account:Detail;zone?:string;active:boolean}){
  return <div className="grid gap-4">
   <p>Owner: {account.owner} · Provider: {account.provider}</p>
@@ -34,10 +42,10 @@ function AccountDetails({account,zone,active}:{account:Detail;zone?:string;activ
    {account.windows?.length?account.windows.map(w=><div key={w.window} className="grid gap-1">
     <strong>{windowName(w.window)}</strong>
     {w.usage===null?<p>Not read yet</p>:<p><meter aria-label={windowName(w.window)} min={0} max={1} value={w.usage}/> {percent(w.usage)}</p>}
-    {w.usageReadAt&&<p>Read {time(w.usageReadAt,zone)}</p>}{w.resetsAt&&<p>Resets {time(w.resetsAt,zone)}</p>}
+    {w.usageReadAt&&<p>Read <UsageReadTime at={w.usageReadAt} zone={zone}/></p>}{w.resetsAt&&<p>Resets {time(w.resetsAt,zone)}</p>}
     {w.reserve!==null&&<p>Reserve {percent(w.reserve)}</p>}
    </div>):<dl><dt>Usage</dt><dd>{account.usage===null?'Not read yet':percent(account.usage)}</dd>
-    <dt>Read</dt><dd>{time(account.usageReadAt,zone)}</dd><dt>Resets</dt><dd>{time(account.resetsAt,zone)}</dd></dl>}
+    <dt>Read</dt><dd><UsageReadTime at={account.usageReadAt} zone={zone}/></dd><dt>Resets</dt><dd>{time(account.resetsAt,zone)}</dd></dl>}
    <p>Has room: {account.hasRoom?'Yes':'No'}</p>
   </section>
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
