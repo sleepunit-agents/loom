@@ -40,12 +40,17 @@ const probe = `
     console.log(shell,flags,found,version);
   }
   // The offline image has no household credential. A job-local listener serves fixture notes.
-  const notes=new Map();
+  const notes=new Map(),attachments=new Map();
   const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
     token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
       let value;
-      if(name==='loom_command'&&args.operation==='memory.noteFile'){
-        const bytes=Buffer.from([0,128,255]);
+      if(name==='loom_command'&&args.operation==='memory.noteAttach'){
+        const bytes=readFileSync(args.input.source);
+        const sha256=createHash('sha256').update(bytes).digest('hex');
+        attachments.set(args.input.path,bytes);
+        value={ok:true,value:{name:args.input.name,sha256,bytes:bytes.length,added:'2026-01-01'}};
+      }else if(name==='loom_command'&&args.operation==='memory.noteFile'){
+        const bytes=attachments.get(args.input.path);
         assert.ok(notes.has(args.input.path));assert.equal(args.input.name,'sample.bin');
         value={ok:true,value:{contents:bytes.toString('base64'),sha256:createHash('sha256').update(bytes).digest('hex')}};
       }else if(name==='loom_command'&&args.operation==='memory.noteDelete'){
@@ -69,14 +74,15 @@ const probe = `
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
+      assert.ok(JSON.parse(await run('loom note attach '+path+' /opt/loom/package.json --name sample.bin --json')).bytes>0);
       const binary=await promisify(execFile)(shell,[flags,'loom note file '+path+' sample.bin'],{encoding:'buffer',env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}});
-      assert.deepEqual(binary.stdout,Buffer.from([0,128,255]));
+      assert.deepEqual(binary.stdout,readFileSync('/opt/loom/package.json'));
       for(const command of ['pin','unpin']){
         const changed=JSON.parse(await run('loom note '+command+' '+path+' --json'));
         assert.equal(changed.pinned,command==='pin');
       }
       assert.ok(JSON.parse(await run('loom note delete '+path+' --json')).deleted);
-      console.log(shell,flags,'note write/read/list/pin/unpin/delete passed');
+      console.log(shell,flags,'note write/read/list/attach/file/pin/unpin/delete passed');
     }
   }finally{await tools.close();}
 

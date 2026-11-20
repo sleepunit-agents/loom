@@ -9,6 +9,7 @@ import type { BodyProgramToolResult } from './body-program-tools.js';
 const path = z.string().max(NOTE_PATH_MAX).regex(NOTE_PATH);
 const request = z.discriminatedUnion('operation', [
   z.object({ operation: z.enum(['pin','unpin','delete']), path, id:z.string().min(1).max(200) }).strict(),
+  z.object({operation:z.literal('attach'),path,source:z.string().min(1).max(4096),name:z.string().regex(FILE_NAME),type:z.string().min(1).max(255).optional(),id:z.string().min(1).max(200)}).strict(),
   z.object({ operation:z.literal('file'), path, name:z.string().regex(FILE_NAME) }).strict(),
   z.object({ operation: z.literal('read'), path }).strict(),
   z.object({ operation: z.literal('list'), prefix: z.string().max(NOTE_PATH_MAX).optional(),
@@ -28,6 +29,11 @@ interface NotePort {
   call(name: string, args: unknown, signal: AbortSignal): Promise<BodyProgramToolResult>;
 }
 
+export function mayAttachNoteFile(entries:readonly string[]):boolean {
+  return !bodyDeniedTools(entries).includes(harnessToolPrefix+'note_write')&&!entries.some(rule=>
+    ['mcp__loom__note_attach','mcp__loom_secrets__note_attach'].some(name=>denialCoversTool(rule,name)));
+}
+
 export function mayReadNoteFile(entries:readonly string[]):boolean {
   return !bodyDeniedTools(entries).includes(harnessToolPrefix+'note_read')&&!entries.some(rule=>
     ['mcp__loom__note_file','mcp__loom_secrets__note_file'].some(name=>denialCoversTool(rule,name)));
@@ -39,6 +45,11 @@ export async function houseNoteRequest(port: NotePort, input: unknown, signal: A
   if (!parsed.success || signal.aborted || !port.agent || !port.allowsCall(parsed.data)) throw Error('House note request unavailable');
   const note = parsed.data;
   if (bodyDeniedTools(port.denied).includes(harnessToolPrefix + 'note_' + note.operation)) throw Error('House note operation denied');
+  if(note.operation==='attach'){
+    if(!mayAttachNoteFile(port.denied))throw Error('House note operation denied');
+    const {id,operation,...fields}=note;
+    return port.call('loom_command',{operation:'memory.noteAttach',input:fields,id},signal);
+  }
   if(note.operation==='file'){
     if(!mayReadNoteFile(port.denied))throw Error('House note operation denied');
     return port.call('loom_command',{operation:'memory.noteFile',input:{path:note.path,name:note.name},id:randomUUID()},signal);

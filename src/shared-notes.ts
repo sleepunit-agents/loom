@@ -1,8 +1,9 @@
+import {noteUploadInput} from './note-upload.js';
 /** Own-source Notes through the same query and operation doors as Memory. */
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLBoolean,GraphQLList} from 'graphql/index.js';
-import {Notes,NoteError,FILE_NAME,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
+import {Notes,NoteError,FILE_NAME,MAX_FILE_BYTES,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
 import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
 import {maySee,type Sharing,type Viewer} from './policy.js';
@@ -44,7 +45,7 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
  }}},
  /** `addsOnly` names a caller that writes a new note and overwrites none (the body of a job on anybody else's word),
   * with the words that refuse an overwrite and what loom records as the note's writer in place of the agent alone. */
- register(operations:Operations,commands:{mayReadFile(viewer:Viewer):boolean;body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
+ register(operations:Operations,commands:{mayAttachFile(viewer:Viewer):boolean;mayReadFile(viewer:Viewer):boolean;body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   operations.register({name:'memory.noteFile',doors:['http'],input:z.object({path,name:z.string().regex(FILE_NAME)}).strict(),
    output:z.object({sha256:z.string(),contents:z.string()}).strict().nullable(),
@@ -73,6 +74,20 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
   };
   const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],inputHash:(words:string)=>commands.hash(words),recover};
   const mayManage=(viewer:Viewer)=>!!selected(viewer)&&!commands.addsOnly?.(viewer);
+  operations.register({...common,name:'memory.noteAttach',input:noteUploadInput,
+   output:z.union([z.object({name:z.string(),sha256:z.string(),bytes:z.number().int(),type:z.string().optional(),added:z.string()}).strict(),
+    z.object({missing:z.literal(true)}).strict()]),may:viewer=>mayManage(viewer)&&commands.mayAttachFile(viewer),
+   run:(ctx,input)=>write(ctx,notes=>{
+    const bytes=Buffer.from(input.contents,'base64');
+    try{
+     if(bytes.length>MAX_FILE_BYTES)throw new OperationError('invalid','Attachment exceeds the note file limit');
+     return notes.attach(input.path,input.name,bytes,{type:input.type});
+    }catch(error){
+     if(error instanceof NoteError&&error.status===404)return {missing:true as const};
+     throw error;
+    }finally{bytes.fill(0);}
+   }),
+  });
   operations.register({...common,name:'memory.notePin',input:z.object({path,pinned:z.boolean()}).strict(),
    output:z.union([z.object({path,pinned:z.boolean(),expires:z.string().nullable()}).strict(),z.object({missing:z.literal(true)}).strict()]),may:mayManage,
    run:(ctx,input)=>write(ctx,notes=>{

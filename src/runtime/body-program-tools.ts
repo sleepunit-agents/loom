@@ -20,6 +20,7 @@ export type BodyProgramToolResult={content:{type:'text';text:string}[];isError?:
 const unavailable=():BodyProgramToolResult=>({isError:true,content:[{type:'text',text:'Body tool unavailable; outcome may be uncertain'}]});
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bodyProgramTools(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof globalThis.fetch;clock?:Clock;
+ noteUpload?:{read(path:string):{contents:Buffer};allows(bytes:Buffer):boolean};
  allowsFileBytes?:(bytes:Buffer)=>boolean;
  onJobEnded?:()=>void;onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
  /** Reads the files a post names from the body's own working area (body-files.ts). Without it a post carries none. */
@@ -38,6 +39,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
     else if(name==='loom_query')value=await client.query(query.parse(args));
     else if(name==='loom_command'){
      const input=command.parse(args),body=input.input;
+     if(input.operation==='memory.noteAttach'&&!options.noteUpload)return unavailable();
      if(input.operation==='memory.noteFile'&&!options.allowsFileBytes)return unavailable();
      // Acceptance, observed provider facts, and Stop acknowledgement belong to
      // the receiving runtime. The model cannot fabricate these observations.
@@ -59,6 +61,16 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
       try{read=readFiles(named.data.map(file=>file.path));}
       catch(error){return{isError:true,content:[{type:'text',text:error instanceof BodyFileRefused?error.message:'File not available'}]};}
       sent={...body,files:read.map(file=>({name:file.name,contents:file.contents.toString('base64')}))} as typeof input.input;
+     }
+     if(input.operation==='memory.noteAttach'){
+      const file=z.object({source:z.string().min(1).max(4096),path:z.string(),name:z.string(),type:z.string().optional()}).strict().parse(body);
+      const upload=options.noteUpload;
+      if(!upload)return unavailable();
+      const {contents}=upload.read(file.source);
+      try{
+       if(contents.includes(token)||!upload.allows(contents))return unavailable();
+       sent={path:file.path,name:file.name,...(file.type?{type:file.type}:{}),contents:contents.toString('base64')};
+      }finally{contents.fill(0);}
      }
      try{value=await client.command(input.operation,sent,input.id);}finally{for(const file of read)file.contents.fill(0);}
      if(input.operation==='memory.noteFile'&&object(value)&&value.ok===true&&value.value!==null){

@@ -1,3 +1,4 @@
+import {noteUploadForm} from '../note-upload.js';
 import {BodyJobEnded,bodyJobEnded} from './body-job-ended.js';
 import {BodyContactExpired,BodyTransportFailure,retryBodyContact,temporaryStatus,temporaryUnavailableReply} from './body-contact.js';
 /** Current-body consumer of ordinary Root HTTP commands and generated reads.
@@ -34,10 +35,14 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
  if(!token||/[\s\u0000-\u001f\u007f]/u.test(token)||!validBodyRequestMs(timeout))throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]),active=new Set<AbortController>();
  let closed=false;const current=()=>!closed&&!lifetime.aborted;
- async function post(path:string,payload:unknown,replay=true){
+ async function post(path:string,payload:unknown,replay=true,upload?:FormData){
   if(!current())throw unavailable();
-  let body:string;try{body=JSON.stringify(payload);}catch{throw unavailable();}
-  if(Buffer.byteLength(body)>DOOR_REQUEST_BYTES)throw unavailable();
+  let body:string|FormData;
+  if(upload)body=upload;
+  else{
+   try{body=JSON.stringify(payload);}catch{throw unavailable();}
+   if(Buffer.byteLength(body)>DOOR_REQUEST_BYTES)throw unavailable();
+  }
   const attempt=async(remaining:number)=>{
   const abort=new AbortController(),end=clock.now()+Math.min(timeout,remaining);active.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
@@ -47,7 +52,7 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
   const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>{erase();reject(unavailable());};abort.signal.addEventListener('abort',rejectStopped,{once:true});});
   try{const reply=await Promise.race([(async()=>{
    if(!valid())throw unavailable();
-   const flight=request(new URL(path,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+token,'content-type':'application/json','accept-encoding':'identity'},body});
+   const flight=request(new URL(path,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+token,...(upload?{}:{'content-type':'application/json'}),'accept-encoding':'identity'},body});
    void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
    response=await flight.catch(()=>{throw new BodyTransportFailure();});
    if(!response.redirected&&temporaryStatus(response.status)&&(response.status!==503||!/^application\/json/i.test(response.headers.get('content-type')??'')))throw new BodyTransportFailure();
@@ -75,7 +80,7 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
    try{
     if(!name.safeParse(operation).success||!receipt.safeParse(id).success||!json.safeParse(input).success)throw unavailable();
     // Recall warms the memories it finds. It is registered as a read and keeps no receipt.
-    const [piece,...rest]=operation.split('.'),reply=await post('/api/'+encodeURIComponent(piece)+'/'+encodeURIComponent(rest.join('.')),{input,id},operation!=='memory.recall');
+    const [piece,...rest]=operation.split('.'),reply=await post('/api/'+encodeURIComponent(piece)+'/'+encodeURIComponent(rest.join('.')),{input,id},operation!=='memory.recall',operation==='memory.noteAttach'?noteUploadForm(input,id):undefined);
     if(!current())throw unavailable();
     if(bodyJobEnded(reply.status,reply.value))throw new BodyJobEnded();
     const answer=result.parse(reply.value),status=answer.ok?200:({'denied':403,'not-found':404,'invalid':400,'conflict':409,'unavailable':503}as const)[answer.code];

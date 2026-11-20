@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { SHA256_HEX_WITHIN } from './core/sha256-hex.js';
+import { basename,resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import type { ServeIo } from './index.js';
 
-const usage = 'Usage: loom note read <path> [--json]\n       loom note file <path> <name>\n       loom note pin|unpin|delete <path> [--id receipt] [--json]\n       loom note list [prefix] [--limit 1..500] [--json]\n       loom note write <path> [--lifespan keep|while|short] [--body text] [--id receipt] [--json]\n';
+const usage = 'Usage: loom note read <path> [--json]\n       loom note attach <path> <file> [--name filename] [--type mime] [--id receipt] [--json]\n       loom note file <path> <name>\n       loom note pin|unpin|delete <path> [--id receipt] [--json]\n       loom note list [prefix] [--limit 1..500] [--json]\n       loom note write <path> [--lifespan keep|while|short] [--body text] [--id receipt] [--json]\n';
 const row = z.object({ path:z.string(), lifespan:z.string(), updated:z.string(), pinned:z.boolean(), files:z.number() }).passthrough();
 
 async function stdinBody() {
@@ -24,7 +25,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
   if(args[0]==='--help'||args[0]==='-h'){io.stdout(usage);return 0;}
   const [operation,...rest]=args;
   const manage=['pin','unpin','delete'].includes(operation);
-  const mutates=manage||operation==='write';
+  const mutates=manage||operation==='write'||operation==='attach';
   if(!['list','read','file'].includes(operation)&&!mutates){io.stderr(usage);return 2;}
   let input:Record<string,unknown>, generatedReceipt:string|undefined, json=false;
   try{
@@ -38,6 +39,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     const {positionals,values}=parseArgs({args:options,allowPositionals:true,options:{
       help:{type:'boolean',short:'h'},
       json:{type:'boolean'},
+      ...(operation==='attach'?{name:{type:'string' as const},type:{type:'string' as const}}:{}),
       ...(operation==='list'?{limit:{type:'string' as const}}:{}),
       ...(operation==='write'?{body:{type:'string' as const},lifespan:{type:'string' as const},}:{}),
       ...(mutates?{id:{type:'string' as const}}:{}),
@@ -47,10 +49,13 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     if(operation==='file'){
       if(values.json){io.stderr('loom note file writes raw bytes. Omit --json.\n');return 2;}
       if(positionals.length!==2){io.stderr('Usage: loom note file <path> <name>\n');return 2;}
+    }else if(operation==='attach'){
+      if(positionals.length!==2){io.stderr('Usage: loom note attach <path> <file>\n');return 2;}
     }else if(positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
     json=!!values.json;
     if(mutates&&values.id===undefined)generatedReceipt=randomUUID();
-    if(operation==='file')input={operation,path,name:positionals[1]};
+    if(operation==='attach')input={operation,path,source:resolve(positionals[1]),name:values.name??basename(positionals[1]),type:values.type,id:values.id??generatedReceipt};
+    else if(operation==='file')input={operation,path,name:positionals[1]};
     else if(manage)input={operation,path,id:values.id??generatedReceipt};
     else if(operation==='list'){
       const limit=values.limit===undefined?100:Number(values.limit);
@@ -70,7 +75,12 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
       headers:{authorization:'Bearer '+cap[2],'content-type':'application/json'},body:JSON.stringify(input)});
     if(!reply.ok)throw Error();
     const value=await reply.json();
-    if(operation==='file'){
+    if(operation==='attach'){
+      if(value.ok!==true)throw Error();
+      if(value.value?.missing===true){io.stderr('No such note.\n');return 3;}
+      const file=z.object({name:z.string(),sha256:z.string(),bytes:z.number().int(),type:z.string().optional(),added:z.string()}).parse(value.value);
+      io.stdout(json?JSON.stringify({...file,...(generatedReceipt?{id:generatedReceipt}:{})})+'\n':input.path+': '+file.name+' ('+file.bytes+' bytes)\n');
+    }else if(operation==='file'){
       if(value.ok!==true)throw Error();
       if(value.value===null){io.stderr('No such note attachment.\n');return 3;}
       const file=z.object({contents:z.string(),sha256:z.string()}).strict().parse(value.value);

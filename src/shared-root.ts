@@ -1,5 +1,6 @@
+import {NOTE_UPLOAD_REQUEST_BYTES,noteUploadEnvelope} from './note-upload.js';
 import {deniedTools,hasGuest} from './runtime/harness-traits.js';
-import {mayReadNoteFile} from './runtime/house-note-request.js';
+import {mayAttachNoteFile,mayReadNoteFile} from './runtime/house-note-request.js';
 import { nightlyNoteRetention } from './shared-note-retention.js';
 import { recentReviewEnds, reportReviewEnd } from './core/conversations/review-result.js';
 import { kitCatalogQueries } from './shared-kit-catalog.js';
@@ -242,12 +243,14 @@ export function sharedRoot(options: {
   const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>heldRefusal(db,bodyJob(viewer),action);
   registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
-  memory.register(operations,options.commsKey?{body:memoryAgent,mayReadFile:viewer=>{
+  const noteFileRoom=(viewer:Viewer,allowed:(rules:readonly string[])=>boolean)=>{
     const work=bodyJob(viewer);
     if(!work)return !!credentials.agentSession(viewer);
     const room=jobRoom(db,work.job);
-    return !hasGuest(room)&&mayReadNoteFile(deniedTools(room));
-  },hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
+    return !hasGuest(room)&&allowed(deniedTools(room));
+  };
+  const mayAttachFile=(viewer:Viewer)=>noteFileRoom(viewer,mayAttachNoteFile);
+  memory.register(operations,options.commsKey?{body:memoryAgent,mayAttachFile,mayReadFile:viewer=>noteFileRoom(viewer,mayReadNoteFile),hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
     // Of what the agent and the household keep, such a body only adds: a memory, or a new note, each stamped by loom with
     // whose word it was written on. Everything else in those families is refused it.
     {knowledge:held('knowledge'),
@@ -451,13 +454,14 @@ export function sharedRoot(options: {
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
-  const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
+  const uploads=new Set<string>();
+  const bodyRequest = (request: Request, abort: AbortController, limited = false, limit=DOOR_REQUEST_BYTES) => {
     let size = 0;
     return request.body ? new Request(request, {
       body: request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, stream) {
           size += chunk.byteLength;
-          if (limited && size > DOOR_REQUEST_BYTES) throw new BodyTooLarge();
+          if (limited && size > limit) throw new BodyTooLarge();
           stream.enqueue(chunk);
         },
       }), { signal: abort.signal }), signal: abort.signal, duplex: 'half',
@@ -500,15 +504,30 @@ export function sharedRoot(options: {
     const request = c.req.raw;
     if (!sameRequestOrigin(request,options.publicOrigin))
       return c.json(failure('denied', 'Cross-origin request refused'), 403);
-    if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return c.json(failure('invalid', 'Use application/json'), 415);
+    const name=c.req.param('piece')+'.'+c.req.param('operation');
+    const type=request.headers.get('content-type')??'';
+    const multipart=name==='memory.noteAttach'&&/^multipart\/form-data;/i.test(type);
+    if(!multipart&&!/^application\/json(?:\s*;|$)/i.test(type))return c.json(failure('invalid','Use application/json'),415);
     const auth = authenticate(request);
     if (!auth?.valid()) return c.json(failure('denied', 'Authentication required'), 401);
     let body: unknown;
-    try { body = await bodyRequest(request, c.get('shutdown'), true).json(); } catch (error) { return error instanceof BodyTooLarge ? c.json(failure('invalid', 'Request body too large'), 413) : c.json(failure('invalid', 'Invalid JSON'), 400); }
+    try{
+      if(multipart){
+        const agent=memoryAgent(auth.viewer);
+        if(!agent||!mayAttachFile(auth.viewer))return c.json(failure('denied','Attachment refused'),403);
+        if(uploads.size>=4||uploads.has(agent.agent))return c.json(failure('unavailable','Attachment transfer busy'),429);
+        uploads.add(agent.agent);
+        const shutdown=c.get('shutdown');
+        const stop=clock.at(clock.now()+60_000,()=>shutdown.abort());
+        try{
+          const data=await bodyRequest(request,shutdown,true,NOTE_UPLOAD_REQUEST_BYTES).formData();
+          body=await noteUploadEnvelope(data);
+        }finally{stop();uploads.delete(agent.agent);}
+      }else body=await bodyRequest(request,c.get('shutdown'),true).json();
+    }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid','Invalid request body'),400);}
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const name = c.req.param('piece') + '.' + c.req.param('operation');
     const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
     const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,request.signal);
     if (epoch !== undefined && answer.ok) {
