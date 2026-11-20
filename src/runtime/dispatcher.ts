@@ -1,7 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import { jobMatchesConversation, reviewThread, reviewRequest } from '../core/conversations/review-place.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
@@ -109,7 +109,7 @@ export class Dispatcher {
           if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
           continue;
         }
-        if (review && !mayRunPrivateWork({member: cv!.member ?? undefined, agent: job.agent, project: cv!.project ?? undefined}, sharedSharing(this.db))) {
+        if (cv && review && (!jobMatchesConversation(job,cv) || !mayRunPrivateWork({member: cv.member ?? undefined, agent: cv.agent, project: cv.project ?? undefined}, sharedSharing(this.db)))) {
           if (this.jobs.unplaceable(job.id, 'The assignment for the private handoff ended.')) ended?.push(job.id);
           continue;
         }

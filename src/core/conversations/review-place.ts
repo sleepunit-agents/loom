@@ -2,6 +2,12 @@ import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, jobs, threads } from '../data/schema.js';
 
+type ConversationScope = Pick<typeof conversations.$inferSelect, 'agent' | 'member' | 'project'>;
+
+export function jobMatchesConversation(job: ConversationScope, cv: ConversationScope) {
+  return job.agent === cv.agent && job.member === cv.member && job.project === cv.project;
+}
+
 /** A distinct child conversation for each request, including parallel requests from one job. */
 export function reviewPlace(parent: string, clientId: string, role?:{id:string;revision:string}) {
   return JSON.stringify(['codex-review', parent, clientId, ...(role?[role.id,role.revision]:[])]);
@@ -23,10 +29,10 @@ export function reviewParent(cv: {venue: string; place: string}) {
 export function reviewThread(db: DataDatabase, cv: typeof conversations.$inferSelect) {
   const parent = reviewParent(cv);
   if (!parent || !cv.member) return;
-  const origin = db.select({cv: conversations, thread: threads}).from(jobs)
+  const origin = db.select({cv: conversations, thread: threads, agent: jobs.agent, member: jobs.member, project: jobs.project}).from(jobs)
     .innerJoin(conversations, eq(jobs.conversation, conversations.id))
     .innerJoin(threads, eq(threads.conversation, conversations.id))
     .where(and(eq(jobs.id, parent), eq(jobs.agent, cv.agent))).get();
-  if (origin?.cv.venue === 'loom' && origin.cv.agent === cv.agent && origin.cv.project === cv.project &&
+  if (origin?.cv.venue === 'loom' && jobMatchesConversation(origin,origin.cv) && origin.cv.agent === cv.agent && origin.cv.project === cv.project &&
       origin.cv.member === cv.member && origin.cv.direct === cv.direct && !origin.thread.archivedAt) return origin.thread;
 }

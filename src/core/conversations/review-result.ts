@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, like } from 'drizzle-orm';
 import { commsKeepDays } from '../data/comms-days.js';
 import { conversations, jobs, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
-import { reviewRequest,reviewThread } from './review-place.js';
+import { jobMatchesConversation,reviewRequest,reviewThread } from './review-place.js';
 import { exitStage } from '../../runtime/job-exit.js';
 
 /** Seal the thread reply before entering the operation transaction. Retries and concurrent
@@ -39,7 +39,7 @@ export async function reportReviewEnd(service:CommsMessages, id:string, allowed:
   commit:(write:()=>void)=>void) {
   const db=service.db;
   const ended=db.select({job:jobs,cv:conversations}).from(jobs).innerJoin(conversations,eq(jobs.conversation,conversations.id)).where(eq(jobs.id,id)).get();
-  if(!ended || !ended.cv.member || !reviewThread(db,ended.cv))return;
+  if(!ended || !ended.cv.member || !jobMatchesConversation(ended.job,ended.cv) || !reviewThread(db,ended.cv))return;
   const {job,cv}=ended;
   if(!job.endedAt || Date.parse(service.now())-Date.parse(job.endedAt)>=commsKeepDays(db)*DAY_MS)return;
   const pending=()=>db.select({id:jobs.id}).from(jobs).where(eq(jobs.retryOf,id)).get();
