@@ -146,3 +146,17 @@ it('records successful metadata changes without invoking a provider, private sig
  expect((await f.post('accountSignedOut',{account,box:'one'})).status).toBe(200);
  expect(network).not.toHaveBeenCalled();for(const spy of Object.values(privateCalls))expect(spy).not.toHaveBeenCalled();
 });
+
+it('creates a subscription and requests its machine sign-ins together under the current member',async()=>{
+ const f=fixture(),input={provider:'provider',label:'New account',machines:['one']};
+ const options=(who:keyof typeof raw)=>f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw[who],'content-type':'application/json'},body:JSON.stringify({query:'{ subscriptionSetup { member providers machines { id } } }'})});
+ expect((await(await options('alice')).json()).data.subscriptionSetup).toEqual({member:'alice',providers:['provider'],machines:[{id:'one'}]});
+ expect((await options('runner')).status).toBe(403);
+ expect((await f.post('accountCreate',{...input,machines:['one','two']})).status).toBe(403);
+ expect(f.db.select().from(s.modelAccounts).all()).toHaveLength(0);
+ const first=await f.post('accountCreate',input,'alice','create-machines');
+ expect(first.status).toBe(200);const response=await first.json();
+ expect(await(await f.post('accountCreate',input,'alice','create-machines')).json()).toEqual(response);
+ expect(f.db.select().from(s.accountSignins).all()).toMatchObject([{account:response.value.id,box:'one',state:'asked',askedBy:'alice'}]);
+ expect(f.db.select().from(s.modelAccountBoxes).all()).toHaveLength(0);
+});

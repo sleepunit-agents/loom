@@ -11,7 +11,7 @@ const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
   resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
@@ -30,6 +30,7 @@ const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces:
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
   hasRoom: column('hasRoom', new GraphQLNonNull(GraphQLBoolean)),
+  pendingSignIns: column('pendingSignIns',new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
   signedInOn: column('signedInOn', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(machine)))),
   windows: column('windows', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(windowReading)))),
   logins: column('logins', new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(login)))),

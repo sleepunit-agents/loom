@@ -160,14 +160,14 @@ its requested model. The operation neither signs in nor calls a model provider.
 
 ## Account metadata commands
 
-The shared operation door offers runtime.accountCreate ({provider,label}),
+The shared operation door offers runtime.accountCreate ({provider,label,machines?}),
 runtime.accountRename ({account,label}), runtime.accountSignedIn ({account,box})
 and runtime.accountSignedOut ({account,box}). Each write uses the ordinary stable
 operation ID and receipt. Creation returns the new account ID; other commands
 acknowledge saved:true.
 
 Creation derives ownership from the authenticated member and accepts a provider
-already present in the configured model catalog. New accounts have no quota
+already present in the configured model catalog. The Subscriptions app reads the available services and eligible machines from subscriptionSetup. When the member selects machines, creation queues one provider sign-in request per selected machine in the same transaction. A pending request appears in the subscription until it ends. The worker confirms the sign-in through the provider. New accounts have no quota
 observation and cannot admit work until a worker reports fresh usage. Provider
 and ownership are fixed for this account; renaming changes its public label.
 

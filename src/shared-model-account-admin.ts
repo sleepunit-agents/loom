@@ -1,18 +1,35 @@
 /** Outside metadata administration. The private program owns provider sign-in;
  * these commands record its result, never provider credentials. */
+import { GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { mayAct, mayCreate, type Viewer } from './policy.js';
+import { holds, rules, mayAct, mayCreate, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { boxes, modelAccounts } from './core/data/schema.js';
-import type { Operations, Door } from './core/operations/index.js';
+import type { Context, Operations, Door } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
 import { AccountLogins } from './runtime/account-logins.js';
 import type { ModelRole } from './runtime/placement.js';
 import { lineName as name } from './core/line-name.js';
-export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,roles:()=>readonly ModelRole[],now:()=>string){
+function creationChoices(db:DataDatabase,viewer:Viewer){
+ if(viewer.kind!=='member')return null;
+ const sharing=sharedSharing(db);
+ if(!mayCreate(viewer,{type:'runtime.model-account',member:viewer.id},sharing))return null;
+ const machines=db.select({id:boxes.id,name:boxes.name,owner:boxes.owner}).from(boxes).where(isNull(boxes.revokedAt)).all()
+  .filter(box=>holds(rules.asksSignIn,viewer,{accountOwner:viewer.id,boxOwner:box.owner},sharing));
+ return {member:viewer.id,machines};
+}
+const choiceBox=new GraphQLObjectType({name:'SubscriptionSetupMachine',fields:{id:{type:GraphQLString},name:{type:GraphQLString}}});
+const setup=new GraphQLObjectType({name:'SubscriptionSetup',fields:{member:{type:GraphQLString},providers:{type:new GraphQLList(GraphQLString)},machines:{type:new GraphQLList(new GraphQLNonNull(choiceBox))}}});
+export function subscriptionSetupField(db:DataDatabase,roles:()=>readonly ModelRole[]){
+ return {type:setup,resolve:(_:unknown,__:unknown,{viewer}:{viewer:Viewer})=>{
+  const choices=creationChoices(db,viewer);
+  return choices&&{...choices,providers:[...new Set(roles().map(role=>role.provider))].sort()};
+ }};
+}
+export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,roles:()=>readonly ModelRole[],now:()=>string,ask:(ctx:Context,input:{account:string;box:string})=>unknown){
  const account=(id:string)=>db.select().from(modelAccounts).where(eq(modelAccounts.id,id)).get();
  const owns=(viewer:Viewer,id:string)=>{
   const row=account(id);
@@ -27,11 +44,15 @@ export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,
  const signIns=accountBoxes(db),committed=(input:{account:string;box:string})=>signIns.committed(input);
  const common:{write:boolean;recheckPolicy:boolean;doors:Door[]}={write:true,recheckPolicy:true,doors:['http']};
  operations.register({...common,name:'runtime.accountCreate',
-  input:z.object({provider:name,label:name}).strict(),output:z.object({id:z.string()}).strict(),
-  may:(viewer,input)=>viewer.kind==='member'&&mayCreate(viewer,{type:'runtime.model-account',member:viewer.id},sharedSharing(db))&&roles().some(role=>role.provider===input.provider),
+  input:z.object({provider:name,label:name,machines:z.array(name).max(64).optional()}).strict(),output:z.object({id:z.string()}).strict(),
+  may:(viewer,input)=>{
+   const choices=creationChoices(db,viewer);
+   return !!choices&&roles().some(role=>role.provider===input.provider)&&(input.machines??[]).every(id=>choices.machines.some(box=>box.id===id));
+  },
   run(ctx,input){
    const id='account-'+randomUUID();
    db.insert(modelAccounts).values({id,owner:ctx.viewer.id,provider:input.provider,label:input.label,usage:0,hasRoom:false}).run();
+   for(const box of new Set(input.machines))ask(ctx,{account:id,box});
    ctx.changed('modelAccount',id);return{id};
   },
  });
