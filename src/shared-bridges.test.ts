@@ -26,7 +26,7 @@ import {expirePrivateBridgeWords} from './core/conversations/private-bridge-word
 import {bridgeChannelFilters,tasks,taskComments,digests,agentStatus} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const token={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64)};
-function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
+function fixture(effectsAllowed:()=>boolean=()=>true,comms=false,admission:'spy'|'runtime'='spy'){
  const client=new Database(':memory:');clean.push(()=>client.close());const db=createDataSchema(client),clock=new FakeClock(),at=new Date(clock.now()).toISOString();
  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(boxes).values({id:'box',name:'Box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();db.insert(secrets).values(['TOKEN','APP'].map(name=>({name,description:'',changedAt:at,changedBy:'owner'}))).run();
  db.insert(bridgeConnections).values({id:'connection',platform:'slack',workspace:'TWORK',botUser:'UBOT',agent:'art',tokenSecret:'TOKEN',appSecret:'APP',enabled:true,state:'disconnected',stateAt:at}).run();db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'art',botsMayTalk:false}).run();
@@ -39,13 +39,39 @@ function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
   if(String(url).endsWith('conversations.info'))return Response.json({ok:true,channel:{id:'CROOM',context_team_id:'TWORK',is_channel:true}});
   if(String(url).endsWith('chat.postMessage'))return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});throw Error('Unexpected endpoint');
  });
- const admitted=vi.fn(()=>true),root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},tempo:{admit:admitted},...(comms?{commsKey:wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR')}:{}),bridges:{source,effectsAllowed,request,slack,discord:()=>({close:async()=>{}})}});clean.push(()=>root.close());
+ const admitted=vi.fn(()=>true),root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},tempo:admission==='spy'?{admit:admitted}:{},...(comms?{commsKey:wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR')}:{}),bridges:{source,effectsAllowed,request,slack,discord:()=>({close:async()=>{}})}});clean.push(()=>root.close());
  for(const id of ['body','other'])db.insert(jobs).values({id,agent:'art',box:'box',title:'',brief:'',model:'test',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:at}).run();
  for(const [id,value] of Object.entries(token))db.insert(tokens).values({fingerprint:createHash('sha256').update(value).digest('hex'),label:id,kind:id==='owner'?'owner':'agent',member:id==='owner'?'owner':null,agent:id==='owner'?null:'art',job:id==='owner'?null:id,createdAt:at}).run();
  const call=async(piece:string,operation:string,input:unknown,credential=token.body,id=randomUUID())=>{const response=setupCall(root,piece+'.'+operation,input,'owner')??await root.http.request('http://loom/api/'+piece+'/'+operation,{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:response.status,body:await response.json()};};
  const receive=async()=>{await root.services.bridges.daemon!.ready();await root.services.bridges.daemon!.idle();await transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'event',team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'Hello',ts:'1794432000.000001'}}})));clock.advance(0);await root.services.bridges.daemon!.idle();return db.select().from(bridgeIncoming).get()!;};
  return {client,db,clock,root,source,transports,closed,request,call,receive,admitted};
 }
+it('admits a linked owner’s Slack DM once without a channel roster or channel route',async()=>{
+ const f=fixture(()=>true,false,'runtime');
+ const channel='DOWNER',workspace='TWORK',user='UOWNER';
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace,user,member:'owner'}).run();
+ runnable(f);
+ f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});
+ const daemon=f.root.services.bridges.daemon!;
+ await daemon.ready();await daemon.idle();
+ const provider=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,options)=>{
+  if(String(url).endsWith('conversations.info'))return Response.json({ok:true,channel:{id:channel,context_team_id:workspace,is_im:true}});
+  return provider(url,options);
+ });
+ const payload=Buffer.from(JSON.stringify({type:'events_api',envelope_id:'dm-receipt',payload:{type:'event_callback',event_id:'dm-event',team_id:workspace,event:{type:'message',channel,channel_type:'im',user,text:'Fictional private question',ts:'1794432000.000007'}}}));
+ const socket=f.transports.at(-1)!;
+ await socket.receive({},payload);await socket.receive({},payload);
+ f.clock.advance(0);await daemon.idle();
+ const incoming=f.db.select().from(bridgeIncoming).all();
+ expect(incoming).toHaveLength(1);
+ expect(incoming[0]).toMatchObject({state:'delivered',isDm:true,member:'owner'});
+ const cv=incoming[0].conversation!;
+ expect(f.db.select().from(conversations).where(eq(conversations.id,cv)).get()).toMatchObject({agent:'art',member:'owner',direct:true,venue:'slack'});
+ expect(f.db.select().from(jobs).where(eq(jobs.conversation,cv)).all()).toMatchObject([{state:'queued',agent:'art',member:'owner'}]);
+ expect(f.request.mock.calls.some(([url])=>String(url).endsWith('conversations.members'))).toBe(false);
+});
 it('mounts actual intake, committed Tempo admission, body reply door and current-credential network send',async()=>{
  const f=fixture();f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();expect(f.db.select().from(inbox).get()?.conversation).toBe(incoming.conversation);expect(f.db.select().from(conversations).get()?.venue).toBe('slack');expect(f.admitted).toHaveBeenCalledOnce();
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
