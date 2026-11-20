@@ -9,6 +9,11 @@ updates:
       npm:
         patterns:
           - "*"
+    # Upgrade the embedding runtime only alongside an explicit store compatibility decision.
+    # The golden passage and query vectors come from fastembed 2.1.0.
+    ignore:
+      - dependency-name: onnxruntime-node
+      - dependency-name: onnxruntime-common
 
   - package-ecosystem: github-actions
     directory: /
