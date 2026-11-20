@@ -12,11 +12,11 @@ import {sharedRoot} from './shared-root.js';
 const cleanup:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 
-it.each(['codex','role'] as const)('returns an overnight %s handoff once after reopening the database',async kind=>{
+it.each(['codex','role','expired'] as const)('rechecks an overnight %s handoff after reopening the database',async kind=>{
  const workRoles=[{agent:'art',id:'research',description:'Compare fictional reports.',models:['reviewer']}];
  const modelRoles=()=>[{model:'reviewer',provider:'openai',harness:'codex' as const,series:'reviewer'}];
  const f=await bodyFixture(cleanup,{workRoles,modelRoles});
- const due=f.clock.now()+12*3600_000, notBefore=new Date(due).toISOString();
+ const due=f.clock.now()+(kind==='expired'?48:12)*3600_000, notBefore=new Date(due).toISOString();
  const request={...(kind==='role'?{role:'research'}:{harness:'codex'}),clientId:'night',label:'Morning report',words:'PRIVATE NIGHT BRIEF',notBefore};
  await f.send('Bring the result back here tomorrow','request');
  expect((await f.call('handoff',{...request,notBefore:new Date(due+30*86400_000).toISOString()},'expired')).status).toBe(400);
@@ -41,7 +41,7 @@ it.each(['codex','role'] as const)('returns an overnight %s handoff once after r
  db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'main',nestedContainers:false,gpu:false}).run();
  db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();
  db.update(s.boxes).set({hostsAny:true,lastSeenAt:now()}).run();
- db.insert(s.modelAccounts).values({id:'paid',owner:'alice',provider:'openai',label:'Fixture',hasRoom:true}).run();
+ db.insert(s.modelAccounts).values({id:'paid',owner:'alice',provider:'openai',label:'Fixture',hasRoom:kind!=='expired'}).run();
  db.insert(s.modelAccountWindows).values({account:'paid',window:'week',usage:0.1,usageReadAt:now(),resetsAt:new Date(due+86400_000).toISOString(),durationMs:604800000}).run();
  db.insert(s.modelAccountBoxes).values({account:'paid',box:'box'}).run();
  const post=async(path:string,token:string,id:string,input:unknown)=>root.http.request('/api/'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input})});
@@ -50,6 +50,15 @@ it.each(['codex','role'] as const)('returns an overnight %s handoff once after r
  expect(await poll('early')).toBeNull();
  expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).all()).toHaveLength(0);
  clock.advance(60_001);
+ if(kind==='expired'){
+  expect(await poll('no-capacity')).toBeNull();
+  expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()?.state).toBe('queued');
+  db.insert(s.household).values({singleton:1,commsDays:1}).onConflictDoUpdate({target:s.household.singleton,set:{commsDays:1}}).run();
+  db.update(s.modelAccounts).set({hasRoom:true}).where(eq(s.modelAccounts.id,'paid')).run();
+  expect(await poll('capacity-after-expiry')).toBeNull();
+  expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()?.endedNote).toBe('The scheduled handoff brief expired.');
+  return;
+ }
  const assignment=await poll('due');
  expect(assignment).toMatchObject({conversation:child,review:true,model:'reviewer'});
  const token='body_'+'d'.repeat(64);
@@ -70,4 +79,25 @@ it.each(['codex','role'] as const)('returns an overnight %s handoff once after r
  expect(await f.key.open(replies[0].words!)).toBe(result.words);
  expect(db.select().from(s.inbox).where(eq(s.inbox.sourceId,'review:'+child)).all()).toHaveLength(1);
  expect(db.select().from(s.jobs).where(eq(s.jobs.id,'holder')).get()?.state).toBe('running');
+});
+
+it('recognizes the same scheduled request from the coordinator’s automatic retry',async()=>{
+ const f=await bodyFixture(cleanup);
+ const now=()=>new Date(f.clock.now()).toISOString();
+ const request={harness:'codex',clientId:'same',label:'Report',words:'Fixture brief',notBefore:new Date(f.clock.now()+3600_000).toISOString()};
+ await f.send('Schedule this','retry-origin');
+ expect((await f.call('handoff',{...request,notBefore:request.notBefore.replace('Z','9Z')},'precision')).status).toBe(400);
+ const issued=await f.call('handoff',request,'original');
+ expect(issued.status).toBe(200);
+ const saved=(await issued.json()).value;
+ f.db.update(s.inbox).set({job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
+ const successor=new Jobs(f.db,now).finish('job','box',1).retry!;
+ expect(successor.retryOf).toBe('job');
+ f.db.update(s.jobs).set({state:'running',box:'box'}).where(eq(s.jobs.id,successor.id)).run();
+ const token='body_'+'e'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:credentialHash(token),kind:'agent',agent:'art',job:successor.id,label:'Retry',createdAt:now()}).run();
+ const resumed=await f.call('handoff',request,'resumed',token);
+ expect(resumed.status,await resumed.clone().text()).toBe(200);
+ expect((await resumed.json()).value).toEqual(saved);
+ expect(f.db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(1);
 });

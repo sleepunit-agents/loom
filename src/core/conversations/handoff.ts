@@ -43,6 +43,17 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
  type Work=NonNullable<ReturnType<typeof current>>;
+ const scheduledParent=(job:Work['job'])=>{
+  let parent=job;
+  const seen=new Set([job.id]);
+  while(parent.retryOf){
+   const previous=db.select().from(jobs).where(eq(jobs.id,parent.retryOf)).get();
+   if(!previous || seen.has(previous.id) || previous.conversation!==job.conversation || previous.agent!==job.agent ||
+     previous.project!==job.project || previous.member!==job.member)throw new OperationError('conflict','Invalid coordinator retry history');
+   seen.add(previous.id);parent=previous;
+  }
+  return parent.id;
+ };
  const ownerThread=(work:Work)=>{
   const person=self?.word(work);
   if(!work.cv.member || work.cv.venue!=='loom' || person?.kind!=='member' || person.id!==work.cv.member || !self?.ownerWork?.(work))return false;
@@ -87,7 +98,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  operations.register(operation({...common,name:'conversation.handoff',
   // To another agent (`agent`), as a brief in a conversation of its own; or to this agent's own body in
   // another conversation (`to`), as mail there that starts its job like any message.
-  input:z.object({notBefore:z.iso.datetime().transform(value=>new Date(value).toISOString()).optional().describe('Earliest UTC start for a private work role or Codex handoff. Its brief must still be retained then.'),role:slug(64).optional(),harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
+  input:z.object({notBefore:z.iso.datetime().refine(value=>!/\.\d{4,}Z$/.test(value),'Use at most millisecond precision').transform(value=>new Date(value).toISOString()).optional().describe('Earliest UTC start for a private work role or Codex handoff. Its brief must still be retained then.'),role:slug(64).optional(),harness:z.literal('codex').optional(),agent:z.string().min(1).max(200).optional(),to:toSelf.optional(),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict()
    .refine(value=>[value.agent,value.to,value.harness,value.role].filter(v=>v!==undefined).length===1 && (!value.notBefore || !!(value.role || value.harness))),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
@@ -107,7 +118,8 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const sealed=await sealHandoff(service.key,resolved?`${resolved.told}\n\n${input.words}`:words,service.now(),commsKeepDays(db));
    return resolved?{sealed,resolved}:sealed;},
   run(ctx,input,prepared){
-   const {job,cv}=requireCurrent(ctx.viewer),sourceId=JSON.stringify([job.id,input.clientId]);
+   const {job,cv}=requireCurrent(ctx.viewer);
+   const parent=input.notBefore?scheduledParent(job):job.id,sourceId=JSON.stringify([parent,input.clientId]);
    if(input.to){
     if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
     const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
@@ -132,7 +144,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
     const request=target && reviewRequest(target);
-    const same=delegated?request?.parent===job.id && request.clientId===input.clientId && request.role?.id===input.role && target?.handoffNotBefore===(input.notBefore??null):target?.place===job.id;
+    const same=delegated?request?.parent===parent && request.clientId===input.clientId && request.role?.id===input.role && target?.handoffNotBefore===(input.notBefore??null):target?.place===job.id;
     if(!target||target.venue!=='handoff'||!same||target.agent!==recipient||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
     return {conversation:target.id,item:existing.id};
    }
@@ -149,7 +161,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const role=input.role?self?.workRoles?.(recipient,input.role)[0]:undefined;
    if(input.role && !role)throw new OperationError('invalid','Unknown work role for this agent');
    if(role && !input.notBefore && !role.available)throw new OperationError('unavailable','No eligible worker is available for this work role');
-   const place=delegated?reviewPlace(job.id,input.clientId,role):job.id;
+   const place=delegated?reviewPlace(parent,input.clientId,role):job.id;
    const target=cvs.open({agent:recipient,venue:'handoff',place,label:input.label,project:cv.project,member:cv.member,direct:cv.direct,handoffNotBefore:input.notBefore});
    if(target.handoffNotBefore!==(input.notBefore??null)||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const word=self?.word({job});
