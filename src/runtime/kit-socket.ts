@@ -37,7 +37,11 @@ export async function kitSocket(directory:string,broker:()=>Pick<ReturnType<type
               transport=error instanceof KitCapacity?'capacity':'catalog';
               return [];
             });
-            result={tools,unavailable:await availability(transport,signal)};
+            try {
+              result={tools,unavailable:await availability(transport,signal)};
+            } catch {
+              result={tools,unavailable:[],reportFailed:true};
+            }
           }
         }
         else if(request.url==='/call'){const {name,args}=call.parse(body);result=await active.call(name,args,signal);}

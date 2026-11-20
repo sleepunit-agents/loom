@@ -190,3 +190,12 @@ it('reports a missing second tool and keeps a machine-specific notice open acros
   expect(await report()).toEqual([]);
   expect(db.select().from(inbox).where(eq(inbox.source,'notice')).get()?.state).toBe('resolved');
 });
+
+it('reports a partially denied kit without disclosing the denied tool name',async()=>{
+  const {db,post}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  db.update(agentKits).set({tools:[tool,{...tool,name:'other'}]}).run();
+  db.insert(agentDeniedTools).values({agent:'art',pattern:'mcp__loom__kit_other',guestsOnly:false}).run();
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const result=await post('availability',{pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]});
+  expect(await result.json()).toEqual({unavailable:[{kit:'weather',reason:'policy',partial:true}]});
+});

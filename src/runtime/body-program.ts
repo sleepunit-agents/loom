@@ -211,7 +211,7 @@ export async function bodyProgram(input: {
     // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
-    if(bridge || guest || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(bridge || policy?.word === 'others' || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
     if(job.venue==='loom' && policy?.word==='owners'){
       const delegation='For a Codex subagent, call conversation.handoff with harness "codex", a unique clientId, label and self-contained words including the repository and commit. Loom returns the result to this thread.';
       context.unshift(delegation);continued.unshift(delegation);
@@ -246,7 +246,10 @@ export async function bodyProgram(input: {
         const line='The worker could not load kit tools or report their availability for this job.';
         context.push(line);continued.push(line);
       }
-      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal,kitBrief).catch(error=>{
+      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal,kitBrief,()=>{
+        const line='The worker could not confirm that kit availability was reported for this job.';
+        context.push(line);continued.push(line);
+      }).catch(error=>{
         const line=error instanceof KitCapacity?error.message:'The worker could not load kit tools for this job.';
         context.push(line);continued.push(line);
         return [];

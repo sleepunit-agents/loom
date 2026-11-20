@@ -41,3 +41,20 @@ it('delivers a fixed unavailability reason to the body when no tool can be liste
     await rm(directory,{recursive:true,force:true});
   }
 });
+
+it('keeps a listed tool usable when reporting its availability fails',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'loom-kit-'));
+  const signal=new AbortController().signal;
+  const list=async()=>[{name:'kit_lookup',description:'Lookup',parameters:{}}];
+  const socket=await kitSocket(directory,()=>({list,call:async()=>'found'}),signal,
+    async()=>{throw Error('report unavailable');});
+  try{
+    const failed=vi.fn();
+    const [lookup]=await bodyKitTools(socket.path,signal,undefined,failed);
+    expect(failed).toHaveBeenCalledOnce();
+    expect(await lookup.execute({},signal)).toEqual({content:[{type:'text',text:'found'}]});
+  }finally{
+    await socket.close();
+    await rm(directory,{recursive:true,force:true});
+  }
+});

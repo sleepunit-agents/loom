@@ -74,7 +74,7 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
         const allowed=target.tools.filter(row=>row.kit===kit);
         const reasons=new Set<KitUnavailable['reason']>();
         if(!tools.length)reasons.add('empty');
-        else if(!allowed.length)reasons.add('policy');
+        else if(allowed.length<tools.length)reasons.add('policy');
         for(const {tool} of allowed){
           if(!pin)reasons.add('image');
           else if(!matchesPin(tool,pin))reasons.add('house');
