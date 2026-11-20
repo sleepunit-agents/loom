@@ -94,7 +94,7 @@ export class AccountLogins {
         const ends = check.state === 'signed-in' && check.expiresAt != null ? Date.parse(check.expiresAt) : NaN;
         const expiresAt = Number.isFinite(ends) && ends >= 0 && ends <= LAST_MS ? new Date(ends).toISOString() : null;
         const after = this.write(key, { state: check.state, expiresAt, learnedFrom: 'check', why: check.state === 'signed-out' && check.why ? REASONS[check.why] : null }, at);
-        if (!before || before.state !== after.state || before.expiresAt !== after.expiresAt || before.why !== after.why) changed.add(check.account);
+        if (!before || before.state !== after.state || before.expiresAt !== after.expiresAt || before.why !== after.why || before.learnedFrom !== after.learnedFrom) changed.add(check.account);
       }
       for (const row of this.db.select().from(modelAccountLogins).where(eq(modelAccountLogins.box, box)).all()) {
         if (seen.has(name(row))) continue;

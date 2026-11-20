@@ -98,9 +98,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     // A cached active:true cannot restore authority after a terminal transition.
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
     run(ctx, input) {
-      const result = dispatcher.heartbeat(runner(ctx.viewer), input.job, input.state);
+      const report:{stampOnly?:boolean}={};
+      const result = dispatcher.heartbeat(runner(ctx.viewer), input.job, input.state, report);
       if(result.stopped)stopped.add(input);
-      ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return {active:result.active};
+      if(report.stampOnly)ctx.stampOnly?.();
+      else {ctx.changed('job', input.job);ctx.changed('box', ctx.viewer.id);}
+      return {active:result.active};
     },
     after(input){if(stopped.delete(input))options.jobEnded(input.job);},
   });

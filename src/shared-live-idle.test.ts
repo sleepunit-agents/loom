@@ -16,7 +16,7 @@ import { GraphQLInt } from 'graphql/index.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, boxFacts, boxReadings, inbox, members, tokens } from './core/data/schema.js';
+import { agents, jobs, boxes, boxFacts, boxReadings, inbox, members, modelAccounts, modelAccountBoxes, tokens } from './core/data/schema.js';
 import { STAMP_WAKE_MS } from './next-data.js';
 import { SILENCE_MS } from './runtime/silence.js';
 import { sharedRoot } from './shared-root.js';
@@ -227,4 +227,43 @@ it('does not read an open selection again for a machine reading that raises and 
   expect(window.data()).toMatchObject({ boxReadings: [{ usedPercent: 70 }] });
   f.clock.advance(60_000);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 80, level: 'ok' }] }), { timeout: 3000 });
+});
+
+it('coalesces repeated worker sign-in observations and publishes a changed sign-in at once',async()=>{
+  const f=await fixture();
+  f.db.insert(modelAccounts).values({id:'sub',label:'Fixture',provider:'fixture',owner:'sam',hasRoom:false}).run();
+  f.db.insert(modelAccountBoxes).values({account:'sub',box:'worker'}).run();
+  const window=await f.watch('sam','{ probe modelAccounts { ... on RuntimeAccountDetail { logins { state checkedAt } } } }');
+  const report=async(state:'signed-in'|'signed-out')=>{
+    f.clock.advance(1000);
+    const result=await f.root.http.request('/api/runtime/signInState',{method:'POST',headers:{authorization:'Bearer '+keys.worker,'content-type':'application/json'},
+      body:JSON.stringify({id:'observation-'+f.clock.now(),input:{logins:[{account:'sub',harness:'codex',place:'containers',state}]}})});
+    expect(result.status).toBe(200);
+  };
+  await report('signed-in');
+  await vi.waitFor(()=>expect(window.data()).toMatchObject({modelAccounts:[{logins:[{state:'signed-in',checkedAt:f.now()}]}]}));
+  const before=f.reads();
+  for(let n=0;n<8;n++){await report('signed-in');await f.settle();}
+  expect(f.reads()).toBe(before);
+  await report('signed-out');
+  await vi.waitFor(()=>expect(window.data()).toMatchObject({modelAccounts:[{logins:[{state:'signed-out',checkedAt:f.now()}]}]}));
+});
+
+it('coalesces a running job heartbeat and wakes readers when a silent job returns',async()=>{
+ const f=await fixture();
+ f.db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ f.db.insert(jobs).values({id:'job',agent:'art',member:'owner',state:'running',box:'worker',title:'Fixture job',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:f.now(),claimedAt:f.now(),heardAt:f.now()}).run();
+ const window=await f.watch('owner','{ probe jobHistory(agent:"art"){id heardAt} }');
+ const heartbeat=async()=>{
+  const r=await f.root.http.request('/api/runtime/heartbeat',{method:'POST',headers:{authorization:'Bearer '+keys.worker,'content-type':'application/json'},
+   body:JSON.stringify({id:'heartbeat-'+f.clock.now(),input:{job:'job',state:'running'}})});
+  expect(await r.json()).toEqual({ok:true,value:{active:true}});
+ };
+ const before=f.reads();
+ for(let n=0;n<5;n++){f.clock.advance(1000);await heartbeat();await f.settle();}
+ expect(f.reads()).toBe(before);
+ expect(f.db.select().from(jobs).get()?.heardAt).toBe(f.now());
+ f.clock.advance(SILENCE_MS+1);await f.settle();await f.poll();await f.settle();
+ await heartbeat();
+ await vi.waitFor(()=>expect(window.data()).toMatchObject({jobHistory:[{id:'job',heardAt:f.now()}]}));
 });

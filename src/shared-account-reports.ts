@@ -87,6 +87,7 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
     may: viewer => !!liveWorker(db, viewer, runner(viewer)),
     run(ctx, input) {
       const changed = logins.checked(liveWorker(db, ctx.viewer, runner(ctx.viewer))!, input.logins);
+      if (changed.length === 0) ctx.stampOnly?.();
       for (const account of changed) ctx.changed('modelAccount', account);
       return { changed: changed.length };
     },
