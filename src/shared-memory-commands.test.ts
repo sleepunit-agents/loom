@@ -711,3 +711,19 @@ it('runs the house note CLI against a running job and refuses the same shell han
  for(const pending of [direct,mcp])await expect(pending.text()).rejects.toThrow();
  expect(await run('read','field/log')).toMatchObject({code:1,out:''});
 },30000);
+
+it.each(['application/json','multipart/form-data; boundary=sample'])('bounds pending uploads and releases the slot after the deadline for %s',async type=>{
+ const f=await fixture();
+ let began!:()=>void;const reading=new Promise<void>(resolve=>began=resolve);
+ const body=new ReadableStream<Uint8Array>({pull(){began();}},{highWaterMark:0});
+ const headers={authorization:'Bearer '+raw.body,'content-type':type};
+ const path=f.url+'/api/memory/noteAttach';
+ const paused=f.root.http.fetch(new Request(path,{method:'POST',headers,body,duplex:'half'} as RequestInit));
+ await reading;
+ const attempt=(token:string)=>f.root.http.request(path,{method:'POST',headers:{...headers,authorization:'Bearer '+token},body:'invalid'});
+ expect((await attempt(raw.body)).status).toBe(429);
+ expect((await attempt(raw.agent)).status).toBe(403);
+ f.clock.advance(60_001);
+ expect((await paused).status).toBe(400);
+ expect((await attempt(raw.body)).status).toBe(400);
+});

@@ -249,7 +249,11 @@ export function sharedRoot(options: {
     const room=jobRoom(db,work.job);
     return !hasGuest(room)&&allowed(deniedTools(room));
   };
-  const mayAttachFile=(viewer:Viewer)=>noteFileRoom(viewer,mayAttachNoteFile);
+  const mayAttachFile=(viewer:Viewer)=>{
+    const work=bodyJob(viewer);if(!work)return false;
+    const room=jobRoom(db,work.job);
+    return !hasGuest(room)&&mayAttachNoteFile(deniedTools(room));
+  };
   memory.register(operations,options.commsKey?{body:memoryAgent,mayAttachFile,mayReadFile:viewer=>noteFileRoom(viewer,mayReadNoteFile),hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
     // Of what the agent and the household keep, such a body only adds: a memory, or a new note, each stamped by loom with
     // whose word it was written on. Everything else in those families is refused it.
@@ -514,16 +518,18 @@ export function sharedRoot(options: {
     const signal=AbortSignal.any([shutdown.signal,request.signal]);
     let body: unknown;
     try{
-      if(multipart){
+      if(name==='memory.noteAttach'){
         const agent=memoryAgent(auth.viewer);
         if(!agent||!mayAttachFile(auth.viewer))return c.json(failure('denied','Attachment refused'),403);
         if(uploads.size>=4||uploads.has(agent.agent))return c.json(failure('unavailable','Attachment transfer busy'),429);
         uploads.add(agent.agent);
         const stop=clock.at(clock.now()+60_000,()=>shutdown.abort());
         releaseUpload.set(shutdown,()=>{stop();uploads.delete(agent.agent);});
+      }
+      if(multipart){
         const data=await bodyRequest(request,{signal},true,NOTE_UPLOAD_REQUEST_BYTES).formData();
         body=await noteUploadEnvelope(data);
-      }else body=await bodyRequest(request,c.get('shutdown'),true).json();
+      }else body=await bodyRequest(request,{signal},true).json();
     }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);

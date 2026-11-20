@@ -74,9 +74,9 @@ const probe = `
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
-      assert.ok(JSON.parse(await run('loom note attach '+path+' /opt/loom/package.json --name sample.bin --json')).bytes>0);
+      assert.ok(JSON.parse(await run('loom note attach '+path+' /opt/loom/assets/icons/loom-32.png --name sample.bin --json')).bytes>0);
       const binary=await promisify(execFile)(shell,[flags,'loom note file '+path+' sample.bin'],{encoding:'buffer',env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}});
-      assert.deepEqual(binary.stdout,readFileSync('/opt/loom/package.json'));
+      assert.deepEqual(binary.stdout,readFileSync('/opt/loom/assets/icons/loom-32.png'));
       for(const command of ['pin','unpin']){
         const changed=JSON.parse(await run('loom note '+command+' '+path+' --json'));
         assert.equal(changed.pinned,command==='pin');
