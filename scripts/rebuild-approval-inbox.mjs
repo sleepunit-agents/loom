@@ -11,12 +11,12 @@ export async function approvalInbox({page,tile,app,example,out}){
   await tile.getByRole('heading',{name:card.ask,exact:true}).waitFor();
   const mail=db.prepare('SELECT * FROM inbox WHERE source=\'approval\' AND source_id=? AND "to"=\'alex\'').all(card.id);
   check(mail.length===1&&mail[0].state==='waiting'&&mail[0].waits_on_id===card.id,'Approval did not produce one linked waiting item for Alex');
-  await tile.getByRole('button',{name:/^Open [Aa]pprovals?$/}).click();
-  const approvals=page.getByRole('region',{name:'Approvals tile',exact:true});await approvals.getByRole('heading',{name:card.ask,exact:true}).waitFor();
+  await tile.getByRole('button',{name:'Open in Approvals',exact:true}).click();
+  const approvals=page.getByRole('region',{name:'Approvals tile',exact:true});await approvals.getByRole('heading',{name:card.what,exact:true}).waitFor();
   check((await approvals.innerText()).includes(card.target),'Inbox opened the wrong approval target');
   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
   await approvals.getByRole('button',{name:'Allow',exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Source answer was refused');
-  await approvals.getByText('Answered by alex',{exact:true}).waitFor();
+  await approvals.getByText(/^Allowed by alex/i).waitFor();
   const answered=db.prepare('SELECT * FROM approvals WHERE id=?').get(card.id),settled=db.prepare('SELECT * FROM inbox WHERE id=?').get(mail[0].id);
   check(answered.state==='allowed'&&answered.decided_by==='alex'&&settled.state==='resolved'&&!!settled.resolution,'Source answer did not settle its Inbox item with a reason');
   await page.screenshot({path:join(out,screenshot),fullPage:true});
