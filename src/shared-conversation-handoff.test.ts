@@ -1,5 +1,8 @@
 /** Real Root and receiving SDK; all bodies/people/words are fictional. */
 import {afterEach,expect,it,vi} from 'vitest';
+import {fileURLToPath} from 'node:url';
+import {dirname} from 'node:path';
+import type {HarnessRun} from './runtime/body-harness.js';
 import {createHash} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -270,12 +273,13 @@ it('keeps equivalent role selectors stable and supports registered native harnes
  expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
 });
 
-it.each(['success','failure','archive','transient','occupied','work-role','role-changed','worker-loss'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
- const roleMode=mode==='work-role'||mode==='role-changed'||mode==='worker-loss';
+it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','worker-loss'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+ const mixed=mode==='mixed-native';
+ const roleMode=mixed||mode==='work-role'||mode==='role-changed'||mode==='worker-loss';
  const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
   {agent:'mark',id:'editing',description:'Check prose.',providers:['openai']}],modelRoles:()=>[
   {model:'first',provider:roleMode?'openai':'claude',harness:'claude',series:'first'},
-  {model:'reviewer',provider:'openai',harness:roleMode?'claude':'codex',series:'reviewer'}]});
+  {model:'reviewer',provider:'openai',harness:roleMode&&!mixed?'claude':'codex',series:'reviewer'}]});
  const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
  await f.send('Please get a cold review','start-review');
  db.insert(s.agentModels).values([{agent:'art',model:'first',position:0},{agent:'art',model:'reviewer',position:1}]).run();
@@ -289,6 +293,14 @@ it.each(['success','failure','archive','transient','occupied','work-role','role-
  db.insert(s.modelAccountBoxes).values({account:'paid',box:'box'}).run();
  const next=async(id:string,capable:boolean,runner=bodyCredentials.runner)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
  await next('advertise',true);
+ if(mixed){
+  db.update(s.modelAccountWindows).set({usage:1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  const unavailable=await f.call('handoffOptions',{},'exhausted');
+  expect((await unavailable.json()).value.roles).toMatchObject([{id:'research',available:false}]);
+  expect((await f.call('handoff',request,'exhausted-launch')).status).toBe(503);
+  expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(0);
+  db.update(s.modelAccountWindows).set({usage:0.1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+ }
  if(mode==='success'){
   const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
   clean.push(()=>tools.close());
@@ -298,7 +310,7 @@ it.each(['success','failure','archive','transient','occupied','work-role','role-
  }
  if(roleMode){
   const discovery=await f.call('handoffOptions',{},'discover');
-  expect((await discovery.json()).value).toMatchObject({codexAvailable:false,roles:[{id:'research',available:true,description:'Compare the cited documents.'}]});
+  expect((await discovery.json()).value).toMatchObject({codexAvailable:mixed,roles:[{id:'research',available:true,description:'Compare the cited documents.'}]});
   expect((await f.call('handoff',{...request,role:'editing'},'other-role')).status).toBe(400);
  }
  const response=await f.call('handoff',request,'launch');
@@ -332,7 +344,7 @@ it.each(['success','failure','archive','transient','occupied','work-role','role-
  }
  const poll=await next('poll',true);
  let assignment=(await poll.json()).value;
- expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:roleMode?'claude':'codex',model:'reviewer'});
+ expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:roleMode&&!mixed?'claude':'codex',model:'reviewer'});
  if(mode==='worker-loss'){
   const first=assignment, standbyRunner='s'.repeat(64), firstBody='body_'+'f'.repeat(64);
   const box=db.select().from(s.boxes).where(eq(s.boxes.id,'box')).get()!;
@@ -397,7 +409,26 @@ it.each(['success','failure','archive','transient','occupied','work-role','role-
  }
  const reply={clientId:'review-result',words:'PRIVATE REVIEW FINDINGS',model:'reviewer'};
  const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:assignment.id,token}}));
- expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);if(roleMode)expect(context).toContain('Compare the cited documents.');return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
+ const executable=fileURLToPath(new URL('../test/fixtures/codex-mixed-handoff.mjs',import.meta.url));
+ const plan=mixed?{command:executable,cwd:dirname(executable)}:{command:'/fictional/codex',cwd:'/fictional'};
+ const native:HarnessRun=async(_job,context)=>{
+  expect(context).toContain(request.words);
+  if(roleMode)expect(context).toContain('Compare the cited documents.');
+  return {text:reply.words,model:'reviewer',actions:[]};
+ };
+ const errors:string[]=[];
+ const code=await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({...plan,reach:'all'}),stdin:async()=>bytes,
+  env:mixed?{PATH:dirname(process.execPath)}:{},signal:new AbortController().signal,clock:f.clock,
+  fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},
+  loadMemory:async()=>null,...(mixed?{}:{native}),error:message=>errors.push(message)});
+ expect(code,errors.join(' ')).toBe(0);
+ if(mixed){
+  const childJobs=db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).all();
+  expect(childJobs).toMatchObject([{id:assignment.id,account:'paid',model:'reviewer'}]);
+  const usage=db.select().from(s.jobUsage).where(eq(s.jobUsage.job,assignment.id)).get();
+  expect(usage).toMatchObject({tokensIn:1200,tokensOut:85,cacheRead:400,toolCalls:5,
+   tools:{'collab_tool_call.spawn_agent.completed':3,'collab_tool_call.spawn_agent.failed':1,'collab_tool_call.wait':1}});
+ }
  await sdk.reply(reply);
  const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();
  expect(replies).toHaveLength(1);expect(replies[0].run).toBe(assignment.id);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
