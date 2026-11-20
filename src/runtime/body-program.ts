@@ -160,6 +160,9 @@ export async function bodyProgram(input: {
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
+        context.push('Your Codex subagent returned the following result. Continue the originating request using the findings.');
+      }
       const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
     });
     if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
@@ -208,6 +211,10 @@ export async function bodyProgram(input: {
     // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(job.venue==='loom' && policy?.word==='owners'){
+      const delegation='For a Codex subagent, call conversation.handoff with harness "codex", a unique clientId, label and self-contained words including the repository and commit. Loom returns the result to this thread.';
+      context.unshift(delegation);continued.unshift(delegation);
+    }
     if(job.venue==='discord'&&job.venueDescription){
       const where='Current conversation: '+job.venueDescription+'. This is your location for this turn, including when your Discord role page describes the server in general.';
       context.unshift(where);continued.unshift(where);
@@ -272,6 +279,7 @@ export async function bodyProgram(input: {
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
     if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'});
+    else if(job.review)await client.reply({clientId:'review-result',words:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }

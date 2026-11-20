@@ -1,6 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
+import { reviewThread, reviewParent } from '../core/conversations/review-place.js';
 import { Threads } from '../core/conversations/threads.js';
 import { lateMailWaits } from '../core/conversations/index.js';
 import { describePlace, jobRoom, othersMail } from '../shared-place-mail.js';
@@ -21,6 +22,7 @@ export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
   // A protocol handshake belongs to the connected worker. Owner labels describe machines and cannot supply it.
+  private readonly reviewBoxes = new Set<string>();
   private readonly programBoxes = new Set<string>();
   /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
    * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
@@ -28,6 +30,11 @@ export class Dispatcher {
   constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[],
     private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
+  }
+  canStartReview(agent:string) {
+    const settings=this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get();
+    return !!settings && !!decidePlacement(this.db,{agent,now:this.now(),roles:this.roles().filter(role=>role.harness==='codex'),
+      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]}).placement;
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;
@@ -40,8 +47,9 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }) {
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false) {
     const { stampOnly } = this.machines.report(box, facts, slots ?? null), written = rowsWritten(this.db);
+    if(reviewResults)this.reviewBoxes.add(box);else this.reviewBoxes.delete(box);
     const assignment = this.placeNext(box, ended, programs);
     // A poll that found no work and wrote no row but the machine's last-seen time: its caller may say so.
     if (poll) poll.stampOnly = stampOnly && !assignment && rowsWritten(this.db) === written;
@@ -76,8 +84,14 @@ export class Dispatcher {
         }
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         // And the word the job works on goes with it: on anybody else's the body is held to loom's tools (policy.ts, loomToolsOnly).
+        const cv=job.conversation?this.db.select().from(conversations).where(eq(conversations.id,job.conversation)).get():undefined;
+        const review=!!cv && !!reviewParent(cv);
+        if(review && !reviewThread(this.db,cv!)){
+          if(this.jobs.unplaceable(job.id,'The originating Comms thread closed.'))ended?.push(job.id);
+          continue;
+        }
         const policy = jobRoom(this.db, job);
-        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
@@ -97,9 +111,9 @@ export class Dispatcher {
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
         const thread = this.currentThread(claimed);
         if(thread)new Threads(this.db,this.now,lateMailWaits).working(thread.id,true);
-        const cv=claimed.conversation?this.db.select().from(conversations).where(eq(conversations.id,claimed.conversation)).get():undefined;
+
         const venue=cv?.venue;
-        return { venue:venue??null, ...(cv?.venue==='discord' && { venueDescription: describePlace(this.db, cv) }), thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        return { ...(review && {review:true}), venue:venue??null, ...(cv?.venue==='discord' && { venueDescription: describePlace(this.db, cv) }), thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };

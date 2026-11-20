@@ -63,7 +63,7 @@ export class ConversationMail {
     }
     const contexts=new Map<string,()=>AnswerContext|null>();
     for(const item of items)if(item.volume==='full'&&prepared.get(item.id)!==null)contexts.set(item.id,await prepareAnswerContext(this.comms,item));
-    const ordinary=(item:Item,words:string|null|undefined)=>item.source==='thread'&&!!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
+    const ordinary=(item:Item,words:string|null|undefined)=>(item.source==='thread'||item.source==='handoff')&&!!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
     const cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
     const history=items.some(item=>ordinary(item,prepared.get(item.id)))?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
     // A bridge conversation has no thread; what was said earlier in it is its own kept words (bridge-history.ts).

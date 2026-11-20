@@ -24,6 +24,7 @@ export function meetsNeed(facts: readonly string[], need: string): boolean {
 interface PlacementInput {
   agent: string; now: string; roles: readonly ModelRole[]; needs?: readonly string[]; prefers?: readonly string[];
   /** A model name or a tag carried by an allowed model. */
+  eligibleBoxes?: ReadonlySet<string>;
   wants?: string | null;
   /** Machines that advertised the clock-program protocol on their most recent poll. */
   programBoxes?: ReadonlySet<string>;
@@ -63,6 +64,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     const silence = box?.lastSeenAt ? now - Date.parse(box.lastSeenAt) : NaN;
     if (!box || box.revokedAt || !Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS)
       return { box: id, reason: 'Machine is not live.' };
+    if (input.eligibleBoxes && !input.eligibleBoxes.has(id)) return {box:id,reason:'Worker has not advertised Codex result delivery.'};
     if (box.reportOnly || !machineMayHost(box, listed.get(id), input.agent, sharing))
       return { box: id, reason: `Machine does not host ${input.agent}.` };
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, id)).all().map(row => row.fact);

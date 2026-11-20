@@ -65,7 +65,7 @@ export class CommsMessages {
     return row;
   }
 
-  private attach(message: Message, item: typeof inbox.$inferSelect): Message {
+  attach(message: Message, item: typeof inbox.$inferSelect): Message {
     return this.db.update(messages).set({ inboxItem: item.id }).where(and(eq(messages.thread, message.thread), eq(messages.seq, message.seq))).returning().get()!;
   }
 
