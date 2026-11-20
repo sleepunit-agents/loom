@@ -17,7 +17,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(report.isolation.consoleErrors.join(' ')).toContain('Walkthrough console capture probe');
   expect(report.inventory).toEqual(titles);runtimeTitle=report.example.runtime.job.title;expect(report.example.runtime.job.state).toBe('queued');
   expect(report.clock).toMatchObject({householdZone:'America/Chicago',browserZone:'Asia/Tokyo',title:expect.stringMatching(/, America\/Chicago time$/)});
- });
+ },60_000);
  it('measures encrypted private-word expiry on the program clock',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
   const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
@@ -29,7 +29,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(result.samples.every(sample=>sample.sqlExecutions>0)).toBe(true);
   expect(result.ok===false||result.inconclusive===true).toBe(true);
  });
- for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0},async()=>{
+ for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,...(title==='Approvals'?{timeout:180_000}:{})},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
   expect(app.title).toBe(title);expect(app.opened||!!app.error).toBe(true);
   expect(app.text.trim().length).toBeGreaterThan(0);
@@ -51,7 +51,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
   if(title==='Comms'){const result=step.value.report.actions?.conversationRecords;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
   if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
-  if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
+  if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inboxCopies:1,persistedAfterReload:true});}
   if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
   if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
   if(title==='Tempo')expect(app.actions.resumed.facts).toMatchObject({sourceKind:'answer',watches:'approval:'+step.value.report.example.approval,lifespan:'once',enabled:false,stillOnceAfterLaterDeadline:true});

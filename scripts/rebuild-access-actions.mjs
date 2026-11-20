@@ -1,5 +1,6 @@
 /** Page controls against the normal disposable startup; SQL only verifies writes. */
 import {join} from 'node:path';
+import {responseForAction} from './rebuild-response-capture.mjs';
 const check=(value,message)=>{if(!value)throw Error(message);};
 const activate=async button=>{await button.focus();await button.press('Enter');};
 
@@ -18,10 +19,9 @@ export async function approveRequestedChange({page,app,composer,change,input,exp
  const db=app.services.comms.db.$client;
  const words=await composer.getByRole('textbox',{name:/^Message\b/}).inputValue();
  check(expectedWords(words),'The prepared message differs from the requested change');
- const sent=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:6000});
- void sent.catch(()=>{});
- await activate(composer.getByRole('button',{name:'Send',exact:true}));
- const response=await sent,body=await response.json();
+ const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/comms/send'&&r.method()==='POST',
+  ()=>activate(composer.getByRole('button',{name:'Send',exact:true})),6000);
+ const body=await response.json();
  check(response.ok()&&body.ok,'Request was not delivered');
  const {thread,seq}=body.value;
  await page.getByRole('region',{name:'Comms tile',exact:true}).getByText(words,{exact:true}).waitFor();
@@ -33,10 +33,8 @@ export async function approveRequestedChange({page,app,composer,change,input,exp
  check(!exists(),'The change took effect before approval');
  await page.goto(new URL('/p/approvals-preview/approval/'+encodeURIComponent(card.id),app.url).href);
  const answer=page.getByRole('region',{name:'Approvals tile',exact:true}).getByRole('group',{name:'Answer approval',exact:true});
- const receipt=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:6000});
- void receipt.catch(()=>{});
- await activate(answer.getByRole('button',{name:'Allow',exact:true}));
- const result=await receipt;
+ const result=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.method()==='POST',
+  ()=>activate(answer.getByRole('button',{name:'Allow',exact:true})),6000);
  check(result.ok()&&(await result.json()).ok&&app.services.approvals.get(card.id).state==='used','Approval did not apply the setting');
 }
 
