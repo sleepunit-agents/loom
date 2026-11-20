@@ -74,7 +74,8 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
       const bytes=Buffer.from(file.contents,'base64');
       try{
         if(createHash('sha256').update(bytes).digest('hex')!==file.sha256)throw Error();
-        await new Promise<void>((resolve,reject)=>process.stdout.write(bytes,error=>error?reject(error):resolve()));
+        if(!io.stdoutBytes)throw Error('Binary output unavailable');
+        await io.stdoutBytes(bytes);
       }finally{bytes.fill(0);}
     }else if(manage){
       const result=operation==='delete'

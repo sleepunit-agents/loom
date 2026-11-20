@@ -38,6 +38,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
     else if(name==='loom_query')value=await client.query(query.parse(args));
     else if(name==='loom_command'){
      const input=command.parse(args),body=input.input;
+     if(input.operation==='memory.noteFile'&&!options.allowsFileBytes)return unavailable();
      // Acceptance, observed provider facts, and Stop acknowledgement belong to
      // the receiving runtime. The model cannot fabricate these observations.
      // Nor its kept harness session: the body program hands that over and takes it back (body-session.ts). A

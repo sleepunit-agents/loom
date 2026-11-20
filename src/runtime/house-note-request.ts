@@ -28,6 +28,11 @@ interface NotePort {
   call(name: string, args: unknown, signal: AbortSignal): Promise<BodyProgramToolResult>;
 }
 
+export function mayReadNoteFile(entries:readonly string[]):boolean {
+  return !bodyDeniedTools(entries).includes(harnessToolPrefix+'note_read')&&!entries.some(rule=>
+    ['mcp__loom__note_file','mcp__loom_secrets__note_file'].some(name=>denialCoversTool(rule,name)));
+}
+
 /** Translate shell inputs to the same job-owned program tools used by the native harness. */
 export async function houseNoteRequest(port: NotePort, input: unknown, signal: AbortSignal) {
   const parsed = request.safeParse(input);
@@ -35,9 +40,7 @@ export async function houseNoteRequest(port: NotePort, input: unknown, signal: A
   const note = parsed.data;
   if (bodyDeniedTools(port.denied).includes(harnessToolPrefix + 'note_' + note.operation)) throw Error('House note operation denied');
   if(note.operation==='file'){
-    const denied=bodyDeniedTools(port.denied);
-    if(denied.includes(harnessToolPrefix+'note_read')||port.denied.some(rule=>
-      ['mcp__loom__note_file','mcp__loom_secrets__note_file'].some(name=>denialCoversTool(rule,name))))throw Error('House note operation denied');
+    if(!mayReadNoteFile(port.denied))throw Error('House note operation denied');
     return port.call('loom_command',{operation:'memory.noteFile',input:{path:note.path,name:note.name},id:randomUUID()},signal);
   }
   if(note.operation==='pin'||note.operation==='unpin'||note.operation==='delete'){
