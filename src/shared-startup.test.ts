@@ -117,6 +117,20 @@ it('releases the adapter, database, source listeners and home ownership after bi
  await Promise.all([app.close(),app.close()]);expect(adapter.client.open).toBe(false);expect(adapter.closed).toBe(2);
  const reopened=new Database(f.program.database,{readonly:true});expect(reopened.prepare('SELECT count(*) AS n FROM members').get()).toEqual({n:2});reopened.close();
 });
+it('preserves the startup and cleanup errors and releases the database and home lease', async () => {
+ const f = await fixture(), module = join(f.home, 'failing-close.mjs');
+ writeFileSync(module, "export let client; export default ({db}) => { client = db.$client; return {close() { throw Error('fixture adapter close'); }}; };", { mode: 0o600 });
+ writeFileSync(f.config, JSON.stringify({...f.program, adapters:module}), {mode:0o600});
+ const cause = Error('fixture late startup');
+ await expect(startSharedHome({home:f.home, port:0, stdout:() => { throw cause; }})).rejects.toMatchObject({
+  cause, errors:[cause, expect.objectContaining({message:'fixture adapter close'})],
+ });
+ const adapter = await import(pathToFileURL(module).href);
+ expect(adapter.client.open).toBe(false);
+ writeFileSync(f.config, JSON.stringify(f.program), {mode:0o600});
+ const restarted = await startSharedHome({home:f.home, port:0, stdout:() => {}});
+ await restarted.close();
+});
 it('refuses a public startup inventory without starting a listener',async()=>{
  const f=await fixture();chmodSync(f.config,0o644);
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
