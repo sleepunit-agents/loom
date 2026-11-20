@@ -37,6 +37,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  const sharing=()=>held?.sharing??options.sharing();
  const once=<T>(viewer:Viewer,work:()=>T):T=>{if(held)return work();held={sharing:options.sharing(),viewer};try{return work();}finally{held=undefined;}};
  const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},sharing());
+ const visibleAgents=(viewer:Viewer)=>options.agents.filter(source=>allowed(viewer,source.agent)).map(source=>source.agent);
  function ids(scope?:string){if(scope!==undefined)return scope?[scope]:[];return [...sources].flatMap(([agent,db])=>has(db,'projects')?(db.prepare('SELECT slug FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${agent}:${r.slug}`):[]);}
  function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{
   if(!has(db,'memories'))return {key:'memories',label:'Memories',available:false};
@@ -71,7 +72,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as ProjectRow|undefined;
   return row && projectRecord(agent, db, row, viewer, readingHub);
  }
- function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean):ProjectRecord{
+ function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean, agents=visibleAgents(viewer)):ProjectRecord{
   const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
   const q:ProjectQuery={agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
   const sections:ProjectSection[]=[];
@@ -106,15 +107,18 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   dated.sort((a,b)=>Date.parse(b.when!)-Date.parse(a.when!));
   const spark=Array.from({length:7},()=>0);for(const i of dated){const back=Math.floor((now-Date.parse(i.when!))/day);if(back>=0&&back<7)spark[6-back]++;}
   const activity=latest([row.updated,...sections.filter(s=>['memories','notes'].includes(s.key)&&s.available&&!s.error&&s.activity).map(s=>s.activity!)]);
-  return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
+  return {id:`${agent}:${row.slug}`,agent,agents:[...agents],now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const list = (viewer:Viewer) => once(viewer, () => {
   const projects:ProjectRecord[] = [];
+  let agents:string[]|undefined;
   for (const [agent, db] of sources) {
    if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
    const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
-   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false));
+   if (!rows.length) continue;
+   agents ??= visibleAgents(viewer);
+   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false, agents));
   }
   return projects;
  });

@@ -32,13 +32,17 @@ it('reads a visible source in two statements when listing either two or ten paus
   const store = new ProjectsStore({ dbPath: memories });
   closes.push(() => store.close());
   const {state, sharing} = facts();
-  const reader = createProjectsReader(new FakeClock(now), {agents: [{agent: 'fiction', memories}], sharing});
+  let directoryReads = 0;
+  const reader = createProjectsReader(new FakeClock(now), {
+    get agents() { directoryReads++; return [{agent: 'fiction', memories}]; }, sharing,
+  });
   closes.push(() => reader.close());
   const measure = () => {
+    directoryReads = 0;
     const prepared = vi.spyOn(BetterSqlite3.prototype, 'prepare');
     try {
       const rows = reader.list(viewer);
-      return {slugs: rows.map(row => row.slug), statements: prepared.mock.calls.length};
+      return {slugs: rows.map(row => row.slug), statements: prepared.mock.calls.length, directoryReads};
     } finally { prepared.mockRestore(); }
   };
   const slugs: string[] = [];
@@ -46,10 +50,10 @@ it('reads a visible source in two statements when listing either two or ten paus
     const slug = 'pond-' + i;
     store.write({slug, name: 'Pond ' + i, status: 'paused'});
     slugs.push(slug);
-    if (i === 1 || i === 9) expect.soft(measure()).toEqual({slugs: [...slugs], statements: 2});
+    if (i === 1 || i === 9) expect.soft(measure()).toEqual({slugs: [...slugs], statements: 2, directoryReads: 2});
   }
   state.owns = false;
-  expect(measure()).toEqual({slugs: [], statements: 0});
+  expect(measure()).toEqual({slugs: [], statements: 0, directoryReads: 1});
 });
 
 it('reads the sharing facts and the people once for a whole listing of projects, and afresh for the next', () => {
