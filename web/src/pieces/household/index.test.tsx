@@ -2,12 +2,12 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {createElement as h} from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import {act,create} from 'react-test-renderer';
-const f=vi.hoisted(()=>({feed:{status:'live',data:{householdSetup:{defaultAgent:null,members:[{id:'sam',role:'owner',fullOwner:true,agents:[]}],agents:[],tokens:[{fingerprint:'f'.repeat(64),label:'Fixture token',kind:'owner',identity:'sam',createdAt:'2026-11-15T00:00:00Z',expiresAt:null,revokedAt:null,lastUsedAt:null}],sessions:[]},boxes:[]}} as {status:string;data?:unknown},operation:vi.fn(),programFeed:{status:'live',data:{programSetup:null}} as {status:string;data?:unknown}}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>query.includes('programSetup')?f.programFeed:f.feed}));vi.mock('../../data/operation',()=>({memberOperation:f.operation}));
-vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Textarea','Field','Fields','Section','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':name==='Textarea'?'textarea':'div',props)])));
+const f=vi.hoisted(()=>({feed:{status:'live',data:{householdSetup:{defaultAgent:null,members:[{id:'sam',role:'owner',fullOwner:true,agents:[]}],agents:[],tokens:[{fingerprint:'f'.repeat(64),label:'Fixture token',kind:'owner',identity:'sam',createdAt:'2026-11-15T00:00:00Z',expiresAt:null,revokedAt:null,lastUsedAt:null}],sessions:[]},boxes:[]}} as {status:string;data?:unknown},operation:vi.fn(),commsUnavailable:false,programFeed:{status:'live',data:{programSetup:null}} as {status:string;data?:unknown}}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>query.includes('homeComms')&&f.commsUnavailable?{status:'offline'}:query.includes('programSetup')?f.programFeed:f.feed}));vi.mock('../../data/operation',()=>({memberOperation:f.operation}));
+vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Textarea','Field','Fields','Section','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Fields'?'fieldset':name==='Button'?'button':name==='Input'?'input':name==='Textarea'?'textarea':'div',props)])));
 import Setup from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
-let tree:ReturnType<typeof create>;const original=f.feed.data,privateBearer='loom_'+'p'.repeat(43);beforeEach(()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:{id:'sam'}})));f.feed.data=original;f.programFeed={status:'live',data:{programSetup:null}};vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
+let tree:ReturnType<typeof create>;const original=f.feed.data,privateBearer='loom_'+'p'.repeat(43);beforeEach(()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:{id:'sam'}})));f.feed.data=original;f.commsUnavailable=false;f.programFeed={status:'live',data:{programSetup:null}};vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
 it('shows safe shared metadata and sends the exact canonical token reference',async()=>{await act(async()=>{tree=create(h(Setup));});expect(JSON.stringify(tree.toJSON())).toContain('Fixture token');const revoke=tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Revoke token');await act(async()=>revoke.props.onClick());expect(f.operation).toHaveBeenCalledExactlyOnceWith('token.revoke',{fingerprint:'f'.repeat(64)});});
 it('hides owner metadata on denied data and disables inactive changes',async()=>{await act(async()=>{tree=create(h(Setup,{active:false}));});expect(tree.root.findAllByType('button').every((node:{props:{disabled?:boolean}})=>node.props.disabled)).toBe(true);const saved=f.feed.data;f.feed.data=undefined;await act(async()=>tree.update(h(Setup)));expect(JSON.stringify(tree.toJSON())).not.toContain('Fixture token');f.feed.data=saved;});
 
@@ -150,4 +150,11 @@ it('shows the machine thresholds only in household setup and sends only changed 
  f.feed.data={householdSetup:null,boxAlertSettings:[lines],boxes:[]};
  await act(async()=>tree.update(h(Setup)));
  expect(tree.root.findAllByProps({'aria-label':'Machine alert thresholds'})).toHaveLength(0);
+});
+
+it('keeps owner setup available when the Comms query is unavailable',async()=>{
+ f.commsUnavailable=true;
+ await act(async()=>{tree=create(h(Setup));});
+ expect(JSON.stringify(tree.toJSON())).toContain('Fixture token');
+ expect(tree.root.findByProps({'aria-label':'Create token'}).findByType('fieldset').props.disabled).toBe(false);
 });
