@@ -1,3 +1,4 @@
+import {prepareHouseCli} from './house-cli-file.js';
 import { BUILD_DEADLINE_MAX_MS, HOUSE_BUILD_DEFAULT_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { logTail } from './log-tail.js';
 import { bodyInput } from './body-bootstrap.js';
@@ -20,7 +21,7 @@ import {deniedTools} from './harness-traits.js';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { join } from 'node:path';
+import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
@@ -172,13 +173,17 @@ export const UPKEEP_FAILED = 'Worker could not look at its house images: old one
  * load in every container, so the worker is not started on one. */
 function programInside(program: string): boolean {
   try {
-    for (const entry of ['body.js','index.js']) {
-      const file = join(program,'dist',entry);
-      if (!lstatSync(file).isFile() || realpathSync(file) !== file) return false;
+    const launcher = join(program,HOUSE_CLI_FILE);
+    const paths = [join(program,'dist','body.js'),join(program,'dist','index.js'),launcher];
+    for (const file of paths) {
+      const stat = lstatSync(file), needed = file===launcher ? 0o555 : 0o444;
+      if (!stat.isFile() || realpathSync(file)!==file || (stat.mode & needed)!==needed) return false;
+      // Containers begin at the program mount; host directories above it are irrelevant.
+      for (let parent=dirname(file);;parent=dirname(parent)) {
+        if ((lstatSync(parent).mode & 0o111)!==0o111) return false;
+        if (parent===program) break;
+      }
     }
-    const launcher = join(program, HOUSE_CLI_FILE);
-    const info = lstatSync(launcher);
-    if (!info.isFile() || realpathSync(launcher) !== launcher || (info.mode & 0o111) !== 0o111) return false;
     const manifest: unknown = JSON.parse(readFileSync(join(program, 'package.json'), 'utf8'));
     const needed: unknown = manifest && typeof manifest === 'object' && 'dependencies' in manifest ? manifest.dependencies : {};
     if (!needed || typeof needed !== 'object' || Array.isArray(needed)) return false;
@@ -429,6 +434,7 @@ export function containerWorkerExecutor(config: {
         if (assignment.program) return scheduledContainer(engine, assignment, image, assignment.program, signal, {
           runtime:fixed.container.runtime, setupTimeoutMs:setupMs, cleanupTimeoutMs:cleanupMs,
         },letGo);
+        prepareHouseCli(fixed.state ?? defaultWorkerState(fixed.box));
         mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');

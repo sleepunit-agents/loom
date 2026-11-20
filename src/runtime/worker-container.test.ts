@@ -1,3 +1,5 @@
+import {houseCliSource} from './worker-mounts.js';
+import {defaultWorkerState} from './worker-left.js';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:net';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -323,6 +325,8 @@ it('reports a container whose process a signal ended as killed, the same stage a
 
 // The three additions for houses: the runtime's name, an account's sign-in directory, the fixed mounts.
 const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
+beforeAll(()=>vi.stubEnv('TMPDIR',houseRoot));
+afterAll(()=>vi.unstubAllEnvs());
 afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
 const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
 /** A directory laid out as an install of the worker is: the body program, and every package it depends on in its own node_modules. */
@@ -337,12 +341,12 @@ function install(name: string, change: (path: string) => void = () => {}) {
 }
 const programDirectory = install('install/loom');
 /** The worker's own directory, as every body's container must be reported to have it. */
-function programReport(source=programDirectory) {
-  return [reported(source,'/opt/loom',false),reported(join(source,'assets/house-bin/loom'),'/usr/local/bin/loom',false)];
+function programReport(source=programDirectory,state=defaultWorkerState('box')) {
+  return [reported(source,'/opt/loom',false),reported(houseCliSource(state),'/usr/local/bin/loom',false)];
 }
 const programAsked = (source=programDirectory) => [
   {Type:'bind',Source:source,Target:'/opt/loom',ReadOnly:true},
-  {Type:'bind',Source:join(source,'assets/house-bin/loom'),Target:'/usr/local/bin/loom',ReadOnly:true},
+  {Type:'bind',Source:houseCliSource(defaultWorkerState('box')),Target:'/usr/local/bin/loom',ReadOnly:true},
 ];
 const loginA = houseDirectory('logins/a'), loginB = houseDirectory('logins/b'), stamps = houseDirectory('stamps'), mirror = houseDirectory('mirror');
 // The engine's own socket and its socket for nested containers must be real sockets (worker-mounts.ts).
@@ -676,7 +680,7 @@ it('mounts an agent\'s own directories into its bodies and never another agent\'
     const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts } }, { ...f.deps, name: () => 'agent' });
     const body = executor.start({ ...job, agent }, built, f.abort.signal); await body.spawned;
     const asked = (f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts as { Source: string }[];
-    expect(asked.map(mount => mount.Source)).toEqual([programDirectory,join(programDirectory,'assets/house-bin/loom'), ...own]);
+    expect(asked.map(mount => mount.Source)).toEqual([programDirectory,houseCliSource(defaultWorkerState('box')), ...own]);
     for (const other of others) expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(other);
     await body.stop();
   }
@@ -689,6 +693,9 @@ it.each([
   ['has its packages linked in from a store', (path: string) => { rmSync(join(path, 'node_modules', 'zod'), { recursive: true }); symlinkSync(houseDirectory('store/zod'), join(path, 'node_modules', 'zod')); }],
   ['has its whole node_modules linked in', (path: string) => { rmSync(join(path, 'node_modules'), { recursive: true }); symlinkSync(houseDirectory('store/modules/zod/..'), join(path, 'node_modules')); }],
   ['has no CLI entry point', (path:string)=>rmSync(join(path,'dist/index.js'))],
+  ['has an unreadable CLI entry point', (path:string)=>chmodSync(join(path,'dist/index.js'),0o600)],
+  ['has an unreadable CLI script', (path:string)=>chmodSync(join(path,'assets/house-bin/loom'),0o111)],
+  ['has an untraversable launcher directory', (path:string)=>chmodSync(join(path,'assets/house-bin'),0o700)],
   ['has no packaged house CLI', (path:string)=>rmSync(join(path,'assets/house-bin/loom'))],
   ['has a non-executable house CLI', (path:string)=>chmodSync(join(path,'assets/house-bin/loom'),0o644)],
   ['has a package.json that is not one', (path: string) => writeFileSync(join(path, 'package.json'), '{"dependencies":["zod"]}')],
@@ -1208,7 +1215,7 @@ it('mounts a job-only kit socket and gives the body no worker credential, even w
       const socket=mounts.find(m=>m.Target==='/run/loom/kit.sock');
       expect(socket?.ReadOnly).toBe(true);path=socket!.Source;
     }
-    if(inspecting(url))return {Mounts:[...programReport(),reported(path,'/run/loom/kit.sock',false)]};
+    if(inspecting(url))return {Mounts:[...programReport(programDirectory,state),reported(path,'/run/loom/kit.sock',false)]};
     return original(method,url,body,signal);
   });
   const body=executor.start(job,built,f.abort.signal);

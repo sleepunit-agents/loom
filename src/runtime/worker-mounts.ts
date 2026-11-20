@@ -27,6 +27,10 @@ export const BODY_PROGRAM_TARGET = '/opt/loom';
 export const BODY_PROGRAM = `${BODY_PROGRAM_TARGET}/dist/body.js`;
 export const HOUSE_CLI_FILE = 'assets/house-bin/loom';
 export const HOUSE_CLI_TARGET = '/usr/local/bin/loom';
+/** A login shell may discard the PATH inherited from the body. Give it a tiny
+ * fixed forwarder. Its host file lives in worker-private state, which a house
+ * cannot mount. Only the shell inside the container resolves the package path. */
+export const houseCliSource = (state: string) => join(state,'house-cli-v1');
 /** The mounted house program puts its own launcher first. Keep the image's tools on PATH,
  * and leave a host process body's environment alone. */
 export function bodyCommandEnvironment(program: string, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -194,6 +198,12 @@ export function bodyMounts(config: {
   const extra = config.protectedPaths ?? [];
   for (const [index, path] of extra.entries())
     if (!plainPath(path)) stop(`container.protectedPaths[${index}]`);
+  if (program && config.state) {
+    const reserved = houseCliSource(config.state);
+    for (const path of [config.tokenFile, config.configFile, config.socket, ...extra]) {
+      if (path && protectedLocations(path).some(name=>overlap(name,reserved))) stop(PROGRAM_KEY);
+    }
+  }
   const kept = [...serverHomes, ...['loom', 'loom-new'].map(name => join(homedir(), '.local/share', name, 'home-backups')), join(localConfig, 'loom-secrets'), join(localConfig, 'loom-new-credentials'), join(localConfig, 'loom-worker'),
     join(localConfig, 'loom-new-worker'), process.env.LOOM_SECRETS_DIR || undefined, ...extra.flatMap(path => [path, path + '-wal', path + '-shm', path + '-journal']),
     config.socket, config.state, config.tokenFile, config.configFile].flatMap(path => path === undefined ? [] : protectedLocations(path));
@@ -206,7 +216,8 @@ export function bodyMounts(config: {
     if (job.run?.nestedContainers) throw new Error('Nested containers unavailable');
     if (program) {
       // Login shells may reset PATH. Both names point at the worker's shipped launcher.
-      own.push(program, {source:join(program.source,HOUSE_CLI_FILE),target:HOUSE_CLI_TARGET,readOnly:true});
+      own.push(program);
+      if (config.state) own.push({source:houseCliSource(config.state),target:HOUSE_CLI_TARGET,readOnly:true});
     }
     if (present) {
       const login = logins.get(job.account)?.get(job.harness);

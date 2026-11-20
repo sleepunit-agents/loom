@@ -243,7 +243,7 @@ it('gives every body the worker\'s own directory, read-only, at one place no mou
   const mounts = bodyMounts({ program: programDirectory, accountLogins: logins, mounts: { art: fixed }, socket });
   const program = { source: programDirectory, target: BODY_PROGRAM_TARGET, readOnly: true };
   expect(BODY_PROGRAM_TARGET).toBe('/opt/loom'); expect(BODY_PROGRAM).toBe('/opt/loom/dist/body.js');
-  expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, {source:join(programDirectory,'assets/house-bin/loom'),target:'/usr/local/bin/loom',readOnly:true}, { source: a, target: home, readOnly: false }]);
+  expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, { source: a, target: home, readOnly: false }]);
   // It need not belong to the worker's user: a system-wide install is root's.
   expect(stopped({ program: programDirectory }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
   const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
