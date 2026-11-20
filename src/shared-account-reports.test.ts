@@ -300,7 +300,7 @@ it('publishes an identical-state failure completion to both reporting and truste
   expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false); expect(f.db.select().from(modelAccountWindows).all()).toEqual([]);
 });
 
-it('refreshes from the normal worker before claims and reports later failure through actual root ingestion', async () => {
+it('admits queued work after a provider resets early, then latches a later worker read failure', async () => {
   const f = fixture([{ model: 'model', provider: 'provider', harness: 'native', series: 'series' }]), output = vi.fn(), error = vi.fn(), paths: string[] = [];
   f.db.insert(agents).values({ id: 'agent', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   f.db.insert(memberAgents).values({ member: 'member', agent: 'agent' }).run();
@@ -308,7 +308,13 @@ it('refreshes from the normal worker before claims and reports later failure thr
   f.db.insert(agentModels).values({ agent: 'agent', model: 'model', position: 0 }).run();
   f.db.insert(agentRunSettings).values({ agent: 'agent', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
   f.db.insert(jobs).values({ id: 'quota-ready-job', agent: 'agent', title: 'Work', state: 'queued', brief: 'instructions', model: 'model', startedByKind: 'agent', startedBy: 'agent', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', queuedAt: f.now() }).run();
-  expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false);
+  const window = f.observation.windows[0];
+  expect((await f.call({ ...f.identity, windows: [{ ...window, usage: 0.97 }] }, 'before-reset')).ok).toBe(true);
+  expect(f.db.select().from(modelAccounts).get()).toMatchObject({ usage: 0.97, hasRoom: false });
+  expect(f.db.select().from(jobs).all().map(job => job.state)).toEqual(['queued']);
+  f.clock.advance(5 * 60_000);
+  const reset = { ...window, usage: 0, readAt: f.now() };
+  expect(Date.parse(window.resetsAt)).toBeGreaterThan(f.clock.now());
   const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => { paths.push(new URL(String(input)).pathname); return f.root.http.fetch(new Request(input, init)); });
   cleanup.push(() => { fetcher.mockRestore(); });
   const command = { command: '/fake/reader', args: [], cwd: '/fake', env: {} };
@@ -317,7 +323,7 @@ it('refreshes from the normal worker before claims and reports later failure thr
   let stop!: () => void; const ended = new Promise<void>(resolve => { stop = resolve; });
   let attempts = 0, scans = 0;
   const pending = workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
-    on: () => {}, off: () => {}, output, error, usage: () => async () => { if (attempts++ > 0) throw Error('private diagnostic'); return f.observation.windows; },
+    on: () => {}, off: () => {}, output, error, usage: () => async () => { if (attempts++ > 0) throw Error('private diagnostic'); return [reset]; },
     containerExecutor: () => ({} as never),
     // The report of the machine itself has its own tests (shared-machine-readings.test.ts); what this machine's disks hold is no part of this one.
     reportReadings: async () => ({ changed: false }),
@@ -330,8 +336,8 @@ it('refreshes from the normal worker before claims and reports later failure thr
   });
   expect(await pending).toBe(0);
   expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/signInState', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
-  expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
-  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.signInState', 'runtime.next', 'runtime.accountUnavailable']);
+  expect(f.db.select().from(modelAccountWindows).get()).toMatchObject({ usage: 0, usageReadAt: reset.readAt });
+  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.accountUsage', 'runtime.health', 'runtime.accountUsage', 'runtime.signInState', 'runtime.next', 'runtime.accountUnavailable']);
   expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
 });
 it('records what a worker read about the sign-ins on its own machine, and only its own', async () => {
