@@ -57,11 +57,12 @@ export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSna
 function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
   const detail = useDataQuery<{
     tempoProgram: { program: { name: string }; programState: unknown; lastResult: string | null } | null;
+  }>('query ProgramDetails($id:String!){tempoProgram(id:$id)}', {id: trigger.id});
+  const journalDetail = useDataQuery<{
     tempoJournal: { lessons: string; state: string; stateChangedAt: string | null } | null;
-  }>(
-    'query TriggerDetails($id:String!){tempoProgram(id:$id) tempoJournal(id:$id)}', {id: trigger.id});
+  }>('query JournalDetails($id:String!){tempoJournal(id:$id)}', {id: trigger.id});
   const program = detail.status === 'live' ? detail.data?.tempoProgram : null;
-  const journal = detail.status === 'live' ? detail.data?.tempoJournal : null;
+  const journal = journalDetail.status === 'live' ? journalDetail.data?.tempoJournal : null;
   const lastDecision = program?.lastResult ?? history(snapshot.events, trigger.id).find(event => event.event === 'program')?.note;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',

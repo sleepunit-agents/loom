@@ -191,8 +191,9 @@ export async function bodyProgram(input: {
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,fetch:input.fetch,clock:input.clock});
     if (journalDeliveries.length) {
       const result = await memoryClient.command('tempo.wakeLessons', {items:journalDeliveries}, randomUUID());
-      if (!result.ok) throw new Error('Trigger lessons unavailable');
-      const lessons = z.string().nullable().parse(result.value);
+      // A worker can be upgraded before its coordinator during a rolling deployment.
+      if (!result.ok && !(result.code === 'not-found' && result.message === 'Unknown operation')) throw new Error('Trigger lessons unavailable');
+      const lessons = result.ok ? z.string().nullable().parse(result.value) : null;
       if (lessons) context.push('Lessons recorded by earlier runs of this trigger:\n' + lessons);
     }
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
