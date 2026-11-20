@@ -7,15 +7,23 @@ import { SHA256_HEX } from '../core/sha256-hex.js';
 import { COMMIT } from '../apps/merge-target.js';
 
 const fingerprint = z.string().length(64).regex(SHA256_HEX);
+const reviewerReply = z.string().max(MESSAGE_WORDS_MAX).refine(reply => !/\p{Surrogate}/u.test(reply), 'Invalid Unicode in reviewer reply');
 export const coldReviewReport = z.object({
   change: z.string().min(1).max(512),
   headCommit: z.string().length(40).regex(COMMIT),
   usage: usageReport.optional(),
   before: fingerprint,
   after: fingerprint,
-  reply: z.string().max(MESSAGE_WORDS_MAX).refine(reply => !/\p{Surrogate}/u.test(reply), 'Invalid Unicode in reviewer reply'),
+  reply: reviewerReply,
 }).strict();
 export type ColdReviewReport = z.infer<typeof coldReviewReport>;
+
+/** Convert unusable model text before it reaches the bounded HTTP door, so measured work can still be filed. */
+export function boundedReviewReport(report: ColdReviewReport): ColdReviewReport {
+  if (reviewerReply.safeParse(report.reply).success) return report;
+  const digest = createHash('sha256').update(report.reply, 'utf16le').digest('hex');
+  return { ...report, reply: 'Unusable reviewer reply SHA-256: ' + digest };
+}
 
 export function reviewOutcome(exit: number, report?: ColdReviewReport, exitBy?: WorkerExitBy): { verdict: 'CLEAR' | 'BLOCKING' | 'NONE'; findings: string } {
   // Preserve receipt identity for discarded output without exposing the failed reply.
