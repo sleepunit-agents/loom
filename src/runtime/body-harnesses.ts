@@ -7,9 +7,9 @@
  * read those answers from here.
  *
  * A harness name that is not listed is the machine's own runner (a `{job,build}` command): loom knows
- * nothing about it, never refuses on its behalf, and reserves no names for it. */
+ * nothing about its tools. Only the agent’s own work and its owners’ work can be placed there. */
 import { harnessUnavailable, type Harness, type HarnessInput, type HarnessRun } from './body-harness.js';
-import { refusesJob } from './harness-traits.js';
+import { hasGuest, refusesJob } from './harness-traits.js';
 import type { WorkerRunPolicy } from './worker.js';
 import { agy } from './agy-body.js';
 import { claude } from './claude-body.js';
@@ -23,7 +23,7 @@ const listed = (name: string): Harness | undefined => Object.hasOwn(harnesses, n
  * accepts any mail. */
 export function harnessCannotRun(name: string, policy: WorkerRunPolicy | undefined, reach?: 'loom' | 'all'): boolean {
   const harness = listed(name);
-  return !!harness && refusesJob(harness, policy, reach);
+  return harness ? refusesJob(harness, policy, reach) : hasGuest(policy);
 }
 /** Whether an environment name (upper-cased) is one this harness signs in with. */
 export function harnessReservesEnv(name: string, key: string, env: NodeJS.ProcessEnv): boolean {

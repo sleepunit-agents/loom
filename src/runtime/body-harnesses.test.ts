@@ -66,9 +66,13 @@ it('knows which harness would refuse a job, with or without knowing the machine'
   // With nothing denied at all, such a harness still cannot run a job on anybody else's word: it has a shell.
   for (const harness of ['codex', 'agy']) { expect(harnessCannotRun(harness, policy([], [], 'others'))).toBe(true); expect(harnessCannotRun(harness, policy([], [], 'others'), 'all')).toBe(true); }
   expect(harnessCannotRun('claude', guest, 'loom')).toBe(false); expect(harnessCannotRun('claude', guest, 'all')).toBe(false);
-  // A runner loom has no adapter for is the machine's own business.
-  expect(harnessCannotRun('house-runner', guest, 'loom')).toBe(false);
-  expect(harnessCannotRun('constructor', guest, 'loom')).toBe(false);
+  for (const name of ['house-runner', 'constructor']) {
+    expect(harnessCannotRun(name, guest)).toBe(true);
+    expect(harnessCannotRun(name, undefined)).toBe(true);
+    expect(harnessCannotRun(name, { people: [], deniedTools: [] })).toBe(true);
+    expect(harnessCannotRun(name, policy([], [], 'owners'))).toBe(false);
+    expect(harnessCannotRun(name, policy([], [], 'own'))).toBe(false);
+  }
 });
 
 it('has one harness that is told what a body is not given, and that one is told loom\'s own tools too', () => {

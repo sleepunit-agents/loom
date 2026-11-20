@@ -11,7 +11,7 @@ import { LOOM_EXIT } from './job-exit.js';
 import { harnessCannotRun } from './body-harnesses.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
-function fixture() {
+function fixture(harness = 'codex') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
@@ -27,7 +27,7 @@ function fixture() {
   db.insert(modelAccounts).values({ id: 'account', owner: 'owner', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
   db.insert(modelAccountWindows).values({ account: 'account', window: 'week', usage: 0.2, usageReadAt: at, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values([{ account: 'account', box: 'first' }, { account: 'account', box: 'second' }]).run();
-  const roles = [{ model: 'primary', provider: 'provider', harness: 'codex', series: 'series' }];
+  const roles = [{ model: 'primary', provider: 'provider', harness, series: 'series' }];
   const runtime = new Dispatcher(db, now, () => roles, harnessCannotRun), comms = new Conversations(db, now);
   const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'Reply', member: 'owner' });
   const mail = comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private brief' });
@@ -185,8 +185,8 @@ it('projects current agent capabilities and only its configured ports at claim',
   expect(assignment.run.nestedContainers).toBe(true);
 });
 
-it('hands the configured outside tier and tool rules to the runner on actual claim', () => {
-  const f = fixture();
+it.each(['codex', 'house-runner'])('refuses guest placement on %s and hands the rules to a compatible runner', harness => {
+  const f = fixture(harness);
   f.db.update(agentRunSettings).set({ nestedContainers: true }).run();
   f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
   f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
@@ -196,12 +196,10 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
   const job = f.runtime.jobs.admit(incoming.conversation!)!;
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
-  // The job works on anybody else's word, so it runs with loom's tools only. The fixture's model runs on Codex,
-  // which always has a shell, and the agent has no other: the job is ended at once and says why, rather than
-  // wait a day for a machine that will never take it.
+  // The only configured harness cannot enforce the guest restriction.
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.jobs.get(job.id)).toMatchObject({ state: 'failed', exitCode: LOOM_EXIT.unplaced, exitBy: 'loom', endedNote: UNHELD_NOTE });
-  expect(UNHELD_NOTE).toBe('Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.');
+  expect(UNHELD_NOTE).toBe('Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and none of its models has a harness that can enforce that limit. Give the agent a model that runs on Claude Code.');
   // Its mail is closed with that reason, so it starts nothing again; the next message does, and on a harness that can be held the job is claimed with the rules.
   expect(f.db.select().from(inbox).where(eq(inbox.job, job.id)).all()).toMatchObject([{ state: 'resolved', resolution: UNHELD_NOTE }]);
   expect(f.runtime.jobs.admit(incoming.conversation!)).toBeUndefined();
