@@ -6,7 +6,7 @@
  * and loom tries the work again on the bounded retry chain (Jobs.retry). A body that dies after answering
  * cannot cause a second answer: loom settles the mail in the same write as a thread reply or a bridge reply. */
 import { z } from 'zod';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
@@ -32,6 +32,7 @@ import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
 import { bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
+import {SESSION_HISTORY_KEYS} from '../core/conversations/session-limit.js';
 import { BODY_TOKEN } from './body-token.js';
 import { BODY_START_BYTES } from './body-input-limit.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
@@ -130,7 +131,7 @@ export async function bodyProgram(input: {
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
     // A bridge conversation's body continues the session the last one left, when loom hands one over
-    // (body-session.ts). It is then told the new mail alone: the session already holds what came before.
+    // (body-session.ts). Continue with new mail and the retained channel lines missing from that session.
     // With none, it starts fresh and is told the conversation's kept history with its mail.
     // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
     // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
@@ -141,7 +142,10 @@ export async function bodyProgram(input: {
     }
     let resume=await keeper?.take();
     if(signal.aborted)throw new Error();
-    const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
+    // Keys identify individual posts even when two replies have identical text and timestamps.
+    const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');
+    const covered=new Set(keeper?.covered), seen=new Set<string>();
+    const continued:string[]=[];let oldestErased:string|undefined;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
@@ -155,6 +159,7 @@ export async function bodyProgram(input: {
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();
         incoming.push(refs[0]);
+        if(item.words!==null)seen.add(keyOf(refs[0]));
         // A hint to check Discord's own message record. No link or file id is read from the words.
         if(item.source==='discord'&&item.words&&discordAttachmentLabels(item.words).length)discordAttachments.set(refs[0],item.words);
       }
@@ -164,8 +169,14 @@ export async function bodyProgram(input: {
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
         context.push('Your Codex subagent returned the following result. Continue the originating request using the findings.');
       }
-      const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
-    });
+      const words=bodyMailContext(item);
+      if(words!==null){
+        context.push(words);
+        for(const line of item.history)if(line.sourceKey)seen.add(keyOf(line.sourceKey));
+        const missing=item.history.filter(line=>!line.sourceKey || !covered.has(keyOf(line.sourceKey)));
+        continued.push(bodyMailContext({...item,history:missing})!);
+      }
+    },50,!!keeper && keeper.historyKeys!==false);
     if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     if(signal.aborted)throw new Error();
     // Mail with no words left to answer (they expired, or the item is muted) needs no answer: settle it now.
@@ -190,7 +201,7 @@ export async function bodyProgram(input: {
     if(guest)secrets.close();
     // And the session it was handed before the word turned is not continued, and none is left: its files go
     // from this machine, and the body starts fresh with the kept history.
-    if(guest&&keeper){keeper.discard();keeper=undefined;resume=undefined;fresh=true;}
+    if(guest&&keeper){keeper.discard();keeper=undefined;resume=undefined;}
     // A harness that cannot be held to loom's tools does not run such a job: the refusal made before the mail
     // was taken, made again now that the mail says more. loom leaves a late stranger's mail for the next job
     // (shared-place-mail.ts, lateMailJoins), so this is reached only if that failed. By now the mail is taken
@@ -273,7 +284,7 @@ export async function bodyProgram(input: {
       catch (error) {
         // The harness could not continue the session and did nothing: the same work, afresh, with the history.
         if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
-        answer = await afresh(room, context.join('\n\n'), signal, {});fresh=true;
+        answer = await afresh(room, context.join('\n\n'), signal, {});covered.clear();
       }
       // No secret this body was handed is said in its answer: one it used, or one it was started with.
       // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
@@ -295,7 +306,8 @@ export async function bodyProgram(input: {
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'});
+    const replyId=randomUUID();
+    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'},replyId);
     else if(job.review)await client.reply({clientId:'review-result',words:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
@@ -306,8 +318,15 @@ export async function bodyProgram(input: {
     await client.settle();
     // The answer is on record. Hand loom the session this run left, for the next body of this conversation,
     // and take its files off this machine. Never a reason to fail work that is done.
-    // A run that continued a session was told no history, and its start stands. One that started fresh held it.
-    try{await keeper?.save(answer.session,fresh?oldestErased:undefined);saved=true;}catch{/* loom sees the kept session is behind the answer */}
+    // Save the record IDs the harness knows, including its reply even if the provider posts it later.
+    try{
+      if(keeper){
+        const current=new Set([...seen,keyOf(replyId)]);
+        const previous=[...covered].filter(key=>!current.has(key));
+        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS));
+      }
+      saved=true;
+    }catch{/* loom sees the kept session is behind the answer */}
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     if(jobSignal.aborted)throw new Error();

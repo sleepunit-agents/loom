@@ -28,7 +28,7 @@ import { keepUntilFor } from './retention.js';
 import { outsidePersonKey } from '../../pieces/bridges/keys.js';
 
 
-export function prepareBridgeHistory(db: DataDatabase, now: () => string, conversation: string): () => HistoryLine[] {
+export function prepareBridgeHistory(db: DataDatabase, now: () => string, conversation: string, identify = false): () => HistoryLine[] {
   const cv = db.select().from(conversations).where(eq(conversations.id, conversation)).get();
   if (!cv || !(bridgeConnections.platform.enumValues as readonly string[]).includes(cv.venue)) return () => [];
   // Erased with the household's keep time when the conversation is a direct one (private-bridge-words.ts).
@@ -44,14 +44,14 @@ export function prepareBridgeHistory(db: DataDatabase, now: () => string, conver
       .where(and(eq(bridgeIncoming.conversation, conversation), eq(bridgeIncoming.state, 'delivered'), ne(bridgeIncoming.text, ''),
         eq(inbox.conversation, conversation), eq(inbox.toKind, 'agent'), eq(inbox.to, cv.agent), eq(inbox.state, 'done')))
       .orderBy(desc(bridgeIncoming.postedAt), desc(sql`${bridgeIncoming}.rowid`)).limit(HISTORY_LINES).all()
-      .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : workspace !== null && row.user ? `the outside account ${outsidePersonKey(cv.venue as 'discord' | 'slack', workspace, row.user)}` : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
-    const sent: Said[] = db.select({ order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
+      .map(row => ({ ...(identify ? {sourceKey: row.id} : {}), kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : workspace !== null && row.user ? `the outside account ${outsidePersonKey(cv.venue as 'discord' | 'slack', workspace, row.user)}` : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
+    const sent: Said[] = db.select({ id: bridgeSends.id, order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
       .where(and(eq(bridgeSends.state, 'sent'), ne(bridgeSends.text, ''),
         // What it posted there: answers to the conversation's messages, and posts that answered none.
         or(inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation))),
           and(isNull(bridgeSends.incoming), eq(bridgeSends.conversation, conversation)))))
       .orderBy(desc(bridgeSends.createdAt), desc(sql`${bridgeSends}.rowid`)).limit(HISTORY_LINES).all()
-      .map(row => ({ kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at), order: row.order }));
+      .map(row => ({ ...(identify ? {sourceKey: row.id} : {}), kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at), order: row.order }));
     const kept = [...received, ...sent].filter(line => line.keepUntil === null || Date.parse(line.keepUntil) > Date.parse(now()))
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || Number(b.kind === 'reply') - Number(a.kind === 'reply') || b.order - a.order)
       .map(({ order: _order, ...line }) => line);

@@ -20,7 +20,7 @@ import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
 class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
-const historyLine=z.object({seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
+const historyLine=z.object({sourceKey:z.string().optional(),seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
 const item=z.object({
  history:z.array(historyLine).max(HISTORY_LINES).refine(lines=>Buffer.byteLength(JSON.stringify(lines))<=HISTORY_BYTES).optional().default([]),
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
@@ -32,7 +32,7 @@ export type BodyMail=Readonly<Omit<z.infer<typeof item>,'refs'|'question'|'histo
 export function bodyMailContext(item:BodyMail):string|null{
  if(item.words===null)return null;
  const input=item.question?{question:item.question,answer:item.words,verdict:item.verdict}:item.words;
- return item.history.length?JSON.stringify({history:item.history,input}):typeof input==='string'?input:JSON.stringify(input);
+ return item.history.length?JSON.stringify({history:item.history.map(({sourceKey:_key,...line})=>line),input}):typeof input==='string'?input:JSON.stringify(input);
 }
 type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none';latencyMs?:number};
 type Reply=Turn&{clientId:string;words:string};
@@ -92,12 +92,12 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  // Each report keeps its operation id until loom has answered it, so a repeat after a lost answer is the same write.
  async function reportReceived(){if(received){await call('accept',{items:received.items},saved,received.id);received=undefined;}}
  return {
-  async takeAndAccept(accept:(item:BodyMail,signal:AbortSignal)=>Promise<void>,limit=50):Promise<{accepted:number;stopRequested:boolean}>{
+  async takeAndAccept(accept:(item:BodyMail,signal:AbortSignal)=>Promise<void>,limit=50,historyKeys=false):Promise<{accepted:number;stopRequested:boolean}>{
    if(taking||!current()||!Number.isInteger(limit)||limit<1||limit>100)throw unavailable();taking=true;
    try{
     await reportReceived();
     let requested=limit,input:z.infer<typeof batch>;
-    for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw error;requested=Math.max(1,Math.floor(requested/2));}}
+    for(;;){try{input=await call('take',{limit:requested,...(historyKeys?{historyKeys:true}:{})},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw error;requested=Math.max(1,Math.floor(requested/2));}}
     const multipleHistories=input.items.filter(row=>row.history.length>0).length>1;
     const malformedRows=input.items.some((row,index)=>
      (row.history.length>0&&row.source!=='thread'&&row.source!=='discord'&&row.source!=='slack'&&row.source!=='trigger'&&row.source!=='handoff')||

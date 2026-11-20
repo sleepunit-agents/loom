@@ -44,9 +44,9 @@ async function fixture(){
  const daemon=root.services.bridges.daemon!;await daemon.ready();await daemon.idle();
  let events=0;
  /** A message in the one Slack thread, so every message is the same conversation. */
- const hear=async(text:string)=>{
+ const hear=async(text:string,user='UUSER')=>{
   const n=++events;
-  await slack.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack'+n,payload:{type:'event_callback',event_id:'event'+n,team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text,ts:`179443200${n}.000001`,...(n>1?{thread_ts:'1794432001.000001'}:{})}}})));
+  await slack.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack'+n,payload:{type:'event_callback',event_id:'event'+n,team_id:'TWORK',event:{type:'message',channel:'CROOM',user,text,ts:`179443200${n}.000001`,...(n>1?{thread_ts:'1794432001.000001'}:{})}}})));
   clock.advance(0);await daemon.idle();
   return db.select().from(s.bridgeIncoming).all().at(-1)!;
  };
@@ -68,9 +68,9 @@ async function fixture(){
  return {db,clock,root,hear,run};
 }
 /** Stands in for where a harness keeps its sessions: what loom handed over, and what the run left. */
-function keeper(kept?:string){
+function keeper(kept?:string, covered?:readonly string[]){
  const calls:string[]=[];
- const sessions:BodySessions={take:async()=>{calls.push('take');return kept;},save:async session=>{calls.push('save:'+session);},discard:()=>{calls.push('discard');}};
+ const sessions:BodySessions={covered,take:async()=>{calls.push('take');return kept;},save:async (session,_since,keys)=>{sessions.covered=keys;calls.push('save:'+session);},discard:()=>{calls.push('discard');}};
  return {sessions,calls};
 }
 
@@ -89,7 +89,7 @@ it('starts a first body fresh, keeping a session, and tells the next one only th
  expect(seen[0].words.split('\n\n')[1]).toBe(asked(seen[0].words));expect(asked(seen[0].words)).toContain('This job works for ');
  expect(one.calls).toEqual(['take','save:session-one-1']);
  const second=await f.hear('Do the second one');expect(second.conversation).toBe(first.conversation);
- const two=keeper('session-one-1');
+ const two=keeper('session-one-1',one.sessions.covered);
  expect(await f.run('two',second.conversation!,native,two.sessions)).toBe(0);
  // Continued: the session already holds what came before, so neither the history nor the identity is said again.
  expect({...seen[1],words:mail(seen[1].words)}).toEqual({words:'Do the second one',session:{resume:'session-one-1'}});
@@ -106,17 +106,23 @@ it('asks for no kept session on anybody else\'s word and leaves none, so the own
  const one=keeper();expect(await f.run('one',cv,native,one.sessions)).toBe(0);
  expect(one.calls).toEqual(['take','save:session-of-run-1']);
  // A job on anybody else's word: the body program asks loom for no session, though one waits there.
- const two=keeper('session-of-run-1');await f.hear('What did you just do?');
- expect(await f.run('two',cv,native,two.sessions,{policy:{people:[{kind:'outside',person:'someone',tier:2}],deniedTools:[],mail:[],word:'others'}})).toBe(0);
+ const guest=JSON.stringify(['slack','TWORK','UGUEST']);
+ f.db.insert(s.agentPeople).values({agent:'art',person:guest,tier:2}).run();
+ const two=keeper('session-of-run-1');await f.hear('What did you just do?','UGUEST');
+ expect(await f.run('two',cv,native,two.sessions,{policy:{people:[{kind:'outside',person:guest,tier:2}],deniedTools:[],word:'others'}})).toBe(0);
  expect(two.calls).toEqual([]);
  // It continues nothing and is asked to keep nothing. It is told what was said before, like any body that starts fresh.
  expect(seen[1].session).toBeUndefined();
- expect(asked(seen[1].words)).toContain('This job works for the outside account someone, who is not one of your owners, and for nobody else.');
+ expect(asked(seen[1].words)).toContain(guest);
  expect(JSON.parse(mail(seen[1].words).slice('IDENTITY\n\n'.length))).toMatchObject({input:'What did you just do?',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});
  // The owners' next body is handed the session the first one left, and continues it.
- const three=keeper('session-of-run-1');await f.hear('Go on');
+ const three=keeper('session-of-run-1',one.sessions.covered);await f.hear('Go on');
  expect(await f.run('three',cv,native,three.sessions)).toBe(0);
- expect({...seen[2],words:mail(seen[2].words)}).toEqual({words:'Go on',session:{resume:'session-of-run-1'}});
+ expect(seen[2].session).toEqual({resume:'session-of-run-1'});
+ const resumed=JSON.parse(mail(seen[2].words));
+ expect(resumed.input).toBe('Go on');
+ expect(resumed.history).toMatchObject([{kind:'message',sender:expect.stringContaining('UGUEST'),words:'What did you just do?'},{kind:'reply',sender:'art',words:'Three steps.'}]);
+ expect(resumed.history).toHaveLength(2);
  expect(three.calls).toEqual(['take','save:session-of-run-3']);
 });
 
@@ -129,7 +135,8 @@ it('runs the same work afresh, with the kept history, when the harness cannot co
  const failing:HarnessRun=async(_job,words,_signal,session)=>{seen.push({words,session});if(session?.resume)throw new HarnessResumeUnavailable();return{text:'Done.',model:'claude-opus-5-5',actions:[],session:'session-new-2'};};
  expect(await f.run('two',second.conversation!,failing,two.sessions)).toBe(0);
  expect(seen.map(call=>call.session)).toEqual([{resume:'session-gone-9'},{}]);
- expect(mail(seen[0].words)).toBe('Do the second one');
+ // An older session has no record IDs. Give it the bounded history on its first resume.
+ expect(JSON.parse(mail(seen[0].words))).toMatchObject({input:'Do the second one',history:[{words:'What is the plan?'},{words:'Three steps.'}]});
  // Afresh it is told who it is and what was said before, then the new message.
  expect(seen[1].words.startsWith('IDENTITY\n\n')).toBe(true);
  expect(JSON.parse(mail(seen[1].words).slice('IDENTITY\n\n'.length))).toMatchObject({input:'Do the second one',history:[{kind:'message',words:'What is the plan?'},{kind:'reply',words:'Three steps.'}]});

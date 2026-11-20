@@ -21,7 +21,7 @@ import type { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
 import type { conversationBodyScope } from './body-scope.js';
 import { commsKeepDays } from '../data/comms-days.js';
-const input=z.object({input:z.object({limit:z.number().int().min(1).max(100).default(50)}).strict()}).strict();
+const input=z.object({input:z.object({historyKeys:z.literal(true).optional(),limit:z.number().int().min(1).max(100).default(50)}).strict()}).strict();
 export function sameMailScope(item:{agent:string|null;member:string|null;project:string|null},cv:{agent:string;member:string|null;project:string|null}):boolean {
  return item.agent===cv.agent&&item.member===cv.member&&item.project===cv.project;
 }
@@ -50,7 +50,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
    (item.fromId===before.cv.agent||handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project)));
   if(prefix.some(item=>!sameMailScope(item,before.cv)))return refuse(403,'Mail scope differs');
   if(!active())return refuse(403,'Authentication ended');
-  const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit);
+  const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit,parsed.input.historyKeys);
   if(!active())return refuse(403,'Authentication ended');
   // This outer claim publishes exactly one shared epoch, or none when it wrote
   // no row (nothing waited, or the same prefix is taken again). Any reentrant
