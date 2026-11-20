@@ -11,7 +11,7 @@ export const coldReviewReport = z.object({
   headCommit: z.string().length(40).regex(COMMIT),
   before: fingerprint,
   after: fingerprint,
-  reply: z.string().max(MESSAGE_WORDS_MAX),
+  reply: z.string().max(MESSAGE_WORDS_MAX).refine(reply => !/\p{Surrogate}/u.test(reply), 'Invalid Unicode in reviewer reply'),
 }).strict();
 export type ColdReviewReport = z.infer<typeof coldReviewReport>;
 
@@ -24,6 +24,6 @@ export function reviewOutcome(exit: number, report?: ColdReviewReport, exitBy?: 
   if (report.before !== report.after) return incomplete('The reviewed files changed during the round.');
   const last = report.reply.trimEnd().split('\n').at(-1);
   if (last !== 'VERDICT: CLEAR' && last !== 'VERDICT: BLOCKING') return incomplete('The reviewer did not return a final verdict.');
-  const blocking = last === 'VERDICT: BLOCKING' || /^-[ \t]+(?:CRITICAL|MAJOR)\b/m.test(report.reply);
+  const blocking = last === 'VERDICT: BLOCKING' || /^[ \t]*[-*+][ \t]+(?:CRITICAL|MAJOR)\b/m.test(report.reply);
   return { verdict: blocking ? 'BLOCKING' : 'CLEAR', findings: report.reply };
 }

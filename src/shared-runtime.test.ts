@@ -708,6 +708,9 @@ it('files a worker review only on its assigned job, change and commit, atomicall
   expect((await f.call('finish', input, 'atomic')).status).toBe(200);
   expect((await f.call('finish', input, 'atomic')).status).toBe(200);
   expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'Other findings\nVERDICT: CLEAR' } }, 'atomic')).status).toBe(409);
+  for (const receipt of f.db.select().from(operationResults).all()) {
+    expect(Buffer.from(receipt.result).toString()).not.toContain('Original findings');
+  }
   expect(review.history(change)).toMatchObject([{ current: false, verdict: 'CLEAR', findings: report.reply }]);
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null });
 });

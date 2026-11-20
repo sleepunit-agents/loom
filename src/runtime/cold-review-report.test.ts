@@ -6,7 +6,7 @@ const report = { change: 'github:org/app#7', headCommit: 'a'.repeat(40), before:
 it('binds the reviewer verdict to successful completion and matching tree fingerprints', () => {
   expect(reviewOutcome(0, report, 'runner')).toEqual({ verdict: 'CLEAR', findings: report.reply });
   for (const severity of ['CRITICAL', 'MAJOR']) {
-    expect(reviewOutcome(0, { ...report, reply: `- ${severity} — missed case\nVERDICT: CLEAR` }, 'runner').verdict).toBe('BLOCKING');
+    expect(reviewOutcome(0, { ...report, reply: `  - ${severity} — missed case\nVERDICT: CLEAR` }, 'runner').verdict).toBe('BLOCKING');
   }
   expect(reviewOutcome(0, { ...report, reply: 'VERDICT: BLOCKING' }, 'runner').verdict).toBe('BLOCKING');
   for (const outcome of [reviewOutcome(1, report, 'runner'), reviewOutcome(0, report), reviewOutcome(0, report, 'worker'), reviewOutcome(0), reviewOutcome(0, { ...report, after: 'c'.repeat(64) }, 'runner'),
@@ -14,5 +14,7 @@ it('binds the reviewer verdict to successful completion and matching tree finger
     expect(outcome.verdict).toBe('NONE');
     expect(outcome.findings).not.toContain('VERDICT: CLEAR');
   }
+  expect(coldReviewReport.safeParse({ ...report, reply: '\uD800' }).success).toBe(false);
+  expect(coldReviewReport.safeParse({ ...report, reply: '🪶' }).success).toBe(true);
   expect(coldReviewReport.safeParse({ ...report, before: '' }).success).toBe(false);
 });
