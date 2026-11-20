@@ -2,9 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, Suspense, type ReactNode } from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import { act, create } from 'react-test-renderer';
+import type { ReviewRound } from '../pieces/change-view/model';
 import type { ApprovalsResult, ChangesResult } from './work-query';
-const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
-vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
+const feed = vi.hoisted(() => ({ reviews: [] as ReviewRound[], status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
+vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('ChangeReviewHistory') ? {changeReviewHistory:feed.reviews} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
 vi.mock('../kit', async () => ({ ...Object.fromEntries(['Split', 'List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'ShortIdentifier', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown', 'Pager'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode; listAction?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop', 'listAction'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listAction, props.listTop, props.list, props.reader] : []))])), Disclosure: ((Real) => (props: { label: string; children?: ReactNode }) => props.label === 'Exact request' ? h(Real, props) : h('Disclosure', { label: props.label }, props.children))((await import('../kit/reader')).Disclosure) }));
 vi.mock('./graphql/selection', () => ({ useSelection: () => ({ status: 'live', data: {
   ordinary: feed.approvals.approvals, questions: [], hasNext: false,
@@ -15,7 +16,7 @@ import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.refresh=false; feed.people=[]; feed.changeStatus=undefined;feed.requestStatus=undefined; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.reviews=[]; feed.refresh=false; feed.people=[]; feed.changeStatus=undefined;feed.requestStatus=undefined; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
@@ -551,4 +552,23 @@ it('refreshes an open caution on focus, visibility, the interval, and a refused 
  expect(request).toHaveBeenCalledTimes(5);
  await act(async()=>tree.unmount());
  expect(tick).toBeUndefined();
+});
+
+it('discards a late review response for a previously open change', async () => {
+  fixture();
+  const first = feed.changes.changes[0], second = { ...first, id: 'c-two' };
+  feed.changes = { ...feed.changes, changes: [first, second] };
+  const round: ReviewRound = { change: first.id, job: 'job', round: 1, tier: 'high', verdict: 'CLEAR', findings: 'First findings', headCommit: first.headCommit };
+  const app = (id: string) => h(ChangesApp, { path: '/p/changes-preview/change/' + id });
+  feed.reviews = [round];
+  await draw(app(first.id));
+  expect(words()).toContain('First findings');
+  await act(async () => tree.update(app(second.id)));
+  expect(words()).not.toContain('First findings');
+  feed.reviews = [{ ...round, change: second.id, findings: 'Second findings' }];
+  await act(async () => tree.update(app(second.id)));
+  expect(words()).toContain('Second findings');
+  feed.reviews = [round];
+  await act(async () => tree.update(app(second.id)));
+  expect(words()).not.toContain('First findings');
 });
