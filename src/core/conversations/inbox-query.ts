@@ -22,6 +22,7 @@ const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
 type Projected=Item&{[projected]?:Record<string,unknown>};
 const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
+export type QuestionAsker = (viewer:Viewer, account:string)=>string|undefined;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
@@ -35,7 +36,15 @@ export class InboxQueries {
     private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>,
     /** Who may answer an item, supplied by the door from the household's rule: called once for a viewer, it
      * returns the answer for each item on the household facts it read then. No default allow. */
-    private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false) {}
+    private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false,
+    private readonly questionAsker?: QuestionAsker) {}
+
+  private namedQuestion(viewer: Viewer, item: Item, body: Body): Body {
+    if (!this.questionAsker || viewer.kind !== 'member' || viewer.id !== item.to || item.toKind !== 'person' ||
+        item.source !== 'thread' || !item.answers || item.onWordKind !== 'outside' || !item.onWord) return body;
+    const name = this.questionAsker(viewer,item.onWord);
+    return name ? {...body,words:`Working for ${name}.\n${body.words}`} : body;
+  }
 
   private allowed(viewer: Viewer) {
     const allowed = this.policy(viewer, getTableColumns(inbox));
@@ -103,6 +112,11 @@ export class InboxQueries {
       const after=readInboxSet(this.db,ids,this.allowed(viewer),words);
       if(after.fingerprint!==before.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))throw Error('Inbox changed; retry the query');
       if(permissions&&this.volumeBatch&&JSON.stringify([...this.volumeBatch(viewer,items)].sort())!==JSON.stringify([...permissions].sort()))throw Error('Inbox permissions changed; retry the query');
+    }
+    // Resolve names after the last asynchronous read, against this recipient's current permissions.
+    for(const row of rows){
+      const body=row[projected].body as Body|null|undefined;
+      if(body)row[projected].body=this.namedQuestion(viewer,row,body);
     }
     for(const at of deadlines)retainedUntil(at);
     return rows;
@@ -302,7 +316,7 @@ export class InboxQueries {
       if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||handoffDeadline(current,days)<=Date.parse(this.now()))return null;
       retainedUntil?.(until);return {words};
     }
-    if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
+    if (!item.thread) return item.words === null ? null : this.namedQuestion(viewer,item,{ words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link });
     const row = () => this.readSet?(()=>{const message=this.readSet!.message(item),thread=this.readSet!.thread(item.thread!);return message&&thread?{message,conversation:thread.conversation}:undefined;})():this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))
       .where(and(eq(messages.thread, item.thread!), eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, id))).get();

@@ -5,7 +5,6 @@
  * known. Who may do what with it is policy.ts's (maySchedule, mayHandTo). */
 import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { outsideNames } from './shared-outside-names.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
 import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
@@ -193,8 +192,8 @@ export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: 
  * agent's own, and the job that later reads the owner's answer, which quotes the question, is told the same.
  * Nothing for a job on owners' word or the agent's own work: its question is its own words alone.
  * Given the question, it also refuses one such a job may not ask (throws an OperationError). */
-const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.string()]);
-export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }, directory?: Parameters<typeof outsideNames>[1]): string | undefined {
+export const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.string()]);
+export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }) {
   const word = jobWord(db, work.job);
   if (word.woke !== 'others') return undefined;
   // Such a question goes only to the people who direct the agent (tellOwners), not to whoever reads the room, and
@@ -214,12 +213,11 @@ export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: 
     if (parsed.success) {
       const [platform,workspace,user] = parsed.data;
       const venue = platform === 'slack' ? 'Slack' : 'Discord';
-      const held = outsideNames(db,directory).person(platform,workspace,user);
-      who = held ? `${held.name} (${venue})` : `a ${venue} account loom has no name for`;
+      who = `a ${venue} account`;
       account = ` (account ${user} in workspace ${workspace})`;
     }
   }
-  return `Asked while working for ${who}, who is not one of ${agent}'s owners${account}.`;
+  return {line:`Asked while working for ${who}, who is not one of ${agent}'s owners${account}.`, outside:person?.kind==='outside' ? person.id : undefined};
 }
 /** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
  * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,

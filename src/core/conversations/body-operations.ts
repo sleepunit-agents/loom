@@ -22,7 +22,7 @@ export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent
  *  - `summary`: loom's line for the head of every digest summary such a body writes, question or none: a summary is on
  *    the tape every later body of the agent is started with.
  *  - `quiet`: such a body's status report is answered and writes nothing to the agent's one status row. */
-export interface OnWord{question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):string|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean}
+export interface OnWord{question(work:BodyWork,question:Readonly<{to:string;link?:string;waitsOnKind?:string}>):{line:string;outside?:string}|undefined;summary(work:BodyWork):string|undefined;quiet(work:BodyWork):boolean}
 type BodyWork=NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority,selfHandoff?:HandoffToSelf,onWord?:OnWord): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
@@ -67,7 +67,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
   async prepare(input,ctx){const work=requireCurrent(ctx.viewer),{job,cv}=work,line=input.question?onWord?.question(work,input.question):undefined,stamp=onWord?.summary(work);
    // The stamp is part of the summary's 600 characters (the table's own bound): a summary that leaves it no room is refused, not cut.
    if(stamp&&stamp.length+1+input.summary.length>600)throw new OperationError('invalid',`A summary from this job is at most ${600-stamp.length-1} characters`);
-   return service.prepareDigest({conversation:cv.id,run:job.id,...input,...(stamp?{summary:stamp+' '+input.summary}:{}),...(input.question&&line?{question:{...input.question,words:line+'\n\n'+input.question.words}}:{})});},
+   return service.prepareDigest({conversation:cv.id,run:job.id,...input,...(stamp?{summary:stamp+' '+input.summary}:{}),...(input.question&&line?{question:{...input.question,...(line.outside?{onWordKind:'outside' as const,onWord:line.outside}:{}),words:line.line+'\n\n'+input.question.words}}:{})});},
   run(ctx,_input,prepared){const {cv}=requireCurrent(ctx.viewer);const digest=(prepared as Awaited<ReturnType<CommsMessages['prepareDigest']>>)();ctx.changed('digests',digest.id);if(digest.inboxItem)ctx.changed('inbox',digest.inboxItem);ctx.changed('conversations',cv.id);return {saved:true as const,digest:digest.id,revision:digest.revision,item:digest.inboxItem};},
  }));
 }

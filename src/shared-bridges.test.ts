@@ -1,4 +1,3 @@
-import { askedOnWord } from './shared-place-mail.js';
 import { kitAccess } from './shared-kit-access.js';
 import { agentKitMembers, agentKits } from './core/data/schema.js';
 import Database from 'better-sqlite3';
@@ -1514,14 +1513,24 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  expect((await f.call('conversation','digest',{summary:'x'.repeat(600-stamp.length-1)})).status).toBe(200);expect(summary()).toHaveLength(600);expect(summary().startsWith(stamp+' ')).toBe(true);
  // Its question waits on no task and no approval card: tied to one, nobody could answer it, and the record could not be moved.
  expect(await f.call('conversation','digest',{summary:'Asked about a task.',question:{to:'owner',answers:'yes-no',words:'Done?',waitsOnKind:'task',waitsOnId:'t-any'}})).toMatchObject({status:403});
- const directory=(platform:string,workspace:string,user:string)=>
-   platform==='slack'&&workspace==='TWORK'&&user==='UUSER'?'Jamie Field':undefined;
- expect(askedOnWord(f.db,{job:{id:'body',agent:'art',conversation:cv}},{to:'owner'},directory))
-   .toBe("Asked while working for Jamie Field (Slack), who is not one of Art's owners (account UUSER in workspace TWORK).");
  // The one way such a body reaches the owners. The owner reads loom's line first, then the body's words.
  expect((await f.call('conversation','digest',{summary:'Asked the owner.',question:{to:'owner',answers:'yes-no',words:'May I post the door code here?',ifYes:'I post it'}})).status).toBe(200);
- const line=`Asked while working for a Slack account loom has no name for, who is not one of Art's owners (account UUSER in workspace TWORK).`;
+ const line=`Asked while working for a Slack account, who is not one of Art's owners (account UUSER in workspace TWORK).`;
  expect(asked()).toMatchObject([{to:'owner',state:'waiting',words:line+'\n\nMay I post the door code here?',ifYes:'I post it'}]);
+ const id=asked()[0].id;
+ const view=async(credential:string)=>{
+   const response=await f.root.http.request('http://loom/graphql',{method:'POST',
+     headers:{authorization:'Bearer '+credential,'content-type':'application/json'},
+     body:JSON.stringify({query:'query($id:String!){inboxItem(id:$id){body{words}}}',variables:{id}})});
+   return response.json();
+ };
+ f.db.insert(members).values({id:'field-member',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'field-member'}).run();
+ expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:expect.stringContaining('Working for field-member.')}}}});
+ expect(JSON.stringify(await view(token.body))).not.toContain('field-member');
+ expect(asked()[0].words).not.toContain('field-member');
+ f.db.delete(bridgePeople).run();
+ expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:line+'\n\nMay I post the door code here?'}}}});
  // The owner answers yes. The answer is mail from the owner, and quotes the question with loom's line: the job that
  // reads it is the owner's, and it is told on whose word the question was asked.
  f.root.writes.run(()=>{f.root.services.conversations.answer(asked()[0].id,'owner','yes');f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
