@@ -4,20 +4,50 @@ import type { DataDatabase } from './database.js';
 import { conversations } from './schema.js';
 import { conversationVisibility } from './conversation-visibility.js';
 
-/** The Project hub needs all matching IDs for its other sections, but only
- * the first fifty rows' people. Both batches apply current SQL visibility. */
-export function readProjectConversations(db: DataDatabase, viewer: Viewer, names: string[], venues: string[]) {
-  const rows = db.query.conversations.findMany({ columns: { id: true, label: true, lastAt: true },
+interface Scope {names:string[]; venues:string[]}
+function indexScopes(scopes: Scope[], field: keyof Scope) {
+  const index = new Map<string, number[]>();
+  scopes.forEach((scope,i) => {
+    for (const key of new Set(scope[field])) {
+      const matches = index.get(key) ?? [];
+      matches.push(i);
+      index.set(key,matches);
+    }
+  });
+  return index;
+}
+const values = (keys: Iterable<string>) => sql`(select value from json_each(${JSON.stringify([...keys])}))`;
+
+/** Select visible conversations once. Each card needs every matching ID and
+ * the participants of its own fifty newest conversations. */
+export function readProjectConversations(db: DataDatabase, viewer: Viewer, scopes: Scope[]) {
+  const projects = indexScopes(scopes,'names'), venues = indexScopes(scopes,'venues');
+  const venueKeys = values(venues.keys());
+  const rows = db.query.conversations.findMany({ columns: { id:true, label:true, lastAt:true, project:true, venue:true, place:true },
     where: f => {
       const allowed = conversationVisibility(viewer).conversations!(f);
-      return and(sql`${{ getSQL: () => allowed }}`, or(inArray(f.project, names), inArray(sql`${f.venue} || ':' || ${f.place}`, venues), inArray(sql`${f.venue} || ':' || ${f.id}`, venues)));
+      return and(sql`${{ getSQL: () => allowed }}`, or(inArray(f.project, values(projects.keys())), inArray(sql`${f.venue} || ':' || ${f.place}`, venueKeys), inArray(sql`${f.venue} || ':' || ${f.id}`, venueKeys)));
     }, orderBy: f => [desc(f.lastAt), asc(f.id)],
   }).sync();
+  const groups = scopes.map(():typeof rows=>[]);
+  const previewIds = new Set<string>();
+  for (const row of rows) {
+    const found = new Set([
+      ...(row.project===null ? [] : projects.get(row.project)??[]),
+      ...(venues.get(row.venue+':'+row.place)??[]),
+      ...(venues.get(row.venue+':'+row.id)??[]),
+    ]);
+    for (const i of found) {
+      const group=groups[i]!;
+      if (group.length<50) previewIds.add(row.id);
+      group.push(row);
+    }
+  }
   const allowed = conversationVisibility(viewer).conversations!(getTableColumns(conversations));
-  const people = db.query.conversationPeople.findMany({ columns: { conversation: true, who: true },
-    where: f => and(inArray(f.conversation, rows.slice(0, 50).map(row => row.id)), sql`${{ getSQL: () => sql`exists(select 1 from ${conversations} where ${conversations.id}=${f.conversation} and ${allowed})` }}`),
+  const people = db.query.conversationPeople.findMany({ columns: { conversation:true, who:true },
+    where: f => and(inArray(f.conversation, values(previewIds)), sql`${{ getSQL: () => sql`exists(select 1 from ${conversations} where ${conversations.id}=${f.conversation} and ${allowed})` }}`),
   }).sync();
   const byConversation = new Map<string, string[]>();
   for (const row of people) { const group = byConversation.get(row.conversation) ?? []; group.push(row.who); byConversation.set(row.conversation, group); }
-  return { rows, people: (id: string) => byConversation.get(id) ?? [] };
+  return { groups, people: (id:string) => byConversation.get(id) ?? [] };
 }
