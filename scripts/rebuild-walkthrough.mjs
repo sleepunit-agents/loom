@@ -236,6 +236,12 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  phase='migration measurements';
+  try {
+   const {migrationEvidence}=await import('./rebuild-migration-evidence.mjs');
+   report.actions.dataMigrations=migrationEvidence();
+  } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
+  save();yield {phase:'migrations',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await homeReadGrowth({page,app,subscriptions,out,sharing:report.actions.dataSharingSQL}));
