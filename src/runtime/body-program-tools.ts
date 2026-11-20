@@ -28,9 +28,10 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
  const {url,token,signal,fetch,clock,onStop,onStatus,readFiles}=options;
  const abort=new AbortController(),lifetime=AbortSignal.any([signal,abort.signal]),active=new Set<ReturnType<typeof bodyCommandClient>>();
  const tools:Tool[]=programToolDefinitions.map(([name,description,input])=>({name,description,inputSchema:z.toJSONSchema(input,{target:'draft-7'})as Tool['inputSchema']}));
+ let uploading=false;
  const port={tools,
   async call(name:string,args:unknown,requestSignal?:AbortSignal):Promise<BodyProgramToolResult>{
-   let client:ReturnType<typeof bodyCommandClient>|undefined;
+   let client:ReturnType<typeof bodyCommandClient>|undefined,ownsUpload=false;
    try{
     const current=AbortSignal.any([lifetime,...(requestSignal?[requestSignal]:[])]);if(current.aborted)return unavailable();
     client=bodyCommandClient({url,token,signal:current,fetch,clock,onJobEnded:options.onJobEnded});active.add(client);
@@ -39,7 +40,10 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
     else if(name==='loom_query')value=await client.query(query.parse(args));
     else if(name==='loom_command'){
      const input=command.parse(args),body=input.input;
-     if(input.operation==='memory.noteAttach'&&!options.noteUpload)return unavailable();
+     if(input.operation==='memory.noteAttach'){
+      if(!options.noteUpload||uploading)return unavailable();
+      uploading=true;ownsUpload=true;
+     }
      if(input.operation==='memory.noteFile'&&!options.allowsFileBytes)return unavailable();
      // Acceptance, observed provider facts, and Stop acknowledgement belong to
      // the receiving runtime. The model cannot fabricate these observations.
@@ -88,7 +92,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
     }else return unavailable();
     if(current.aborted)return unavailable();
     return{...(object(value)&&value.ok===false?{isError:true}:{}),content:[{type:'text',text:JSON.stringify(value)}]};
-   }catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text',text:error.message}]};return unavailable();}finally{if(client){client.close();active.delete(client);}}
+   }catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text',text:error.message}]};return unavailable();}finally{if(ownsUpload)uploading=false;if(client){client.close();active.delete(client);}}
   },
   close(){abort.abort();for(const client of active)client.close();active.clear();},
  };

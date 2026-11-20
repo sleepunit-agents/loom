@@ -23,7 +23,8 @@ const mounts = bodyMounts({program,state})({agent:'fixture',harness:'codex',acco
 const probe = `
   import assert from 'node:assert/strict';
   import {execFileSync} from 'node:child_process';
-  import {readFileSync} from 'node:fs';
+  import {copyFileSync,mkdtempSync,readFileSync} from 'node:fs';
+  import {bodyNoteFileReader} from '${BODY_PROGRAM_TARGET}/dist/runtime/body-files.js';
   import {execFile} from 'node:child_process';
   import {promisify} from 'node:util';
   import {createHash} from 'node:crypto';
@@ -40,12 +41,15 @@ const probe = `
     console.log(shell,flags,found,version);
   }
   // The offline image has no household credential. A job-local listener serves fixture notes.
+  const work=mkdtempSync('/tmp/loom-note-'), source=work+'/fixture.png';
+  copyFileSync('/opt/loom/assets/icons/loom-32.png',source);
+  const readFixture=bodyNoteFileReader(work,[work]);
   const notes=new Map(),attachments=new Map();
   const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
     token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
       let value;
       if(name==='loom_command'&&args.operation==='memory.noteAttach'){
-        const bytes=readFileSync(args.input.source);
+        const {contents:bytes}=readFixture(args.input.source);
         const sha256=createHash('sha256').update(bytes).digest('hex');
         attachments.set(args.input.path,bytes);
         value={ok:true,value:{name:args.input.name,sha256,bytes:bytes.length,added:'2026-01-01'}};
@@ -74,7 +78,7 @@ const probe = `
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
-      assert.ok(JSON.parse(await run('loom note attach '+path+' /opt/loom/assets/icons/loom-32.png --name sample.bin --json')).bytes>0);
+      assert.ok(JSON.parse(await run('loom note attach '+path+' '+source+' --name sample.bin --json')).bytes>0);
       const binary=await promisify(execFile)(shell,[flags,'loom note file '+path+' sample.bin'],{encoding:'buffer',env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}});
       assert.deepEqual(binary.stdout,readFileSync('/opt/loom/assets/icons/loom-32.png'));
       for(const command of ['pin','unpin']){
@@ -87,7 +91,7 @@ const probe = `
   }finally{await tools.close();}
 
 `;
-execFileSync('podman',['run','--rm','--pull=never','--network=none','--read-only','--cap-drop=ALL',
+execFileSync('podman',['run','--rm','--pull=never','--network=none','--read-only','--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=1m,mode=1777','--cap-drop=ALL',
   '--user',user+':'+user,'--env','LOOM_BODY_OWN_HARNESS=0',
   ...mounts.flatMap(({source,target,readOnly})=>{
     if (!readOnly) throw Error('Expected a read-only program mount');
