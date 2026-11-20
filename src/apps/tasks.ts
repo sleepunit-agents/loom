@@ -159,15 +159,15 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         requireUsable(value.project);
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const imported = db.select({lastIssued: importedTaskSequence.lastIssued}).from(importedTaskSequence);
-        const next = db.select({id: sql<number>`max(coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0), coalesce((${imported}), 0)) + 1`})
+        const n = db.select({id: sql<number>`max(coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0), coalesce((${imported}), 0)) + 1`})
           .from(tasks).get()!.id;
-        if (!Number.isSafeInteger(next)) throw new Error('Task ID space exhausted');
-        const at = now(), id = taskId(next);
+        if (!Number.isSafeInteger(n)) throw new Error('Task ID space exhausted');
+        const at = now(), id = taskId(n);
         if (value.spec && db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.specItem, value.spec.item), eq(tasks.criterion, value.spec.criterion))).get()) throw new Error('A task already implements that line of the spec');
         db.insert(tasks).values({ id, title: value.title, goal: value.goal, why: value.why, doneWhen: value.doneWhen,
           description: value.description, priority: value.priority, type: value.type, project: value.project,
           ownerKind: value.owner.kind, owner: value.owner.kind === 'household' ? null : value.owner.id,
-          createdByKind: actor.kind, createdBy: actor.id, createdAt: at, changedAt: at, position: next,
+          createdByKind: actor.kind, createdBy: actor.id, createdAt: at, changedAt: at, position: n,
           sourceKind: value.source?.kind, sourceId: value.source?.id, specItem: value.spec?.item, criterion: value.spec?.criterion }).run();
         if (value.parent) link(id, value.parent, 'parent-child');
         return row(id);
