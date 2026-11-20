@@ -11,9 +11,9 @@ export function hasAgentJournal(trigger: Trigger) {
     && !trigger.member && !trigger.conversation && !trigger.program;
 }
 
-const journalBytes = 16_384;
+export const TRIGGER_JOURNAL_BYTES = 16_384;
 function bounded(text: string) {
-  if (Buffer.byteLength(text) > journalBytes) throw new Error('Trigger journal text exceeds 16384 bytes');
+  if (Buffer.byteLength(text) > TRIGGER_JOURNAL_BYTES) throw new Error(`Trigger journal text exceeds ${TRIGGER_JOURNAL_BYTES} bytes`);
   return text;
 }
 

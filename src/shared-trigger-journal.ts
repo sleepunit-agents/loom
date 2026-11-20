@@ -4,7 +4,7 @@ import { bodyOperationDefaults, type conversationBodyScope } from './core/conver
 import type { DataDatabase } from './core/data/database.js';
 import { inbox, inboxRefs, triggerAcceptances, triggers } from './core/data/schema.js';
 import { operation, OperationError, type Operations } from './core/operations/index.js';
-import { appendLesson, hasAgentJournal, readJournal, replaceJournalState } from './core/tempo/journal.js';
+import { TRIGGER_JOURNAL_BYTES, appendLesson, hasAgentJournal, readJournal, replaceJournalState } from './core/tempo/journal.js';
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 
@@ -53,7 +53,7 @@ export function registerTriggerJournal(operations: Operations, db: DataDatabase,
     output: z.object({trigger:z.string(), lessons:z.string(), state:z.string(), stateRevision:z.number(), stateChangedAt:z.string().nullable()}),
     run: ctx => readJournal(db, required(ctx.viewer)),
   }));
-  operations.register(operation({ ...defaults, name: 'tempo.appendLesson', input: z.object({ lesson: z.string().min(1).max(16384) }).strict(),
+  operations.register(operation({ ...defaults, name: 'tempo.appendLesson', input: z.object({ lesson: z.string().min(1).max(TRIGGER_JOURNAL_BYTES) }).strict(),
     output: z.object({ saved: z.literal(true) }), run(ctx, { lesson }) {
       const id = required(ctx.viewer);
       appendLesson(db, id, lesson);
@@ -61,7 +61,7 @@ export function registerTriggerJournal(operations: Operations, db: DataDatabase,
       return { saved: true };
     },
   }));
-  operations.register(operation({ ...defaults, name: 'tempo.replaceJournalState', input: z.object({ revision: z.number().int().nonnegative(), state: z.string().max(16384) }).strict(),
+  operations.register(operation({ ...defaults, name: 'tempo.replaceJournalState', input: z.object({ revision: z.number().int().nonnegative(), state: z.string().max(TRIGGER_JOURNAL_BYTES) }).strict(),
     output: z.object({ revision: z.number() }), run(ctx, input) {
       const id = required(ctx.viewer);
       const revision = replaceJournalState(db, id, input.revision, input.state, new Date(ctx.now).toISOString());
