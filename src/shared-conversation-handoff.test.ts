@@ -273,9 +273,9 @@ it('keeps equivalent role selectors stable and supports registered native harnes
  expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
 });
 
-it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','worker-loss'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','worker-loss'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const mixed=mode==='mixed-native';
- const roleMode=mixed||mode==='work-role'||mode==='role-changed'||mode==='worker-loss';
+ const roleMode=mixed||mode==='work-role'||mode==='role-changed'||mode==='agent-removed'||mode==='worker-loss';
  const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
   {agent:'mark',id:'editing',description:'Check prose.',providers:['openai']}],modelRoles:()=>[
   {model:'first',provider:roleMode?'openai':'claude',harness:'claude',series:'first'},
@@ -336,8 +336,9 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
  f.clock.advance(60_000);
  expect((await (await next('legacy',false)).json()).value).toBeNull();
- if(mode==='assignment-removed'){
-  db.delete(s.projectMembers).where(and(eq(s.projectMembers.project,'pond'),eq(s.projectMembers.member,'alice'))).run();
+ if(mode==='assignment-removed'||mode==='agent-removed'){
+  if(mode==='agent-removed')db.update(s.agents).set({removedAt:now()}).where(eq(s.agents.id,'art')).run();
+  else db.delete(s.projectMembers).where(and(eq(s.projectMembers.project,'pond'),eq(s.projectMembers.member,'alice'))).run();
   expect((await (await next('after-removal',true)).json()).value).toBeNull();
   expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()).toMatchObject({state:'failed',box:null,claimedAt:null});
   return;

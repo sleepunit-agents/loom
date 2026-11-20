@@ -698,6 +698,6 @@ export function mayHandOff(from: string, to: string, project: string | null, s: 
 export function mayRunPrivateWork(r: Scope & {agent:string}, s:Sharing):boolean {
   const member=r.member===undefined?undefined:entry(s.members,r.member);
   const project=r.project===undefined?undefined:entry(s.projects,r.project);
-  return !!member?.agents.includes(r.agent) && (r.project===undefined
+  return namesCurrent('agent',r.agent,s) && !!member?.agents.includes(r.agent) && (r.project===undefined
     || !!project?.agents.includes(r.agent) && (member.owner || project.members.includes(r.member!)));
 }
