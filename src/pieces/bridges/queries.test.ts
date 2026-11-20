@@ -24,15 +24,15 @@ function fixture() {
   const scope: BridgeActivityScope = { connections: eq(bridgeConnections.agent, 'art'), incoming: ne(bridgeIncoming.id, 'private') };
   return { db, client, clock, statements, queries, receive, scope };
 }
-it('counts in SQL, retaining visible zero-message connections and excluding both hidden connections and hidden messages', () => {
+it('batches metadata, retaining visible zero-message connections and excluding both hidden connections and hidden messages', () => {
   const f = fixture();
   f.receive('delivered', start); f.receive('held', start - 1000, 'held'); f.receive('pending', start - 2000, 'pending'); f.receive('dropped', start - 3000, 'dropped');
   f.receive('private', start); f.receive('other-message', start, 'delivered', 'other');
   f.receive('boundary', start - day); f.receive('old', start - day - 1); f.receive('future', start + 1);
   f.statements.length = 0;
   expect(f.queries.activity(f.scope)).toEqual([{ id: 'c', received: 4, delivered: 1, held: 1 }, { id: 'empty', received: 0, delivered: 0, held: 0 }]);
-  expect(f.statements).toHaveLength(1); expect(f.statements[0]).toContain('count('); expect(f.statements[0]).toContain('sum(');
-  expect(f.statements[0]).not.toContain('"text"'); expect(f.statements[0]).not.toMatch(/insert|update|delete/i);
+  expect(f.statements).toHaveLength(1);
+  for(const statement of f.statements){expect(statement).not.toContain('"text"');expect(statement).not.toMatch(/insert|update|delete/i);}
 });
 it('requires both SQL scopes before executing any query', () => {
   const f = fixture(); f.statements.length = 0;
@@ -82,4 +82,17 @@ it('counts receipt time rather than platform-post time and schedules the matchin
   f.db.update(bridgeIncoming).set({ postedAt: new Date(start).toISOString() }).where(eq(bridgeIncoming.id, 'new-post-old-receipt')).run();
   expect(f.queries.activity(f.scope)[0].received).toBe(1);
   expect(f.queries.nextDeadline()).toBe(start + day - 1000);
+});
+
+it.each(['receipts','connections'])('keeps one activity statement when %s grow from two to ten',kind=>{
+ const f=fixture();let small=0,visits=0;
+ f.db.$client.function('count_receipt',(_id:string)=>{visits++;return 1;});
+ const scope={...f.scope,incoming:sql`(${f.scope.incoming} and count_receipt(${bridgeIncoming.id}))`};
+ for(let n=0;n<10;n++){
+  const connection=kind==='connections'?'extra-'+n:'c';
+  if(kind==='connections')f.db.insert(bridgeConnections).values({id:connection,platform:'slack',agent:'art',workspace:'workspace',botUser:'bot-'+n,tokenSecret:'token',enabled:true,state:'connected',stateAt:new Date(start).toISOString()}).run();
+  f.receive('row-'+n,start,'delivered',connection);
+  if(n===1||n===9){f.statements.length=0;visits=0;expect(f.queries.activity(scope).reduce((n,row)=>n+row.received,0)).toBe(n+1);expect(visits).toBe(n+1);if(n===1)small=f.statements.length;else expect(f.statements.length).toBe(small);}
+ }
+ expect(small).toBe(1);
 });
