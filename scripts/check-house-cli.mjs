@@ -46,7 +46,12 @@ const probe = `
   const readFixture=bodyNoteFileReader(work,[work]);
   const notes=new Map(),attachments=new Map();
   const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
-    token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
+    token:'fixture',signal:new AbortController().signal,
+    houseSend:{venue:'loom',denied:[],async call(name,args){
+      assert.equal(name,'loom_command');assert.equal(args.operation,'conversation.message');
+      assert.equal(args.input.kind,'progress');assert.equal(args.input.words,'fixture progress');
+      return {content:[{type:'text',text:JSON.stringify({ok:true,value:{saved:true,seq:1}})}]};
+    }},houseNotes:{denied:[],async call(name,args){
       let value;
       if(name==='loom_command'&&args.operation==='memory.noteAttach'){
         const {contents:bytes}=readFixture(args.input.source);
@@ -74,7 +79,7 @@ const probe = `
     }}});
   try{
     for(const [shell,flags,path] of [['/bin/sh','-c','fixture/normal'],['/bin/bash','-lc','fixture/login']]){
-      const run=async command=>(await promisify(execFile)(shell,[flags,command],{env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}})).stdout;
+      const run=async command=>(await promisify(execFile)(shell,[flags,command],{env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote,LOOM_BODY_HOUSE_SEND:tools.houseSend}})).stdout;
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
@@ -87,6 +92,9 @@ const probe = `
       }
       assert.ok(JSON.parse(await run('loom note delete '+path+' --json')).deleted);
       console.log(shell,flags,'note write/read/list/attach/file/pin/unpin/delete passed');
+      const update=JSON.parse(await run('loom runtime send --conversation room --text "fixture progress"'));
+      assert.equal(update.recorded,true);assert.equal(update.seq,1);
+      console.log(shell,flags,'runtime send recorded the fixture progress message');
     }
   }finally{await tools.close();}
 
