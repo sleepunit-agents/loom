@@ -37,6 +37,7 @@
  *
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
+import {parseOutsidePersonKey} from './pieces/bridges/keys.js';
 import {randomBytes} from 'node:crypto';
 import {and,asc,desc,eq,inArray,isNull,like,sql} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
@@ -465,9 +466,24 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   inboxTitle(card:Approval,names:CardNames) {
    let value:Proposal;
    try { value=read(card).value; } catch { return undefined; }
-   if(value.change!=='bridge' && value.change!=='kitGrant' && value.change!=='projectOutsidePerson') return undefined;
-   // Resolved cards describe the original input. The current configuration can only describe a pending change.
-   return ownerCard(value,card.state==='pending'?before(value):undefined,names)?.title;
+   let platform: unknown;
+   let was: unknown;
+   switch(value.change) {
+    case 'kitGrant': platform='platform' in value.input.to ? value.input.to.platform : undefined; break;
+    case 'projectOutsidePerson': platform=value.input.platform; break;
+    case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
+    case 'bridge':
+     if(value.input.action==='disconnect') {
+      if(card.state!=='pending') return undefined;
+      was=before(value);
+      platform=was && typeof was==='object' && 'platform' in was ? was.platform : undefined;
+     } else platform=value.input.platform;
+     break;
+    default: return undefined;
+   }
+   if(platform!=='slack') return undefined;
+   // A historical title describes the original request, independent of later configuration.
+   return ownerCard(value,card.state==='pending' ? was ?? before(value) : undefined,names)?.title;
   },
   file,
   // Called after the outer Allow transaction commits, so readers see the change.
