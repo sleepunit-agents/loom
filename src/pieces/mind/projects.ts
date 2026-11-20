@@ -82,7 +82,8 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
    if (!prepared || !r.prepareForList) return r.read(viewer,q);
    let reader = prepared.get(r);
    if (!reader) {
-    reader = r.prepareForList(viewer);
+    try { reader = r.prepareForList(viewer); }
+    catch (error) { reader = () => { throw error; }; }
     prepared.set(r,reader);
    }
    return reader(q);

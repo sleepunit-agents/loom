@@ -251,7 +251,7 @@ it('selects shared tasks and changes once for each active project listing',async
  cleanup.push(()=>app.close());
  const selections=[f.db.query.tasks,f.db.query.taskComments,f.db.query.taskLinks,f.db.query.changes]
    .map(table=>vi.spyOn(table,'findMany'));
- async function list(size:number,reads:number){
+ async function list(size:number,reads:number[]){
   for(const selection of selections)selection.mockClear();
   const response=await app.http.request(app.url+'/graphql',{
    method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},
@@ -260,12 +260,15 @@ it('selects shared tasks and changes once for each active project listing',async
   const result=await response.json();
   expect(result.errors).toBeUndefined();
   expect(result.data.memoryProjects).toHaveLength(size);
-  for(const selection of selections)expect(selection).toHaveBeenCalledTimes(reads);
+  selections.forEach((selection,index)=>expect(selection).toHaveBeenCalledTimes(reads[index]!));
  }
  store.write({slug:'quiet',name:'Quiet',status:'paused'});
- await list(1,0);
+ await list(1,[0,0,0,0]);
  for(let i=0;i<10;i++){
   store.write({slug:'pond-'+i,name:'Pond '+i,status:'active'});
-  if(i===1||i===9)await list(i+2,1);
+  if(i===1||i===9)await list(i+2,[1,1,1,1]);
  }
+ selections[1]!.mockImplementationOnce(()=>{throw new Error('comments unavailable');});
+ await list(11,[1,1,0,1]);
+ await list(11,[1,1,1,1]);
 });
