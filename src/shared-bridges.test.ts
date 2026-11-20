@@ -89,9 +89,19 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  const id=randomUUID(),status=(credential:string,send=id)=>f.call('bridges','sendStatus',{id:send},credential);
  const provider=f.request.getMockImplementation()!;
  let part=0;
- f.request.mockImplementation(async(url,init)=>String(url).endsWith('chat.postMessage')
-  ? Response.json({ok:true,channel:'CROOM',ts:'1794432000.00000'+(++part)}) : provider(url,init));
- expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)},token.body)).status).toBe(200);
+ const second=Promise.withResolvers<void>();
+ f.request.mockImplementation(async(url,init)=>{
+  if(!String(url).endsWith('chat.postMessage'))return provider(url,init);
+  const index=++part;
+  if(index===2)await second.promise;
+  return Response.json({ok:true,channel:'CROOM',ts:'1794432000.00000'+index});
+ });
+ const text='x'.repeat(3901);
+ try{
+  expect((await f.call('bridges','say',{id,text},token.body)).status).toBe(200);
+  await vi.waitFor(()=>expect(part).toBe(2));
+  expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sending',postedIds:['1794432000.000001']}});
+ }finally{second.resolve();}
  await f.root.services.bridges.daemon!.idle();
  expect((await status(token.body)).body).toMatchObject({ok:true,value:{state:'sent',postedIds:['1794432000.000001','1794432000.000002']}});
  const legacy={id:randomUUID(),text:'Existing post'};
@@ -99,6 +109,9 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  await f.root.services.bridges.daemon!.idle();
  expect((await f.call('bridges','say',legacy,token.body)).status).toBe(200);
  await f.root.services.bridges.daemon!.idle();
+ expect((await f.call('bridges','reply',{id,incoming:incoming.id,text,model:'observed'},token.body)).status).toBe(200);
+ await f.root.services.bridges.daemon!.idle();
+ expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('done');
  expect(part).toBe(3);
  expect((await status(token.body,legacy.id)).status).toBe(404);
  expect((await status(token.owner)).status).not.toBe(200);

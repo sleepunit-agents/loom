@@ -36,7 +36,7 @@ export function queueAgentPost(db: DataDatabase, conversations: Conversations, s
    // Its own posts there: each wrote a reply turn of this job's in that conversation.
    const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,job),eq(turns.kind,'reply'))).all();
    if(!existing&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages to one place`);
-   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}
+   try{sends.queue({id:input.id,text:input.text,author:{job,intermediate:false},held:!effectsAllowed(),at:{conversation:cv.id,connection:at.connection,channel:at.channel,thread:at.thread}});}
    catch(error){
      if(error instanceof BridgeQueueRefusal) throw new OperationError('invalid','Bridge message could not be queued');
      throw error;
@@ -83,7 +83,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const place=input.incoming?undefined:placed(ctx.viewer),bound=input.incoming?target(ctx.viewer,input.incoming):place;if(!bound)throw new OperationError('denied','Current bridge body required');
    if(place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${place.closed}`);
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-   try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,author:{job:bound.job,intermediate:false},held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
    // The reply is the answer to everything this job took in the conversation before it, as a thread reply
    // is (ConversationMail.settle). Settling that mail here, with the reply, means a body that dies before
    // its own confirmation cannot leave answered mail waiting for a second body. Mail that arrived since
@@ -218,7 +218,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
    const files=(input.files??[]).map(file=>({name:file.name,contents:Buffer.from(file.contents,'base64')}));
-   try{sends.queue({id:input.id,text:input.text,sendingJob:bound.job,held:!effectsAllowed(),...(files.length?{files}:{}),...(bound.incoming?{incoming:bound.incoming}:{at:bound.at!})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,author:{job:bound.job,intermediate:true},held:!effectsAllowed(),...(files.length?{files}:{}),...(bound.incoming?{incoming:bound.incoming}:{at:bound.at!})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
    finally{for(const file of files)file.contents.fill(0);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
