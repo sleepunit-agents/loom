@@ -77,7 +77,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
     words={row => { const approval = cardOf(row); return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
     sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
-      : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} /> : undefined}
+      : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
     navigation={{ folder, query: search, offset, hasNext: (data?.items.length ?? 0) > inboxPageSize,
       onFolder(id) { setFolder(id); setOffset(0); select(); }, onQuery(value) { setSearch(value); setOffset(0); },

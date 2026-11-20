@@ -7,12 +7,12 @@ import { workAnswersAllowed } from './shared-work-access.js';
 import { and, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { approvals } from './core/data/schema.js';
 import { workVisibility } from './core/data/work-visibility.js';
-import { proposalCard, storedProposal, type CardNames } from './proposal-words.js';
+import { type CardNames } from './proposal-words.js';
 
 const titleRow = new GraphQLObjectType({ name: 'InboxProposalTitle', fields: {
   approval: { type: GraphQLString }, title: { type: GraphQLString },
 } });
-export function workQueryFields(db: DataDatabase, refreshConfigured: boolean, names: (viewer: Viewer) => CardNames) {
+export function workQueryFields(db: DataDatabase, refreshConfigured: boolean, names: (viewer: Viewer) => CardNames, titleOf:(row: typeof approvals.$inferSelect,names:CardNames)=>string|undefined) {
   return { ...conversationWorkFields(db), inboxProposalTitles: {
     type: new GraphQLList(titleRow),
     args: { ids: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) } },
@@ -20,14 +20,13 @@ export function workQueryFields(db: DataDatabase, refreshConfigured: boolean, na
       // One page plus its separately opened item. Resolve owner-readable names only for visible cards.
       if (!ids.length || !workAnswersAllowed(db,viewer)) return [];
       if (ids.length > 100) throw Error('Too many approval titles requested');
-      const rows = db.select({id: approvals.id, operation: approvals.operation, details: approvals.details})
+      const rows = db.select()
         .from(approvals).where(and(inArray(approvals.id, ids), eq(approvals.operation,'household.change'),
           workVisibility(viewer).approvals!(getTableColumns(approvals)))).all();
-      const context = { names: names(viewer) };
+      const visibleNames = names(viewer);
       return rows.flatMap(row => {
-        const input = storedProposal(row);
-        const card = input && proposalCard(input.change, input.input, context);
-        return card ? [{approval: row.id, title: card.title}] : [];
+        const title = titleOf(row,visibleNames);
+        return title ? [{approval: row.id, title}] : [];
       });
     },
   }, workAnswerOwner: { type:new GraphQLNonNull(GraphQLBoolean),

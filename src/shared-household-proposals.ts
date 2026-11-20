@@ -446,8 +446,29 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   try{return service.allow(card.id,rule.setBy,`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`);}
   catch(error){if(error instanceof OperationError)return card;throw error;}
  };
+ const ownerCard=(value:Proposal,was:ReturnType<typeof before>|undefined,names?:CardNames)=>{
+     const machineIds=value.change==='runSettings'
+      ? [...value.input.boxes,...((was as {boxes?:string[]}|null)?.boxes??[])]
+      : value.change==='machineReader'?[value.input.box]:[];
+     const machines=new Map(machineIds.length?db.select({id:boxes.id,name:boxes.name}).from(boxes)
+      .where(inArray(boxes.id,[...new Set(machineIds)])).all().map(row=>[row.id,row.name]):[]);
+     const context:CardContext={
+      ...(was!==undefined?{before:{value:was}}:{}),
+      ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
+      projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
+      machineName:id=>machines.get(id),
+     };
+     return plain(value,context);
+ };
  return{
   operation:[operation,apply] as const,
+  inboxTitle(card:Approval,names:CardNames) {
+   let value:Proposal;
+   try { value=read(card).value; } catch { return undefined; }
+   if(value.change!=='bridge' && value.change!=='kitGrant' && value.change!=='projectOutsidePerson') return undefined;
+   // Resolved cards describe the original input. The current configuration can only describe a pending change.
+   return ownerCard(value,card.state==='pending'?before(value):undefined,names)?.title;
+  },
   file,
   // Called after the outer Allow transaction commits, so readers see the change.
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
@@ -633,18 +654,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      try{parsed=read(card);}catch{return unknown();}
      if(card.state!=='pending')return{summary:'',problem:null,card:null,blocked:null,exact:exactRequest(parsed.kept.after)};
      const {kept,value}=parsed,was=before(value);
-     const machineIds=value.change==='runSettings'
-      ? [...value.input.boxes,...((was as {boxes?:string[]}|null)?.boxes??[])]
-      : value.change==='machineReader'?[value.input.box]:[];
-     const machines=new Map(machineIds.length?db.select({id:boxes.id,name:boxes.name}).from(boxes)
-      .where(inArray(boxes.id,[...new Set(machineIds)])).all().map(row=>[row.id,row.name]):[]);
-     const names=parts.names?.(ctx.viewer),context:CardContext={
-      before:{value:was},
-      ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
-      projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
-      machineName:id=>machines.get(id),
-     };
-     const told=plain(value,context);
+     const names=parts.names?.(ctx.viewer),told=ownerCard(value,was,names);
      if(!told)return unknown();
      let blocked=blockedWords(value,kept,was,ctx.viewer,names);
      if(blocked&&value.change==='placeSchedule'&&value.input.asker.kind==='outside'){

@@ -909,10 +909,10 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   f.db.insert(memberAgents).values({ member: 'lee', agent: 'art' }).run();
   f.db.insert(bridgePeople).values({ ...gage, member: 'gage' }).run();
   expect((await preview(f, id)).card!.title).toContain('gage (Slack)');
-  const titles = async (actor: keyof typeof credentials) => {
+  const titles = async (actor: keyof typeof credentials, ids=[id]) => {
     const response = await f.root.http.request('http://loom/graphql', {method:'POST',
       headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},
-      body:JSON.stringify({query:'query Titles($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids:[id]}})});
+      body:JSON.stringify({query:'query Titles($ids:[String!]!){inboxProposalTitles(ids:$ids){approval title}}',variables:{ids}})});
     const result=await response.json();expect(result.errors).toBeUndefined();return result.data.inboxProposalTitles;
   };
   expect(await titles('sam')).toEqual([{approval:id,title:expect.stringContaining('gage (Slack)')}]);
@@ -925,6 +925,11 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
     expect(read).toContain('slack user U07V8CZUC1J in T02AYL3QM');
     expect(read).not.toMatch(/gage|art-slack|loom has no name/i);
   }
+  const disconnect=(await f.call('household/propose',{change:'bridge',input:{action:'disconnect',id:'art-slack'},why:'Disconnect Slack'},'art')).body.value!.id;
+  const unrelated=(await f.call('household/propose',{change:'kit',input:{agent:'art',kit:'second-kit',tools:[]},why:'Add kit'},'art')).body.value!.id;
+  const disconnectedTitle=(await preview(f,disconnect)).card!.title;
+  expect(disconnectedTitle).toContain('Slack connection');
+  expect(await titles('sam',[disconnect,unrelated])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
 });
 
 it('names an outside account from its exact directory record only for the owner', async () => {
