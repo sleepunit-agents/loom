@@ -20,8 +20,7 @@ The old helper reads a staff-capable credential through a separate secret comman
 
 The worker uses an ephemeral helper container for each invocation. The worker selects the approved content-addressed house image, mounts nothing from the job, disables container logging and passes the credential envelope over attached stdin. The immutable program runs as UID/GID 65534 and receives UTF-8, NUL-free credential values under their approved aliases in a clean child environment. Install the helper and its dependencies with permissions that allow that user to execute them. Native shell access in an owner's body must confer no access to a helper's processes, working directory or credentials. The executor trusts the approved program, interpreter and image. An owner reviewing a pin also trusts their handling of output and outbound network access.
 
-On a rootless Podman worker with fewer than 65,535 mapped IDs, set `container.podmanHelperSubid` to an available positive subordinate ID, for example 32767. The worker checks the engine's subordinate UID and GID ranges and uses Podman's native create endpoint for kit and scheduled-program helpers. The process still runs as 65534:65534 inside the container. The setting is local to the worker and requires Podman 5.
-
+On a rootless Podman 5 worker with a short UID or GID map, set `container.podmanHelperSubid` to an ID **inside Podman’s user namespace**. Both the UID and GID maps must cover every namespace ID from zero through that value. For example, if namespace ID 1 maps to host ID 20000 for 40000 IDs, a setting of 32767 maps the helper to host ID 52766. Inside the helper it is still 65534:65534. Only kit and scheduled-program helpers use this setting.
 
 ## Owner cards for Pond
 

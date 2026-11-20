@@ -37,6 +37,7 @@ it('uses the approved image without body mounts, host privileges or credentials 
   const {engine,calls} = fixture('online');
   expect((await runKitContainer(engine,input)).toString()).toBe('online');
   expect(JSON.stringify(calls)).not.toContain('fixture-secret');
+  expect(JSON.stringify(calls)).not.toContain(input.secrets.KIT_POND.toString('base64'));
   expect(JSON.stringify(calls)).not.toContain(input.argv[0]);
   expect(calls.find(c=>c.path.includes('/create'))?.body).toMatchObject({
     Image:image, Labels:{'loom.job':'test-job','loom.box':'test-box'}, HostConfig:{ReadonlyRootfs:true, LogConfig:{Type:'none'}, CapDrop:['ALL'], Mounts:[]},
@@ -75,7 +76,7 @@ it('accepts the full stdout allowance even when Docker frames each byte separate
   expect((await runKitContainer(engine, input)).toString()).toBe(text);
 });
 
-it.each(['rootless','rootful','short mapping','gap','missing zero','old API','lost start'] as const)('checks the %s engine before creating a mapped helper', async mode => {
+it.each(['rootless','rootful','short mapping','gap','missing zero','old API','host bind','lost start'] as const)('checks the %s engine before creating a mapped helper', async mode => {
   const {engine,calls,writes} = fixture('online');
   const base = {container_id:0,host_id:1000,size:1};
   const rest = {container_id:1,host_id:20000,size:32767};
@@ -85,10 +86,19 @@ it.each(['rootless','rootful','short mapping','gap','missing zero','old API','lo
     if (args[1].endsWith('/libpod/info')) return {version:{ APIVersion:mode === 'old API' ? '4.9.0' : '5.4.2' },
       host:{security:{rootless:mode !== 'rootful'},idMappings:{uidmap,gidmap}}};
     const response = await engine.json(...args);
+    if (mode === 'host bind' && args[1].startsWith('/containers/') && args[1].endsWith('/json'))
+      return {Mounts:[{Type:'bind',Source:'/outside',Destination:'/inside'}]};
     if (mode === 'lost start' && args[1].endsWith('/start')) throw new Error('Start reply lost');
     return response;
   }};
   const run = runKitContainer(control,{...input,runtime:'crun',podmanHelperSubid:32767});
+  if (mode === 'host bind') {
+    await expect(run).rejects.toThrow('Unexpected container storage');
+    expect(calls.some(c=>c.path.endsWith('/start'))).toBe(false);
+    expect(writes).toEqual([]);
+    expect(calls.at(-1)?.method).toBe('DELETE');
+    return;
+  }
   if (mode === 'lost start') {
     await expect(run).rejects.toThrow('Start reply lost');
     expect(calls.filter(c=>c.path.endsWith('/start'))).toHaveLength(1);
@@ -113,6 +123,7 @@ it.each(['rootless','rootful','short mapping','gap','missing zero','old API','lo
     resource_limits:{memory:{limit:134217728},pids:{limit:32},cpu:{period:100000,quota:50000}},
   }});
   expect(JSON.stringify(calls)).not.toContain('fixture-secret');
+  expect(JSON.stringify(calls)).not.toContain(input.secrets.KIT_POND.toString('base64'));
   expect(JSON.stringify(calls)).not.toContain(input.argv[0]);
   expect(calls.at(-1)?.method).toBe('DELETE');
 });

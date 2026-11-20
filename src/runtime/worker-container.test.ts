@@ -1229,6 +1229,9 @@ it('starts and ends a body without touching anything inside its account\'s sign-
   expect(seen()).toEqual(before);
 });
 
+const mappedEngineInfo = {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
+      idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
+
 it('mounts a job-only kit socket and gives the body no worker credential, even with a shell',async()=>{
   const f=fixture(),state=mkdtempSync(join(houseRoot,'kit-state-'));
   const broker=vi.spyOn(brokerModule,'kitBroker');
@@ -1236,8 +1239,7 @@ it('mounts a job-only kit socket and gives the body no worker credential, even w
   const original=f.engine.json.getMockImplementation()!;
   let path='';
   f.engine.json.mockImplementation(async(method,url,body,signal)=>{
-    if(url.endsWith('/libpod/info')) return {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
-      idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
+    if(url.endsWith('/libpod/info')) return mappedEngineInfo;
     if(url.endsWith('/libpod/containers/create')) throw new Error('Fixture stops before helper launch');
     if(url.startsWith('/containers/create')){
       const mounts=(body as {HostConfig:{Mounts:{Source:string;Target:string;ReadOnly:boolean}[]}}).HostConfig.Mounts;
@@ -1295,8 +1297,7 @@ it('prepares a scheduled helper using its worker namespace setting', async () =>
   const f = programFixture();
   const executor = containerWorkerExecutor({...f.config,container:{...f.config.container,podmanHelperSubid:32767}},f.deps);
   f.engine.json.mockImplementation(async (_method,path) => {
-    if (path.endsWith('/libpod/info')) return {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
-      idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
+    if (path.endsWith('/libpod/info')) return mappedEngineInfo;
     if (path.endsWith('/libpod/containers/create')) throw new Error('Fixture stops before helper launch');
   });
   const body = executor.start({...job,program:namedProgram},built,f.abort.signal);
