@@ -572,3 +572,19 @@ it('discards a late review response for a previously open change', async () => {
   await act(async () => tree.update(app(second.id)));
   expect(words()).not.toContain('First findings');
 });
+
+it('opens the owner explanation when Allow is refused on a collapsed Inbox kit grant',async()=>{
+ fixture();feed.owner=true;
+ const row=feed.approvals.approvals[0];
+ Object.assign(row,{operation:'household.change',details:JSON.stringify({change:'kitGrant',after:{agent:'art',kit:'livonia',grant:true,to:{platform:'slack',workspace:'ws',user:'user'}}})});
+ const request=vi.fn<typeof fetch>(async url=>String(url).endsWith('/answer')
+   ? Response.json({ok:false,code:'invalid',message:'Choose an outside account already known to the agent or household'},{status:400})
+   : Response.json({ok:true,value:{summary:'',problem:null,blocked:'This cannot be allowed yet: Art does not know this Slack contact.',card:{title:'Grant the Livonia kit',nothing:false,facts:[],exact:'{}'}}}));
+ vi.stubGlobal('fetch',request);
+ await draw(h(LiveApprovalCard,{id:row.id}));
+ expect(request).not.toHaveBeenCalled();
+ await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Allow').props.onClick());
+ expect(request.mock.calls.map(([url])=>url)).toEqual(['/api/approvals/answer','/api/household/proposalPreview']);
+ expect(words()).toContain('Art does not know this Slack contact.');
+ expect(tree.root.findByType('Error').props.title).toBe('Couldn’t save your answer');
+});
