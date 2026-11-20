@@ -17,10 +17,19 @@ export async function changeActions({page,tile,app,example,out}){
   const request=write(()=>a.request({kind:'merge',target:`${current.id}@${current.headCommit}`,what:'Merge the fictitious cached change',why:'The fictitious checks pass.',agent:'fern',askedFrom:example.conversation,actingFor:'alex',project:'garden',conversation:example.conversation,ask:'Merge the exact fictitious head?',ifYes:'Fern merges this commit.',ifNo:'Fern leaves the pull request open.'}));
   const select=async title=>{const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(title,{exact:true})}).click();};
   await select(base.title);
-  const reader=tile.getByRole('region',{name:'Changes: the open item',exact:true});
-  await reader.getByText('example-reviewer · reviewer',{exact:true}).waitFor();
-  for(const [login,role] of [['example-fern','author'],['example-requested','requested'],['example-assignee','assignee'],['example-commenter','commenter']])await reader.getByText(`${login} · ${role}`,{exact:true}).waitFor();
-  for(const title of ['Compare garden pumps','Order the selected pump','Measure the hose'])await reader.getByText(title,{exact:true}).waitFor();
+  const reader=tile.getByRole('article',{name:'Change',exact:true});
+  const fact=async(section,label,value)=>{
+   const group=reader.getByRole('region',{name:section,exact:true});
+   const field=group.getByText(label,{exact:true}).locator('xpath=following-sibling::dd[1]');
+   await field.filter({hasText:value}).waitFor();
+   check(await field.innerText()===value,'Incorrect '+label+' in '+section);
+  };
+  for(const [label,login] of [['Reviewed it','example-reviewer'],['Author','example-fern'],['Asked to review','example-requested'],['Assigned','example-assignee'],['Commented','example-commenter']]){
+   await fact('People on it',label,login);
+  }
+  for(const [index,title] of ['Compare garden pumps','Order the selected pump','Measure the hose'].entries()){
+   await reader.getByRole('button',{name:`Open ${title}, ${example.tasks[index]}`,exact:true}).waitFor();
+  }
   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/changes/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
   await reader.getByRole('button',{name:'Yes, merge it',exact:true}).click();
   const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Merge answer was refused');
@@ -33,8 +42,8 @@ export async function changeActions({page,tile,app,example,out}){
   const order=await tile.locator('.loom-split__rows [data-split-row]').allTextContents();
   const expected=['Fictitious owner decision',base.title,'Fictitious CI work','Fictitious review work','Fictitious author work','Fictitious finished work'];
   check(order.length===expected.length&&order.every((text,index)=>text.includes(expected[index])),'Changes are not ordered you/agent/ci/reviewer/author/done');
-  await select('Fictitious CI work');await reader.getByText('pump-ci · running',{exact:true}).waitFor();
-  await select('Fictitious author work');await reader.getByText('hose-test · failing',{exact:true}).waitFor();
+  await select('Fictitious CI work');await fact('Checks','Running','pump-ci');
+  await select('Fictitious author work');await fact('Checks','Failing','hose-test');
   check(reads===1,'Rendering read the source again');
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {changeWorkflow:{ok:true,screenshot,sourceReads:reads,groups:['you','agent','ci','reviewer','author','done']}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {changeWorkflow:{ok:false,error:String(error),screenshot}};}
@@ -45,7 +54,7 @@ export async function changeInline({page,tile,app,example,out}){
  const screenshot='action-changeInline.png';
  try{
   const words=`Review this fictitious pull request: ${example.change}.`;
-  const editor=tile.getByRole('textbox',{name:'Message fern',exact:true});await editor.fill(words);
+  const editor=tile.getByRole('textbox',{name:'Message Fern',exact:true});await editor.fill(words);
   const send=tile.getByRole('button',{name:'Send',exact:true}).and(page.locator(':enabled'));await send.waitFor({state:'visible'});await send.focus();
   if(await editor.inputValue()!==words)throw Error('Reference draft changed before Send');
   const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/comms/send'&&r.method()==='POST',()=>send.press('Enter'));
@@ -57,8 +66,8 @@ export async function changeInline({page,tile,app,example,out}){
   await card.getByRole('button',{name:'Open',exact:true}).click();
   const change=page.getByRole('region',{name:'Changes tile',exact:true});
   await change.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
-  const reader=change.getByRole('region',{name:'Changes: the open item',exact:true});
-  await reader.getByText('Compare garden pumps',{exact:true}).click();
+  const reader=change.getByRole('article',{name:'Change',exact:true});
+  await reader.getByRole('button',{name:/^Open Compare garden pumps, /}).click();
   const tasks=page.getByRole('region',{name:'Tasks tile',exact:true});
   await tasks.getByRole('heading',{name:'Compare garden pumps',exact:true}).waitFor({timeout:4000});
   await tasks.getByText('Pull requests',{exact:true}).waitFor();
