@@ -29,13 +29,13 @@ owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t
 # Narrow observable criteria supplement broad prose. Text presence proves only
 # these visible facts, never the whole behavioral promise it came from.
 ui={
- 'conversations':[('Comms','The private thread displays the person message and agent reply.',['Please compare replacement pumps','Three fit. The quiet model']),('Comms','A question appears inline with Allow and Deny.',['Spend up to 180','Allow','Deny']),('Comms','Work made in the conversation is listed.',['Work','Compare garden pumps','Order the selected pump'])],
+ 'conversations':[('Comms','The private thread displays the person message and agent reply.',['Please compare replacement pumps','Three fit. The quiet model']),('Comms','A question appears inline with Allow and Deny.',['Spend up to 180','Allow','Deny']),('Comms','Work made in the conversation is listed.',['Made here','Compare garden pumps','Order the selected pump'])],
  'desk':[('Home','Home shows owned agents and their last answer.',['Fern','Moss','LAST ANSWER','Three fit.']),('Home','Home offers a message box for each owned agent.',['MESSAGE FERN','MESSAGE MOSS','Send'])],
  'tasks':[('Tasks','Ready work is listed in the Tasks tile.',['Ready','Measure the hose']),('Tasks','A task detail displays its title, goal, reason and owner.',['Measure the hose','GOAL\nThe example garden has working water.','WHY\nThe old pump stopped.','OWNER\nFern']),('Tasks','The task detail offers claim, close and comment.',['Claim','Close','Comment'])],
- 'approvals':[('Approvals','The pending request shows its question, reason, outcomes and exact target.',['Inspect the example pump?','Why','If you allow','If you deny','command: example-worker:inspect-pump']),('Approvals','The request offers Allow and Deny.',['Allow','Deny']),('Approvals','The request shows its permanent request record.',['Permanent record','request'])],
+ 'approvals':[('Approvals','The pending request shows its question, reason, outcomes and exact target.',['May Fern inspect the example pump before ordering?','Check the hose before ordering.','IF YOU ALLOW','Fern inspects it.','IF YOU DENY','Fern waits.','command: example-worker:inspect-pump']),('Approvals','The request offers Allow and Deny.',['Allow','Deny']),('Approvals','The request shows its permanent request record.',['HISTORY','Asked '])],
  'tempo':[('Tempo','The trigger detail shows its source, lifespan, target and words.',['answer · once','An item in fern','Words','Continue after the example inspection']),('Tempo','The trigger offers Run now, Cancel and Pause agent.',['Run now','Cancel','Pause agent'])],
- 'changes':[('Changes','The PR detail shows checks, review, head commit and linked task.',['Checks','Review','Commit:','Compare garden pumps'])],
- 'inbox':[('Inbox','The waiting question displays reason and yes/no outcomes.',['Spend up to 180','If yes','If no','The example pump is available.']),('Inbox','The question offers Yes, No, a written answer, done and dismiss.',['Yes','No','Record answer','Mark done','Dismiss'])],
+ 'changes':[('Changes','The PR detail shows checks, review, head commit and linked task.',['Checks passing','REVIEW','Approved','COMMIT','aaaaaaaa','Compare garden pumps'])],
+ 'inbox':[('Inbox','The waiting question displays reason and yes/no outcomes.',['Spend up to 180','IF YES','Fern orders the pump.','IF NO','Fern compares cheaper pumps.','The example pump is available.']),('Inbox','The question offers Yes, No, a written answer, done and dismiss.',['Yes','No','Record answer','Mark done','Dismiss'])],
  'memory':[('Knowledge','Knowledge offers search and freshness folders.',['Search knowledge','Recently verified','Due a check']),('Activity','Activity shows a day and the conversation turns.',['Shown day','Repair the garden pump'])],
  'people':[('Sharing','The owner can open project sharing without an unavailable screen.',[]),('Household setup','The owner can open household members and agents without an unavailable screen.',[])],
  'signing-in':[('Your account','The signed-in member can see their account without an unavailable screen.',[])],
@@ -85,6 +85,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('That need becomes a question in the inbox'):row['probe']={'kind':'action','action':'privateConversationQuestion'}
  for app,text,contains in ui.get(f.stem,[]):
   probe={'kind':'ui','app':app,'contains':contains}
+  if text in ('Home shows owned agents and their last answer.','Home offers a message box for each owned agent.'):probe={'kind':'action','action':'homeMessage'}
+  if text=='Knowledge offers search and freshness folders.':probe={'kind':'action','action':'knowledgeSearchFolders'}
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
   add(text,'',probe)
  if f.stem=='tempo':

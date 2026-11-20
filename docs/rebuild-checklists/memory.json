@@ -114,13 +114,8 @@
       "promise": "Knowledge offers search and freshness folders.",
       "source": "docs/how-it-works/site/memory.html",
       "probe": {
-        "kind": "ui",
-        "app": "Knowledge",
-        "contains": [
-          "Search knowledge",
-          "Recently verified",
-          "Due a check"
-        ]
+        "kind": "action",
+        "action": "knowledgeSearchFolders"
       }
     },
     {

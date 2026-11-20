@@ -131,14 +131,8 @@
       "promise": "Home shows owned agents and their last answer.",
       "source": "docs/how-it-works/site/desk.html",
       "probe": {
-        "kind": "ui",
-        "app": "Home",
-        "contains": [
-          "Fern",
-          "Moss",
-          "LAST ANSWER",
-          "Three fit."
-        ]
+        "kind": "action",
+        "action": "homeMessage"
       }
     },
     {
@@ -146,13 +140,8 @@
       "promise": "Home offers a message box for each owned agent.",
       "source": "docs/how-it-works/site/desk.html",
       "probe": {
-        "kind": "ui",
-        "app": "Home",
-        "contains": [
-          "MESSAGE FERN",
-          "MESSAGE MOSS",
-          "Send"
-        ]
+        "kind": "action",
+        "action": "homeMessage"
       }
     },
     {

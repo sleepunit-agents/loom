@@ -170,8 +170,10 @@
         "app": "Inbox",
         "contains": [
           "Spend up to 180",
-          "If yes",
-          "If no",
+          "IF YES",
+          "Fern orders the pump.",
+          "IF NO",
+          "Fern compares cheaper pumps.",
           "The example pump is available."
         ]
       }
