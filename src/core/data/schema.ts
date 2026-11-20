@@ -2022,6 +2022,15 @@ export const secretChangesRelations = relations(secretChanges, ({ one }) => ({
 }));
 
 /** Internal bookkeeping has named columns too. Opaque bytes are never queried as facts. */
+// A v1 archive may have issued task numbers whose rows were subsequently deleted.
+export const importedTaskSequence = sqliteTable('imported_task_sequence', {
+  singleton: integer('singleton').primaryKey().notNull(),
+  lastIssued: integer('last_issued').notNull(),
+}, t => [
+  check('imported_task_sequence_singleton', sql`${t.singleton} = 1`),
+  check('imported_task_sequence_range', sql`typeof(${t.lastIssued}) = 'integer' and ${t.lastIssued} between 0 and 9007199254740991`),
+]);
+
 export const migrations = sqliteTable('migrations', {
   number: integer('number').primaryKey().notNull(),
   appliedAt: text('applied_at').notNull(),
@@ -2256,6 +2265,7 @@ export const triggerAcceptances = sqliteTable('trigger_acceptances', {
 });
 
 export const plumbing = {
+  importedTaskSequence,
   triggerAcceptances,
   triggerJournals,
   agentKits, agentKitProjects, agentKitMembers, agentKitOutsidePeople, projectOutsidePeople, kitUses,

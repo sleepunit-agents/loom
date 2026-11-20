@@ -371,6 +371,8 @@ const upgrades: readonly (readonly string[])[] = [
   ["CREATE TABLE `bridge_send_jobs` (\n\t`send` text PRIMARY KEY NOT NULL,\n\t`job` text NOT NULL,\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade\n);"],
   // 25: remember the approved recipient of an addressed one-to-one post for delivery rechecks.
   ['ALTER TABLE bridge_send_jobs ADD COLUMN direct_target text','ALTER TABLE bridge_send_jobs ADD COLUMN final_reply integer DEFAULT false NOT NULL'],
+  // 26: preserve numbers already issued by an imported v1 task store.
+  ["CREATE TABLE `imported_task_sequence` (\n\t`singleton` integer PRIMARY KEY NOT NULL,\n\t`last_issued` integer NOT NULL,\n\tCONSTRAINT \"imported_task_sequence_singleton\" CHECK(\"imported_task_sequence\".\"singleton\" = 1),\n\tCONSTRAINT \"imported_task_sequence_range\" CHECK(typeof(\"imported_task_sequence\".\"last_issued\") = 'integer' and \"imported_task_sequence\".\"last_issued\" between 0 and 9007199254740991)\n);"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

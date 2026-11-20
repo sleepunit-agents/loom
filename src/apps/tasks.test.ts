@@ -4,7 +4,7 @@ import { createDataSchema, type DataDatabase } from '../core/data/database.js';
 import { eq } from 'drizzle-orm';
 import { members, agents, inbox, inboxRefs, projects, tasks as taskRows } from '../core/data/schema.js';
 import { Conversations } from '../core/conversations/index.js';
-import { taskService, type TaskService } from './tasks.js';
+import { preserveImportedTaskSequence, taskService, type TaskService } from './tasks.js';
 
 let client: Database.Database, db: DataDatabase, tasks: TaskService;
 const actor = { kind: 'member', id: 'jonathan' } as const;
@@ -18,6 +18,22 @@ beforeEach(() => {
 });
 afterEach(() => client.close());
 const file = (title: string, priority = 2, type: 'task' | 'epic' = 'task') => tasks.create({ title, priority, type, goal: 'The pump works', why: 'Keep the pond healthy', owner: { kind: 'household' } }, actor);
+
+it('reserves previously issued archive IDs across imports, retries and failed transactions', () => {
+  expect(file('Before import').id).toBe('t-1');
+  preserveImportedTaskSequence(db, 150);
+  expect(file('After import').id).toBe('t-151');
+  preserveImportedTaskSequence(db, 100);
+  preserveImportedTaskSequence(db, 150);
+  expect(() => db.transaction(() => {
+    preserveImportedTaskSequence(db, 200);
+    throw new Error('Import failed');
+  })).toThrow('Import failed');
+  expect(file('After retry').id).toBe('t-152');
+  expect(() => preserveImportedTaskSequence(db, -1)).toThrow();
+  preserveImportedTaskSequence(db, Number.MAX_SAFE_INTEGER);
+  expect(() => file('Overflow')).toThrow('Task ID space exhausted');
+});
 
 it('finds ready work by urgency, excludes epics and waits for every blocker to close', () => {
   const epic = file('Restore pond', 0, 'epic'), buy = file('Buy pump', 1), install = file('Install pump', 0), checklist = file('Write checklist', 3);
