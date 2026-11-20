@@ -18,14 +18,14 @@ export interface MemoryQueryContext { viewer: Viewer }
 const text = { type: GraphQLString };
 const requiredText = { type: new GraphQLNonNull(GraphQLString) };
 const freshness = new GraphQLEnumType({ name:'MemoryKnowledgeFreshness', values:{ fresh:{value:'fresh'}, aging:{value:'aging'}, due:{value:'due'} } });
+const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
 const summaryFields = {
  slug:requiredText, title:requiredText, domain:requiredText, updated:requiredText,
- verified_at:text, freshness_anchor:text, sla_class:text, fresh:{type:new GraphQLNonNull(freshness)}, by:text, recent:{type:GraphQLBoolean},
+ checked:{type:check}, verified_at:text, freshness_anchor:text, sla_class:text, fresh:{type:new GraphQLNonNull(freshness)}, by:text, recent:{type:GraphQLBoolean},
 };
 const summary = new GraphQLObjectType({ name:'MemoryKnowledgeSummary', fields:summaryFields });
 const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text,excerpt:requiredText,retrievedAt:requiredText,createdAt:requiredText } });
 const reference = new GraphQLObjectType({ name:'MemoryKnowledgeReference', fields:{ slug:requiredText,title:requiredText } });
-const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
 const annotation = new GraphQLObjectType({name:'MemoryKnowledgeAnnotation',fields:{
  id:{type:new GraphQLNonNull(GraphQLInt)},kind:requiredText,actor:requiredText,words:requiredText,evidence:requiredText,created:requiredText,
 }});
@@ -63,7 +63,7 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
  const page = new GraphQLObjectType< {slug:string},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
   ...summaryFields,body:requiredText,sourcing:text,
   sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
-  citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},checked:{type:check},
+  citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},
   checks:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(check))),resolve:(source,_args,context)=>{
    if (!allowed(context) || !db) return [];
    try {
