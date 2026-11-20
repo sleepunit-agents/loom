@@ -1,4 +1,6 @@
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { NativeSelect } from '../../kit/native-select';
+import type { ReactNode } from 'react';
 import type {Call} from '../../data/store';
 import {memoryCall as call} from '../../memory/commands';
 import {frozen} from '../../data/mutation';
@@ -8,7 +10,28 @@ import {memoryQueries} from '../../memory/queries';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
-function Reader({ page, zone, open, canVerify, canRecheck, request, act }: { page: Page; zone?: string; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
+function AnnotationForm({request, save, reset}: {request?: Call; save(kind: string, words: string): void; reset(): void}) {
+  const [kind, setKind] = useState('note');
+  const [words, setWords] = useState('');
+  const answer = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
+  if (answer.result?.ok) return <p role="status">Annotation saved <Button onClick={() => {setWords(''); reset();}}>Add another annotation</Button></p>;
+  return <form aria-label="Annotate page" onSubmit={event => {
+    event.preventDefault();
+    if (words.trim() && !frozen(answer)) save(kind, words.trim());
+  }}>
+    <fieldset className="grid gap-2" disabled={frozen(answer)}>
+      <label>Annotation type <NativeSelect value={kind} onChange={event => setKind(event.target.value)}>
+        <option value="note">Note</option><option value="outdated">Out of date</option><option value="intent">Intent</option>
+      </NativeSelect></label>
+      <label>Annotation <Textarea required maxLength={4000} value={words} onChange={event => setWords(event.target.value)} /></label>
+      <Button type="submit">Save annotation</Button>
+    </fieldset>
+    {answer.pending && <Loading label="Saving annotation…" />}
+    {answer.result && !answer.result.ok && <div><Error text={answer.result.message} />
+      {answer.result.code === 'unavailable' && <Button type="button" onClick={() => request?.retry?.()}>Retry this annotation</Button>}</div>}
+  </form>;
+}
+function Reader({ page, zone, open, canVerify, canRecheck, request, act, annotationForm }: { annotationForm?: ReactNode; page: Page; zone?: string; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
   const answer = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
   const body = useMemo(() => page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`), [page.body]);
   return <PageReader>
@@ -32,6 +55,7 @@ function Reader({ page, zone, open, canVerify, canRecheck, request, act }: { pag
         {annotation.evidence && <p className="whitespace-pre-wrap">Evidence: {annotation.evidence}</p>}
       </li>)}
     </ul></Section>}
+    {annotationForm}
     <Section label="Sources">{page.sources.length ? <dl className="grid gap-3">{page.sources.map((source,n) => <div key={n}><dt>{source.kind}</dt><dd>{source.claim}{source.locator && <> · {source.href ? <a className="underline" href={source.href} target="_blank" rel="noreferrer">{source.locator}</a> : source.locator}</>}</dd></div>)}</dl> : <p>No sources recorded</p>}</Section>
     <Section label="Cited by">{page.citedBy.length ? <List label="Cited by">{page.citedBy.map(p => <Row key={p.slug} title={p.title} onClick={() => open(p.slug)} />)}</List> : <p>No referring pages</p>}</Section>
     {(page.sourcing || page.by) && <Facts><Fact label="Sourcing">{page.sourcing}</Fact><Fact label="Written by">{page.by}</Fact></Facts>}
@@ -100,7 +124,14 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     listAction={<Button disabled={!permission.canAdd} onClick={() => setAdding(true)}>Add a fact</Button>}
     listTitle={query.trim() ? `Matching “${query.trim()}”` : listTitle} listCount={shown.length}
     list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at, zone)}` : `written ${date(page.updated, zone)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => { setAdding(false); navigate(page.slug); }} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
-    reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} zone={zone} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
+    reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} annotationForm={permission.canAdd && <AnnotationForm request={requests.get('$annotation/'+current.slug)}
+      save={(kind, words) => {
+        const key = '$annotation/'+current.slug;
+        const previous = requests.get(key);
+        if (previous && frozen(previous.getSnapshot())) return;
+        const request = call('mind.knowledgeAnnotate', {slug:current.slug, kind, words});
+        setRequests(previous => new Map(previous).set(key, request));
+      }} reset={() => setRequests(previous => {const next = new Map(previous); next.delete('$annotation/'+current.slug); return next;})} />} zone={zone} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
       const previous=requests.get(current.slug);if(previous&&frozen(previous.getSnapshot()))return;
       const request = call(`mind.${verb}`, { slug: current.slug });
       setRequests(previous => new Map(previous).set(current.slug, request));

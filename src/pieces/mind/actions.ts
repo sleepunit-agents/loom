@@ -197,26 +197,41 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       if (!kept) throw new OperationError('not-found', 'That version of the page is not kept');
       return kept.body;
     });
-  operations.register(operation({name:'mind.knowledgeDispute',write:true,recover,
-    input:z.object({slug,words:z.string().trim().min(1).max(4000),evidence:z.string().trim().min(1).max(4000)}).strict(),
-    output:z.unknown(),may:viewer=>mayAct(viewer,{type:'knowledge'},options.sharing(),'act'),
-    run(ctx,input){
-      refuse(ctx.viewer);
-      if(!db || !mindReceiptsReady(db))throw new OperationError('unavailable','Knowledge is not prepared for changes');
-      const receipt=ctx.receipt!;
-      const result=db.transaction(()=>{
-        mindReceipts.expire(db,ctx.now);
-        const replay=recover(ctx);if(replay)return replay;
-        const page=db.prepare("SELECT id FROM pages WHERE slug=? AND status='active'").get(input.slug) as {id:number}|undefined;
-        if(!page)throw new OperationError('not-found','Active knowledge page not found');
-        const row=db.prepare("INSERT INTO page_annotations (page_id,kind,actor,words,evidence,created) VALUES (?,'dispute',?,?,?,?)")
-          .run(page.id,ctx.viewer.id,input.words,input.evidence,new Date(ctx.now).toISOString());
-        const result={annotation:Number(row.lastInsertRowid),slugs:[input.slug]};
-        mindReceipts.save(db,receipt,result,receipt.expires);return result;
-      }).immediate();
-      if(!(result instanceof RecoveredWrite))ctx.changed('knowledge',input.slug);
-      return result;
-    },
-  }));
+  const words = z.string().trim().min(1).max(4000);
+  const dispute = z.object({slug, words, evidence: words}).strict()
+    .transform(value => ({...value, kind: 'dispute' as const}));
+  const annotation = z.object({
+    slug, words, kind: z.enum(['outdated', 'intent', 'note']),
+  }).strict().transform(value => ({...value, evidence: ''}));
+  for (const [name, input] of [
+    ['mind.knowledgeDispute', dispute],
+    ['mind.knowledgeAnnotate', annotation],
+  ] as const) {
+    operations.register(operation<z.output<typeof dispute> | z.output<typeof annotation>>({name, write: true, recover, input,
+      output: z.unknown(), may: viewer => mayAct(viewer, {type:'knowledge'}, options.sharing(), 'act'),
+      run(ctx, input) {
+        refuse(ctx.viewer);
+        if (!db || !mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
+        const receipt = ctx.receipt!;
+        const result = db.transaction(() => {
+          mindReceipts.expire(db, ctx.now);
+          const replay = recover(ctx);
+          if (replay) return replay;
+          const page = db.prepare("SELECT id FROM pages WHERE slug=? AND status='active'").get(input.slug) as {id:number}|undefined;
+          if (!page) throw new OperationError('not-found', 'Active knowledge page not found');
+          const row = db.prepare('INSERT INTO page_annotations (page_id,kind,actor,words,evidence,created) VALUES (?,?,?,?,?,?)')
+            .run(page.id, input.kind, ctx.viewer.id, input.words, input.evidence, new Date(ctx.now).toISOString());
+          if (input.kind === 'outdated') {
+            options.verify(db, {slug: input.slug, outcome: 'stale', verifier: ctx.viewer.id}, ctx.now);
+          }
+          const result = {annotation: Number(row.lastInsertRowid), slugs:[input.slug]};
+          mindReceipts.save(db, receipt, result, receipt.expires);
+          return result;
+        }).immediate();
+        if (!(result instanceof RecoveredWrite)) ctx.changed('knowledge', input.slug);
+        return result;
+      },
+    }));
+  }
   return { close() { db?.close(); } };
 }
