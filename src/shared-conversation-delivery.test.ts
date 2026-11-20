@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
-import {bodyFixture} from '../test/fixtures/conversation-body.js';
+import {bodyFixture,credentialHash} from '../test/fixtures/conversation-body.js';
 import {Jobs} from './runtime/jobs.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -27,6 +27,18 @@ it('holds queued and retrying original mail, sends on claim and shows failure on
   expect(delivery()).toBe('held');job=result.retry!;expect(jobs.claim(job.id,'box')).toBeUndefined();expect(delivery()).toBe('held');f.clock.advance(1000*2**attempt);
  }
  expect(jobs.admit(thread.conversation)).toBeUndefined();expect(delivery()).toBe('failed');
+ const followup=await f.root.services.comms!.send({thread:thread.id,sender:'alice',kind:'message',clientId:'continue',words:'Please try again'});
+ const fresh=jobs.admit(thread.conversation)!;
+ expect(fresh.id).not.toBe(job.id);expect(fresh.retryOf).toBeNull();
+ expect(jobs.claim(fresh.id,'box')).toBeDefined();jobs.started(fresh.id,'box','fresh-build');
+ const token='fresh_'+'d'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Replacement body',kind:'agent',agent:'art',job:fresh.id,createdAt:new Date(f.clock.now()).toISOString()}).run();
+ const response=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ expect(response.status).toBe(200);
+ const items=(await response.json()).value.items;
+ expect(items.map((item:{words:string})=>item.words)).toEqual(['Fictitious retry','Please try again']);
+ expect((await f.call('confirm',{items:[message.inboxItem,followup.inboxItem]},'accepted-retry',token)).status).toBe(200);
+ expect(f.db.select().from(s.messages).where(eq(s.messages.thread,thread.id)).all().map(row=>row.delivery)).toEqual(['delivered','delivered']);
 });
 it('keeps late input unconfirmed while restoring its sending state when the running body actually takes it',async()=>{
  const f=await bodyFixture(clean);await f.send('Late input','late');f.db.update(s.messages).set({delivery:'held'}).run();

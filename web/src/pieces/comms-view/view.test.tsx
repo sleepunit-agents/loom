@@ -220,6 +220,7 @@ it('draws a tool step as one progress line in plain words, and a delivery only w
   expect(steps.map((step: { props: { 'data-state': string }; findAllByType(type: string): { children: string[] }[] }) => [step.props['data-state'], step.findAllByType('span').at(-1)!.children.join('')]))
     .toEqual([['done', 'Looked up three pumps · done'], ['running', 'Search · in progress']]);
   expect(JSON.stringify(tree.toJSON())).not.toContain('web_search');
+  expect(JSON.stringify(tree.toJSON())).toContain('Send a follow-up here to retry delivery of your waiting messages.');
   expect(classed('comms-delivery').map((line: { props: { 'data-state': string }; children: string[] }) => [line.props['data-state'], line.children.join('')])).toEqual([['sending', 'Sending…'], ['failed', 'Not delivered']]);
 });
 it('draws a reference in a message as a chip that opens its page where the app knows how', async () => {
