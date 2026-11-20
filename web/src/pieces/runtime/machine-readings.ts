@@ -2,7 +2,7 @@ import {briefTime} from '../../kit/time';
 import {READING_OLD_MS} from '../../../../src/runtime/machine-reading-time';
 /** What a machine's worker last read on it, as the short lines "Your machines" shows. The numbers and the
  * level are loom's (`boxReadings`); nothing is judged here. */
-export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:string; disk?:string|null; usedPercent:number|null; sizeMib:number|null; freeMib:number|null; answers:boolean|null; level:'ok'|'raised'|'urgent'; readAt:string|null; unknownSince:string|null; stale:boolean};
+export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:string; usedPercent:number|null; sizeMib:number|null; freeMib:number|null; engineStatus:number|null; level:'ok'|'raised'|'urgent'; readAt:string|null; unknownSince:string|null; stale:boolean};
 
 /** An amount of room, in the binary units `df -h` writes. The same rounding as the notice loom sends. */
 export function room(mib:number):string {
@@ -20,11 +20,16 @@ export function readingAge(reading:Reading,now:number,zone?:string):string {
 }
 /** One reading, quietly. A disk is named by its path only when the machine has more than one watched. */
 export function readingLine(reading:Reading,disks:number,now:number,zone?:string):string {
+ if(reading.kind==='containers'&&reading.unknownSince){
+  if(!reading.readAt)return 'Container runtime did not answer';
+  const last=reading.engineStatus===200?'successfully':`with an error (${reading.engineStatus})`;
+  return `Container runtime did not answer (last answered ${last} ${briefTime(reading.readAt,zone,now)})`;
+ }
  if(!reading.readAt){
   const label=reading.kind==='disk'?`Disk ${reading.thing}`:reading.kind==='memory'?'Memory':'Container runtime';
   return `${label} not yet read`;
  }
- const said=reading.kind==='containers'?(reading.answers?'Container runtime answering':'Container runtime not answering')
+ const said=reading.kind==='containers'?(reading.engineStatus===200?'Container runtime answered successfully':`Container runtime answered with an error (${reading.engineStatus})`)
   :reading.kind==='memory'?`Memory ${room(reading.freeMib??0)} available`
   :`Disk${disks>1?' '+reading.thing:''} ${reading.usedPercent??0}% · ${room(reading.freeMib??0)} free`;
  return said+readingAge(reading,now,zone);
@@ -32,7 +37,7 @@ export function readingLine(reading:Reading,disks:number,now:number,zone?:string
 /** An open condition, plainly. Nothing for a reading that is fine. */
 export function conditionLine(reading:Reading):string|undefined {
  if(reading.level==='ok')return undefined;
- if(reading.kind==='containers')return 'The container runtime is not answering.';
+ if(reading.kind==='containers')return `The container runtime answered with an error (${reading.engineStatus}).`;
  if(reading.kind==='memory')return `Low memory: ${room(reading.freeMib??0)} available.`;
  return `${reading.thing} is ${reading.level==='urgent'?'almost out of room':'running out of room'}: ${reading.usedPercent??0}% full, ${room(reading.freeMib??0)} free.`;
 }

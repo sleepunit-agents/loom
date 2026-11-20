@@ -932,6 +932,7 @@ export const boxes = sqliteTable('boxes', {
   revokedAt: text('revoked_at'),
   slots: integer('slots'),
   readers: text('readers', { mode: 'json' }).$type<string[]>(),
+  readingSequence: integer('reading_sequence').notNull().default(0),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
@@ -963,48 +964,37 @@ export const boxFacts = sqliteTable('box_facts', {
   check('box_facts_from_owner_boolean', sql`${t.fromOwner} in (0, 1)`),
 ]);
 
-/** The latest reading of one thing on a machine: the room on the filesystem under a watched path, the
- * memory available, or whether the container runtime answers. One row per machine, kind and thing,
- * replaced by each reading; no history. `thing` is the watched path for a disk and empty otherwise.
- *
- * Two watched paths on one filesystem are one disk. `disk` is loom's own name for the disk a path was last
- * found on, the same on every path of it, and absent for what is no disk. A condition is a disk's, not a
- * path's: `level`, `since`, `urgent_since` and `stale` are the disk's and the same on each of its paths.
- * `level` is what loom made of the reading (runtime/machine-conditions.ts): the worker sends numbers,
- * never a judgement. `since` and `urgent_since` name the occasion a notice was raised for, and are absent
- * while that level is not held. `unknown_since` is the path's own: set while the worker says it cannot
- * read that path, when the numbers are the last ones read there (`read_at`). `stale` is set once nothing
- * of the disk has been readable for a day: loom has closed what it said and holds it to no line until it
- * is read again. */
+/** Latest reading and condition for each machine and watched thing. Each disk path has its own row.
+ * The last successful values stay on the row while it is unknown. Durations accrue between reports
+ * on Loom's process clock. The sequence records which report updated the row. */
 export const boxReadings = sqliteTable('box_readings', {
   box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
   kind: text('kind', { enum: ["disk", "memory", "containers"] }).notNull(),
   thing: text('thing').notNull(),
-  disk: text('disk'),
-  device: text('device'),
-  generation: text('generation'),
+  generation: text('generation').notNull(),
   occasion: integer('occasion').notNull().default(0),
   urgentOccasion: integer('urgent_occasion').notNull().default(0),
   lastLines: text('last_lines', { mode: 'json' }).$type<{ diskPercent: number; diskUrgentPercent: number; diskFreeMib: number; memoryFreeMib: number }>(),
   usedPercent: integer('used_percent'),
   sizeMib: integer('size_mib'),
   freeMib: integer('free_mib'),
-  answers: integer('answers', { mode: 'boolean' }),
+  engineStatus: integer('engine_status'),
   level: text('level', { enum: ["ok", "raised", "urgent"] }).notNull(),
   since: text('since'),
   urgentSince: text('urgent_since'),
   readAt: text('read_at'),
   unknownSince: text('unknown_since'),
-  unknownObservation: text('unknown_observation'),
-  unknownConfirmed: integer('unknown_confirmed', { mode: 'boolean' }).notNull().default(false),
+  observedAt: text('observed_at'),
+  unknownMs: integer('unknown_ms').notNull().default(0),
+  absentMs: integer('absent_ms'),
+  reportSequence: integer('report_sequence').notNull().default(0),
   stale: integer('stale', { mode: 'boolean' }).notNull().default(false),
 }, t => [
   primaryKey({ columns: [t.box, t.kind, t.thing] }),
   check('box_readings_kind', sql`${t.kind} in ('disk', 'memory', 'containers')`),
   check('box_readings_level', sql`${t.level} in ('ok', 'raised', 'urgent')`),
-  check('box_readings_disk', sql`(${t.kind} = 'disk') = (${t.disk} is not null)`),
   check('box_readings_used_percent_range', sql`${t.usedPercent} is null or ${t.usedPercent} between 0 and 100`),
-  check('box_readings_answers_boolean', sql`${t.answers} is null or ${t.answers} in (0, 1)`),
+  check('box_readings_engine_status_range', sql`${t.engineStatus} is null or ${t.engineStatus} = 200 or ${t.engineStatus} between 300 and 599`),
   check('box_readings_since_utc', utc(t.since)),
   check('box_readings_urgent_since_utc', utc(t.urgentSince)),
   check('box_readings_read_at_utc', utc(t.readAt)),

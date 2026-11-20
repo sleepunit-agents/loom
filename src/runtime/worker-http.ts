@@ -151,8 +151,8 @@ export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: 
 export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: readonly WorkerLoginCheck[]) {
   return operationCaller(input)('signInState', { logins }, z.object({ changed: z.number().int().nonnegative() }).strict());
 }
-/** What this machine's worker read about the machine itself (machine-check.ts), everything it watches each time,
- * and how often it reads: loom counts "two readings in a row" by that. */
+/** What this machine's worker read about the machine itself (machine-check.ts), including unknown readings.
+ * Loom tracks the report order. */
 export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[]) {
   return operationCaller(input)('machineReadings', { readings }, z.object({ changed: z.boolean() }).strict());
 }

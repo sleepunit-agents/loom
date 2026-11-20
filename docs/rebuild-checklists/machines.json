@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "cff274828374ede654e0df8bf9277e9caa1c6ee0f28df0c8ae6cceb85594202c",
+  "sourceSha256": "931385bb29bf1795b72a28c63b25c28906603c34e6a2621fbb1da164ef9e0227",
   "promises": [
     {
       "id": "machines-001",

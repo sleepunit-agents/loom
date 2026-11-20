@@ -35,7 +35,7 @@ it('executes the minimal enrollment selection and reapplies current visibility w
     expect(result.data?.boxes).toHaveLength(2);
     // Which machines have a condition open, and nothing about it: no path, number or level, and none of a machine not seen.
     expect(result.data?.boxReadings).toEqual([]);
-    const reading = {kind:'disk' as const,disk:'group',readAt:at};
+    const reading = {kind:'disk' as const,generation:'first',readAt:at};
     db.insert(boxReadings).values([{...reading,box:'live',thing:'/',usedPercent:91,level:'raised'},{...reading,box:'live',thing:'/srv',usedPercent:40,level:'ok'},
       {...reading,box:'hidden',thing:'/',usedPercent:99,level:'urgent'}]).run();
     expect((await read()).data?.boxReadings).toEqual([{box:'live'}]);

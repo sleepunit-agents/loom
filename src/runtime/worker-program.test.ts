@@ -518,7 +518,7 @@ for (const source of ['~/.claude', '.claude', '']) it(`refuses a sign-in directo
 it('reads its own machine on a slow clock of its own and reports everything it watches each time', async () => {
   const f = fixture(), sent: unknown[] = [], waits: number[] = [];
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, state: '/var/lib/loom-worker', watchPaths: ['/srv/data'] }) : 'private-token');
-  const readings = [[{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100, freeBytes: 29 }], [{ kind: 'disk', thing: '/', unknown: true }], [{ kind: 'disk', thing: '/', device: 1, sizeBytes: 100, freeBytes: 29 }]];
+  const readings = [[{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }], [{ kind: 'disk', thing: '/', unknown: true }], [{ kind: 'disk', thing: '/', sizeBytes: 100, freeBytes: 29 }]];
   let round = 0;
   const machineReader = vi.fn((_input: { paths: readonly string[]; engine?: unknown; signal?: AbortSignal }) => async () => readings[round]);
   const reportReadings = vi.fn(async (_remote: unknown, said: unknown) => { sent.push(said); return { changed: false }; });
@@ -538,7 +538,7 @@ it('reads its own machine on a slow clock of its own and reports everything it w
   expect(waits).toEqual([300_000, 300_000, 300_000]);
   expect(f.error).not.toHaveBeenCalled();
 });
-it('treats a completed engine error as a refusal and a transport failure as unknown', async () => {
+it('treats a completed engine error as its HTTP status and a transport failure as unknown', async () => {
   const f = fixture();
   const json = vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new docker.DockerResponseError(503))
     .mockRejectedValueOnce(new Error('socket disconnected'));
@@ -548,8 +548,8 @@ it('treats a completed engine error as a refusal and a transport failure as unkn
     expect(await workerProgram({ ...f, machineReader: makeReader })).toBe(0);
     const probe = makeReader.mock.calls[0][0].engine!;
     const signal = new AbortController().signal;
-    await expect(probe(signal)).resolves.toBe(true);
-    await expect(probe(signal)).resolves.toBe(false);
+    await expect(probe(signal)).resolves.toBe(200);
+    await expect(probe(signal)).resolves.toBe(503);
     await expect(probe(signal)).rejects.toThrow('socket disconnected');
     expect(json).toHaveBeenCalledWith('GET', '/version', undefined, signal);
   } finally { engine.mockRestore(); }

@@ -241,9 +241,9 @@ export async function workerProgram(input: {
         ...(socket === undefined ? {} : { engine: async (signal: AbortSignal) => {
           try {
             await dockerEngine(socket).json('GET', '/version', undefined, signal);
-            return true;
+            return 200;
           } catch (error) {
-            if (error instanceof DockerResponseError) return false;
+            if (error instanceof DockerResponseError && error.status >= 300 && error.status <= 599) return error.status;
             throw error;
           }
         } }) });

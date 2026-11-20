@@ -479,7 +479,7 @@ it('starts upgraded households with no machine readings and the default lines fo
  upgradeDataSchema(db);
  expect(db.prepare('select * from box_readings').all()).toEqual([]);
  expect(db.prepare('select * from box_alert_settings').all()).toEqual([{singleton:1,disk_percent:85,disk_urgent_percent:95,disk_free_mib:5120,memory_free_mib:512}]);
- db.prepare("insert into box_readings(box,kind,thing,disk,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/','group',71,204800,59392,'ok',?)").run(at);
+ db.prepare("insert into box_readings(box,kind,thing,generation,used_percent,size_mib,free_mib,level,read_at) values('legacy','disk','/','first',71,204800,59392,'ok',?)").run(at);
  expect(db.prepare('select unknown_since, stale from box_readings').get()).toEqual({unknown_since:null,stale:0});
  // A line that could never clear, and an urgent line not over the other, are refused by the table itself.
  for (const column of ['disk_free_mib', 'memory_free_mib']) {
@@ -491,7 +491,7 @@ it('starts upgraded households with no machine readings and the default lines fo
  }
  expect(()=>db.prepare('update box_alert_settings set disk_percent=3').run()).toThrow(/box_alert_settings_disk_percent_range/);
  expect(()=>db.prepare('update box_alert_settings set disk_urgent_percent=85').run()).toThrow(/box_alert_settings_disk_urgent_percent_range/);
- expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('legacy','load','','ok',?)").run(at)).toThrow(/box_readings_kind/);
- expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('legacy','memory','','worrying',?)").run(at)).toThrow(/box_readings_level/);
- expect(()=>db.prepare("insert into box_readings(box,kind,thing,level,read_at) values('nobody','memory','','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','load','','first','ok',?)").run(at)).toThrow(/box_readings_kind/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','memory','','first','worrying',?)").run(at)).toThrow(/box_readings_level/);
+ expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('nobody','memory','','first','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
 });

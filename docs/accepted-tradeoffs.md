@@ -612,6 +612,12 @@ reading and notices for that machine in its owner's view. Loom decides the
 conditions, report timing and recipients. Revisit this if machine readings
 are used to make decisions about other machines or their owners.
 
+### Multiple watched paths on one filesystem can raise separate notices
+
+Loom uses the configured path as the identity of a disk reading. Two paths
+on the same filesystem each have their own condition and can each notify the
+owner. List one path per filesystem when configuring the worker.
+
 ### A hung mount can leave a sleeping disk helper
 
 A kernel call on a hung mount can keep one helper asleep per watched path

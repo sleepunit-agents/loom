@@ -1,9 +1,10 @@
 /** The worker reports memory, container runtime availability, and every configured disk path.
  * For each disk path it runs this program's own adjacent machine-disk-helper.js with process.execPath
  * and no shell. Its only script argument is the configured path, validated here and in the helper.
- * This check runs no other program. loom groups the readings and decides what to say. */
+ * This check runs no other program. loom evaluates each reading and decides what to say. */
 import { spawn } from 'node:child_process';
-import { freemem, totalmem } from 'node:os';
+import os from 'node:os';
+import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 /** The kinds of thing read. The list itself is the column's (`box_readings.kind`); the worker loads no
@@ -12,8 +13,7 @@ export type ReadingKind = 'disk' | 'memory' | 'containers';
 /** One thing read. `thing` is the watched path of a disk and absent otherwise. `unknown` names a thing this
  * machine watches and could not read this time. A disk's size is what its user can fill (used and
  * available): the two numbers `df` works its percentage out from, as loom then does (machine-conditions.ts). */
-export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; answers?: boolean;
-  device?: number }
+export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; engineStatus?: number }
 /** The longest one call to the machine may take. A filesystem that does not answer (a network mount whose server is gone) is unknown. */
 export const MACHINE_READ_MS = 5_000;
 /** The most paths one worker watches. */
@@ -35,12 +35,11 @@ export const WATCHED_PATH_LENGTH = 120;
 export const watchedPath = (value: string) => value.length <= WATCHED_PATH_LENGTH &&
   (value === '/' || /^(\/[A-Za-z0-9._][A-Za-z0-9._@+-]*)+(?![\s\S])/.test(value)) && !value.split('/').some(step => step === '.' || step === '..');
 
-export const DEVICE_MAX = Number.MAX_SAFE_INTEGER;
 const whole = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-export const diskNumbers = (device: unknown, size: unknown, free: unknown): boolean =>
-  whole(device) && device <= DEVICE_MAX && whole(size) && size > 0 && size <= SIZE_BYTES_MAX && whole(free) && free <= size;
+export const diskNumbers = (size: unknown, free: unknown): boolean =>
+  whole(size) && size > 0 && size <= SIZE_BYTES_MAX && whole(free) && free <= size;
 
-type DiskResult = { device: number; sizeBytes: number; freeBytes: number } | { unknown: true; reason?: 'link' };
+type DiskResult = { sizeBytes: number; freeBytes: number } | { unknown: true; reason?: 'link' };
 const unknown: DiskResult = { unknown: true };
 /** The helper emits one JSON line. Reject extra keys, extra lines and numbers the door would refuse. */
 export function parseDiskResult(output: string): DiskResult {
@@ -50,7 +49,7 @@ export function parseDiskResult(output: string): DiskResult {
     if (JSON.stringify(row) !== output.slice(0, -1)) return unknown;
     if (row?.unknown === true && (Object.keys(row).length === 1 ||
       (Object.keys(row).length === 2 && row.reason === 'link'))) return row;
-    if (row && Object.keys(row).length === 3 && diskNumbers(row.device, row.sizeBytes, row.freeBytes)) return row;
+    if (row && Object.keys(row).length === 2 && diskNumbers(row.sizeBytes, row.freeBytes)) return row;
   } catch { /* An incomplete or invalid answer is unknown. */ }
   return unknown;
 }
@@ -67,9 +66,30 @@ const SAID = {
   start: 'Worker machine check: a disk helper could not be started\n',
 } as const;
 
+/** Read only the kernel's estimate of memory available for new work. */
+export async function readMemory(): Promise<MachineReading> {
+  const sizeBytes = os.totalmem();
+  const kernel = os as typeof os & { availableMemory?: () => number };
+  let available = kernel.availableMemory?.();
+  if (available === undefined) {
+    try {
+      const file = await fs.open('/proc/meminfo', 'r');
+      try {
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await file.read(buffer);
+        const kib = buffer.toString('utf8', 0, bytesRead).match(/^MemAvailable:[ \t]+([0-9]+)[ \t]+kB\n/m)?.[1];
+        if (kib !== undefined) available = Number(kib) * 1024;
+      } finally { await file.close(); }
+    } catch { /* No kernel estimate is available. */ }
+  }
+  const freeBytes = available === undefined ? undefined : Math.min(available, sizeBytes);
+  return freeBytes !== undefined && diskNumbers(sizeBytes, freeBytes)
+    ? { kind: 'memory', sizeBytes, freeBytes } : { kind: 'memory', unknown: true };
+}
+
 export function machineReader(input: {
   paths: readonly string[];
-  engine?: (signal: AbortSignal) => Promise<boolean>;
+  engine?: (signal: AbortSignal) => Promise<number>;
   timeoutMs?: number;
   signal?: AbortSignal;
   say?: (line: string) => void;
@@ -131,23 +151,22 @@ export function machineReader(input: {
   }, { once: true });
 
   return async (): Promise<MachineReading[]> => {
+    const memory = readMemory();
     const disks = Promise.all(paths.map(async (thing): Promise<MachineReading> => {
       const result = await disk(thing);
-      if ('device' in result) return { kind: 'disk', thing, ...result };
+      if ('sizeBytes' in result) return { kind: 'disk', thing, ...result };
       if (result.reason) sayOnce(result.reason);
       return { kind: 'disk', thing, unknown: true };
     }));
     const readings: MachineReading[] = [];
     if (input.engine) {
       try {
-        const answers = await input.engine(AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(input.signal ? [input.signal] : [])]));
-        readings.push({ kind: 'containers', answers });
+        const engineStatus = await input.engine(AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(input.signal ? [input.signal] : [])]));
+        readings.push({ kind: 'containers', engineStatus });
       } catch {
         readings.push({ kind: 'containers', unknown: true });
       }
     }
-    const sizeBytes = totalmem(), freeBytes = Math.min(freemem(), sizeBytes);
-    return [...readings, ...await disks, diskNumbers(0, sizeBytes, freeBytes)
-      ? { kind: 'memory', sizeBytes, freeBytes } : { kind: 'memory', unknown: true }];
+    return [...readings, ...await disks, await memory];
   };
 }

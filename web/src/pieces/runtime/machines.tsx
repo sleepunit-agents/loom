@@ -2,13 +2,13 @@ import {useEffect, useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {memberOperation} from '../../data/operation';
 import {Button, Error as ErrorView, Loading} from '../../kit';
-import {conditionLine, readingLine, readingsOf, type Reading} from './machine-readings';
+import {conditionLine, readingAge, readingLine, readingsOf, type Reading} from './machine-readings';
 import {useHouseholdZone} from '../../data/zone';
 
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
 type Card = {id:string; ask:string};
-const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } boxReadings { box kind thing disk usedPercent sizeMib freeMib answers level readAt unknownSince stale } agents { id } }';
+const query = 'query OwnerMachines { boxes { id name owner readers revokedAt } boxReadings { box kind thing usedPercent sizeMib freeMib engineStatus level readAt unknownSince stale } agents { id } }';
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
 function MachineReadings({readings}: {readings:Reading[]}) {
@@ -22,22 +22,12 @@ function MachineReadings({readings}: {readings:Reading[]}) {
  },[hasReadings]);
  if(!hasReadings)return null;
  const disks=readings.filter(reading=>reading.kind==='disk').length,now=Date.now();
- const groups=new Map<string,Reading[]>();
- for(const reading of readings){
-  const key=reading.disk??JSON.stringify([reading.kind,reading.thing]);
-  const group=groups.get(key);
-  if(group)group.push(reading);
-  else groups.set(key,[reading]);
- }
- const open=[...groups.values()].map(group=>{
-  const latest=group.reduce((best,reading)=>(reading.readAt??'')>(best.readAt??'')||
-   (reading.readAt===best.readAt&&best.unknownSince&&!reading.unknownSince)?reading:best);
-  const paths=group.map(reading=>reading.thing);
-  const thing=paths.length>1?`The disk holding ${paths.slice(0,-1).join(', ')} and ${paths.at(-1)}`:latest.thing;
-  return conditionLine({...latest,thing});
- }).filter((line):line is string=>!!line);
+ const open=readings.flatMap(reading=>{
+  const line=conditionLine(reading);
+  return line?[{key:JSON.stringify([reading.kind,reading.thing]),line:line+readingAge(reading,now,zone)}]:[];
+ });
  return <div className="grid gap-1">
-  {open.map(line=><p key={line} role="status"><strong>{line}</strong></p>)}
+  {open.map(({key,line})=><p key={key} role="status"><strong>{line}</strong></p>)}
   <p className="text-muted-foreground">{readings.map(reading=>readingLine(reading,disks,now,zone)).join(' · ')}</p>
  </div>;
 }

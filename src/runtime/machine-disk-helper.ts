@@ -42,10 +42,9 @@ function readDisk(path: string) {
     const found = statfsSync(`/proc/self/fd/${before.fd}`, { bigint: true });
     walk(path, after, before.stats);
     if (PSEUDO.has(Number(BigInt.asUintN(32, found.type))) || !found.blocks) return { unknown: true };
-    const device = Number(before.stats.at(-1)!.dev);
     const sizeBytes = Number((found.blocks - found.bfree + found.bavail) * found.bsize);
     const freeBytes = Number(found.bavail * found.bsize);
-    if (diskNumbers(device, sizeBytes, freeBytes)) return { device, sizeBytes, freeBytes };
+    if (diskNumbers(sizeBytes, freeBytes)) return { sizeBytes, freeBytes };
   } catch (error) {
     if (error instanceof UnsafePath) return { unknown: true, reason: 'link' };
   } finally {

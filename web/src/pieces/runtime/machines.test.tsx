@@ -32,27 +32,27 @@ it('shows owner history and proposes and answers scoped read grants',async()=>{
 it('shows what each machine last read on itself quietly, and an open condition plainly',async()=>{
  const before=f.feed.data;
  const now=Date.now(),ago=(ms:number)=>new Date(now-ms).toISOString();
- const reading={usedPercent:null,sizeMib:null,freeMib:null,answers:null,level:'ok',readAt:ago(60_000),unknownSince:null,stale:false};
+ const reading={usedPercent:null,sizeMib:null,freeMib:null,engineStatus:null,level:'ok',readAt:ago(60_000),unknownSince:null,stale:false};
  f.feed={status:'live',data:{...before,boxReadings:[
   {...reading,box:'box',kind:'memory',thing:'',sizeMib:16384,freeMib:1946},
   {...reading,box:'box',kind:'disk',thing:'/',usedPercent:71,sizeMib:204800,freeMib:61440},
-  {...reading,box:'box',kind:'containers',thing:'',answers:true},
+  {...reading,box:'box',kind:'containers',thing:'',engineStatus:200},
   {...reading,box:'other',kind:'disk',thing:'/',usedPercent:99,sizeMib:1000,freeMib:10,level:'urgent'},
  ]}} as never;
  f.call.mockResolvedValue([]);
  await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
  const text=()=>tree.root.findAllByType('p').map((p:{children:unknown[]})=>p.children.map(child=>typeof child==='string'?child:(child as {children:string[]}).children.join('')).join(''));
  // Shown without opening the machine, and nothing of a machine that is not this member's.
- expect(text()).toEqual(['Disk 71% · 60 GB free · Memory 1.9 GB available · Container runtime answering']);
+ expect(text()).toEqual(['Disk 71% · 60 GB free · Memory 1.9 GB available · Container runtime answered successfully']);
  expect(tree.root.findAllByProps({role:'status'})).toHaveLength(0);
  f.feed={status:'live',data:{...before,boxReadings:[
   {...reading,box:'box',kind:'disk',thing:'/',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised'},
   {...reading,box:'box',kind:'disk',thing:'/srv/data',usedPercent:97,sizeMib:102400,freeMib:3072,level:'urgent'},
-  {...reading,box:'box',kind:'containers',thing:'',answers:false,level:'raised'},
+  {...reading,box:'box',kind:'containers',thing:'',engineStatus:503,level:'raised'},
  ]}} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
- expect(text()).toEqual(['/ is running out of room: 91% full, 18 GB free.','/srv/data is almost out of room: 97% full, 3 GB free.','The container runtime is not answering.',
-  'Disk / 91% · 18 GB free · Disk /srv/data 97% · 3 GB free · Container runtime not answering']);
+ expect(text()).toEqual(['/ is running out of room: 91% full, 18 GB free.','/srv/data is almost out of room: 97% full, 3 GB free.','The container runtime answered with an error (503).',
+  'Disk / 91% · 18 GB free · Disk /srv/data 97% · 3 GB free · Container runtime answered with an error (503)']);
  expect(tree.root.findAllByProps({role:'status'})).toHaveLength(3);
  // A number is shown as current only while it is. One the worker can no longer take, or has not sent for
  // three of its intervals, says when it was read; one loom has given up on says it has not been read since.
@@ -64,8 +64,8 @@ it('shows what each machine last read on itself quietly, and an open condition p
   {...reading,box:'box',kind:'disk',thing:'/was',usedPercent:96,sizeMib:204800,freeMib:8192,readAt:dead,unknownSince:dead,stale:true},
  ]}} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
- // The disk that is still raised keeps its plain line; the stale one, whose notice loom closed, has none.
- expect(text()).toEqual(['/srv is running out of room: 91% full, 18 GB free.',
+ // The open condition qualifies its last reading; the stale one has no open condition.
+ expect(text()).toEqual([`/srv is running out of room: 91% full, 18 GB free. (as of ${briefTime(lost,undefined,now)})`,
   `Disk / 71% · 60 GB free · Disk /old 40% · 120 GB free (as of ${briefTime(old,undefined,now)}) · Disk /srv 91% · 18 GB free (as of ${briefTime(lost,undefined,now)}) · Disk /was 96% · 8 GB free (not read since ${briefTime(dead,undefined,now)})`]);
  expect(briefTime(dead,undefined,now)).not.toBe(briefTime(new Date(now).toISOString(),undefined,now));
  f.feed={status:'live',data:{...before,boxReadings:[
@@ -74,32 +74,34 @@ it('shows what each machine last read on itself quietly, and an open condition p
   {...reading,box:'box',kind:'containers',thing:'',readAt:null,unknownSince:lost},
  ]}} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
- expect(text()).toEqual(['Disk /never not yet read · Memory not yet read · Container runtime not yet read']);
+ expect(text()).toEqual(['Disk /never not yet read · Memory not yet read · Container runtime did not answer']);
  // A machine with no reading yet (an older worker, or none reporting) shows no line at all.
  f.feed={status:'live',data:before} as never;
  await act(async()=>tree.update(h(OwnerMachines,{member:'lee'})));
  expect(text()).toEqual([]);
 });
-it('ages readings in an open window and shows one condition for paths on the same disk',async()=>{
+it('ages readings independently and never substitutes a newer timestamp from another path',async()=>{
  const before=f.feed;
  vi.useFakeTimers();
  try {
   const now=Date.parse('2026-11-19T14:00:00Z');
   vi.setSystemTime(now);
-  const disk={box:'box',kind:'disk',disk:'group',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised',
+  const disk={box:'box',kind:'disk',usedPercent:91,sizeMib:204800,freeMib:18432,level:'raised',
    readAt:new Date(now-14*60_000-1).toISOString(),unknownSince:null,stale:false};
   f.feed={status:'live',data:{...before.data,boxReadings:[
-   {...disk,thing:'/srv/a',usedPercent:99,unknownSince:disk.readAt,readAt:new Date(now-16*60_000).toISOString()},
+   {...disk,thing:'/srv/a',usedPercent:99,level:'urgent',unknownSince:disk.readAt,readAt:new Date(now-1000).toISOString()},
    {...disk,thing:'/srv/b'},
   ]}} as never;
   await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
   const status=tree.root.findAllByProps({role:'status'});
-  expect(status).toHaveLength(1);
-  expect(status[0].findByType('strong').children.join('')).toBe('The disk holding /srv/a and /srv/b is running out of room: 91% full, 18 GB free.');
+  expect(status.map((item:{findByType:(type:string)=>{children:string[]}})=>item.findByType('strong').children.join(''))).toEqual([
+   `/srv/a is almost out of room: 99% full, 18 GB free. (as of ${briefTime(new Date(now-1000).toISOString(),undefined,now)})`,
+   '/srv/b is running out of room: 91% full, 18 GB free.',
+  ]);
   const text=()=>JSON.stringify(tree.toJSON());
-  expect(text().match(/as of/g)).toHaveLength(1);
-  await act(async()=>{vi.advanceTimersByTime(60_000);});
   expect(text().match(/as of/g)).toHaveLength(2);
+  await act(async()=>{vi.advanceTimersByTime(60_000);});
+  expect(text().match(/as of/g)).toHaveLength(4);
   await act(async()=>tree.unmount());
   expect(vi.getTimerCount()).toBe(0);
  } finally {

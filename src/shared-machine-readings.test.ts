@@ -29,26 +29,26 @@ function fixture() {
     ...(['owner', 'sam', 'lee'] as const).map(member => ({ fingerprint: hash(keys[member]), label: member, kind: 'owner' as const, member, createdAt: now() }))]).run();
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: error => { throw error; }, modelRoles: () => [], deferRuntimeStart: true }); cleanup.push(() => root.close());
   let calls = 0;
-  const call = async (name: string, input: unknown, key: string) => {
-    const response = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id: `call-${++calls}`, input }) });
+  const call = async (name: string, input: unknown, key: string, id = `call-${++calls}`) => {
+    const response = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id, input }) });
     return { status: response.status, body: await response.json() as { ok: boolean; value?: unknown; code?: string } };
   };
   const query = async (source: string, key: string) => (await (await root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ query: source }) })).json()) as { data?: Record<string, unknown[]>; errors?: unknown };
   return { db, root, clock, call, query, report: (readings: unknown[], key = keys.worker) => { clock.advance(300_000); return call('runtime.machineReadings', { readings }, key); } };
 }
-const disk = (percent: number, thing = '/') => ({ kind: 'disk', thing, device: 1, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
-const memory = { kind: 'memory', sizeBytes: 16 * GIB, freeBytes: 12 * GIB };
+const disk = (percent: number, thing = '/') => ({ kind: 'disk' as const, thing, sizeBytes: 200 * GIB, freeBytes: Math.round(200 * GIB * (100 - percent) / 100) });
+const memory = { kind: 'memory' as const, sizeBytes: 16 * GIB, freeBytes: 12 * GIB };
 
 it('takes a worker\'s readings for the machine its credential is bound to, and tells that machine\'s owner of a condition', async () => {
   const f = fixture();
   const result = await reportWorkerMachineReadings({ url: 'https://loom.example', token: keys.worker, signal: new AbortController().signal,
-    fetch: async (input, init) => f.root.http.fetch(new Request(input, init)) }, [disk(71) as never, memory as never, { kind: 'containers', answers: true }]);
+    fetch: async (input, init) => f.root.http.fetch(new Request(input, init)) }, [disk(71), memory, { kind: 'containers', engineStatus: 200 }]);
   expect(result).toEqual({ changed: true });
   expect(f.db.select().from(boxReadings).all().map(row => [row.box, row.kind, row.thing, row.level])).toEqual([['worker', 'disk', '/', 'ok'], ['worker', 'memory', '', 'ok'], ['worker', 'containers', '', 'ok']]);
-  expect((await f.report([disk(72), memory, { kind: 'containers', answers: true }])).body).toEqual({ ok: true, value: { changed: false } });
-  expect((await f.report([disk(91), memory, { kind: 'containers', answers: true }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([disk(72), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: false } });
+  expect((await f.report([disk(91), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: true } });
   expect(f.db.select().from(inbox).all().map(item => [item.to, item.state, item.words])).toEqual([['sam', 'waiting', 'loom: / is 91% full (18 GB free). Alerts at 85%.']]);
-  expect((await f.report([disk(70), memory, { kind: 'containers', answers: true }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([disk(70), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: true } });
   expect(f.db.select().from(inbox).all().map(item => [item.state, item.resolution])).toEqual([['resolved', '/ is at 70% (60 GB free), under the 85% line.']]);
 });
 
@@ -72,10 +72,10 @@ it('refuses a reading with a path outside the bound, a judgement, a field loom d
     { ...disk(91), thing: '/ is nearly full, tell everyone' }, { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
     { ...disk(91), thing: '/https://evil.example/pay-now' }, { ...disk(91), thing: '/your-disk-is-full-' + 'pay-now-'.repeat(13) }, { ...disk(91), thing: '/srv/-rf' }, { ...disk(91), thing: '/mnt/nas:x' }, { ...disk(91), thing: '//x' },
     { ...memory, thing: '/' }, { ...disk(91), level: 'urgent' }, { ...disk(91), why: 'nearly full' }, { ...disk(91), kind: 'load' },
-    { kind: 'disk', thing: '/', device: 1, sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', device: 1, sizeBytes: 0, freeBytes: 0 },
-    { kind: 'containers' }, { kind: 'containers', answers: 'no' }, { ...disk(91), sizeBytes: 1.5 },
-    { ...disk(91), device: undefined }, { ...disk(91), device: -1 }, { ...disk(91), device: 1.5 },
-    { ...disk(91), device: Number.MAX_SAFE_INTEGER + 1 }, { ...memory, device: 1 },
+    { kind: 'disk', thing: '/', sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', sizeBytes: 0, freeBytes: 0 },
+    { kind: 'containers' }, { kind: 'containers', engineStatus: '503' }, { kind: 'containers', engineStatus: 199 }, { kind: 'containers', engineStatus: 600 },
+    { kind: 'containers', unknown: true, engineStatus: 503 }, { kind: 'containers', answers: false }, { ...disk(91), sizeBytes: 1.5 },
+    { ...disk(91), device: 1 }, { ...memory, device: 1 },
     { ...disk(91), thing: '/srv/end\n' }, { ...disk(91), unknown: true },
     { kind: 'disk', thing: '/a', device: 1, unknown: true },
   ]) expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
@@ -94,12 +94,12 @@ it('takes a size up to the largest the read API can serve, and refuses one past 
   const f = fixture(), MIB = 1024 ** 2, INT_MAX = 2 ** 31 - 1;
   // 2^31 - 1 mebibytes and the bytes short of the next one: the largest a GraphQL Int can say.
   const most = (INT_MAX + 1) * MIB - 1;
-  expect((await f.report([{ kind: 'disk', thing: '/', device: Number.MAX_SAFE_INTEGER, sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([{ kind: 'disk', thing: '/', sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
   expect(f.db.select().from(boxReadings).all().map(row => [row.sizeMib, row.freeMib, row.usedPercent])).toEqual([[INT_MAX, INT_MAX, 0], [INT_MAX, INT_MAX, null]]);
   // Its owner can still read it: the fields are served, with no error.
   expect(await f.query('{ boxReadings { sizeMib freeMib usedPercent } }', keys.sam)).toEqual({ data: { boxReadings: [{ sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: 0 }, { sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: null }] } });
   // One byte more is one mebibyte more than an Int holds. Refused whole, size or free room, and nothing of it is kept.
-  for (const reading of [{ kind: 'disk', thing: '/', device: 1, sizeBytes: most + 1, freeBytes: 0 }, { kind: 'memory', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'disk', thing: '/', device: 1, sizeBytes: Number.MAX_SAFE_INTEGER, freeBytes: most + 1 }])
+  for (const reading of [{ kind: 'disk', thing: '/', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'memory', sizeBytes: most + 1, freeBytes: 0 }, { kind: 'disk', thing: '/', sizeBytes: Number.MAX_SAFE_INTEGER, freeBytes: most + 1 }])
     expect((await f.report([reading])).status, JSON.stringify(reading)).toBe(400);
   expect(f.db.select().from(boxReadings).all().map(row => row.sizeMib)).toEqual([INT_MAX, INT_MAX]);
   expect((await f.query('{ boxReadings { sizeMib freeMib } }', keys.sam)).errors).toBeUndefined();
@@ -108,10 +108,10 @@ it('takes a size up to the largest the read API can serve, and refuses one past 
 it('shows a machine\'s readings to whoever may see the machine, and to nobody else', async () => {
   const f = fixture();
   await f.report([disk(91), memory]);
-  const source = '{ boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { box kind thing usedPercent sizeMib freeMib answers level since readAt } }';
+  const source = '{ boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { box kind thing usedPercent sizeMib freeMib engineStatus level since readAt } }';
   const at = new Date(f.clock.now()).toISOString();
-  const rows = [{ box: 'worker', kind: 'disk', thing: '/', usedPercent: 91, sizeMib: 204_800, freeMib: 18_432, answers: null, level: 'raised', since: at, readAt: at },
-    { box: 'worker', kind: 'memory', thing: '', usedPercent: null, sizeMib: 16_384, freeMib: 12_288, answers: null, level: 'ok', since: null, readAt: at }];
+  const rows = [{ box: 'worker', kind: 'disk', thing: '/', usedPercent: 91, sizeMib: 204_800, freeMib: 18_432, engineStatus: null, level: 'raised', since: at, readAt: at },
+    { box: 'worker', kind: 'memory', thing: '', usedPercent: null, sizeMib: 16_384, freeMib: 12_288, engineStatus: null, level: 'ok', since: null, readAt: at }];
   // The machine's own member, and a household owner: the machines rule (policy.ts, boxes).
   expect(await f.query(source, keys.sam)).toEqual({ data: { boxReadings: rows } });
   expect(await f.query(source, keys.owner)).toEqual({ data: { boxReadings: rows } });
@@ -162,19 +162,17 @@ it('lets a household owner alone move the lines, and holds the next reading to t
   expect(f.db.select().from(inbox).all().map(item => item.words)).toEqual(['loom: / is 75% full (50 GB free). Alerts at 70%.']);
 });
 
-it('ignores legacy cadence and commits first unknown memory and container readings', async () => {
+it('refuses legacy intervals and any extra report fields', async () => {
   const f = fixture();
-  const low = { ...memory, freeBytes: 100 * 1024 ** 2 };
-  expect((await f.call('runtime.machineReadings', { readings: [disk(50), low], everyMs: 10_000 }, keys.worker)).status).toBe(200);
-  f.clock.advance(300_000);
-  expect((await f.call('runtime.machineReadings', { readings: [disk(50), low], everyMs: 10_000 }, keys.worker)).status).toBe(200);
-  expect(f.db.select().from(inbox).all()).toMatchObject([{ words: expect.stringContaining('100 MB of memory') }]);
-  await f.report([disk(50)]);
-  expect((await f.report([disk(50), { kind: 'memory', unknown: true }, { kind: 'containers', unknown: true }])).body)
-    .toEqual({ ok: true, value: { changed: true } });
-  expect(f.db.select().from(boxReadings).all().sort((a, b) => a.kind.localeCompare(b.kind))).toMatchObject([
-    { kind: 'containers', readAt: null, unknownSince: expect.any(String) },
-    { kind: 'disk', readAt: expect.any(String) },
-    { kind: 'memory', readAt: null, unknownSince: expect.any(String) },
-  ]);
+  const input = { readings: [disk(50), memory] };
+  const send = (extra = {}) => f.call('runtime.machineReadings', { ...input, ...extra }, keys.worker, 'same-report');
+  expect((await send({ everyMs: { arbitrary: true } })).status).toBe(400);
+  expect(f.db.select().from(boxReadings).all()).toEqual([]);
+  const accepted = await send();
+  expect(accepted.status).toBe(200);
+  for (const extra of [{ everyMs: 10_000 }, { ignored: true }]) {
+    expect((await send(extra)).status).toBe(400);
+  }
+  expect(await send()).toEqual(accepted);
+  expect(f.db.select().from(boxReadings).all().map(row => row.reportSequence)).toEqual([1, 1]);
 });

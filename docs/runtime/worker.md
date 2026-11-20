@@ -1042,7 +1042,7 @@ A worker reads a small fixed set of things on its own machine and tells loom
 the numbers (`runtime.machineReadings`). loom decides what is a condition,
 tells the machine's owner once, and closes what it said when a later reading is
 back under the line. No model takes part, and the worker sends no words of its
-own: numbers, a yes or no, and for a disk the path watched.
+own: numbers, an HTTP status, and for a disk the path watched.
 
 The worker uses Node's filesystem calls in its own disk helper, memory calls
 in the worker, and one bounded request to the configured container socket.
@@ -1053,7 +1053,11 @@ in the worker, and one bounded request to the configured container socket.
   The worker keeps this set across rounds and starts it from configuration
   on every launch. Fullness follows `df`: used over used and available,
   rounded up to a whole percent. Read-only filesystems are read normally.
-- **Memory.** The total and what is available to start something new with.
+  List one path per filesystem. Two paths on the same filesystem produce two
+  readings and can each raise a notice.
+- **Memory.** The total and the kernel estimate of what is available to start
+  something new. The worker uses `os.availableMemory()` where available,
+  with Linux’s `MemAvailable` as a fallback. If neither is available, the reading is unknown.
 - **The container runtime.** Whether the engine at `container.socket`
   answers a version request within five seconds. A completed error response
   counts as a refusal. A timeout or transport failure is unknown. Only workers
@@ -1086,10 +1090,10 @@ helpers and the worker exits normally. A helper stuck in the kernel can
 remain asleep until the mount responds or the machine restarts. A failed
 start produces an unknown reading and a fixed diagnostic logged once.
 
-Every report names each watched path with numbers and an integer device ID,
-or as unknown. loom records an unknown thing even before its first successful
-read, with no numbers or last-read time. Missing directories, links, memory-backed and kernel
-filesystems, and read-only images such as squashfs are reported as unknown.
+Every report names each watched path with numbers or as unknown. Loom keeps an
+unknown reading even before the first successful read, with no numbers or
+last-read time. Missing directories, links, memory-backed and kernel filesystems,
+and read-only images such as squashfs are reported as unknown.
 The worker keeps its filesystem readings independent of the engine's answer.
 
 ```json
@@ -1117,7 +1121,7 @@ them.
 | `diskUrgentPercent` | 95 | over `diskPercent`, at most 100 | a disk at or over this is urgent |
 | `diskFreeMib` | 5120 (5 GiB) | 0 to 1,000,000,000 MiB | a disk with less free than this is raised |
 | `memoryFreeMib` | 512 | 0 to 1,000,000,000 MiB | memory available under this, twice in a row, is raised |
-| | | | the container runtime not answering, twice in a row, is raised |
+| | | | the container runtime answering with an HTTP error, twice in a row, is raised |
 
 A condition is raised at its line and cleared only under it by a margin, so a
 reading that hovers at the line raises once and stays raised: a percent line
@@ -1126,10 +1130,10 @@ at `floor + ceil(floor / 10)` whole MiB. The lowest line is 10 so that every lin
 a point it clears at. A disk is raised by the first reading over its line.
 Memory and the container runtime dip for a moment (a build, an engine being
 restarted), so they are raised only when two consecutive reports are both over
-the line. Loom uses its own receipt times, at most 30 minutes apart. An unknown
-or missing reading starts the count again. A floor is asked only of something at
-least twice its size: a smaller disk is held to the percent line alone, and its
-notices say nothing of the floor. A machine is held to changed lines by its
+the line. Loom numbers a machine’s reports in receipt order. An unknown or
+missing reading, or a silence notice between reports, restarts the count.
+A floor applies only if the total size is at least twice the floor. A smaller
+disk uses the percent line alone. A machine is held to changed lines by its
 next reading. Zero switches off either free-room floor. The percentage lines
 remain bounded by the table above.
 
@@ -1137,8 +1141,9 @@ A size is kept in whole mebibytes and served as a GraphQL `Int`, which ends at
 2^31 - 1. The door refuses a size of 2^51 bytes (2 PiB) or more; it is not cut
 down to fit, because a number that is not the disk's would be held to the
 lines. A worker names a filesystem that large as unknown, so the rest of its
-report is taken. A readable disk carries a device ID from 0 through
-2^53 - 1. An unknown reading carries only its kind and, for a disk, its path.
+report is taken. An unknown reading carries only its kind and, for a disk, its
+path. A container runtime that answers with an error reports its status, for
+example `503`. A transport failure or timeout reports unknown and raises no notice.
 A report can name up to 16 disk paths and one reading of each other kind.
 
 ### What the owner is told
@@ -1156,23 +1161,22 @@ A recovery names the line the latest reading cleared. When a settings edit clear
 owner switched off the memory floor, its notice closes with
 `The memory floor was switched off.`
 
-loom stores a reading per watched path. In each report, paths with the same
-device ID form one disk with one condition. The notice names the group, for
-example `loom: the disk holding /srv/a and /srv/b is 91% full (18 GB free).
-Alerts at 85%.` A readable shared path that still reports the same device
-continues the occasion, even if other paths are added or removed. Unknown
-paths keep their previous association and supply no evidence about where a
-disk has moved. A path reporting a different device is evaluated with that
-device. The original disk can recover only on a reading from a retained path
-on its device. Notice IDs use stored occasion counters.
+Each watched path has its own reading, condition, and notice occasions.
+Omitting a thing from a report treats its reading as unknown. Loom adds time
+between consecutive unknown observations on its monotonic process clock,
+with a maximum of one hour per interval. A process restart loses the open
+interval and preserves accumulated time. An interval crossed by a silence
+notice contributes no time. After a day of observed
+unreadability, loom marks the row stale and closes its notices with the last
+reading, for example `/srv can no longer be read; last read Nov 19, 8:05 AM at
+91%.` A later reading over a line starts a new occasion.
 
-Loom closes an unreadable disk's notices once each retained path has been
-unknown for a day and has been observed unknown on two reports separated by
-at least an hour of elapsed time. Reports and the runtime sweep can close the
-notice. The sweep requires a machine that is still reporting. Loom keeps
-the last numbers, marks the group stale and says, for example,
-`/srv can no longer be read; last read Nov 19, 8:05 AM at 91%.` A later
-reading over a line starts a new occasion.
+If the thing has been absent from every report for a full day of observed
+time, loom drops the row and closes its notices with, for example,
+`/srv is no longer reported by this machine.` Naming the thing, even as
+unknown, restarts the absence count. An empty report contributes observations
+but closes nothing by itself. Heartbeats and runtime sweeps add no observed
+time.
 
 A machine that stops reporting keeps its conditions and their notices as they
 were; its silence is its own notice. A machine taken out of the household has

@@ -63,8 +63,16 @@ export class Machines {
       this.db.update(boxes).set({ lastSeenAt: at }).where(gt(boxes.lastSeenAt, at)).run();
       return this.db.select().from(boxes).where(and(eq(boxes.alwaysOn, true), isNull(boxes.revokedAt))).all()
         .filter(box => now - Date.parse(box.lastSeenAt ?? box.enrolledAt) > silenceMs)
-        .map(box => notices.send({ toKind: 'person', to: box.owner, member: box.owner, source: 'notice', sourceId: outage(box),
-          fromKind: 'unknown', words: `Machine ${box.name} has stopped reporting.`, refs: [box.id] }));
+        .map(box => {
+          const written = rowsWritten(this.db);
+          const notice = notices.send({ toKind: 'person', to: box.owner, member: box.owner, source: 'notice', sourceId: outage(box),
+            fromKind: 'unknown', words: `Machine ${box.name} has stopped reporting.`, refs: [box.id] });
+          // Leave a gap in the reading sequence only when this outage first raised a notice.
+          if (rowsWritten(this.db) !== written) {
+            this.db.update(boxes).set({ readingSequence: box.readingSequence + 1 }).where(eq(boxes.id, box.id)).run();
+          }
+          return notice;
+        });
     }, { behavior: 'immediate' });
   }
 }
