@@ -112,3 +112,16 @@ it('lists an older memory a project keeps coming back to, by its heat now and no
  // The five oldest of the newer ones are neither among the newest twenty nor hotter than those.
  expect(memories.items.map(item => item.ref)).not.toContain('m-0');
 });
+
+it('keeps the final hot preview for a repeated reference in a legacy store', async()=>{
+ const f=fixture();
+ f.store.write({slug:'pond',name:'Pond'});
+ f.database.exec(`CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT);
+ INSERT INTO memories VALUES(1,'duplicate','project','Older','words','2026-11-12',NULL,'pond',0,NULL),
+ (2,'duplicate','project','Newer','words','2026-11-13',NULL,'pond',0,NULL)`);
+ const result=await f.query('{memoryProjects {sections {key total items {title ref}}}}');
+ expect(result.errors).toBeUndefined();
+ expect(result.data).toMatchObject({memoryProjects:[{sections:expect.arrayContaining([
+  {key:'memories',total:2,items:[{title:'Newer — words',ref:'duplicate'}]},
+ ])}]});
+});

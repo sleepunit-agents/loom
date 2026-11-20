@@ -13,12 +13,11 @@ import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectSectionRead,ProjectQuery} from './projects-roles.js';
 import {MAX_REVISIONS,fieldState} from '../../backends/cards.js';
-import {hottestIds} from '../../backends/salience.js';
+import {activeMemory,projectMemorySections,registerProjectHeat} from './project-memory-sections.js';
 export type {ProjectRecord} from './projects-model.js';
 const itemSchema=z.object({title:z.string(),ref:z.string().optional(),when:z.string().optional(),changed:z.string().optional(),status:z.string().optional(),body:z.string().optional(),href:z.string().optional(),who:z.array(z.string()).optional(),waiting:z.boolean().optional(),new:z.boolean().optional()}).strict();
 const sectionSchema=z.object({available:z.boolean(),error:z.string().optional(),items:z.array(itemSchema).optional(),groups:z.array(z.object({title:z.string(),waiting:z.boolean().optional(),items:z.array(itemSchema)}).strict()).optional(),total:z.number().int().nonnegative().optional(),counts:z.record(z.string(),z.number()).optional(),activity:z.string().optional(),expires:z.number().finite().optional(),conversationIds:z.array(z.string().min(1).max(200)).optional()}).strict();
 const sectionItems=(s:ProjectSection)=>[...(s.items??[]),...(s.groups??[]).flatMap(g=>g.items.map(i=>({...i,...(g.waiting?{waiting:true}:{})})))];
-const activeMemory='archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))';
 const day=DAY_MS;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
@@ -28,7 +27,12 @@ export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;s
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
- const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>existsSync(a.memories)?new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined);
+ const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>{
+  if (!existsSync(a.memories)) return;
+  const db = new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0});
+  registerProjectHeat(db);
+  return db;
+ });
  try{sources.follow();}catch(e){for(const db of sources.end())db.close();throw e;}
  // One listing reads many projects, and each read asks who may see what several times and lists the people
  // again. The sharing facts are a read of whole tables and nothing in a read writes, so one synchronous call
@@ -39,21 +43,12 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},sharing());
  const visibleAgents=(viewer:Viewer)=>options.agents.filter(source=>allowed(viewer,source.agent)).map(source=>source.agent);
  function ids(scope?:string){if(scope!==undefined)return scope?[scope]:[];return [...sources].flatMap(([agent,db])=>has(db,'projects')?(db.prepare('SELECT slug FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${agent}:${r.slug}`):[]);}
- function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{
-  if(!has(db,'memories'))return {key:'memories',label:'Memories',available:false};
-  if(!maySee(v,{type:'memory',agent:q.agent},sharing()))return {key:'memories',label:'Memories',available:false};
-  const where=`${activeMemory} AND project IN (${q.names.map(()=>'?').join(',')})`;
-  const args=[new Date(q.now).toISOString(),...q.names];
-  interface Row {ref:string;category:string;title:string;content:string;created:string;updated:string|null}
-  const fields='ref,category,title,content,created,updated';
-  const rows=db.prepare(`SELECT ${fields} FROM memories WHERE ${where} ORDER BY created DESC,id DESC LIMIT 20`).all(...args) as Row[];
-  // And the ten hottest right now, which may be older than those twenty.
-  const hot=hottestIds(db,where,args,10,q.now);
-  if(hot.length)rows.push(...db.prepare(`SELECT ${fields} FROM memories WHERE id IN (${hot.map(()=>'?').join(',')})`).all(...hot) as Row[]);
-  const counts=Object.fromEntries((db.prepare(`SELECT category,count(*) AS n FROM memories WHERE ${where} GROUP BY category`).all(...args) as {category:string;n:number}[]).map(r=>[r.category,r.n]));
-  const activity=(db.prepare(`SELECT max(coalesce(updated,created)) AS at FROM memories WHERE ${where}`).get(...args) as {at:string|null}).at;
-  const expiry=(db.prepare(`SELECT expires_at AS at FROM memories WHERE ${where} AND expires_at IS NOT NULL ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(...args) as {at:string}|undefined)?.at;
-  return {key:'memories',label:'Memories',available:true,...(expiry?{expires:Date.parse(expiry)}:{}),...(activity?{activity}:{}),counts,total:Object.values(counts).reduce((a,b)=>a+b,0),items:[...new Map(rows.map(r=>[r.ref,r])).values()].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).map(r=>({title:`${r.title} — ${r.content}`.replace(/\s+/g,' ').slice(0,200),href:`/p/projects-preview/project/${encodeURIComponent(`${q.agent}:${q.card.slug}`)}/memory/${encodeURIComponent(r.ref)}`,ref:r.ref,when:r.created,changed:r.updated??r.created,status:r.category,new:Date.parse(r.updated??r.created)>Date.parse(q.since)}))};
+ function memoryReader(db:Database,agent:string,viewer:Viewer,queries:ProjectQuery[]):ProjectSectionRead{
+  if (!queries.length || !maySee(viewer,{type:'memory',agent},sharing())) return ()=>({available:false});
+  try {
+   const sections=db.transaction(()=>has(db,'memories')?projectMemorySections(db,agent,queries):undefined)();
+   return q=>sections?.get(q.card.slug)??{available:false};
+  } catch(error) { return ()=>{throw error;}; }
  }
  function peopleSection(v:Viewer,q:ProjectQuery):ProjectSection{
   if(!options.people)return {key:'people',label:'People',available:false};
@@ -70,11 +65,14 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   if(!allowed(viewer,agent)||!db||!has(db,'projects'))return;
   const asked=resolveCardReference(db,'project',reference);
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as ProjectRow|undefined;
-  return row && projectRecord(agent, db, row, viewer, readingHub);
+  return row && projectRecord(db,row,viewer,readingHub,projectQuery(agent,row,clock.now()),visibleAgents(viewer));
  }
- function projectRecord(agent:string, db:Database, row:ProjectRow, viewer:Viewer, readingHub:boolean, agents=visibleAgents(viewer), prepared?:Map<ProjectSectionRole,ProjectSectionRead>):ProjectRecord{
-  const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
-  const q:ProjectQuery={agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
+ function projectQuery(agent:string,row:ProjectRow,now:number):ProjectQuery {
+  const card=JSON.parse(row.card_json) as ProjectCard;
+  return {agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
+ }
+ function projectRecord(db:Database,row:ProjectRow,viewer:Viewer,readingHub:boolean,q:ProjectQuery,agents:string[],prepared?:Map<ProjectSectionRole,ProjectSectionRead>,memories?:ProjectSectionRead):ProjectRecord{
+  const {agent,card,now}=q;
   const sections:ProjectSection[]=[];
   const section=(key:string,label:string,fn:()=>Omit<ProjectSection,'key'|'label'>)=>{try{const raw=fn();const {key:_key,label:_label,...data}=raw as ProjectSection;sections.push({...sectionSchema.parse(data),key,label});}catch{sections.push({key,label,available:true,error:`${label} couldn't answer`});}};
   const role=(key:string,label:string,r:ProjectSectionRole|undefined)=>section(key,label,()=>{
@@ -97,7 +95,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
    section('people','People',()=>peopleSection(viewer,q));
    sections.push(conversations);
    role('notes','Notes',options.notes);
-   section('memories','Memories',()=>db.transaction(()=>memorySection(db,q,viewer))());
+   section('memories','Memories',()=>(memories??memoryReader(db,agent,viewer,[q]))(q));
   }
   const dated:ProjectItem[]=[],waiting:ProjectItem[]=[],people=new Map<string,string>([[agent.toLowerCase(),agent]]);
   const addPerson=(name:string)=>{const key=name.trim().toLowerCase();if(key&&!people.has(key))people.set(key,name);};
@@ -123,13 +121,16 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  const list = (viewer:Viewer) => once(viewer, () => {
   const projects:ProjectRecord[] = [];
   const prepared = new Map<ProjectSectionRole,ProjectSectionRead>();
+  const now=clock.now();
   let agents:string[]|undefined;
   for (const [agent, db] of sources) {
    if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
    const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
    if (!rows.length) continue;
    agents ??= visibleAgents(viewer);
-   for (const row of rows) projects.push(projectRecord(agent, db, row, viewer, false, agents, prepared));
+   const queries=rows.map(row=>projectQuery(agent,row,now));
+   const memories=memoryReader(db,agent,viewer,queries.filter(q=>q.card.status==='active'));
+   for (const [i,row] of rows.entries()) projects.push(projectRecord(db,row,viewer,false,queries[i]!,agents,prepared,memories));
   }
   return projects;
  });
