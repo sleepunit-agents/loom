@@ -89,3 +89,25 @@ it('marks an open usage reading stale after one hour and clears the warning on r
   expect(JSON.stringify(tree.toJSON())).not.toContain('Stale reading');
  }finally{vi.useRealTimers();}
 });
+
+it('filters by visible owner and machines together with sign-in or capacity warnings',async()=>{
+ const nearlyFull:RuntimeAccount={__typename:'RuntimeAccountSummary',label:'Shared account',level:'almost full'};
+ const login={reporting:true,needsSignIn:true,canRequest:false,box:{id:'observed',name:'Studio'},place:'host' as const,harness:'claude',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'};
+ const account={...detail,logins:[login],pendingSignIns:[{id:'waiting',name:'Library'}]};
+ f.snapshot={status:'live',data:{modelAccounts:[account,nearlyFull,{__typename:'RuntimeAccountSummary',label:'Quiet account',level:'plenty'}]}};
+ await act(async()=>{tree=create(h(RuntimeAccounts));});
+ const search=async(value:string)=>act(async()=>tree.root.findByProps({type:'search'}).props.onChange({target:{value}}));
+ await act(async()=>tree.root.findByProps({type:'checkbox'}).props.onChange({target:{checked:true}}));
+ expect(JSON.stringify(tree.toJSON())).toContain('Shared account');
+ expect(JSON.stringify(tree.toJSON())).not.toContain('Quiet account');
+ for(const term of [' ALICE ','workshop','studio','library']){
+  await search(term);const result=JSON.stringify(tree.toJSON());expect(result).toContain('Main subscription');expect(result).not.toContain('Shared account');
+ }
+ f.snapshot={status:'live',data:{modelAccounts:[{...account,logins:[{...login,reporting:false,needsSignIn:false}]}]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(JSON.stringify(tree.toJSON())).toContain('No matching subscriptions.');
+ f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'almost full'}]}};
+ await act(async()=>tree.update(h(RuntimeAccounts)));
+ expect(JSON.stringify(tree.toJSON())).toContain('No matching subscriptions.');
+ await search('main');expect(JSON.stringify(tree.toJSON())).toContain('Main subscription');
+});
