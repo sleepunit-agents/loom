@@ -44,6 +44,30 @@ it('fetches the job\'s branch into its own mirror, names the commit and hands th
   expect(await source.fetch(house, undefined, never())).toBe(second);
   expect(readdirSync(join(root, 'mirrors'))).toHaveLength(1);
 });
+it('fetches an exact review commit into an empty mirror after the branch moves', async () => {
+  const origin = repository('review-origin', { 'review.txt': 'original words' });
+  const head = origin.commit({ 'review.txt': 'new words' });
+  const source = local('review-mirror'), house = { repository: origin.address, branch: 'main', file: '' };
+  const commit = await source.fetch(house, undefined, never(), origin.first);
+  expect(commit).toBe(origin.first);
+  expect((await all(source.context(house, commit, never()))).toString('latin1')).toContain('original words');
+  await expect(source.fetch(house, undefined, never(), '0'.repeat(40))).rejects.toThrow(HouseSourceError);
+  const blob = git(origin.path, 'rev-parse', 'HEAD:review.txt');
+  await expect(source.fetch(house, undefined, never(), blob)).rejects.toThrow(HouseSourceError);
+  git(origin.path, 'tag', '-a', 'review-tag', '-m', 'points to a commit');
+  const tag = git(origin.path, 'rev-parse', 'refs/tags/review-tag');
+  await expect(source.fetch(house, undefined, never(), tag)).rejects.toThrow(HouseSourceError);
+  expect(await source.fetch(house, undefined, never())).toBe(head);
+});
+
+it('rejects abbreviated and symbolic review revisions before running git', async () => {
+  const spawn = vi.fn(), source = houseSource({ directory: join(root, 'invalid-review'), spawn });
+  const house = { repository: 'https://example.com/house.git', branch: 'main', file: '' };
+  for (const ref of ['', 'main', 'abcd123', 'a'.repeat(40) + '\n']) {
+    await expect(source.fetch(house, undefined, never(), ref)).rejects.toThrow(HouseSourceError);
+  }
+  expect(spawn).not.toHaveBeenCalled();
+});
 /** Every file under a directory, as text. */
 function everything(directory: string): string {
   return readdirSync(directory, { withFileTypes: true, recursive: true }).filter(entry => entry.isFile())

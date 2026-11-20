@@ -1,7 +1,7 @@
 /** Where a house comes from: the worker's own fetch of an agent's house repository.
  *
  * The worker keeps one bare mirror per repository under its state directory, fetches the job's branch into
- * it with the machine's `git`, and hands out that commit as a tar stream it writes itself from git's
+ * it (or fetches an explicitly requested review commit) with the machine's `git`, and hands out that commit as a tar stream it writes itself from git's
  * objects (house-context.ts), which is the build context the engine is given (house-image.ts). That is all
  * the worker does with a repository: it never checks one out, neither it nor git interprets a file of
  * one, and nothing a repository holds becomes an argument, a file on this machine outside the mirror's
@@ -88,8 +88,9 @@ export const gitAvailable = (): boolean => {
 
 export interface HouseSource {
   /** Bring the mirror of the house's repository up to its branch and say which commit that is. The secret
-   * is used for this one fetch and kept nowhere. */
-  fetch(house: House, credential: Uint8Array | undefined, signal: AbortSignal): Promise<string>;
+   * is used for this one fetch and kept nowhere. For an exact revision fetch only that object,
+   * even when the branch has advanced. Fail if the remote cannot serve that commit. */
+  fetch(house: House, credential: Uint8Array | undefined, signal: AbortSignal, requestedCommit?: string): Promise<string>;
   /** That commit's files as a tar stream, written by the worker from git's objects (house-context.ts). The
    * stream fails when git does or the context is not one the worker writes, so a cut-off context is
    * never taken for a whole one. `apart` puts the commit's files one directory down, with one file of
@@ -158,9 +159,13 @@ export function houseSource(options: {
     } catch { /* a mirror left over is found again next time */ } finally { tidying = false; }
   };
   return {
-    fetch(house, credential, signal) {
+    fetch(house, credential, signal, requestedCommit) {
       const url = houseAddress(house.repository, protocols);
       if (!url || !houseBranch(house.branch) || (house.file !== '' && !houseFile(house.file))) return Promise.reject(new HouseSourceError('House is not one this worker fetches'));
+      if (requestedCommit !== undefined && (typeof requestedCommit !== 'string' || requestedCommit.length !== 40 || !COMMIT.test(requestedCommit))) {
+        return Promise.reject(new HouseSourceError('Expected a full commit id'));
+      }
+      const sourceRef = requestedCommit ?? `refs/heads/${house.branch}`;
       const mirror = mirrorOf(house.repository);
       let header: [string, string][] = [];
       try { if (credential !== undefined && url.protocol === 'https:') header = [[`http.${url.origin}/.extraHeader`, authorization(credential)]]; }
@@ -173,9 +178,10 @@ export function houseSource(options: {
         // The address is given here each time and stored nowhere: not as a remote, and not in FETCH_HEAD,
         // which git is told not to write. Depth 1: the worker needs one commit.
         await run(['--git-dir', mirror, 'fetch', '--quiet', '--no-tags', '--depth=1', '--no-recurse-submodules', '--no-write-fetch-head', '--force', '--',
-          house.repository, `+refs/heads/${house.branch}:refs/loom/fetched`], environment(options.directory, protocols, header), signal);
+          house.repository, `+${sourceRef}:refs/loom/fetched`], environment(options.directory, protocols, header), signal);
         const commit = (await run(['--git-dir', mirror, 'rev-parse', '--verify', '--quiet', 'refs/loom/fetched^{commit}'], plain, signal, 'pipe')).trim();
         if (!COMMIT.test(commit)) throw new HouseSourceError('git failed');
+        if (requestedCommit !== undefined && commit !== requestedCommit) throw new HouseSourceError('git did not return the requested commit');
         void tidy(mirror);
         return commit;
       });
