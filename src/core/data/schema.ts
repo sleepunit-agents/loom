@@ -933,6 +933,7 @@ export const boxes = sqliteTable('boxes', {
   slots: integer('slots'),
   readers: text('readers', { mode: 'json' }).$type<string[]>(),
   readingSequence: integer('reading_sequence').notNull().default(0),
+  readingSilenceSequence: integer('reading_silence_sequence').notNull().default(0),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
   check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),

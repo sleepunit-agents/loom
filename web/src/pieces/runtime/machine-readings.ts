@@ -26,6 +26,7 @@ export function readingLine(reading:Reading,disks:number,now:number,zone?:string
   return `Container runtime did not answer (last answered ${last} ${briefTime(reading.readAt,zone,now)})`;
  }
  if(!reading.readAt){
+  if(reading.kind==='disk'&&!reading.thing)return 'Worker state directory not read (path outside watched path bounds)';
   const label=reading.kind==='disk'?`Disk ${reading.thing}`:reading.kind==='memory'?'Memory':'Container runtime';
   return `${label} not yet read`;
  }

@@ -4,16 +4,16 @@
  * This check runs no other program. loom evaluates each reading and decides what to say. */
 import { spawn } from 'node:child_process';
 import os from 'node:os';
-import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 /** The kinds of thing read. The list itself is the column's (`box_readings.kind`); the worker loads no
  * household schema, and loom's side holds this to the column where it writes a reading down (machine-conditions.ts). */
 export type ReadingKind = 'disk' | 'memory' | 'containers';
-/** One thing read. `thing` is the watched path of a disk and absent otherwise. `unknown` names a thing this
+/** One thing read. `thing` names a disk by its path, except for an unknown state directory whose name
+ * cannot be reported. `unknown` names a thing this
  * machine watches and could not read this time. A disk's size is what its user can fill (used and
  * available): the two numbers `df` works its percentage out from, as loom then does (machine-conditions.ts). */
-export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; engineStatus?: number }
+export interface MachineReading { kind: ReadingKind; thing?: string; unknown?: true; sizeBytes?: number; freeBytes?: number; engineStatus?: number; reason?: 'state-path' }
 /** The longest one call to the machine may take. A filesystem that does not answer (a network mount whose server is gone) is unknown. */
 export const MACHINE_READ_MS = 5_000;
 /** The most paths one worker watches. */
@@ -25,15 +25,12 @@ export const WATCHED_PATHS_MAX = 16;
 export const SIZE_BYTES_MAX = 2 ** 51 - 1;
 /** The longest watched path. */
 export const WATCHED_PATH_LENGTH = 120;
-/** A path loom will keep and write into a notice: absolute, at most WATCHED_PATH_LENGTH long, each step
- * beginning with a letter, a digit, a dot or an underscore and going on in those and `@ + -`, with no empty
- * step, no `.` or `..`, and no colon anywhere. loom cannot know what a worker was set to watch, so it cannot
- * tell a real path from words written to look like one: `/your_disk_is_failing.call.0800-555-0199.now`
- * passes. What protects a reader is that the text is short, has no spaces or punctuation beyond those
- * letters, is shown only to that machine's owner and household owners, and that every other word of the
- * notice is loom's own. */
-export const watchedPath = (value: string) => value.length <= WATCHED_PATH_LENGTH &&
-  (value === '/' || /^(\/[A-Za-z0-9._][A-Za-z0-9._@+-]*)+(?![\s\S])/.test(value)) && !value.split('/').some(step => step === '.' || step === '..');
+/** A short absolute path, safe to show as text. The helper walks it without following links.
+ * A worker can still name a path its owner did not configure. */
+export const watchedPath = (value: string) => value.startsWith('/') && Array.from(value).length <= WATCHED_PATH_LENGTH &&
+  !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value) && !value.split('/').includes('..');
+
+export const WATCHED_THING_LIMIT_ERROR = 'Machine watched thing limit exceeded';
 
 const whole = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 export const diskNumbers = (size: unknown, free: unknown): boolean =>
@@ -63,6 +60,7 @@ export function startDiskHelper(path: string, start = spawn) {
 const SAID = {
   link: 'Worker machine check: a watched path is not a directory reached without a link, and is not read\n',
   name: 'Worker machine check: a directory to watch has a name loom does not take, and is not watched\n',
+  'state-path': 'Worker machine check: the state directory path is outside the watched path bounds\n',
   start: 'Worker machine check: a disk helper could not be started\n',
 } as const;
 
@@ -70,18 +68,7 @@ const SAID = {
 export async function readMemory(): Promise<MachineReading> {
   const sizeBytes = os.totalmem();
   const kernel = os as typeof os & { availableMemory?: () => number };
-  let available = kernel.availableMemory?.();
-  if (available === undefined) {
-    try {
-      const file = await fs.open('/proc/meminfo', 'r');
-      try {
-        const buffer = Buffer.alloc(4096);
-        const { bytesRead } = await file.read(buffer);
-        const kib = buffer.toString('utf8', 0, bytesRead).match(/^MemAvailable:[ \t]+([0-9]+)[ \t]+kB\n/m)?.[1];
-        if (kib !== undefined) available = Number(kib) * 1024;
-      } finally { await file.close(); }
-    } catch { /* No kernel estimate is available. */ }
-  }
+  const available = kernel.availableMemory?.();
   const freeBytes = available === undefined ? undefined : Math.min(available, sizeBytes);
   return freeBytes !== undefined && diskNumbers(sizeBytes, freeBytes)
     ? { kind: 'memory', sizeBytes, freeBytes } : { kind: 'memory', unknown: true };
@@ -89,6 +76,7 @@ export async function readMemory(): Promise<MachineReading> {
 
 export function machineReader(input: {
   paths: readonly string[];
+  statePath?: string;
   engine?: (signal: AbortSignal) => Promise<number>;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -101,11 +89,17 @@ export function machineReader(input: {
   const sayOnce = (why: keyof typeof SAID) => {
     if (!said.has(why)) { said.add(why); input.say?.(SAID[why]); }
   };
-  const paths = [...new Set(input.paths)].filter(path => {
+  const invalidStatePath = input.statePath !== undefined && !watchedPath(input.statePath);
+  if (invalidStatePath) sayOnce('state-path');
+  const paths = [...new Set([
+    ...input.paths.slice(0, 1),
+    ...(input.statePath !== undefined && !invalidStatePath ? [input.statePath] : []),
+    ...input.paths.slice(1),
+  ])].filter(path => {
     if (watchedPath(path)) return true;
     sayOnce('name');
     return false;
-  }).slice(0, WATCHED_PATHS_MAX);
+  }).slice(0, WATCHED_PATHS_MAX - Number(invalidStatePath));
 
   function disk(path: string): Promise<DiskResult> {
     if (input.signal?.aborted || live.has(path)) return Promise.resolve(unknown);
@@ -167,6 +161,8 @@ export function machineReader(input: {
         readings.push({ kind: 'containers', unknown: true });
       }
     }
-    return [...readings, ...await disks, await memory];
+    readings.push(...await disks);
+    if (invalidStatePath) readings.push({ kind: 'disk', unknown: true, reason: 'state-path' });
+    return [...readings, await memory];
   };
 }

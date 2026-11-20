@@ -5,7 +5,8 @@ import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTab
 import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { GraphQLError, GraphQLSchema, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { dataValue } from './subscriptions.js';
 import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
 
 type TableName = keyof typeof tables;
@@ -159,6 +160,11 @@ export function dataQueries(client: Database.Database, options: {
         fields[key].type = new GraphQLList(new GraphQLNonNull(GraphQLString));
       }
     }
+    if (name === 'boxReadings') {
+      fields.lastLines.type = dataValue;
+      // drizzle-graphql may stringify SQLite JSON objects before field resolution.
+      fields.lastLines.resolve = row => typeof row.lastLines === 'string' ? JSON.parse(row.lastLines) : row.lastLines;
+    }
     if (name === 'tasks') fields.isReady = {
       name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
       description: 'Open non-epic task with no unclosed blocker, computed in this SQL statement.',
@@ -196,7 +202,8 @@ export function dataQueries(client: Database.Database, options: {
       return querySelection.run(info, () => resolve(source, args, context, info));
     };
   }
-  return generated;
+  // Register the JSON scalar introduced on the generated reading types.
+  return selected.has('boxReadings') ? new GraphQLSchema(generated.toConfig()) : generated;
 }
 
 /** Merge field selections by schema field name: scalar aliases, directives

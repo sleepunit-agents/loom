@@ -109,3 +109,19 @@ it('ages readings independently and never substitutes a newer timestamp from ano
   vi.useRealTimers();
  }
 });
+
+it('renders a printable path as text and gives an invalid state directory its fixed unknown label',async()=>{
+ const before=f.feed;
+ const now=new Date().toISOString(),path='/srv/worker <img src=x> & state';
+ const disk={box:'box',kind:'disk',usedPercent:91,sizeMib:204800,freeMib:18432,engineStatus:null,level:'raised',readAt:now,unknownSince:null,stale:false};
+ try {
+  f.feed={status:'live',data:{...before.data,boxReadings:[
+   {...disk,thing:path},
+   {...disk,thing:'',usedPercent:null,sizeMib:null,freeMib:null,level:'ok',readAt:null,unknownSince:now},
+  ]}} as never;
+  await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
+  expect(tree.root.findAllByType('img')).toHaveLength(0);
+  expect(JSON.stringify(tree.toJSON())).toContain(path);
+  expect(JSON.stringify(tree.toJSON())).toContain('Worker state directory not read (path outside watched path bounds)');
+ } finally { f.feed=before; }
+});

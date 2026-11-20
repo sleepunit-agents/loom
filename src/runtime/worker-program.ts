@@ -10,10 +10,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { relaySignIn } from './account-signin-relay.js';
 import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider } from './worker-process.js';
-import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, type WorkerLoginCheck } from './worker-http.js';
+import { workerMachineReads, httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth, reportWorkerAccountLogins, reportWorkerMachineReadings, WorkerWatchedThingLimit, type WorkerLoginCheck } from './worker-http.js';
 import { readLogin, watchesLogin } from './account-login-check.js';
 import { MACHINE_CHECK_MS } from './machine-reading-time.js';
-import { WATCHED_PATHS_MAX, machineReader, watchedPath } from './machine-check.js';
+import { WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, machineReader, watchedPath } from './machine-check.js';
 import { DockerResponseError, dockerEngine } from './docker-engine.js';
 import { runWorker } from './worker-loop.js';
 import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
@@ -234,9 +234,11 @@ export async function workerProgram(input: {
     // is how the machine loom itself is on is watched when it hosts no bodies. A failed report is tried
     // again at the next interval and never stops the worker. A container runtime is asked about only by a
     // worker that has one configured (`container.socket`), whether or not it also only reports.
-    const watchMachine = () => {
+    const watchMachine = (statePath?: string) => {
       const socket = config.container?.socket, everyMs = config.machineCheckMs ?? MACHINE_CHECK_MS;
-      const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.reportOnly ? [] : [config.state ?? defaultWorkerState(config.box)]), ...(config.watchPaths ?? [])], signal: abort.signal,
+      let saidLimit = false;
+      const read = (input.machineReader ?? machineReader)({ paths: ['/', ...(config.watchPaths ?? [])],
+        ...(statePath === undefined ? {} : { statePath }), signal: abort.signal,
         say: line => input.error(line),
         ...(socket === undefined ? {} : { engine: async (signal: AbortSignal) => {
           try {
@@ -249,7 +251,15 @@ export async function workerProgram(input: {
         } }) });
       return poll(everyMs, 'Worker machine readings unavailable\n', async () => {
         const readings = await read();
-        if (!abort.signal.aborted) await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings);
+        if (abort.signal.aborted) return;
+        try { await (input.reportReadings ?? reportWorkerMachineReadings)(remote, readings); }
+        catch (error) {
+          if (!(error instanceof WorkerWatchedThingLimit)) throw error;
+          if (!saidLimit) {
+            saidLimit = true;
+            if (!abort.signal.aborted) input.error(`Worker machine check: ${WATCHED_THING_LIMIT_ERROR}\n`);
+          }
+        }
       // A clock of its own: it shares no timing with the usage refresh or the sign-in check.
       }, input.machinePause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); }));
     };
@@ -270,7 +280,7 @@ export async function workerProgram(input: {
           : {ok: false, output: 'Machine read unavailable'};
         await reader.done({id: request.id, ...result});
       });
-      if (config.reportOnly) { loginChecks = watchLogins(); machineChecks = watchMachine(); await diagnostics; return 0; }
+      if (config.reportOnly) { loginChecks = watchLogins(); machineChecks = watchMachine(config.state); await diagnostics; return 0; }
     }
     const silenceExpired = (ms: number) => input.error(`Worker abandoned a job after Loom was unreachable for ${ms} ms\n`);
     const control = (input.control ?? httpWorkerControl)({ ...remote, slots, ...(config.container && { programs: true }), silenceExpired, ...(config.facts === undefined ? {} : { facts: config.facts }) });
@@ -330,7 +340,7 @@ export async function workerProgram(input: {
       if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
       else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: signIn.timeoutMs });
     });
-    loginChecks = watchLogins(); machineChecks = watchMachine();
+    loginChecks = watchLogins(); machineChecks = watchMachine(state);
     stage = 'slot';
     // Several jobs side by side: each slot is the one loop there always was, and they share the control,
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).

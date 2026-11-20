@@ -70,7 +70,7 @@ async function fixture() {
     const response = await root.http.request('http://loom/api/runtime/machineReadings', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys.worker },
       body: JSON.stringify({ input: { readings: [percent === 'unknown' ? { kind: 'disk', thing: '/', unknown: true } : { kind: 'disk', thing: '/', sizeBytes: 200 * 1024 ** 3, freeBytes: Math.round(2 * 1024 ** 3 * (100 - percent)) },
         { kind: 'memory', sizeBytes: 16 * 1024 ** 3, freeBytes: freeMemoryMib * 1024 ** 2 }, { kind: 'containers', engineStatus: answers ? 200 : 503 }] }, id: `reading-${clock.now()}-${Math.random()}` }) });
-    return (await response.json() as { value: { changed: boolean } }).value.changed;
+    expect(await response.json()).toEqual({ ok: true, value: { ok: true } });
   };
   // Long enough for a selection that was woken to have been read again.
   const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve)); };
@@ -157,19 +157,19 @@ it('does not read an open selection again for a write that was refused before it
 it('reads an open selection again at once for a machine reading that changes a state a person is shown, and for no drift in the numbers between', async () => {
   const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(orderBy: {kind: {direction: asc, priority: 0}}) { kind usedPercent engineStatus level unknownSince readAt } }');
   const shown = () => (window.data() as { boxReadings: { kind: string; usedPercent: number | null; engineStatus: number | null; level: string; unknownSince: string | null }[] }).boxReadings;
-  f.clock.advance(1000); expect(await f.reading(71)).toBe(true);
+  f.clock.advance(1000); await f.reading(71);
   await vi.waitFor(() => expect(shown()).toHaveLength(3));
   /** One reading that must be an ordinary change: read again and shown at once, with nothing waited for. */
   const loud = async (percent: number | 'unknown', answers: boolean, check: () => void) => {
     await f.settle(); const before = f.reads();
-    f.clock.advance(1000); expect(await f.reading(percent, 12_288, answers)).toBe(true);
+    f.clock.advance(1000); await f.reading(percent, 12_288, answers);
     await vi.waitFor(check);
     expect(f.reads()).toBeGreaterThan(before);
   };
   /** Readings whose numbers alone move: each is kept, and none wakes the selection. */
   const quiet = async (percents: number[], answers: boolean, unknown = false) => {
     await f.settle(); const before = f.reads(), frames = window.frames();
-    for (const percent of percents) { f.clock.advance(1000); expect(await f.reading(unknown ? 'unknown' : percent, 12_288 - percent, answers), String(percent)).toBe(false); await f.settle(); }
+    for (const percent of percents) { f.clock.advance(1000); await f.reading(unknown ? 'unknown' : percent, 12_288 - percent, answers); await f.settle(); }
     expect(f.reads()).toBe(before); expect(window.frames()).toBe(frames);
   };
   await quiet([72, 74, 80, 84, 71], true);
@@ -196,17 +196,17 @@ it('reads an open selection again at once for a machine reading that changes a s
 it('does not read an open selection again for a machine reading that raises and clears nothing, and shows a condition at once', async () => {
   const f = await fixture(), window = await f.watch('sam', '{ probe boxReadings(where: {kind: {eq: disk}}) { thing usedPercent level } }');
   // The first reading is a thing watched for the first time: a change, shown at once.
-  f.clock.advance(1000); expect(await f.reading(71)).toBe(true);
+  f.clock.advance(1000); await f.reading(71);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 71, level: 'ok' }] }));
   await f.settle();
   const after = f.reads(), frames = window.frames();
   // The same reading again and again, and readings whose numbers move under every line.
-  for (const percent of [71, 71, 71, 72, 74, 71, 80, 84, 71, 71]) { f.clock.advance(1000); expect(await f.reading(percent, 12_288 - percent), String(percent)).toBe(false); await f.settle(); }
+  for (const percent of [71, 71, 71, 72, 74, 71, 80, 84, 71, 71]) { f.clock.advance(1000); await f.reading(percent, 12_288 - percent); await f.settle(); }
   expect(f.db.select().from(boxReadings).all().map(row => [row.kind, row.usedPercent ?? row.freeMib ?? row.engineStatus, row.readAt])).toEqual([['disk', 71, f.now()], ['memory', 12_217, f.now()], ['containers', 200, f.now()]]);
   expect(f.reads()).toBe(after); expect(window.frames()).toBe(frames); expect(window.closed()).toBe(false);
   // Over the line is a condition: raised, told to the machine's owner and shown at once. Said again, it is nothing new.
   const quiet = f.reads();
-  f.clock.advance(1000); expect(await f.reading(91)).toBe(true);
+  f.clock.advance(1000); await f.reading(91);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 91, level: 'raised' }] }));
   expect(f.db.select().from(inbox).all().map(item => [item.to, item.words])).toEqual([['sam', 'worker: / is 91% full (18 GB free). Alerts at 85%.']]);
   // Five seconds after a notice is filed loom reads every selection once more, whether or not anything is
@@ -214,16 +214,16 @@ it('does not read an open selection again for a machine reading that raises and 
   f.clock.advance(6000); await f.settle();
   const raised = f.reads();
   expect(raised).toBeGreaterThan(quiet);
-  for (let i = 0; i < 5; i++) { f.clock.advance(1000); expect(await f.reading(91)).toBe(false); await f.settle(); }
+  for (let i = 0; i < 5; i++) { f.clock.advance(1000); await f.reading(91); await f.settle(); }
   expect(f.reads()).toBe(raised);
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
   // Cleared is shown at once too.
-  f.clock.advance(1000); expect(await f.reading(70)).toBe(true);
+  f.clock.advance(1000); await f.reading(70);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 70, level: 'ok' }] }));
   await f.settle();
   // The numbers alone still reach the window, late: within a minute, as a last-seen time does. (This test keeps
   // clear of a whole minute until here: the desk's clock has every selection read at each one.)
-  f.clock.advance(1000); expect(await f.reading(80)).toBe(false); await f.settle();
+  f.clock.advance(1000); await f.reading(80); await f.settle();
   expect(window.data()).toMatchObject({ boxReadings: [{ usedPercent: 70 }] });
   f.clock.advance(60_000);
   await vi.waitFor(() => expect(window.data()).toEqual({ probe: 0, boxReadings: [{ thing: '/', usedPercent: 80, level: 'ok' }] }), { timeout: 3000 });

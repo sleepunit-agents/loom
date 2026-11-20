@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -49,7 +50,7 @@ it('runs only the fixed script within the build, with one validated argument and
   expect(spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, [join(localBuild, 'machine-disk-helper.js'), '/mnt/data'], {
     shell: false, stdio: ['ignore', 'pipe', 'ignore'], env: expect.objectContaining({ NODE_OPTIONS: undefined }),
   });
-  for (const path of ['relative', '/mnt/../data', '/mnt/x\n', '/mnt/-flag', '/mnt/a;exit', '/' + 'a'.repeat(120)]) {
+  for (const path of ['relative', '/mnt/../data', '/mnt/x\n', '/mnt/\u0085', '/mnt/\u2028', '/' + 'a'.repeat(120)]) {
     expect(watchedPath(path)).toBe(false);
     expect(() => startDiskHelper(path, spawn)).toThrow('Invalid watched path');
   }
@@ -243,18 +244,41 @@ it('uses the kernel’s available memory rather than its free pages', async () =
   expect(await readMemory()).toEqual({ kind: 'memory', sizeBytes: 8192 * 1024, freeBytes: 6144 * 1024 });
 });
 
-it('falls back to a bounded MemAvailable read and reports unknown without a kernel estimate', async () => {
-  vi.spyOn(os, 'totalmem').mockReturnValue(8192 * 1024);
-  const file = { read: vi.fn(), close: vi.fn(async () => {}) };
-  const open = vi.spyOn(fs, 'open').mockResolvedValue(file as never);
-  const meminfo = (text: string) => file.read.mockImplementationOnce(async (buffer: Buffer) => {
-    expect(buffer.byteLength).toBe(4096);
-    return { bytesRead: buffer.write(text) };
-  });
-  meminfo('MemTotal: 8192 kB\nMemFree: 128 kB\nMemAvailable: 4096 kB\n');
-  expect(await readMemory()).toEqual({ kind: 'memory', sizeBytes: 8192 * 1024, freeBytes: 4096 * 1024 });
-  meminfo('MemTotal: 8192 kB\nMemFree: 128 kB\n');
-  expect(await readMemory()).toEqual({ kind: 'memory', unknown: true });
-  expect(open).toHaveBeenNthCalledWith(2, '/proc/meminfo', 'r');
-  expect(file.close).toHaveBeenCalledTimes(2);
+it('reports and shuts down even when the memory fallback path is a FIFO with no writer', async () => {
+  const tmp = mkdtempSync(join(os.tmpdir(), 'loom-meminfo-'));
+  const fifo = join(tmp, 'meminfo');
+  execFileSync('mkfifo', [fifo]);
+  const actualOpen = fs.open.bind(fs);
+  const open = vi.spyOn(fs, 'open').mockImplementation((path, ...args) =>
+    actualOpen(path === '/proc/meminfo' ? fifo : path, ...args));
+  const abort = new AbortController();
+  const { start } = starters(() => true);
+  const pending = machineReader({ paths: ['/'], start, signal: abort.signal })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([pending, new Promise(resolve => { timer = setTimeout(() => resolve('blocked'), 150); })]);
+    abort.abort();
+    expect(result).toEqual([disk('/'), { kind: 'memory', unknown: true }]);
+  } finally {
+    clearTimeout(timer);
+    if (open.mock.calls.length) {
+      // Unblock the old implementation so a regression cannot hang the test process.
+      const writer = await actualOpen(fifo, 'w');
+      await writer.writeFile('MemAvailable: 4096 kB\n');
+      await writer.close();
+      await pending;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+it('reads a printable state directory and reports one fixed reason for an invalid state directory', async () => {
+  const { start } = starters(() => true);
+  const say = vi.fn(), path = '/var/lib/worker state;[é]';
+  expect(await machineReader({ paths: ['/'], statePath: path, start, say })()).toMatchObject([disk('/'), disk(path), { kind: 'memory' }]);
+  const read = machineReader({ paths: ['/'], statePath: '/' + 'x'.repeat(120), start, say });
+  for (let i = 0; i < 2; i++) {
+    expect(await read()).toMatchObject([disk('/'), { kind: 'disk', unknown: true, reason: 'state-path' }, { kind: 'memory' }]);
+  }
+  expect(say).toHaveBeenCalledExactlyOnceWith('Worker machine check: the state directory path is outside the watched path bounds\n');
 });

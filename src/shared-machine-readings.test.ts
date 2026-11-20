@@ -31,7 +31,8 @@ function fixture() {
   let calls = 0;
   const call = async (name: string, input: unknown, key: string, id = `call-${++calls}`) => {
     const response = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id, input }) });
-    return { status: response.status, body: await response.json() as { ok: boolean; value?: unknown; code?: string } };
+    const bytes = await response.text();
+    return { status: response.status, bytes, body: JSON.parse(bytes) as { ok: boolean; value?: unknown; code?: string } };
   };
   const query = async (source: string, key: string) => (await (await root.http.request('/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ query: source }) })).json()) as { data?: Record<string, unknown[]>; errors?: unknown };
   return { db, root, clock, call, query, report: (readings: unknown[], key = keys.worker) => { clock.advance(300_000); return call('runtime.machineReadings', { readings }, key); } };
@@ -43,12 +44,12 @@ it('takes a worker\'s readings for the machine its credential is bound to, and t
   const f = fixture();
   const result = await reportWorkerMachineReadings({ url: 'https://loom.example', token: keys.worker, signal: new AbortController().signal,
     fetch: async (input, init) => f.root.http.fetch(new Request(input, init)) }, [disk(71), memory, { kind: 'containers', engineStatus: 200 }]);
-  expect(result).toEqual({ changed: true });
+  expect(result).toEqual({ ok: true });
   expect(f.db.select().from(boxReadings).all().map(row => [row.box, row.kind, row.thing, row.level])).toEqual([['worker', 'disk', '/', 'ok'], ['worker', 'memory', '', 'ok'], ['worker', 'containers', '', 'ok']]);
-  expect((await f.report([disk(72), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: false } });
-  expect((await f.report([disk(91), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([disk(72), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { ok: true } });
+  expect((await f.report([disk(91), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { ok: true } });
   expect(f.db.select().from(inbox).all().map(item => [item.to, item.state, item.words])).toEqual([['sam', 'waiting', 'loom: / is 91% full (18 GB free). Alerts at 85%.']]);
-  expect((await f.report([disk(70), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([disk(70), memory, { kind: 'containers', engineStatus: 200 }])).body).toEqual({ ok: true, value: { ok: true } });
   expect(f.db.select().from(inbox).all().map(item => [item.state, item.resolution])).toEqual([['resolved', '/ is at 70% (60 GB free), under the 85% line.']]);
 });
 
@@ -69,8 +70,9 @@ it('refuses a reading with a path outside the bound, a judgement, a field loom d
   // text a real path; every other word an owner reads is loom's.
   const f = fixture();
   for (const reading of [
-    { ...disk(91), thing: '/ is nearly full, tell everyone' }, { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
-    { ...disk(91), thing: '/https://evil.example/pay-now' }, { ...disk(91), thing: '/your-disk-is-full-' + 'pay-now-'.repeat(13) }, { ...disk(91), thing: '/srv/-rf' }, { ...disk(91), thing: '/mnt/nas:x' }, { ...disk(91), thing: '//x' },
+    { ...disk(91), thing: 'relative' }, { ...disk(91), thing: undefined },
+    { ...disk(91), thing: '/your-disk-is-full-' + 'pay-now-'.repeat(13) }, { ...disk(91), thing: '/srv/../etc' }, { ...disk(91), thing: '/srv/\u202efoo' },
+    { kind: 'disk', thing: '/', unknown: true, reason: 'state-path' }, { kind: 'memory', unknown: true, reason: 'state-path' },
     { ...memory, thing: '/' }, { ...disk(91), level: 'urgent' }, { ...disk(91), why: 'nearly full' }, { ...disk(91), kind: 'load' },
     { kind: 'disk', thing: '/', sizeBytes: 10, freeBytes: 11 }, { kind: 'disk', thing: '/' }, { kind: 'disk', thing: '/', sizeBytes: 0, freeBytes: 0 },
     { kind: 'containers' }, { kind: 'containers', engineStatus: '503' }, { kind: 'containers', engineStatus: 199 }, { kind: 'containers', engineStatus: 600 },
@@ -83,7 +85,7 @@ it('refuses a reading with a path outside the bound, a judgement, a field loom d
   expect(f.db.select().from(boxReadings).all()).toEqual([]);
   expect((await f.report([disk(50), disk(51)])).status).toBe(400);
   // What it could not read is named and carries nothing else.
-  expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([{ kind: 'disk', thing: '/', unknown: true }, { kind: 'memory', unknown: true }])).body).toEqual({ ok: true, value: { ok: true } });
   expect(f.db.select().from(boxReadings).all()).toMatchObject([
     { kind: 'disk', thing: '/', readAt: null, unknownSince: expect.any(String), usedPercent: null },
     { kind: 'memory', thing: '', readAt: null, unknownSince: expect.any(String), freeMib: null },
@@ -94,7 +96,7 @@ it('takes a size up to the largest the read API can serve, and refuses one past 
   const f = fixture(), MIB = 1024 ** 2, INT_MAX = 2 ** 31 - 1;
   // 2^31 - 1 mebibytes and the bytes short of the next one: the largest a GraphQL Int can say.
   const most = (INT_MAX + 1) * MIB - 1;
-  expect((await f.report([{ kind: 'disk', thing: '/', sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { changed: true } });
+  expect((await f.report([{ kind: 'disk', thing: '/', sizeBytes: most, freeBytes: most }, { kind: 'memory', sizeBytes: most, freeBytes: most }])).body).toEqual({ ok: true, value: { ok: true } });
   expect(f.db.select().from(boxReadings).all().map(row => [row.sizeMib, row.freeMib, row.usedPercent])).toEqual([[INT_MAX, INT_MAX, 0], [INT_MAX, INT_MAX, null]]);
   // Its owner can still read it: the fields are served, with no error.
   expect(await f.query('{ boxReadings { sizeMib freeMib usedPercent } }', keys.sam)).toEqual({ data: { boxReadings: [{ sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: 0 }, { sizeMib: INT_MAX, freeMib: INT_MAX, usedPercent: null }] } });
@@ -175,4 +177,52 @@ it('refuses legacy intervals and any extra report fields', async () => {
   }
   expect(await send()).toEqual(accepted);
   expect(f.db.select().from(boxReadings).all().map(row => row.reportSequence)).toEqual([1, 1]);
+});
+
+it('answers numeric drift and a threshold crossing with byte-identical acknowledgements', async () => {
+  const f = fixture();
+  await f.report([disk(71)]);
+  const drift = await f.report([disk(72)]);
+  const crossed = await f.report([disk(91)]);
+  expect(drift.bytes).toBe(crossed.bytes);
+  expect(crossed.body).toEqual({ ok: true, value: { ok: true } });
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
+it('serves every column of both reading tables at the real root for the household owner', async () => {
+  const f = fixture();
+  await f.report([disk(91)]);
+  const reading = f.db.select().from(boxReadings).get()!;
+  const settings = f.db.select().from(boxAlertSettings).get();
+  const selection = (columns: object) => Object.keys(columns).join(' ');
+  expect(await f.query(`{ boxReadings { ${selection(getTableColumns(boxReadings))} boxRow { id } } boxAlertSettings { ${selection(getTableColumns(boxAlertSettings))} } }`, keys.owner)).toEqual({
+    data: { boxReadings: [{ ...reading, boxRow: { id: reading.box } }], boxAlertSettings: [settings] },
+  });
+});
+
+it('takes printable state paths verbatim and accepts an unnamed unknown state directory', async () => {
+  const f = fixture();
+  const path = '/worker state/<&;:`> café';
+  expect((await f.report([disk(91, path), { kind: 'disk', unknown: true, reason: 'state-path' }])).status).toBe(200);
+  expect(await f.query('{ boxReadings { thing unknownSince } }', keys.owner)).toEqual({
+    data: { boxReadings: [{ thing: path, unknownSince: null }, { thing: '', unknownSince: expect.any(String) }] },
+  });
+  expect(f.db.select().from(inbox).get()?.words).toContain(path);
+});
+
+it('refuses a report as a whole if a machine would retain more than 24 things', async () => {
+  const f = fixture();
+  const paths = Array.from({ length: 23 }, (_, i) => disk(50, `/d${i}`));
+  await f.report([...paths.slice(0, 15), memory]);
+  await f.report(paths.slice(15));
+  const rows = f.db.select().from(boxReadings).all();
+  const sequence = f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.readingSequence;
+  const refused = await f.report([disk(91, '/d0'), disk(99, '/overflow')]);
+  expect(refused.status).toBe(400);
+  expect(refused.body).toEqual({ ok: false, code: 'invalid', message: 'Machine watched thing limit exceeded' });
+  expect(f.db.select().from(boxReadings).all()).toEqual(rows);
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.readingSequence).toBe(sequence);
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  expect((await f.report([disk(91, '/d0')])).status).toBe(200);
+  expect(f.db.select().from(boxReadings).where(eq(boxReadings.thing, '/d0')).get()?.usedPercent).toBe(91);
 });

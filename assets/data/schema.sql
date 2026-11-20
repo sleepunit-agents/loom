@@ -852,6 +852,7 @@ CREATE TABLE `boxes` (
 	`slots` integer,
 	`readers` text,
 	`reading_sequence` integer DEFAULT 0 NOT NULL,
+	`reading_silence_sequence` integer DEFAULT 0 NOT NULL,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
 	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),

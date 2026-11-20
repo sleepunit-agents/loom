@@ -6,8 +6,8 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { liveWorker } from './shared-worker.js';
 import { householdOwner } from './shared-sharing.js';
 import { boxReadings } from './core/data/schema.js';
-import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, watchedPath } from './runtime/machine-check.js';
-import { MachineConditions, alertLines, setAlertLines } from './runtime/machine-conditions.js';
+import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, watchedPath } from './runtime/machine-check.js';
+import { MachineConditions, WatchedThingLimit, alertLines, setAlertLines } from './runtime/machine-conditions.js';
 
 // loom keeps a size in whole mebibytes and the read API serves an integer column as a GraphQL `Int`, which
 // ends at 2^31 - 1 (drizzle-graphql maps SQLiteInteger to GraphQLInt). A larger size is refused here and
@@ -18,10 +18,12 @@ const bytes = z.number().int().min(0).max(SIZE_BYTES_MAX);
  * watched, held to a short length and a plain alphabet (`watchedPath`, which says what that does and does
  * not protect). No judgement: whether a number is a fault is decided here (MachineConditions), and every
  * word of a notice but the path is loom's. `unknown` names a thing the worker watches and could not read. */
-export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(),
+export const machineReading = z.object({ kind: z.enum(boxReadings.kind.enumValues), thing: z.string().refine(watchedPath).optional(), unknown: z.literal(true).optional(), reason: z.literal('state-path').optional(),
   sizeBytes: bytes.optional(), freeBytes: bytes.optional(), engineStatus: z.union([z.literal(200), z.number().int().min(300).max(599)]).optional() }).strict().superRefine((reading, context) => {
   const issue = (message: string) => context.addIssue({ code: 'custom', message });
-  if ((reading.kind === 'disk') !== (reading.thing !== undefined)) issue('A disk is named by its path, and nothing else is named');
+  if (reading.reason === 'state-path') {
+    if (reading.kind !== 'disk' || reading.thing !== undefined || !reading.unknown) issue('Only an unknown state directory can have no path');
+  } else if ((reading.kind === 'disk') !== (reading.thing !== undefined)) issue('A disk is named by its path, and nothing else is named');
   const numbers = reading.sizeBytes !== undefined || reading.freeBytes !== undefined;
   if (reading.unknown) {
     if (numbers || reading.engineStatus !== undefined) issue('An unknown reading carries no values');
@@ -42,18 +44,23 @@ export function registerSharedMachineReadings(operations: Operations, db: DataDa
   operations.register({ name: 'runtime.machineReadings', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ readings: z.array(machineReading).max(WATCHED_PATHS_MAX + 2)
       .refine(readings => readings.filter(row => row.kind === 'disk').length <= WATCHED_PATHS_MAX &&
-        new Set(readings.map(row => JSON.stringify([row.kind, row.thing]))).size === readings.length, 'Report each watched thing once') }).strict(), output: z.object({ changed: z.boolean() }).strict(),
+        new Set(readings.map(row => JSON.stringify([row.kind, row.thing]))).size === readings.length, 'Report each watched thing once') }).strict(), output: z.object({ ok: z.literal(true) }).strict(),
     may: viewer => !!liveWorker(db, viewer, runner(viewer)),
     run(ctx, input) {
       const box = liveWorker(db, ctx.viewer, runner(ctx.viewer));
       if (!box) throw new OperationError('denied', 'Worker required');
-      const { changed } = conditions.read(box, input.readings);
+      let changed: boolean;
+      try { ({ changed } = conditions.read(box, input.readings)); }
+      catch (error) {
+        if (error instanceof WatchedThingLimit) throw new OperationError('invalid', WATCHED_THING_LIMIT_ERROR);
+        throw error;
+      }
       // The numbers move with every reading. A state a person is shown (a condition raised or cleared, the
       // container runtime answering or not, a thing unknown, readable again, stale, added or dropped) is an
       // ordinary change, told at once. Numbers alone are a stamp and reach an open window as a last-seen
       // time does (docs/accepted-tradeoffs.md): MachineConditions.read says which this was.
       if (changed) ctx.changed('box', box); else ctx.stampOnly?.();
-      return { changed };
+      return { ok: true as const };
     },
   });
   operations.register({ name: 'machine.setAlertLines', write: true, recheckPolicy: true,

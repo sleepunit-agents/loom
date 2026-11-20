@@ -172,7 +172,7 @@ it('raises low memory and a container runtime that answers with errors only when
   expect(f.closed().map(([, reason]) => reason).sort()).toEqual(['2 GB of memory is available, over the 512 MB floor.', 'The container runtime answered successfully.']);
 });
 
-it('treats missing readings as unknown and closes nothing on empty reports', () => {
+it('expires and drops omitted readings through empty reports alone', () => {
   const f = fixture();
   f.read(disk(91), memory(300));
   f.read(disk(92), memory(300));
@@ -183,11 +183,12 @@ it('treats missing readings as unknown and closes nothing on empty reports', () 
     { freeMib: 300, level: 'raised', readAt, unknownSince: f.now(), unknownMs: 0, absentMs: 0 },
   ]);
   expect(f.open()).toHaveLength(2);
-  observeHours(f, 24);
+  observeHours(f, 23);
   expect(f.open()).toHaveLength(2);
-  f.read(memory(9000));
-  expect(f.rows().map(row => row.kind)).toEqual(['memory']);
-  expect(f.closed().map(([, why]) => why)).toContain('/ is no longer reported by this machine.');
+  observeHours(f, 1);
+  expect(f.rows()).toEqual([]);
+  expect(f.open()).toEqual([]);
+  expect(f.closed().map(([, why]) => why)).toContain('/ has not been read since Nov 19, 2:10 PM; the last reading was 92% full (16 GB free).');
 });
 
 it('closes what it said about a thing that has been unknown for a day, marks the record stale, and starts a new occasion when it is read again', () => {
@@ -206,7 +207,7 @@ it('closes what it said about a thing that has been unknown for a day, marks the
   f.advance(HOUR - 5 * MINUTES);
   expect(f.read(...gone)).toEqual({ changed: true });
   expect(f.open()).toEqual([]);
-  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', '/ can no longer be read; last read Nov 19, 8:05 AM at 96%.']]);
+  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', '/ has not been read since Nov 19, 8:05 AM; the last reading was 96% full (8 GB free).']]);
   // The last numbers are kept, marked stale and held to no line.
   expect(f.rows()[0]).toMatchObject({ level: 'ok', stale: true, usedPercent: 96, since: null, urgentSince: null, readAt: '2026-11-19T14:05:00.000Z' });
   expect(f.read(...gone)).toEqual({ changed: false });
@@ -262,7 +263,7 @@ it('restarts the count on an unknown reading, an omitted reading, or a silence n
   expect(f.mail()).toEqual([]);
   machines.sweep();
   machines.sweep();
-  expect(f.db.select().from(boxes).get()?.readingSequence).toBe(6);
+  expect(f.db.select().from(boxes).get()?.readingSequence).toBe(5);
   machines.heartbeat('box-1');
   f.read(memory(300), down);
   expect(f.open()).toEqual([]);
@@ -321,7 +322,7 @@ it('closes what was said about a machine taken out of the household, and takes n
   expect(f.service.sweep()).toBe(true);
   expect(f.rows()).toEqual([]);
   expect(f.open()).toEqual([]);
-  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', 'No longer watched']]);
+  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', 'Machine was removed from the household.']]);
   expect(() => f.read(disk(96))).toThrow('Machine not available');
   expect(f.service.sweep()).toBe(false);
 });
@@ -395,7 +396,7 @@ it('keeps independent occasions for paths with identical readings and uses each 
   f.read(unknown(a), disk(60, b));
   expect(f.closed().map(([, why]) => why)).toEqual(['/srv/b is at 60% (80 GB free), under the 85% line.']);
   observeHours(f, 24, unknown(a), disk(60, b));
-  expect(f.closed().map(([, why]) => why)).toContainEqual(expect.stringMatching(/^\/srv\/a can no longer be read; .* at 93%\.$/));
+  expect(f.closed().map(([, why]) => why)).toContainEqual(expect.stringMatching(/^\/srv\/a has not been read since .*; the last reading was 93% full/));
 });
 
 it('drops a path after a full day of uninterrupted absence and gives it a new occasion on return', () => {
@@ -413,7 +414,7 @@ it('drops a path after a full day of uninterrupted absence and gives it a new oc
   observeHours(f, 23, healthy);
   expect(f.open()).toHaveLength(1);
   observeHours(f, 1, healthy);
-  expect(f.closed()).toEqual([[first.words, '/srv/data is no longer reported by this machine.']]);
+  expect(f.closed()).toEqual([[first.words, '/srv/data has not been read since Nov 20, 1:20 PM; the last reading was 92% full (16 GB free).']]);
   expect(f.rows().map(row => row.thing)).toEqual(['/']);
   f.read(healthy, disk(91, path));
   expect(f.open()).toEqual([first.words]);
@@ -476,4 +477,58 @@ it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: 
   f.read(then.reading);
   expect(f.closed()).toEqual(closed === null ? [] : [[opened, closed]]);
   expect(f.open()).toEqual(said ? [said] : closed === null ? [opened] : []);
+});
+
+it.each([16, -16])('publishes an otherwise identical reading after a wall-clock step of %i minutes', minutes => {
+  const f = fixture();
+  f.read(disk(50));
+  f.stepClock(minutes * MINUTES);
+  expect(f.read(disk(50))).toEqual({ changed: true });
+  expect(f.read(disk(50))).toEqual({ changed: false });
+});
+
+it('describes only the last successful runtime read when it goes unknown and is then omitted', () => {
+  const f = fixture(), down = { kind: 'containers' as const, engineStatus: 503 };
+  f.read(down);
+  f.read(down);
+  f.read({ kind: 'containers', unknown: true });
+  observeHours(f, 24, disk(50));
+  expect(f.closed()).toEqual([['loom: the container runtime answered with an error (503).',
+    'The container runtime has not been read since Nov 19, 2:10 PM; the last reading was HTTP 503.']]);
+});
+
+it('applies already accumulated expiry in the sweep without inventing observation time', () => {
+  const f = fixture();
+  f.read(disk(91), disk(91, '/omitted'));
+  f.read(unknown('/'));
+  f.db.update(boxReadings).set({ unknownMs: STALE_MS }).run();
+  f.db.update(boxReadings).set({ absentMs: STALE_MS }).where(eq(boxReadings.thing, '/omitted')).run();
+  const sequence = f.db.select().from(boxes).get()?.readingSequence;
+  expect(f.service.sweep()).toBe(true);
+  expect(f.open()).toEqual([]);
+  expect(f.rows()).toMatchObject([{ thing: '/', stale: true, unknownMs: STALE_MS }]);
+  expect(f.db.select().from(boxes).get()?.readingSequence).toBe(sequence);
+  expect(f.service.sweep()).toBe(false);
+});
+
+it('frees a place on the report that drops an omitted path and publishes the new path once', () => {
+  const f = fixture();
+  const paths = Array.from({ length: 24 }, (_, i) => disk(50, `/d${i}`));
+  f.read(...paths.slice(0, 16));
+  f.read(...paths.slice(8));
+  expect(() => f.read(disk(50, '/new'))).toThrow();
+  observeHours(f, 23, ...paths.slice(8));
+  f.advance(HOUR - 5 * MINUTES);
+  expect(f.read(...paths.slice(9), disk(50, '/new'))).toEqual({ changed: true });
+  expect(f.rows()).toHaveLength(17);
+  expect(f.rows().some(row => row.thing === '/new')).toBe(true);
+  expect(f.read(...paths.slice(9), disk(50, '/new'))).toEqual({ changed: false });
+});
+
+it('publishes the first fresh reading after restart even though it cannot count a prior process interval', () => {
+  const f = fixture();
+  f.read(disk(50));
+  f.db.update(boxReadings).set({ observedAt: 'previous-process:42' }).run();
+  f.advance(16 * MINUTES);
+  expect(new MachineConditions(f.db, f.now, () => 0).read('box-1', [disk(50)])).toEqual({ changed: true });
 });

@@ -67,9 +67,9 @@ export class Machines {
           const written = rowsWritten(this.db);
           const notice = notices.send({ toKind: 'person', to: box.owner, member: box.owner, source: 'notice', sourceId: outage(box),
             fromKind: 'unknown', words: `Machine ${box.name} has stopped reporting.`, refs: [box.id] });
-          // Leave a gap in the reading sequence only when this outage first raised a notice.
+          // Break reading continuity once per outage without counting an incoming report.
           if (rowsWritten(this.db) !== written) {
-            this.db.update(boxes).set({ readingSequence: box.readingSequence + 1 }).where(eq(boxes.id, box.id)).run();
+            this.db.update(boxes).set({ readingSilenceSequence: box.readingSequence }).where(eq(boxes.id, box.id)).run();
           }
           return notice;
         });

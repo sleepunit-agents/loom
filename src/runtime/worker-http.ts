@@ -1,5 +1,5 @@
 import type { LoginReason } from './account-login-check.js';
-import type { MachineReading } from './machine-check.js';
+import { WATCHED_THING_LIMIT_ERROR, type MachineReading } from './machine-check.js';
 import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. Claims are never replayed. */
 import { randomUUID } from 'node:crypto';
@@ -37,6 +37,8 @@ export interface WorkerHttpOptions {
   /** Wait between attempts at a receipt-backed report. */
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
+export class WorkerWatchedThingLimit extends Error {}
+
 class WorkerOperationFailure extends Error {
   constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false) {
     super(`Worker ${name} failed; outcome may be uncertain`);
@@ -74,7 +76,7 @@ function operationCaller(input: WorkerHttpOptions) {
       } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
       // Only a parsed refusal from Loom says this worker has lost authority. A gateway
       // can return its own page (including a 403) while Loom is starting.
-      if (!response.ok && !(name === 'next' && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
+      if (!response.ok && !((name === 'next' || name === 'machineReadings') && response.status === 400) && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
         throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
       }
       if (!response.body) throw new WorkerOperationFailure(name, false);
@@ -94,12 +96,15 @@ function operationCaller(input: WorkerHttpOptions) {
       if (signal.aborted) throw new Error('Worker request cancelled');
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (!response.ok) {
+        if (name === 'machineReadings' && z.object({ ok: z.literal(false), code: z.literal('invalid'), message: z.literal(WATCHED_THING_LIMIT_ERROR) }).safeParse(data).success) {
+          throw new WorkerWatchedThingLimit(WATCHED_THING_LIMIT_ERROR);
+        }
         const denied = z.object({ ok: z.literal(false), code: z.literal('denied'), message: z.string() }).strict().safeParse(data).success;
         throw new WorkerOperationFailure(name, false, false, denied);
       }
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
     } catch (error) {
-      if (error instanceof WorkerOperationFailure) throw error;
+      if (error instanceof WorkerOperationFailure || error instanceof WorkerWatchedThingLimit) throw error;
       // Never include upstream bodies, URLs, tokens or fetch diagnostics in logs.
       throw new WorkerOperationFailure(name, deadline.signal.aborted);
     } finally {
@@ -154,7 +159,7 @@ export function reportWorkerAccountLogins(input: WorkerHttpOptions, logins: read
 /** What this machine's worker read about the machine itself (machine-check.ts), including unknown readings.
  * Loom tracks the report order. */
 export function reportWorkerMachineReadings(input: WorkerHttpOptions, readings: readonly MachineReading[]) {
-  return operationCaller(input)('machineReadings', { readings }, z.object({ changed: z.boolean() }).strict());
+  return operationCaller(input)('machineReadings', { readings }, z.object({ ok: z.literal(true) }).strict());
 }
 export function workerMachineReads(input: WorkerHttpOptions) {
   const call = operationCaller(input);

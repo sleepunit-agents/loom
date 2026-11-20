@@ -1042,13 +1042,13 @@ A worker reads a small fixed set of things on its own machine and tells loom
 the numbers (`runtime.machineReadings`). loom decides what is a condition,
 tells the machine's owner once, and closes what it said when a later reading is
 back under the line. No model takes part, and the worker sends no words of its
-own: numbers, an HTTP status, and for a disk the path watched.
+own: numbers, an HTTP status, and for a disk the path watched. Loom acknowledges
+a successful report without returning any household state.
 
 The worker uses Node's filesystem calls in its own disk helper, memory calls
 in the worker, and one bounded request to the configured container socket.
 
-- **Disks.** The filesystems under `/`, the state directory of a worker that
-  takes jobs, and each path in `watchPaths`. Include the container runtime's
+- **Disks.** The filesystems under `/`, the worker’s state directory when it has one, and each path in `watchPaths`. Include the container runtime's
   real data directory in `watchPaths` when it is on a separate filesystem.
   The worker keeps this set across rounds and starts it from configuration
   on every launch. Fullness follows `df`: used over used and available,
@@ -1056,8 +1056,8 @@ in the worker, and one bounded request to the configured container socket.
   List one path per filesystem. Two paths on the same filesystem produce two
   readings and can each raise a notice.
 - **Memory.** The total and the kernel estimate of what is available to start
-  something new. The worker uses `os.availableMemory()` where available,
-  with Linux’s `MemAvailable` as a fallback. If neither is available, the reading is unknown.
+  something new. The worker uses `os.availableMemory()` where available.
+  Without that estimate, the reading is unknown.
 - **The container runtime.** Whether the engine at `container.socket`
   answers a version request within five seconds. A completed error response
   counts as a refusal. A timeout or transport failure is unknown. Only workers
@@ -1076,11 +1076,11 @@ the final descriptor in `/proc/self/fd`, then checks the walked names again.
 If a directory such as `/var/lib/docker` is a symlink, configure the real
 directory. **Keep watched paths outside trees bodies can write.**
 See [accepted trade-offs](../accepted-tradeoffs.md).
-A watched path is absolute and at most 120 characters. Each component starts
-with a letter, digit, dot or underscore and continues with those or `@ + -`.
-The special components `.` and `..` are disallowed. An invalid `watchPaths`
-entry fails configuration. An invalid state path is skipped with a fixed
-diagnostic.
+A watched path is absolute and at most 120 characters. It can contain spaces
+and printable punctuation. Control characters, line breaks and `..`
+components are disallowed. An invalid `watchPaths` entry fails configuration.
+The worker reports a state directory outside these bounds as unknown with a
+fixed reason, without sending the directory name.
 
 Helpers can read in parallel. After five seconds the worker reports the path
 as unknown and leaves the helper alone. It starts a replacement only after
@@ -1144,7 +1144,10 @@ lines. A worker names a filesystem that large as unknown, so the rest of its
 report is taken. An unknown reading carries only its kind and, for a disk, its
 path. A container runtime that answers with an error reports its status, for
 example `503`. A transport failure or timeout reports unknown and raises no notice.
-A report can name up to 16 disk paths and one reading of each other kind.
+A report can carry up to 16 disk readings and one of each other kind. Loom
+keeps at most 24 things per machine. A report that would exceed that limit
+is refused whole with a fixed error that the worker logs once. Dropping a
+path frees its place.
 
 ### What the owner is told
 
@@ -1168,19 +1171,19 @@ with a maximum of one hour per interval. A process restart loses the open
 interval and preserves accumulated time. An interval crossed by a silence
 notice contributes no time. After a day of observed
 unreadability, loom marks the row stale and closes its notices with the last
-reading, for example `/srv can no longer be read; last read Nov 19, 8:05 AM at
-91%.` A later reading over a line starts a new occasion.
+reading, for example `/srv has not been read since Nov 19, 8:05 AM; the last
+reading was 91% full (18 GB free).` A later reading over a line starts a new
+occasion.
 
-If the thing has been absent from every report for a full day of observed
-time, loom drops the row and closes its notices with, for example,
-`/srv is no longer reported by this machine.` Naming the thing, even as
-unknown, restarts the absence count. An empty report contributes observations
-but closes nothing by itself. Heartbeats and runtime sweeps add no observed
-time.
+After a full day of observed absence, loom drops the row and closes any open
+notices with the same wording. Naming the thing, even as unknown, restarts
+the absence count. An empty report observes absence for every known thing.
+Sweeps apply any expiry already reached, and heartbeats and sweeps add no
+observed time.
 
 A machine that stops reporting keeps its conditions and their notices as they
 were; its silence is its own notice. A machine taken out of the household has
-its readings dropped and their notices closed (`No longer watched`), at the
+its readings dropped and their notices closed (`Machine was removed from the household.`), at the
 next sweep.
 
 `box_readings` keeps the latest reading of each thing and no history. It is

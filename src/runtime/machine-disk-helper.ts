@@ -19,7 +19,7 @@ class UnsafePath extends Error {}
 const sameDirectory = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
 
 function walk(path: string, descriptors: number[], expected?: BigIntStats[]) {
-  const steps = ['/', ...(path === '/' ? [] : path.slice(1).split('/'))];
+  const steps = ['/', ...path.split('/').filter(step => step && step !== '.')];
   const stats = steps.map((step, index) => {
     // Linux procfs gives Node a directory-relative lookup. Only the next
     // component comes from the watched path, with no ancestor resolved again.

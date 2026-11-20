@@ -167,7 +167,7 @@ it('closes on its sweep what was said about the condition of a machine since rem
   expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.words])).toEqual([['waiting', 'Workshop: / is 91% full (9 GB free). Alerts at 85%.']]);
   f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run();
   f.clock.advance(30_000);
-  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.resolution])).toEqual([['resolved', 'No longer watched']]);
+  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all().map(row => [row.state, row.resolution])).toEqual([['resolved', 'Machine was removed from the household.']]);
   expect(f.error).not.toHaveBeenCalled();
 });
 

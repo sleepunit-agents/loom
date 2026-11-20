@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNotNull } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, or } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { boxAlertSettings, boxes, boxReadings } from '../core/data/schema.js';
 import { householdTimezone } from '../core/data/household-settings.js';
@@ -39,6 +39,9 @@ const clearRoom = (floor: number) => floor + Math.floor((floor + 9) / 10);
 const FLOOR_APPLIES = 2;
 /** How long a thing may be unknown before loom closes what it said about it. */
 export const STALE_MS = DAY_MS;
+const WATCHED_THINGS_MAX = 24;
+export class WatchedThingLimit extends Error {}
+
 const MAX_OBSERVED_INTERVAL_MS = 60 * 60_000;
 const clockEpoch = randomUUID();
 const MIB = 1024 * 1024;
@@ -175,12 +178,13 @@ export function clearedWords(before: Reading, row: Reading, lines: AlertLines, u
   return `${said}, under the ${lines.diskPercent}% line.`;
 }
 
-/** The reason a notice is closed with when its thing has been unknown for STALE_MS: that it can no longer
- * be read, and what the last reading was. `when` is the time of that reading as its reader's household writes times. */
+/** Describe the last reading without attributing its absence to a cause. */
 export function staleWords(row: Reading, when: string): string {
-  if (row.kind === 'containers') return `The container runtime did not answer; last answered ${when} with an error (${row.engineStatus}).`;
-  if (row.kind === 'memory') return `Memory can no longer be read; last read ${when} with ${roomWords(row.freeMib ?? 0)} available.`;
-  return `${row.thing} can no longer be read; last read ${when} at ${row.usedPercent}%.`;
+  const thing = row.kind === 'containers' ? 'The container runtime' : row.kind === 'memory' ? 'Memory' : row.thing;
+  const value = row.kind === 'containers' ? `HTTP ${row.engineStatus}` :
+    row.kind === 'memory' ? `${roomWords(row.freeMib ?? 0)} available` :
+      `${row.usedPercent}% full (${roomWords(row.freeMib ?? 0)} free)`;
+  return `${thing} has not been read since ${when}; the last reading was ${value}.`;
 }
 
 export class MachineConditions {
@@ -196,7 +200,7 @@ export class MachineConditions {
   private settle(machine: Box | undefined, before: Reading | undefined, after: Reading | undefined, lines: AlertLines, at: string, gone = 'No longer watched'): void {
     const notices = new Conversations(this.db, () => at, lateMailWaits);
     // `after` is absent when the thing is no longer watched, and stale when it has been unknown too long:
-    // neither is a reading that put anything right, and the reason says which.
+    // neither is a fresh reading that cleared an alert line.
     const why = (urgent: boolean) => after && !after.stale ? clearedWords(before!, after, lines, urgent) : gone;
     if (before && before.level !== 'ok' && (!after || after.level === 'ok')) notices.resolveSource('notice', raisedId(before), why(false));
     if (before?.level === 'urgent' && after?.level !== 'urgent') notices.resolveSource('notice', urgentId(before), why(true));
@@ -246,6 +250,23 @@ export class MachineConditions {
       absentMs: absent ? Math.min(STALE_MS, row.absentMs === null ? 0 : row.absentMs + elapsed) : null };
   }
 
+  private expiryReason(row: Reading): string | undefined {
+    return row.readAt ? staleWords(row, this.when(row.readAt)) : undefined;
+  }
+
+  private drop(row: Reading, lines: AlertLines, at: string, reason?: string): void {
+    this.db.delete(boxReadings).where(where(row)).run();
+    this.settle(undefined, row, undefined, lines, at, reason);
+  }
+
+  private expire(row: Reading): Reading | undefined {
+    if (row.absentMs !== null && row.absentMs >= STALE_MS) return undefined;
+    if (row.unknownMs >= STALE_MS && !row.stale) {
+      return { ...row, stale: true, level: 'ok', since: null, urgentSince: null };
+    }
+    return row;
+  }
+
   /** Numeric drift is a stamp. A change in the state a person is shown is published immediately. */
   read(box: string, readings: readonly MachineReading[]): { changed: boolean } {
     const at = this.at(), now = Math.floor(this.elapsed());
@@ -253,53 +274,57 @@ export class MachineConditions {
       const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();
       if (!machine || machine.revokedAt) throw new Error('Machine not available');
       const sequence = machine.readingSequence + 1;
-      this.db.update(boxes).set({ readingSequence: sequence }).where(eq(boxes.id, box)).run();
+      const seenAt = Date.parse(at);
       const lines = alertLines(this.db);
       const keyOf = (reading: { kind: Reading['kind']; thing?: string }) => JSON.stringify([reading.kind, reading.thing ?? '']);
       const report = new Map(readings.map(reading => [keyOf(reading), reading]));
       const previous = new Map(this.db.select().from(boxReadings).where(eq(boxReadings.box, box)).all().map(row => [keyOf(row), row]));
-      let changed = false;
-      for (const key of new Set([...previous.keys(), ...report.keys()])) {
+      const updates = [...new Set([...previous.keys(), ...report.keys()])].map(key => {
         const before = previous.get(key), reading = report.get(key);
         const row = before ?? this.blank({ box, kind: reading!.kind, thing: reading!.thing ?? '' });
-        const consecutive = row.reportSequence === sequence - 1;
-        const interval = this.interval(row, now);
-        let after = reading && !reading.unknown
+        const consecutive = row.reportSequence === sequence - 1 && row.reportSequence > machine.readingSilenceSequence;
+        const after = reading && !reading.unknown
           ? this.next(row, values(reading), lines, at, consecutive)
-          : this.unknown(row, at, consecutive ? interval : 0, !reading);
-        // Empty reports are observations. Closing a notice requires a report with readings.
-        if (readings.length && after.absentMs === STALE_MS) {
-          this.db.delete(boxReadings).where(where(row)).run();
-          const thing = row.kind === 'disk' ? row.thing : row.kind === 'memory' ? 'Memory' : 'The container runtime';
-          this.settle(undefined, row, undefined, lines, at, `${thing} is no longer reported by this machine.`);
+          : this.unknown(row, at, consecutive ? this.interval(row, now) : 0, !reading);
+        return { before, after: this.expire(after) };
+      });
+      // Count the retained rows after expiry, before committing any part of the report.
+      if (updates.filter(({ after }) => after !== undefined).length > WATCHED_THINGS_MAX) throw new WatchedThingLimit();
+      this.db.update(boxes).set({ readingSequence: sequence }).where(eq(boxes.id, box)).run();
+
+      let changed = false;
+      for (const { before, after } of updates) {
+        if (!after) {
+          this.drop(before!, lines, at, this.expiryReason(before!));
           changed = true;
           continue;
         }
-        let why: string | undefined;
-        if (readings.length && after.unknownMs === STALE_MS && !after.stale) {
-          after = { ...after, stale: true, level: 'ok', since: null, urgentSince: null };
-          if (row.readAt) why = staleWords(row, this.when(row.readAt));
-        }
         this.save(before, { ...after, observedAt: `${clockEpoch}:${now}`, reportSequence: sequence });
-        this.settle(machine, before, after, lines, at, why);
+        this.settle(machine, before, after, lines, at, after.stale && !before?.stale ? this.expiryReason(after) : undefined);
+        const priorAge = before?.readAt ? seenAt - Date.parse(before.readAt) : NaN;
         changed ||= !before || before.level !== after.level || before.engineStatus !== after.engineStatus ||
           before.unknownSince !== after.unknownSince || before.stale !== after.stale ||
-          (after.unknownSince === null && interval > READING_OLD_MS);
+          (after.unknownSince === null && (priorAge > READING_OLD_MS || priorAge < 0));
       }
       return { changed };
     }, { behavior: 'immediate' });
   }
 
-  /** Only reports can advance unreadable observations. Revocation closes the machine's notices. */
+  /** Apply deadlines already reached by observations and close notices for revoked machines. */
   sweep(): boolean {
     const at = this.at();
     return this.db.transaction(() => {
       const lines = alertLines(this.db);
-      const rows = this.db.select({ reading: boxReadings }).from(boxReadings)
-        .innerJoin(boxes, eq(boxes.id, boxReadings.box)).where(isNotNull(boxes.revokedAt)).all();
-      for (const { reading } of rows) {
-        this.db.delete(boxReadings).where(where(reading)).run();
-        this.settle(undefined, reading, undefined, lines, at);
+      const rows = this.db.select({ reading: boxReadings, revokedAt: boxes.revokedAt }).from(boxReadings)
+        .innerJoin(boxes, eq(boxes.id, boxReadings.box)).where(or(isNotNull(boxes.revokedAt),
+          gte(boxReadings.absentMs, STALE_MS), and(eq(boxReadings.stale, false), gte(boxReadings.unknownMs, STALE_MS)))).all();
+      for (const { reading, revokedAt } of rows) {
+        const after = revokedAt ? undefined : this.expire(reading);
+        if (!after) this.drop(reading, lines, at, revokedAt ? 'Machine was removed from the household.' : this.expiryReason(reading));
+        else {
+          this.save(reading, after);
+          this.settle(undefined, reading, after, lines, at, this.expiryReason(reading));
+        }
       }
       return rows.length > 0;
     }, { behavior: 'immediate' });

@@ -616,7 +616,10 @@ are used to make decisions about other machines or their owners.
 
 Loom uses the configured path as the identity of a disk reading. Two paths
 on the same filesystem each have their own condition and can each notify the
-owner. List one path per filesystem when configuring the worker.
+owner. List one path per filesystem when configuring the worker. A worker can
+report printable path names of its choosing for its own machine. Notices use
+plain text, the web renders paths as text, and MCP encodes replies as JSON.
+Loom retains at most 24 things per machine.
 
 ### A hung mount can leave a sleeping disk helper
 
@@ -645,7 +648,8 @@ replacement worker can leave another asleep if the mount is still hung.
   is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
   once: a condition raised, made urgent or cleared; the container runtime going from answering to not
   answering or back; a thing becoming unknown, readable again or stale; a thing watched for the first
-  time or no more; and a fresh reading after the previous one has aged out.
+  time or no more; and a fresh reading when the stored read time is more than fifteen minutes old
+  or lies in the future on the server’s wall clock.
   `src/shared-live-idle.test.ts` holds the stamp and ordinary-change paths.
 - **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
   was waiting is set again by the next such time written, a minute from then; with nothing more written it
