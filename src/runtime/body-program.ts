@@ -213,7 +213,7 @@ export async function bodyProgram(input: {
     // this job need not be the asker of the last (harness-traits.ts, workingFor).
     if(bridge || policy?.word === 'others' || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
     if(job.venue==='loom' && policy?.word==='owners'){
-      const delegation='Check conversation.handoffOptions for assigned peers and current Codex availability. To delegate through Loom, call conversation.handoff with either agent (a listed peer) or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, include the repository and commit. Loom returns the Codex result to this thread. For help inside this job, use native subagents when your harness provides them.';
+      const delegation='Check conversation.handoffOptions for assigned peers and current Codex availability. To delegate through Loom, call conversation.handoff with either agent (a listed peer) or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, include the repository and commit. Loom returns the Codex result to this thread. To check progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
       context.unshift(delegation);continued.unshift(delegation);
     }
     if(job.venue==='discord'&&job.venueDescription){

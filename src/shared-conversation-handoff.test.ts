@@ -8,6 +8,7 @@ import * as s from './core/data/schema.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
+import {reviewPlace} from './core/conversations/review-place.js';
 import {handoffDeadline,handoffEnvelope,sealHandoff} from './core/conversations/handoff-words.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -287,6 +288,18 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
  const response=await f.call('handoff',request,'launch');
  expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
  const child=(await response.json()).value.conversation;
+ const status=(conversation:string,token=bodyCredentials.body)=>f.call('handoffStatus',{conversation},'status',token);
+ if(mode==='success'){
+  expect((await (await status(child)).json()).value).toEqual({jobState:null,resultDelivered:false});
+  expect((await status(f.thread.conversation)).status).toBe(403);
+  expect((await status('missing')).status).toBe(403);
+  const parent=db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
+  const other=root.services.comms!.threads.open({agent:'art',member:'alice',project:'pond',title:'Another private thread'});
+  db.insert(s.jobs).values({...parent,id:'other-parent',conversation:other.conversation,state:'done',endedAt:now()}).run();
+  const foreign=root.services.conversations.open({agent:'art',member:'alice',project:'pond',venue:'handoff',place:reviewPlace('other-parent','brief'),label:'Other child',direct:false});
+  expect((await status(foreign.id)).status).toBe(403);
+  expect((await status(child,bodyCredentials.agent)).status).toBe(403);
+ }
  db.update(s.inbox).set({state:'done',job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
  db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
  f.clock.advance(60_000);
@@ -341,6 +354,11 @@ it.each(['success','failure','archive','transient','occupied'] as const)('delive
   clean.push(()=>receiver.close());
   const received:string[]=[];
   await receiver.takeAndAccept(async item=>{if(item.words)received.push(item.words);});if(id===holding)await receiver.settle();
+  if(mode==='success'||mode==='occupied'){
+   const response=await status(child,token);
+   expect(response.status).toBe(200);
+   expect((await response.json()).value).toEqual({jobState:'running',resultDelivered:true});
+  }
   return received;
  };
  if(holding){
