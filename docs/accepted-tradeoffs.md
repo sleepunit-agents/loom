@@ -860,8 +860,8 @@ replacement worker can leave another asleep if the mount is still hung.
 - **An owner cannot yet give a named outside person more.** There is no way to say "this person's jobs may
   read files" or "this helper may use the shell read-only". Every job on anybody else's word gets the same
   floor. That grant is the follow-up to this change.
-- A harness loom has no adapter for (a machine's own `{job, build}` runner) is the machine's business: loom
-  hands it the word in the job's room and cannot hold it to anything.
+- Placement refuses guest work on a harness without a registered adapter. Loom can only verify the tool
+  restrictions of a harness it knows.
 - Where: `src/policy.ts` (`loomToolsOnly`); `src/runtime/harness-traits.ts` (`hasGuest`, `bodyReach`,
   `refusesJob`, `hasFileTools`); `src/runtime/claude-body.ts`; `src/runtime/body-program.ts`;
   `src/runtime/body-secret-tools.ts`; `src/shared-secret-inputs.ts`; `src/shared-secret-agent-commands.ts`;

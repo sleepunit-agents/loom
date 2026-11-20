@@ -19,7 +19,7 @@ import type { WorkerExitBy } from './job-exit.js';
 import { SILENCE_MS } from './silence.js';
 import { rowsWritten } from '../core/data/rows-written.js';
 /** What loom records on a job on anybody else's word that no harness the agent has can run. */
-export const UNHELD_NOTE = 'Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and every model the agent has runs on a harness that always has a shell. Give the agent a model that runs on Claude Code.';
+export const UNHELD_NOTE = 'Never started: this job is not working for the agent\'s owners, so it runs with loom\'s tools only, and none of its models has a harness that can enforce that limit. Give the agent a model that runs on Claude Code.';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;

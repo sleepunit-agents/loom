@@ -168,7 +168,7 @@ said whose it was, and no stage is guessed.
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 30 | worker house | The house's image does not meet the image contract: it does not say it is a house of this layout (`loom.house="2"`), it does not list the job's harness, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
-| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Or, at once: the job works on anybody else's word and every model the agent has runs on a harness that always has a shell ("What a body may use"). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
+| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Or, at once: the job works on anybody else's word and none of its models has a harness that can enforce that limit ("What a body may use"). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 | 32 | worker build time | The house was not fetched and built within the build limit (`buildTimeoutMs`). The worker reported on the job all the while. |
 
 Any other code is the runner's own (a builder or a custom runner). A job swept
@@ -1360,8 +1360,7 @@ For a job on anybody else's word:
 When every model the agent has runs on a harness that cannot, the job is ended
 as soon as a machine asks for work: failed by loom (exit 31), with the note
 "Never started: this job is not working for the agent's owners, so it runs with
-loom's tools only, and every model the agent has runs on a harness that always
-has a shell. Give the agent a model that runs on Claude Code." The mail that
+loom's tools only, and none of its models has a harness that can enforce that limit. Give the agent a model that runs on Claude Code." The mail that
 made the job anybody else's is closed with the same note, so it is carried into
 no later job. An owner's message in that conversation, waiting behind it or
 written later, gets a job on owners' word, which runs: the end of the guest's
