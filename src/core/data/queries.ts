@@ -1,13 +1,14 @@
 import type Database from 'better-sqlite3';
+import { taskReadiness } from './task-readiness.js';
 import { taskShelved } from './project-in-use.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
-import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
+import { type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
 import { GraphQLError, GraphQLSchema, GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, isInputObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
 import { dataValue } from './subscriptions.js';
-import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
+import { schema, tables, taskComments } from './schema.js';
 
 type TableName = keyof typeof tables;
 type Fields = Record<string, AnyColumn>;
@@ -70,11 +71,7 @@ export function dataQueries(client: Database.Database, options: {
       Object.entries(value.config(createTableRelationsHelpers(value.table))).map(([key, relation]) => [key, names.get(getTableName(relation.referencedTable))!]),
     ));
   }
-  const readiness = (fields: Fields) => {
-    const blocker = alias(tasks, 'data_ready_blocker');
-    // A shelved task is not ready: its project is retired (project-in-use.ts, `taskShelved`).
-    return sql`${fields.status} = 'open' and ${fields.type} <> 'epic' and not ${taskShelved({ status: fields.status, project: fields.project })} and not exists (select 1 from ${taskLinks} inner join ${tasks} as ${sql.identifier("data_ready_blocker")} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} <> 'closed')`;
-  };
+
   function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? [], root = true): ReadConfig {
     const config = input === true ? {} : input;
     const predicate = visibility[name]!;
@@ -85,7 +82,7 @@ export function dataQueries(client: Database.Database, options: {
         extras: (fields: Fields) => {
           const extras: Record<string, SQL.Aliased> = {};
           if (fieldsSelected.has('isReady')) {
-            const ready = readiness(fields);
+            const ready = taskReadiness(fields);
             extras.isReady = sql`${{ getSQL: () => ready }}`.mapWith(Boolean).as('data_is_ready');
           }
           if (fieldsSelected.has('isShelved')) {
@@ -114,7 +111,7 @@ export function dataQueries(client: Database.Database, options: {
         // Readiness is a property of the visible task, not of the subset of
         // blockers the caller can read. Never return hidden blocker rows/IDs.
         const ready = root && name === 'tasks' && querySelection.getStore()?.fieldName === 'readyTasks'
-          ? readiness(fields) : undefined;
+          ? taskReadiness(fields) : undefined;
         return and(sql`${{ getSQL: () => allowed }}`, ready ? sql`${{ getSQL: () => ready }}` : undefined, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {

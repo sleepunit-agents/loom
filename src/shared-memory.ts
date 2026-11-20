@@ -30,7 +30,6 @@ import {verifyKnowledgePages} from './backends/knowledge-verification.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {createPersonHalf} from './backends/people-creation.js';
-import type {TaskService} from './apps/tasks.js';
 import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
 import {migrateMindReceipts,upgradeMindReceipts} from './pieces/mind/receipt-schema.js';
@@ -127,7 +126,7 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
  if(options&&(typeof options.checkingAgent!=='string'||!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
 }
-export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,tasks:Pick<TaskService,'ready'>,embedding?:()=>EmbeddingProvider,report?:(error:unknown)=>void){
+export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,embedding?:()=>EmbeddingProvider,report?:(error:unknown)=>void){
  validateSharedMemoryOptions(db,options);
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
@@ -152,7 +151,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
  try{
   const people=peopleReader({directory:sources?.commons.people,get agents(){return listed.agents;},sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
-  const projects=createProjectsReader(clock,{get agents(){return listed.agents;},sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
+  const projects=createProjectsReader(clock,{get agents(){return listed.agents;},sharing,people,...sharedProjectSections(db),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);

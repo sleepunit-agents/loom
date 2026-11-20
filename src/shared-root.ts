@@ -206,7 +206,7 @@ export function sharedRoot(options: {
   }) : undefined;
   // Mail about a task goes into its conversation only for a person who reads that conversation (policy.ts, addressee).
   const tasks=taskService(db,now,(person,conversation)=>canReadSharedConversation(db,addressee(person),conversation));
-  const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding,report);
+  const memory=sharedMemory(db,clock,options.memory,options.memoryEmbedding,report);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);

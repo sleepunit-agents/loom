@@ -790,7 +790,7 @@ it('reads whether a project is retired, and whether a task is shelved, in one pl
   // Nor does it read whether a project is removed: what state a project is in is asked of the one file.
   expect(text('src/shared-projects.ts')).not.toMatch(/row\.removedAt|project\.removedAt|projects\.removedAt/);
   // Every reader that picks work asks the one filter: the ready queue, readiness in the data door, the sweep, the hub.
-  for (const file of ['src/apps/tasks.ts', 'src/core/data/queries.ts', 'src/core/tempo/work-sweep.ts', 'src/shared-memory-projects.ts']) expect(text(file), file).toContain('taskShelved(');
+  for (const file of ['src/apps/tasks.ts', 'src/core/data/queries.ts', 'src/core/tempo/work-sweep.ts', 'src/core/data/project-sections.ts', 'src/core/data/task-readiness.ts']) expect(text(file), file).toContain('taskShelved(');
   for (const file of ['src/core/conversations/inbox-query.ts', 'src/core/data/inbox-read.ts']) expect(text(file), file).toContain('waitsOnShelvedTask(inbox)');
   // The app is told; it does not look at a project to decide.
   for (const file of sourcesOf('web/src', /\.tsx?$/)) expect(text(file), file).not.toMatch(/retiredAt|retired_at/);
