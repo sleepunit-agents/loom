@@ -1,9 +1,3 @@
-.loom-kit-title, .loom-kit-meta, .loom-split__title, .loom-split__folder-name {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
 .loom-kit-frame { display: grid; gap: 16px; min-width: 0; }
 .loom-kit-filters { display: flex; flex-wrap: wrap; gap: 12px; }
 .loom-kit-list { display: flex; flex-direction: column; min-width: 0; }

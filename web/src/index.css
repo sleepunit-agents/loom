@@ -67,6 +67,17 @@
 /* The looks (Neon Noir, Low Light, Daylight): Neon's structure and each look's tokens. */
 @import "@/looks/looks.css";
 
+/* Human-readable labels can grow across lines in both the shell and app views. */
+.loom-kit-title, .loom-kit-meta, .loom-split__title, .loom-split__folder-name,
+.loom-lapp__nm, .loom-lapp__sub, .desk-home-talk-title, .desk-solo-about,
+.desk-comms-name, .next-strip > button.next-strip-title {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', sans-serif;

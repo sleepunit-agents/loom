@@ -46,7 +46,7 @@
 .desk-home-talks ul{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;margin:0;padding:0;list-style:none}
 .desk-home-talk{display:flex;align-items:baseline;gap:8px;min-width:0;padding:5px 0;border-bottom:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
 .desk-home-talk[data-unread]{color:var(--v-text)}
-.desk-home-talk-title{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.desk-home-talk-title{flex:1 1 auto;min-width:0;}
 .desk-home-talk time{flex:none;font:11px var(--font-data,monospace);color:var(--v-text-3)}
 .desk-home-unread{flex:none;align-self:center;width:6px;height:6px;border-radius:50%;background:var(--loom-unread,var(--v-blue))}
 .desk-home-all{justify-self:start;padding:4px 2px;font-size:12.5px;text-decoration:none;color:var(--v-text-2)}
@@ -81,7 +81,7 @@
 .desk-solo-face>.desk-agent-face{position:absolute;left:50%;top:50%;translate:-50% -50%;scale:var(--face-scale,1);pointer-events:none}
 .desk-solo-hero h2{font:600 clamp(30px,5cqw,78px)/1.05 var(--font-display)}
 .desk-solo-hero h2 a{color:inherit;text-decoration:none}
-.desk-solo-about{margin-top:8px;color:var(--v-text-2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.desk-solo-about{margin-top:8px;color:var(--v-text-2);}
 .desk-solo-state{margin-top:10px;color:var(--v-text-2);font:500 12px var(--font-data,monospace)}
 .desk-solo-columns{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,6fr);gap:clamp(22px,4cqw,64px)}
 .desk-solo-columns>section{display:grid;align-content:start;gap:12px;min-width:0}
