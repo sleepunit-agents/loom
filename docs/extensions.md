@@ -1,5 +1,8 @@
 # Pieces: extending loom without growing it
 
+> **This describes the older program.** Pieces as separate programs reached as `loom <piece>`, their manifests, offers and grants were removed with it (2026-11-16); the parts of today's program run in one process. The program as it is now is described in
+> [`architecture.md`](architecture.md). This page is kept because the designs in `docs/specs` cite its sections.
+
 loom is identity, memory and knowledge for one agent. It keeps that job small
 on purpose. Everything else an agent leans on (a task store, secrets, a clock
 that wakes it, a chat bridge, an approval page) is a **piece**: a separate

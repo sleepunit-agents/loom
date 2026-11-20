@@ -1,3 +1,7 @@
+/* The order of the cascade's layers, said before any of them is opened. A layer's place is fixed where it is first
+   named, and the build puts the kit's sheets ahead of the app's: without this line `components` came first and so
+   lowest, under the reset in `base`, and a bare select in a page kept no padding or corners (2026-11-19). */
+@layer properties, theme, base, components, utilities;
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

@@ -1,15 +1,17 @@
-import { sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { and, sql } from 'drizzle-orm';
+import { agents } from './schema.js';
 import type { Viewer } from '../../policy.js';
+import { sqlVisibility } from '../../policy-sql.js';
 import type { QueryVisibility } from './queries.js';
-import { members } from './schema.js';
 
-/** Machines registry: member ownership, with current household-owner precedence.
- * Hosting an agent is execution permission, not access to its owner's registry.
+/** Read filters for the machines registry. The rules are stated in policy.ts.
  * Installed runtime services continue to use the shared database directly. */
 export function boxVisibility(viewer: Viewer): QueryVisibility {
-  const current = alias(members, 'box_viewer');
-  return { boxes: fields => viewer.kind === 'member'
-    ? sql`exists (select 1 from ${members} as ${sql.identifier('box_viewer')} where ${current.id} = ${viewer.id} and (${current.role} = 'owner' or ${fields.owner} = ${current.id}))`
-    : sql`false` };
+  const visibility = sqlVisibility(viewer, ['boxes', 'boxAgents', 'boxFacts', 'boxReadings', 'boxAlertSettings']);
+  return {
+    ...visibility,
+    // The machine roster shows current placements. The saved grant can take effect again after a restore.
+    boxAgents: fields => and(visibility.boxAgents!(fields),
+      sql`exists (select 1 from ${agents} where ${agents.id} = ${fields.agent} and ${agents.removedAt} is null)`)!,
+  };
 }

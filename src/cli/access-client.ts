@@ -1,10 +1,11 @@
 /** Canonical shared sign-in clients: GraphQL reads, shared commands, one-time issuance. */
+import {LOGIN_PATH,SHA256_HEX} from '../core/sha256-hex.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { ConnectionError, doorConnection } from './connection.js';
 import type { IOStreams } from './io.js';
-import type { ClientRuntime } from './api-client.js';
-const reference=z.string().regex(/^[0-9a-f]{64}$/),time=z.string();
+import type { ClientRuntime } from './io.js';
+const reference=z.string().regex(SHA256_HEX),time=z.string();
 const tokenInfo=z.object({fingerprint:reference,label:z.string(),kind:z.enum(['owner','agent','runner']),expired:z.boolean(),identity:z.string(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),lastUsedAt:time.nullable()}).strict();
 const programInfo=z.object({fingerprint:reference,label:z.string(),member:z.string().nullable(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),ended:z.boolean(),records:z.array(z.string()),operations:z.array(z.string())}).strict();
 const sessionInfo=z.object({ref:reference,device:z.string(),member:z.string().nullable(),tokenLabel:z.string().nullable(),isAgent:z.boolean(),ended:z.boolean(),issuedAt:time,seenAt:time}).strict();
@@ -12,7 +13,7 @@ const accountInfo=z.object({member:z.string(),passkeys:z.array(z.object({ref:ref
 const rosterInfo=z.object({defaultAgent:z.string().nullable(),members:z.array(z.object({id:z.string(),role:z.string(),fullOwner:z.boolean(),agents:z.array(z.string())}).strict()),agents:z.array(z.object({id:z.string(),about:z.string(),markBg:z.string(),markFg:z.string(),faceShape:z.string(),faceEyes:z.string(),github:z.array(z.string())}).strict())}).strict();
 const clients={
  program:{names:['list','create','setGrants'],root:'programSetup',field:'tokens',fields:'tokens { fingerprint label member createdAt expiresAt revokedAt ended records operations }',schema:z.array(programInfo)},
- household:{names:['read','setMember','setAgent','setAgentAccounts','setProject'],root:'householdSetup',field:'',fields:'defaultAgent members { id role fullOwner agents } agents { id about markBg markFg faceShape faceEyes github }',schema:rosterInfo},
+ household:{names:['read'],root:'householdSetup',field:'',fields:'defaultAgent members { id role fullOwner agents } agents { id about markBg markFg faceShape faceEyes github }',schema:rosterInfo},
  token:{names:['list','create','revoke','link'],root:'householdSetup',field:'tokens',fields:'tokens { fingerprint label kind expired identity createdAt expiresAt revokedAt lastUsedAt }',schema:z.array(tokenInfo)},
  sessions:{names:['list','revoke'],root:'householdSetup',field:'sessions',fields:'sessions { ref device member tokenLabel isAgent ended issuedAt seenAt }',schema:z.array(sessionInfo)},
  account:{names:['read','removePasskey','revokeSession'],root:'account',field:'',fields:'member passkeys { ref label createdAt lastUsedAt ended } sessions { ref device issuedAt seenAt ended } notifications { publicKey devices { ref device createdAt seenAt } }',schema:accountInfo},
@@ -38,14 +39,8 @@ export async function runAccessClient(piece: 'token'|'program'|'sessions'|'accou
   if((read||link)&&Object.keys(input as object).length){io.stderr(`${program}: this command takes an empty JSON object\n`);return 2;}
   const fail = (message: string) => { io.stderr(`${program}: ${message}\n`); return 1; };
   let base: URL, token: string;
-  try {
-    if (!io.env.LOOM_URL) return fail('LOOM_URL is required');
-    base = new URL(io.env.LOOM_URL);
-    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) return fail('Invalid LOOM_URL');
-    if (!io.env.LOOM_TOKEN_FILE) return fail('LOOM_TOKEN_FILE is required');
-    token = (await readFile(io.env.LOOM_TOKEN_FILE, 'utf8')).trim();
-    if (!token) return fail('Token file is empty');
-  } catch { return fail('Cannot configure loom connection'); }
+  try { ({ base, token } = await doorConnection(io.env)); }
+  catch (error) { return fail(error instanceof ConnectionError ? error.message : 'Cannot configure loom connection'); }
   const query=`{ ${binding.root} { ${binding.fields} } }`;
   // Keep raw validated input: reserialization changes overflow numbers to null.
   // Never journal/retry returned bearer credentials. Ordinary mutations retain
@@ -76,7 +71,7 @@ export async function runAccessClient(piece: 'token'|'program'|'sessions'|'accou
         const output=binding.field?(value as Record<string,unknown>)[binding.field]:value;
         const checked=binding.schema.safeParse(output);if(!checked.success)return fail('Invalid daemon response');io.stdout(JSON.stringify(checked.data,null,2)+'\n');
       }else{
-        const schema=link?z.object({path:z.string().regex(/^\/login\/[0-9a-f]{64}$/),expiresAt:time}).strict():piece==='household'?(name==='setAgentAccounts'?z.object({saved:z.literal(true)}).strict():z.object({id:z.string()}).strict()):issuance?z.object({token:z.string().min(32),fingerprint:reference}).strict():piece==='program'&&name==='setGrants'?z.object({saved:z.literal(true)}).strict():name==='removePasskey'?z.object({removed:z.literal(true)}).strict():z.object({revoked:z.literal(true)}).strict();
+        const schema=link?z.object({path:z.string().regex(LOGIN_PATH),expiresAt:time}).strict():piece==='household'?(name==='setAgentAccounts'?z.object({saved:z.literal(true)}).strict():z.object({id:z.string()}).strict()):issuance?z.object({token:z.string().min(32),fingerprint:reference}).strict():piece==='program'&&name==='setGrants'?z.object({saved:z.literal(true)}).strict():name==='removePasskey'?z.object({removed:z.literal(true)}).strict():z.object({revoked:z.literal(true)}).strict();
         const result=z.object({ok:z.literal(true),value:schema}).strict().safeParse(answer);
         if(!result.success)return fail(oneTime?unknownOutcome:'Invalid daemon response');
         io.stdout(link?new URL((result.data.value as {path:string}).path,base).href+'\n':issuance?(result.data.value as {token:string}).token+'\n':JSON.stringify(result.data.value,null,2)+'\n');

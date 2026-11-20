@@ -15,8 +15,8 @@ function fixture(){
  const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  for(const id of ['owner','sam'])db.insert(members).values({id,role:id==='owner'?'owner':'member',joinedAt:at}).run();
  // This is only the explicit persistence test port, not a production fallback.
- const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);return undefined;}),store={read:(id:string)=>values.get(id),write};
- let choices:ProgramGrants={records:['tasks','projects'],operations:['tasks.command','household.setProject','runtime.boxRevoke','token.revoke','account.read','signin.rotate','sessions.revoke','program.grantsSet']};
+ const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);return undefined;}),store={read:(id:string)=>values.get(id),readMany:(ids:readonly string[])=>new Map([...values].filter(([id])=>ids.includes(id))),write};
+ let choices:ProgramGrants={records:['tasks','projects'],operations:['tasks.command','household.setProject','runtime.boxCreate','token.revoke','account.read','signin.rotate','sessions.revoke','program.grantsSet']};
  const service=sharedProgramSetup(db,clock,store,()=>choices);
  const root=sharedRoot({db,clock,programGrants:store.read,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>root.close());
  return{client,clock,db,at,values,write,store,service,root,choose:(value:ProgramGrants)=>{choices=value;}};
@@ -57,7 +57,7 @@ it('never lets an owner-subject program grant itself wider credential authority'
  f.root.operations.register({name:'program.grantsSet',write:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,run});
  const response=await f.root.http.request('http://loom/api/program/grantsSet',{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify({input:{},id:'self-escalation'})});
  expect(response.status).toBe(403);expect(run).not.toHaveBeenCalled();
- expect(f.service.catalogue().operations).toEqual(['household.setProject','runtime.boxRevoke','tasks.command']);
+ expect(f.service.catalogue().operations).toEqual(['household.setProject','runtime.boxCreate','tasks.command']);
 });
 it.each([{records:['projects','tasks'],operations:[]},{records:[],operations:[]}])('rolls back issuance if stored grants differ from the requested set: %j',stored=>{
  const f=fixture();f.write.mockImplementation((id)=>{f.values.set(id,stored);return undefined;});
@@ -84,11 +84,11 @@ it('has exact safe metadata fields and relies on canonical subject constraints',
  expect(()=>f.db.delete(members).where(eq(members.id,'sam')).run()).toThrow(/FOREIGN KEY/);
 });
 it('allows explicitly granted ordinary lifecycle operations, not a retired legacy credential endpoint',async()=>{
- const f=fixture();expect(f.root.operations.has('runtime.revokeBox')).toBe(false);expect(f.root.operations.has('runtime.boxRevoke')).toBe(true);
+ const f=fixture();expect(f.root.operations.has('runtime.revokeBox')).toBe(false);expect(f.root.operations.has('runtime.boxRevoke')).toBe(false);expect(f.root.operations.has('runtime.boxCreate')).toBe(true);
  f.db.insert(boxes).values({id:'box',name:'Box',owner:'owner',hostsAny:false,sameMachineAsLoom:false,reportOnly:true,alwaysOn:false,enrolledAt:f.at}).run();
- const issued=f.service.issue({member:'owner',label:'Machine lifecycle',records:[],operations:['runtime.boxRevoke']});
- const response=await f.root.http.request('http://loom/api/runtime/boxRevoke',{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify({input:{box:'box'},id:'lifecycle'})});
- expect(response.status).toBe(200);expect(f.db.select().from(boxes).where(eq(boxes.id,'box')).get()?.revokedAt).toBe(f.at);
+ const issued=f.service.issue({member:'owner',label:'Machine lifecycle',records:[],operations:['runtime.boxCreate']});
+ const response=await f.root.http.request('http://loom/api/runtime/boxCreate',{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify({input:{name:'Granted',sameMachineAsLoom:false},id:'lifecycle'})});
+ expect(response.status).toBe(200);expect(f.db.select().from(boxes).where(eq(boxes.name,'Granted')).get()).toMatchObject({owner:'owner',revokedAt:null});
 });
 it('rejects an untyped asynchronous writer before invoking it or minting a token',()=>{
  const f=fixture();let called=false;

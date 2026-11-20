@@ -20,7 +20,7 @@ it('gives a different fresh body the retained dialogue and follow-up without a s
  const f=await fixture(),old=f.db.select().from(s.jobs).get()!,token='body_'+'d'.repeat(64),beforeMessages=f.db.select().from(s.messages).all();
  f.root.services.runtime.stop('job','alice','reset');
  f.root.writes.run(()=>{
-  f.db.insert(s.jobs).values({...old,id:'fresh-job',state:'running'}).run();f.db.update(s.conversations).set({job:'fresh-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();
+  f.db.insert(s.jobs).values({...old,id:'fresh-job',state:'running'}).run();
   f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Fictional fresh body',kind:'agent',agent:'art',job:'fresh-job',createdAt:new Date(f.clock.now()).toISOString()}).run();
  });
  const native=vi.fn(async(_job:unknown,context:string)=>{const value=JSON.parse(context);expect(value.input).toBe('Do that again');expect(value.history.map((line:{words:string})=>line.words)).toEqual(['PRIOR PERSON DIALOGUE','PRIOR AGENT REPLY']);expect(value.history.map((line:{sender:string})=>line.sender)).toEqual(['alice','art']);return{text:'New answer',model:'fixture',actions:[]};});

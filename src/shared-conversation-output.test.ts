@@ -13,13 +13,15 @@ it('publishes encrypted replies and tool cards with actual run/model metadata an
  expect(JSON.stringify([f.db.select().from(s.operationResults).all(),f.db.select().from(s.turns).all(),f.db.select().from(s.jobs).all(),f.db.select().from(s.inbox).all()])).not.toContain('PRIVATE');expect(f.db.select().from(s.turns).all().some(row=>row.model==='REQUESTED MODEL')).toBe(false);
  expect((await f.call('message',{kind:'reply',clientId:'reply',words:'PRIVATE ANSWER t-41',model:'actual-model',outcome:'answered',latencyMs:123},'reply')).status).toBe(200);expect(f.db.select().from(s.messages).all()).toHaveLength(2);expect((await f.call('message',{kind:'reply',clientId:'reply',words:'PRIVATE ANSWER t-41',model:'actual-model',outcome:'answered',latencyMs:123},'fresh-retry')).status).toBe(200);expect(f.db.select().from(s.messages).all()).toHaveLength(2);expect(f.db.select().from(s.turns).all()).toHaveLength(2);
 });
-it('reports actual working heartbeats and clears Stop only after explicit observation',async()=>{
+it('reports actual working heartbeats, tells the body of a Stop, and never takes the Stop on the body\'s word',async()=>{
  const f=await fixture();const report=(input:unknown,id:string)=>f.call('status',input,id);
  expect(await(await report({state:'working',work:'Checking the pump'},'start')).json()).toEqual({ok:true,value:{saved:true,stopRequested:false}});
  const before=f.db.select().from(s.threads).get()!;expect(before).toMatchObject({working:true,workingSince:expect.any(String),workingBeat:expect.any(String)});f.clock.advance(1000);
  expect((await report({state:'working',work:'Checking the pump'},'beat')).status).toBe(200);expect(f.db.select().from(s.threads).get()).toMatchObject({workingSince:before.workingSince,workingBeat:new Date(f.clock.now()).toISOString()});
  f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));expect((await(await report({state:'working',work:'Checking the pump'},'read-stop')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);
- expect((await(await report({state:'idle',work:'Stopped',seenStop:true},'stopped')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});expect(f.db.select().from(s.agentStatus).get()).toEqual({agent:'art',state:'idle',work:'',changedAt:new Date(f.clock.now()).toISOString()});
+ // A status report cannot take the Stop: loom takes it when the worker reports the body's exit (Jobs.finish).
+ expect((await report({state:'idle',work:'Stopped',seenStop:true},'ack')).status).toBe(400);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);
+ expect((await(await report({state:'idle',work:'Stopped'},'stopped')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:true});expect(f.db.select().from(s.agentStatus).get()).toEqual({agent:'art',state:'idle',work:'',changedAt:new Date(f.clock.now()).toISOString()});
 });
 it('rejects non-body authority and input-selected attribution',async()=>{
  const f=await fixture(),message={kind:'reply',clientId:'one',words:'PRIVATE'};
@@ -37,7 +39,7 @@ it.each(['assignment','ended','thread','scope'] as const)('withholds sealed outp
 it('isolates sender retry IDs across jobs and records no inferred model',async()=>{
  const f=await fixture();const input={kind:'reply',clientId:'same',words:'First job'};
  expect((await f.call('message',input,'first')).status).toBe(200);const old=f.db.select().from(s.jobs).get()!;
- f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'next-job',state:'running'}).run();f.db.update(s.conversations).set({job:'next-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'next-job'}).where(eq(s.tokens.job,old.id)).run();});
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'next-job',state:'running'}).run();f.db.update(s.tokens).set({job:'next-job'}).where(eq(s.tokens.job,old.id)).run();});
  expect((await f.call('message',{...input,words:'Second job'},'second')).status).toBe(200);expect(f.db.select().from(s.messages).all()).toMatchObject([{run:'job',clientId:'job:same'},{run:'next-job',clientId:'next-job:same'}]);expect(f.db.select().from(s.turns).all().map(row=>row.model)).toEqual([null,null]);
 });
 it('keys both private output and reported status fingerprints with the Comms key',async()=>{

@@ -16,7 +16,9 @@ it.each(['comms','authored','private-handoff'] as const)('records completion wit
   if(background){f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();f.db.update(s.conversations).set({venue:'handoff',place:'fictional-parent-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();}
  });
  const brief=background?await sealHandoff(f.key,'Fictional private handoff',new Date(f.clock.now()).toISOString(),14):null;
- if(background)f.root.writes.run(()=>f.root.services.conversations.send({conversation:f.thread.conversation,toKind:'agent',to:'art',source:'handoff',fromKind:'agent',fromId:'mark',words:brief}));
+ if(background)f.root.writes.run(()=>f.root.services.conversations.send({conversation:f.thread.conversation,toKind:'agent',to:'art',source:'handoff',fromKind:'agent',fromId:'mark',words:brief,
+  // A brief carries the word of the job that sent it (conversation.handoff): here the member's.
+  onWordKind:'member',onWord:'alice'}));
  else expect((await f.send('Fictional member input','person')).status).toBe(200);
  const job={id:'job',box:'box',agent:'art',conversation:f.thread.conversation,thread:background?null:f.thread.id,venue:background?'handoff':'loom',model:'fixture',account:'fixture',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:'job',token}}));

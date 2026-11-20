@@ -151,7 +151,7 @@ describe('generated SQL reads', () => {
     const schema = dataQueries(client, { tables: ['projects', 'tasks'], visibility: { projects: () => sql`true`, tasks: () => sql`true` } });
     const printed = printSchema(schema);
     expect(schema.getMutationType()).toBeUndefined();
-    for (const name of ['tokens', 'sessions', 'signinChallenges', 'passkeys', 'operationResults', 'conversationsByProject', 'taskCommentsByTask']) expect(printed).not.toContain(name);
+    for (const name of ['tokens', 'sessions', 'bridgeSendParts', 'passkeys', 'operationResults', 'conversationsByProject', 'taskCommentsByTask']) expect(printed).not.toContain(name);
     const result = await graphql({ schema, source: '{ tokens { fingerprint } }' });
     expect(result.errors?.[0].message).toContain('Cannot query field');
   });

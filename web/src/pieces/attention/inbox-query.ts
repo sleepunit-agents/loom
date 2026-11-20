@@ -1,19 +1,25 @@
 import { taskSegment } from '../tasks/route';
-import { useSelection } from '../../data/graphql/selection';
+import { useMemo } from 'react';
+import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import type { DataQuerySnapshot } from '../../data/graphql';
-import type { InboxFolders, InboxItem } from '../inbox-view/model';
+import type { InboxAnswer, InboxFolders, InboxItem } from '../inbox-view/model';
+import { memberOperation } from '../../data/operation';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
+/** Recording an answer to an Inbox item: the one action, for the Inbox and for Home's band. */
+export const answerInboxItem = (id: string, answer: InboxAnswer, words?: string) =>
+  memberOperation<void>('inbox.answer', { item: id, answer, ...(words ? { words } : {}) });
 const fields = `id canAnswer canSetVolume quietUntil source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
  bodyKeepUntil answerKeepUntil body { words why ifYes ifNo link } read refs answer answerText answeredBy answeredAt resolution`;
-export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$id:String!,$hasItem:Boolean!,$onlyErrors:Boolean!){
+export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$onlyErrors:Boolean!){
  inboxItems(folder:$folder,search:$search,agent:$agent,limit:51,offset:$offset) @skip(if:$onlyErrors){${fields}}
- inboxItem(id:$id) @include(if:$hasItem){${fields}}
  inboxFolders { needs alerts answered fyi all agents { id count } }
  inboxActionResults(limit:20){id at ok text page readAt}
 }`;
+/** The open item, alone. Opening one changes this request and nothing the list reads. */
+export const inboxItemQuery = `query InboxItem($id:String!){ inboxItem(id:$id){${fields}} }`;
 interface InboxSelection { query: string; variables: Record<string, unknown>; decode(data: Record<string, unknown>): InboxReading }
-export interface InboxReading { folders: InboxFolders; items: InboxItem[]; item: InboxItem | null; results: InboxActionResult[] }
+export interface InboxReading { folders: InboxFolders; items: InboxItem[]; results: InboxActionResult[] }
 function item(value: unknown): InboxItem {
   if (!value || typeof value !== 'object') throw Error('Invalid Inbox item');
   const row = value as InboxItem;
@@ -22,14 +28,14 @@ function item(value: unknown): InboxItem {
     || row.body && typeof row.body.words !== 'string') throw Error('Invalid Inbox item');
   return row;
 }
-export function inboxSelection(folder: string, search: string, offset: number, selected?: string): InboxSelection {
+export function inboxSelection(folder: string, search: string, offset: number): InboxSelection {
   return { query: inboxQuery, variables: { folder: folder.startsWith('agent:') || folder === 'errors' ? 'all' : folder,
-    search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, id: selected ?? '', hasItem: !!selected, onlyErrors: folder === 'errors' },
+    search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, onlyErrors: folder === 'errors' },
     decode(data) {
       if (folder !== 'errors' && !Array.isArray(data.inboxItems) || !Array.isArray(data.inboxActionResults)) throw Error('Invalid Inbox selection');
       const folders = data.inboxFolders as InboxFolders;
       if (!folders || !['needs','alerts','answered','fyi','all'].every(key => Number.isInteger(folders[key as keyof Pick<InboxFolders,'needs'|'alerts'|'answered'|'fyi'|'all'>])) || !Array.isArray(folders.agents)) throw Error('Invalid Inbox folders');
-      return { folders, items: ((data.inboxItems ?? []) as unknown[]).map(item), item: data.inboxItem ? item(data.inboxItem) : null,
+      return { folders, items: ((data.inboxItems ?? []) as unknown[]).map(item),
         results: data.inboxActionResults.map(value => {
           const row = value as InboxActionResult;
           if (!row || typeof row.id !== 'string' || typeof row.text !== 'string' || typeof row.ok !== 'boolean') throw Error('Invalid action result');
@@ -38,9 +44,18 @@ export function inboxSelection(folder: string, search: string, offset: number, s
     },
   };
 }
-/** Decode the selected fields over the single canonical query client. */
+export function inboxItemSelection(id: string): QuerySelection<InboxItem | null> {
+  return { query: inboxItemQuery, variables: { id }, decode: data => data.inboxItem ? item(data.inboxItem) : null };
+}
+/** Decode the selected fields over the single canonical query client. The folders, counts and rows of the
+ * last folder, search or page stay on screen (marked `settling`) while the next one loads. */
 export function useInboxSelection(selection: InboxSelection): DataQuerySnapshot<InboxReading> {
-  return useSelection(selection);
+  return useSelection(selection, { keep: true });
+}
+/** The open item by id, on its own small request; nothing is open with no id. Nothing is kept between
+ * items: an answer here is always for this id. */
+export function useInboxItem(id?: string): DataQuerySnapshot<InboxItem | null> {
+  return useSelection(useMemo(() => inboxItemSelection(id ?? ''), [id]), { pause: !id });
 }
 /** Private question and answer wording have separate deadlines. A missing or
  * invalid private deadline is unavailable, while plain Inbox text has none. */
@@ -53,8 +68,17 @@ export function retainedInboxItem(row: InboxItem, now: number): InboxItem {
 
 export function inboxSourcePath(row: InboxItem): string | undefined {
   const kind = row.waitsOnKind ?? row.source, id = row.waitsOnId ?? row.sourceId;
+  if (kind === 'approval') {
+    const card = row.waitsOnId ?? row.refs.find(ref => ref.startsWith('a-')) ?? id;
+    return card ? `/p/approvals-preview/approval/${encodeURIComponent(card)}` : undefined;
+  }
   if (!id) return undefined;
-  if (kind === 'approval') return `/p/approvals-preview/approval/${encodeURIComponent(id)}`;
   if (kind === 'secret-request') return `/p/settings-preview/requests/${encodeURIComponent(id)}`;
   if (kind === 'task') return `/p/tasks-preview/task/${taskSegment(id)}`;
+}
+
+/** Where a reference an item is about opens, for the two kinds this app can address: a task and an approval card. */
+export function inboxRefPath(ref: string): string | undefined {
+  if (/^t-\d+$/.test(ref)) return `/p/tasks-preview/task/${taskSegment(ref)}`;
+  if (/^a-[A-Za-z0-9-]+$/.test(ref)) return `/p/approvals-preview/approval/${encodeURIComponent(ref)}`;
 }

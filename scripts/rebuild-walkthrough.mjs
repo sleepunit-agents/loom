@@ -82,7 +82,7 @@ export async function* walkthroughSteps(output) {
   // or installed configuration. The ordinary startup loads its existing port.
   prepareAcceptanceHome(home);
   clock=new FakeClock(Date.parse(report.example.createdAt));
-  let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
+  let link='';app=await startSharedHome({home,port:0,clock,stdout:()=>{},reportError:error=>report.errors.push(String(error))});link=app.signinLink();
   retention=await prepareRetention({app,example:report.example,home});
 
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
@@ -126,7 +126,7 @@ export async function* walkthroughSteps(output) {
   yield {phase:'ready',report:safeReport(report)};
   report.actions={...report.actions,conversationRetention:await retention({page,clock,out})};
   save();yield {phase:'retention',actions:safeReport(report.actions)};
-  {const tile=await openApp('Project sharing');await tile.getByText('Example garden',{exact:true}).first().waitFor();report.actions.dataSharingSQL=await sharingGrowth({page,app,subscriptions,out});await tile.getByRole('button',{name:'Close Project sharing',exact:true}).click();await tile.waitFor({state:'detached'});}
+  {const tile=await openApp('Sharing');await tile.getByText('Example garden',{exact:true}).first().waitFor();report.actions.dataSharingSQL=await sharingGrowth({page,app,subscriptions,out});await tile.getByRole('button',{name:'Close Sharing',exact:true}).click();await tile.waitFor({state:'detached'});}
   save();yield {phase:'data-growth',actions:safeReport(report.actions)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
   const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?'],'Agents':['DESCRIPTION']};
@@ -164,7 +164,7 @@ export async function* walkthroughSteps(output) {
      row.text=await tile.innerText();
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
-    if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
+    if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Your account')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     if(title==='Settings'){
@@ -217,7 +217,7 @@ export async function* walkthroughSteps(output) {
   Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
 
   save();yield {phase:'desk',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await appearanceActions({page,app,out}));
+  Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
   save();yield {phase:'data',actions:safeReport(report.actions)};

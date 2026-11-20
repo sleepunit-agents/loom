@@ -9,7 +9,7 @@ import type {startSharedHome} from '../shared-startup.js';
 import {maskCredentialScreenshots} from '../../scripts/rebuild-credential-evidence.mjs';
 const enabled=process.env.LOOM_PROGRAM_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))||!existsSync(resolve('dist/shared-startup.js'))))throw Error('Programme evidence requires Chrome and the built app');
-it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow programme through the real browser',{timeout:20_000},async()=>{
+it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow programme through the real browser',async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-programme-home-')),out=join(process.env.LOOM_TEST_SHOTS??resolve('artifacts'),'programme-access');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined,browser:Browser|undefined,link='';const errors:unknown[]=[],diagnostics:string[]=[],expiry=new Date(Date.now()+3600_000).toISOString();let failed=false;
  const safeError=(error:unknown)=>Error(String(error).replace(/loom_[A-Za-z0-9_-]+/g,'[token redacted]').replace(/\/login\/[^\s"'<>\)]+/g,'/login/[redacted]'));
@@ -19,7 +19,7 @@ it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow 
   // The production holder forks an adjacent .js entry with no loader flags.
   // Use the built backend so this proof exercises that actual child process.
   const {startSharedHome}=await import('../../dist/shared-startup.js');
-  app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:text=>{link=text.trim();},reportError:error=>errors.push(error)});
+  app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:()=>{},reportError:error=>errors.push(error)});link=app.signinLink();
   const current=app,db=current.services.comms!.db.$client,owner=(db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>new URL(route.request().url()).origin===current.url?route.continue():route.abort('blockedbyclient'));

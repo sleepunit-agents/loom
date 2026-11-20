@@ -1,4 +1,6 @@
-/** Only the age library: no program, plaintext cache, or logged crypto error. */
+/** Only the age library: no program, plaintext cache, or logged crypto error.
+ * The key is a file in the home, in clear, that only this OS user can read (docs/accepted-tradeoffs.md,
+ * "Root keys are readable on disk by their own process"). */
 import { Encrypter, Decrypter, generateX25519Identity, identityToRecipient } from 'age-encryption';
 import { constants, closeSync, fstatSync, openSync, readFileSync, writeFileSync, fsyncSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

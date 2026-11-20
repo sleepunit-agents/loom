@@ -29,6 +29,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   screenshots:
+    # Browser tests are off while the web app waits its turn (Jonathan, 2026-11-16). Set the repository
+    # variable LOOM_BROWSER_TESTS to 'on' to bring them back.
+    if: vars.LOOM_BROWSER_TESTS == 'on'
     # Browser work runs in CI, never on loom's machine.
     runs-on: ubuntu-latest
     strategy:
@@ -85,28 +88,28 @@ jobs:
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_SHOTS="$PWD/artifacts/knowledge-app"
-          nice -n 19 npx vitest run src/ui/mind-knowledge-app.integration.test.ts --project browser --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/knowledge-browser.json
+          nice -n 19 npx vitest run src/ui/mind-knowledge-app.integration.test.ts --project browser --maxWorkers=1 --reporter=default --reporter=./scripts/slow-reporter.ts --reporter=json --outputFile=artifacts/knowledge-browser.json
       - name: Capture People on the hosted after runner
         if: matrix.version == 'after'
         env:
           LOOM_PEOPLE_EVIDENCE: '1'
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          nice -n 19 npx vitest run src/ui/mind-people-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/people-browser.json
+          nice -n 19 npx vitest run src/ui/mind-people-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=./scripts/slow-reporter.ts --reporter=json --outputFile=artifacts/people-browser.json
       - name: Capture Projects on the hosted after runner
         if: matrix.version == 'after'
         env:
           LOOM_PROJECTS_EVIDENCE: '1'
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          nice -n 19 npx vitest run src/ui/mind-projects-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/projects-browser.json
+          nice -n 19 npx vitest run src/ui/mind-projects-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=./scripts/slow-reporter.ts --reporter=json --outputFile=artifacts/projects-browser.json
       - name: Capture Activity on the hosted after runner
         if: matrix.version == 'after'
         env:
           LOOM_ACTIVITY_EVIDENCE: '1'
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          nice -n 19 npx vitest run src/ui/mind-activity-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/activity-browser.json
+          nice -n 19 npx vitest run src/ui/mind-activity-app.integration.test.ts --maxWorkers=1 --reporter=default --reporter=./scripts/slow-reporter.ts --reporter=json --outputFile=artifacts/activity-browser.json
       - uses: actions/upload-artifact@v7
         if: always() && matrix.version == 'after'
         with:

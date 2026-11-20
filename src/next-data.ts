@@ -1,13 +1,12 @@
 import { assertReadSchema } from './core/data/read-schema.js';
-import { conversationTables, conversationVisibility } from './core/data/conversation-visibility.js';
+import { conversationTables, conversationVisibility, talkVisibility } from './core/data/conversation-visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
-import { getTableColumns, sql, type AnyColumn } from 'drizzle-orm';
+import { getTableColumns } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
 import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
 import {GraphQLSchema,GraphQLObjectType,GraphQLBoolean} from 'graphql/index.js';
-import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -26,14 +25,18 @@ import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
-import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
+import { sqlVisibility } from './policy-sql.js';
+import { JobSummaries, jobSummaryFields, nextTerminalDeadline } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
-export const sharedQueryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
+export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'boxReadings', 'boxAlertSettings', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
-      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined) {
+      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;
+/** The longest a last-seen style time waits before open selections are read again for it:
+ * docs/accepted-tradeoffs.md, "A last-seen time reaches an open window up to a minute late". */
+export const STAMP_WAKE_MS = 60_000;
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined, canReadUsage: (viewer:Viewer)=>boolean = () => true, canReadProgram: (viewer:Viewer)=>boolean = canReadUsage) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
@@ -43,7 +46,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   };
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
-  let activityRead = false;
+  let activityRead = false, currentJobsRead = false;
   const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
@@ -52,30 +55,25 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   let stopped = false;
   const schedule = () => {
     cancelDeadline?.(); cancelDeadline = undefined;
-    if (stopped || !activityRead) return;
-    const at = bridges.nextDeadline();
+    if (stopped) return;
+    const deadlines = [activityRead ? bridges.nextDeadline() : undefined, currentJobsRead ? nextTerminalDeadline(db, clock.now()) : undefined];
+    const at = deadlines.filter((time): time is number => time !== undefined).sort((a,b) => a-b)[0];
     if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
   };
   // Start deadline scans only after an actual activity selection succeeds.
 
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
   const schema = (viewer: Viewer, full = false) => {
-    const agents=taskVisibility(viewer),byAgent=(fields:Record<string,AnyColumn>)=>agents.agents!({id:fields.agent});
     const records=full?undefined:programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
     return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
-    visibility: { ...boxVisibility(viewer), ...agents, ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
+    // Every rule is stated in policy.ts.
+    visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
-      // Reports and model preferences have their agent's current visibility.
-      agentStatus: byAgent,
-      agentModels: byAgent,
-      members: fields => viewer.kind === 'member' ? sql`(exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner') or ${fields.id} = ${viewer.id})` : sql`false`,
-      memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
-      memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
+      ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
     },
-  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
-    // Jobs carry the same agent/project/private-member labels as Approvals.
-    // Reuse its canonical SQL rather than maintain another sharing policy.
-    ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
+  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer)), ...accounts.fields,
+    // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
+    ...jobSummaryFields(new JobSummaries(db, () => ({ ...talkVisibility(viewer), ...conversationVisibility(viewer), ...boxVisibility(viewer), ...taskVisibility(viewer), ...tempoVisibility(viewer) }), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), () => canReadUsage(viewer)),
   });};
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));
@@ -93,7 +91,19 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
     schema,
   });
-  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); } });
+  // Times loom stamps as it is used (a machine's last report, a credential's last use, how long a call took)
+  // are written many times a second and decide nothing about who reads what. Open selections are read again
+  // for them at most once in STAMP_WAKE_MS, and not at all while none is written.
+  let cancelStamps: (() => void) | undefined, stampsDue = 0;
+  const stamped = () => {
+    if (stopped) return;
+    // A wake waits for the wall clock to reach its time. After the clock is set back, the one already waiting
+    // is further off than any wake should be: the next stamp sets it again, a whole interval from now.
+    if (cancelStamps && stampsDue - clock.now() <= STAMP_WAKE_MS) return;
+    cancelStamps?.(); stampsDue = clock.now() + STAMP_WAKE_MS;
+    cancelStamps = clock.at(stampsDue, () => { cancelStamps = undefined; if (!stopped) live.metadataChanged(); });
+  };
+  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); }, stamped });
   const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
@@ -101,8 +111,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     readVersion: () => live.epoch(),
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
-    timingsChanged() { live.timingsChanged(); },
-    credentialUsageChanged() { live.metadataChanged(); },
+    timingsChanged: stamped,
+    credentialUsageChanged: stamped,
     writes,
     close() {
       if (closing) return closing;
@@ -110,7 +120,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       closing = Promise.resolve().then(async () => {
         try { await socketClosing; } finally { await http.drain(); }
       });
-      stopped = true; cancelDeadline?.();
+      stopped = true; cancelDeadline?.(); cancelStamps?.();
       http.stop();
       const socketClosing = socket.close();
       live.close();

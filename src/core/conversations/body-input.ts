@@ -1,8 +1,13 @@
+import { discordBodyWords } from '../../pieces/bridges/discord-link.js';
 import {handoffPeersAssigned} from './handoff-access.js';
 import {handoffDeadline} from './handoff-words.js';
 import {hasPrivateInboxPayload,privateInboxDeadline,privateInboxAnswer} from './private-inbox-words.js';
 /** Body-only ephemeral mail. No operation receipt, job brief or shared cache ever
- * carries words. Confirming acceptance is a separate acknowledgement write. */
+ * carries words. Confirming acceptance is a separate acknowledgement write.
+ * This is a route of its own and not a registered operation, on purpose: an
+ * operation keeps its result as a retry receipt, and this result is the mail's
+ * decrypted words. The checks it makes in an operation's place are listed in
+ * docs/accepted-tradeoffs.md ("Taking mail is a route, not an operation"). */
 import { sameRequestOrigin } from '../data/origin.js';
 import { z } from 'zod';
 import { and,eq,inArray } from 'drizzle-orm';
@@ -10,11 +15,12 @@ import type { Authentication } from '../live/index.js';
 import { failure } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { guardedResponse } from '../data/guarded-response.js';
-import { household,inbox,inboxRefs,messages,threads } from '../data/schema.js';
+import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { wordsDeadline } from './retention.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
 import type { conversationBodyScope } from './body-scope.js';
+import { commsKeepDays } from '../data/comms-days.js';
 const input=z.object({input:z.object({limit:z.number().int().min(1).max(100).default(50)}).strict()}).strict();
 export function sameMailScope(item:{agent:string|null;member:string|null;project:string|null},cv:{agent:string;member:string|null;project:string|null}):boolean {
  return item.agent===cv.agent&&item.member===cv.member&&item.project===cv.project;
@@ -39,36 +45,44 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const {db}=options.service,mail=new ConversationMail(options.service),cvs=options.service.threads.conversations;
   // Validate the exact pending prefix before opening any private ciphertext.
   const prefix=cvs.pending(before.cv.id,before.job.id).slice(0,parsed.input.limit);
-  mailAccess=()=>before.cv.member!==null||prefix.every(item=>item.source!=='handoff'||item.fromKind==='agent'&&item.fromId!==null&&handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project));
+  mailAccess=()=>before.cv.member!==null||prefix.every(item=>item.source!=='handoff'||item.fromKind==='agent'&&item.fromId!==null&&
+   // A note from another body of this same agent (handoff.ts, `to`) is its own mail: there is no peer to be assigned with.
+   (item.fromId===before.cv.agent||handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project)));
   if(prefix.some(item=>!sameMailScope(item,before.cv)))return refuse(403,'Mail scope differs');
   if(!active())return refuse(403,'Authentication ended');
   const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit);
   if(!active())return refuse(403,'Authentication ended');
-  // This outer claim publishes exactly one shared epoch. Any reentrant
+  // This outer claim publishes exactly one shared epoch, or none when it wrote
+  // no row (nothing waited, or the same prefix is taken again). Any reentrant
   // postcommit mutation invalidates the prepared words before byte release.
-  const expected=options.version()+1;
+  const base=options.version();
   const committed=options.writes.run(prepared),deliveries=committed.value;
   for(const _error of committed.notificationErrors){try{options.reportError(new Error('Body input notification failed'));}catch{}}
-  if(!active()||options.version()!==expected)return refuse(503,'Mail changed; take it again');
+  const expected=options.version();
+  if(!active()||expected>base+1)return refuse(503,'Mail changed; take it again');
   // The HTTP response projection stays next to its publication lease so every
   // private output field contributes its deadline before any bytes are released.
   // ConversationMail remains reusable by trusted in-process callers.
   const refs=deliveries.length?db.select().from(inboxRefs).where(inArray(inboxRefs.item,deliveries.map(row=>row.item.id))).all():[];
-  const days=db.select({days:household.commsDays}).from(household).get()?.days??14;
+  const days=commsKeepDays(db);
   let until=Infinity;
   const items=deliveries.map(({item,words,answerContext,history})=>{
+   if(before.cv.venue==='discord'){
+    if(item.source==='discord'&&words!==null)words=discordBodyWords(words);
+    if(history)history=history.map(line=>({...line,words:discordBodyWords(line.words)}));
+   }
    let keepUntil:string|null=null,verdict:string|null=null;
    if(item.thread&&item.messageSeq!==null){
     const message=db.select().from(messages).where(and(eq(messages.thread,item.thread),eq(messages.seq,item.messageSeq),eq(messages.inboxItem,item.id))).get();
     if(!message)throw Error('Mail reference changed');verdict=message.verdict;
     if(words!==null){const deadline=wordsDeadline(message,days);until=Math.min(until,deadline);keepUntil=Number.isFinite(deadline)?new Date(deadline).toISOString():null;}
    }
-   if(item.source==='handoff'&&words!==null){const deadline=handoffDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();}
+   if(!item.thread&&item.source==='handoff'&&words!==null){const deadline=handoffDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();}
    if(hasPrivateInboxPayload(db,item)&&words!==null){const deadline=privateInboxDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();
    }
    if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
    if(answerContext){if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
-   for(const line of history??[])until=Math.min(until,Date.parse(line.keepUntil));
+   for(const line of history??[])if(line.keepUntil!==null)until=Math.min(until,Date.parse(line.keepUntil));
    return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
   });
   const thread=db.select({stop:threads.stopRequested}).from(threads).where(eq(threads.conversation,before.cv.id)).get();

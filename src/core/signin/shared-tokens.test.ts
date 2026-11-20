@@ -71,19 +71,26 @@ it('allows trusted machine enrollment in the same transaction without an interna
   expect(f.root.credentials.authenticate(request)).toBeUndefined();
 });
 
-it('binds job credentials only to assigned current work for the named agent', async () => {
-  const f = fixture(), issue = (job: string, label = job) => f.issue({kind:'agent',agent:'art',job,label});
+it('refuses to bind a job at the owner door, and inside binds only assigned current work, ending the job\'s other token', async () => {
+  const f = fixture(), signin = f.root.services.signin, issue = (job: string, label = job) => f.root.writes.run(() => signin.issue({kind:'agent',agent:'art',job,label})).value;
   f.db.insert(agents).values({id:'mark',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
   const base={agent:'art',box:'box',title:'Fixture job',brief:'Work',model:'fixture',state:'running' as const,startedByKind:'member',startedBy:'owner',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:f.at};
   f.db.insert(jobs).values([{...base,id:'current'},{...base,id:'other',agent:'mark'},{...base,id:'finished',state:'done'},{...base,id:'unassigned',box:null}]).run();
-  for(const job of ['missing','other','finished','unassigned']) expect((await issue(job)).status).toBe(400);
-  const response=await issue('current');expect(response.status).toBe(200);
-  const {value}=await response.json();
+  // A household owner is handed no bearer for a job: that would be a second body for it.
+  for(const job of ['missing','other','finished','unassigned','current']) expect((await f.issue({kind:'agent',agent:'art',job,label:'Door '+job})).status).toBe(400);
+  expect(f.db.select().from(tokens).all().filter(row=>row.job!==null)).toEqual([]);
+  for(const job of ['missing','other','finished','unassigned']) expect(()=>issue(job)).toThrow('Choose current work for this agent');
+  const value=issue('current');
   expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,value.fingerprint)).get()).toMatchObject({kind:'agent',agent:'art',job:'current'});
   const auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+value.token}}));
   expect(auth?.viewer).toEqual({kind:'agent',id:'art'});
-  f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'current')).run());
+  // A job has one live body token, whichever way the next one is made.
+  const next=issue('current','again');
   expect(auth?.valid()).toBe(false);
+  expect(f.db.select().from(tokens).all().filter(row=>row.job==='current'&&!row.revokedAt).map(row=>row.fingerprint)).toEqual([next.fingerprint]);
+  const live=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+next.token}}));
+  f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'current')).run());
+  expect(live?.valid()).toBe(false);
 });
 
 it.each(['revoke','demote'] as const)('rechecks issuer authority inside the issuance transaction after %s', async change => {

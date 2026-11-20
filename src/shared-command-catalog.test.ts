@@ -2,7 +2,6 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
-import {registerBuiltinService} from './core/services.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 async function fixture(){
@@ -28,11 +27,11 @@ it('discovers newly registered HTTP commands with their structural input hints, 
  const transformed=await(await f.post({name:'fixture.transformed'})).json();expect(transformed.value.commands[0].inputSchema.properties.value.type).toBe('string');expect(called).not.toHaveBeenCalled();expect(may).not.toHaveBeenCalled();
  const denied=await f.root.http.request('/api/fixture/transformed',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{value:'2'}})});expect(denied.status).toBe(403);expect(called).not.toHaveBeenCalled();expect(may).toHaveBeenCalled();
 });
-it.each(['member','agent','runner']as const)('refuses %s credentials that are not the current receiving body',async who=>{
- const f=await fixture();expect((await f.post({},raw[who])).status).toBe(403);
+it('lists commands for a current member, and refuses a runner',async()=>{
+ const f=await fixture();expect((await f.post({},raw.member)).status).toBe(200);expect((await f.post({},raw.runner)).status).toBe(403);
 });
-it('does not turn a plain agent label or installed service into a body proof',async()=>{
- const f=await fixture(),service=registerBuiltinService(f.root.operations,'body-catalogue',['runtime.commandCatalog'],'runtime');
+it('does not turn a plain agent label or a service label into a body proof',async()=>{
+ const f=await fixture(),service={kind:'service' as const,id:'runtime'};
  for(const viewer of[{kind:'agent' as const,id:'art'},service])expect(f.root.operations.call('http',viewer,'runtime.commandCatalog',{})).toMatchObject({ok:false,code:'denied'});
 });
 it.each(['ended','revoked-machine','ownership','current-job','current-agent']as const)('denies a catalogue request after %s withdrawal',async change=>{
@@ -40,13 +39,13 @@ it.each(['ended','revoked-machine','ownership','current-job','current-agent']as 
   if(change==='ended')f.db.update(s.jobs).set({state:'done'}).run();
   if(change==='revoked-machine')f.db.update(s.boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).run();
   if(change==='ownership')f.db.delete(s.memberAgents).run();
-  if(change==='current-job')f.db.update(s.conversations).set({job:null}).run();
+  if(change==='current-job')f.db.update(s.jobs).set({conversation:null}).run();
   if(change==='current-agent')f.db.update(s.conversations).set({agent:'mark'}).run();
  });expect([401,403]).toContain((await f.post()).status);
 });
-it('allows a still-bound waiting body and never grants it worker control',async()=>{
- const f=await fixture();f.root.writes.run(()=>f.db.update(s.jobs).set({state:'waiting'}).run());expect((await f.post({name:'runtime.started'})).status).toBe(200);
- const denied=await f.root.http.request('/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:'cannot-control',input:{job:'job',build:'fake'}})});expect(denied.status).toBe(403);expect(f.db.select().from(s.jobs).get()?.state).toBe('waiting');
+it('allows a still-bound running body and never grants it worker control',async()=>{
+ const f=await fixture();expect((await f.post({name:'runtime.started'})).status).toBe(200);
+ const denied=await f.root.http.request('/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:'cannot-control',input:{job:'job',build:'fake'}})});expect(denied.status).toBe(403);expect(f.db.select().from(s.jobs).get()?.state).toBe('running');
 });
 it('rejects overposted identity and unknown names without echoing caller strings',async()=>{
  const f=await fixture();expect((await f.post({agent:'art'})).status).toBe(400);const missing=await f.post({name:'PRIVATE_UNKNOWN_NAME'});expect(missing.status).toBe(404);expect(await missing.text()).not.toContain('PRIVATE_UNKNOWN_NAME');

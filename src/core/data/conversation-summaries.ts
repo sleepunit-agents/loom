@@ -4,6 +4,7 @@ import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from './database.js';
 import { conversations, threads } from './schema.js';
 import { conversationVisibility } from './conversation-visibility.js';
+import { commsKeepDays } from './comms-days.js';
 
 export function readRecentConversations(db: DataDatabase, viewer: Viewer, agent: string, limit: number, answeredOnly: boolean) {
   return db.query.conversations.findMany({ where: f => {
@@ -35,7 +36,7 @@ export function readConversationAnswers(db: DataDatabase, viewer: Viewer, ids: s
     },
   }).sync();
   const byThread = new Map(replies.map(row => [row.thread, row]));
-  const days = db.query.household.findFirst({ columns: { commsDays: true } }).sync()?.commsDays ?? 14;
+  const days = commsKeepDays(db);
   const latest = new Map<string, { thread: string; seq: number; at: string; keepUntil: string | null; words: Buffer | null; hasWords: boolean; agent: string | null; project: string | null; member: string | null }>();
   for (const row of rows) {
     const message = byThread.get(row.id);

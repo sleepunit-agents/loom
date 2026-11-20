@@ -111,20 +111,13 @@ $LOOM_HOME/                     (default ~/.config/loom)
   `--variant "Crack Neck=idle:15:rare"` place the rest); `--manifest` replaces it.
   Served at `/faces/<agent>/` to someone signed in who sees that agent, only
   the manifest and the sheets it names.
-- **Pixel icons** (`icons/<set>/`, src/icon-set.ts, web/src/app-icon.tsx): the
-  household's art for its apps' keys, never loom's (it isn't in the repo). A
-  manifest, `{ "icons": { "home": "home.png", … }, "line": ["home", …] }`, and
-  each icon a 32×32 PNG; an app is its label in lowercase, dashes for spaces.
-  `line` names the line-only icons (mostly dark ink): install works it out from
-  the pixels when the manifest doesn't say. household.json's `icons` names the
-  set in use. `loom household icons install <dir> [--name <set>]` installs a
-  folder (its manifest, or every `<app>.png` in it) and wears it;
-  `icons set <app> <file.png>` swaps one icon; `icons use <set>|none`;
-  `icons list`. Served at `/pixel-icons/<app>.png` to someone signed in. A
-  member sees them with Appearance's "Pixel icons" on (off unless they turn it
-  on; the choice isn't offered without a set): each icon recoloured to its
-  key's ramp per look and state (web/src/pixel-ramp.ts) at 32 px on keys and
-  tiles; a 16 px row keeps its line icon.
+- **App icons** are loom's own, in the repo (web/src/assets/house-icons/, its
+  README; web/src/app-icon.tsx), keyed by an app's id: one greyscale image per
+  app, tinted to its key per look and state as the browser paints it
+  (web/src/house-ramp.ts), the same art at every size. An app with no art yet
+  keeps its line icon. There is no household icon set and no "Pixel icons"
+  choice any more (2026-11-19); the `icons` field of a member's preferences is
+  kept and unused.
 
 ## Who's asking: tokens
 

@@ -6,12 +6,12 @@ import { GraphQLInt, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, members } from '../data/schema.js';
-import { workVisibility } from '../data/work-visibility.js';
+import { talkVisibility } from '../data/conversation-visibility.js';
 
 const noticeType = new GraphQLObjectType({ name: 'SettledInboxNotice', fields: {
   id: { type: GraphQLString }, count: { type: GraphQLInt },
 } });
-export function settledNotices(db: DataDatabase, changed: () => void, visibleRow: (viewer:Viewer,fields:Record<string,AnyColumn>)=>SQL = (viewer,fields)=>workVisibility(viewer).approvals!(fields)) {
+export function settledNotices(db: DataDatabase, changed: () => void, visibleRow: (viewer:Viewer,fields:Record<string,AnyColumn>)=>SQL = (viewer,fields)=>talkVisibility(viewer).inbox(fields)) {
   const notices = new Map<string, { id: string; items: readonly string[] }>();
   let closed = false;
   const visible = (member: string, ids: readonly string[]) => {

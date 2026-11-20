@@ -5,7 +5,7 @@ const path = require('path');
   const out = process.argv[2], full = process.argv[3] === 'full';
   const browser = await chromium.launch();
   const base = 'file://' + path.join(__dirname, 'site') + '/';
-  for (const pg of (process.argv[4] ? process.argv[4].split(',') : ['index','conversations','desk','tasks','approvals','tempo','changes','inbox','memory','machines','models','bridges','secrets','people','signing-in','outside','data','measuring','decided'])) {
+  for (const pg of (process.argv[4] ? process.argv[4].split(',') : ['index','conversations','desk','tasks','approvals','tempo','changes','inbox','memory','machines','models','bridges','secrets','people','signing-in','outside','tools','data','measuring','decided'])) {
     for (const [tag, w, h] of [['desk', 1440, 900], ['phone', 400, 800]]) {
       for (const scheme of ['light', 'dark']) {
         const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: scheme });

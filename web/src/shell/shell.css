@@ -5,19 +5,10 @@
 .next-shell { height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--v-canvas); color:var(--v-text); }
 .next-bar { height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 24px; border-bottom:1px solid var(--v-edge); font-size:12px; letter-spacing:.08em; }
 .next-bar strong { color:var(--v-pink); }
-.next-preferences { position:relative; letter-spacing:normal; }
-.next-preferences summary { cursor:pointer; }
-.next-preferences-panel { position:fixed; right:12px; top:48px; z-index:20; width:280px; max-width:calc(100vw - 24px); padding:16px; display:grid; gap:12px; border:1px solid var(--v-edge); border-radius:8px; background:var(--v-paper); box-shadow:0 10px 40px #0004; }
-.next-preferences-panel label { display:grid; gap:6px; }
-.next-preferences-panel label:has(input) { display:flex; align-items:center; }
-.next-preferences-panel select { width:100%; padding:8px; color:var(--v-text); background:var(--v-canvas); border:1px solid var(--v-edge); border-radius:4px; }
-.next-preferences-panel p:empty { display:none; }
 .next-ground { position:relative; flex:1; min-height:0; margin:24px; }
 .next-tile { position:absolute; display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--v-edge); border-radius:8px; background:var(--v-paper); box-shadow:0 8px 32px #0002; animation:next-in .18s ease-out; }
 .next-tile[data-focused] { border-color:var(--v-pink); }
 .next-strip { display:flex; align-items:center; min-height:38px; flex:none; gap:2px; padding:2px 6px; border-bottom:1px solid var(--v-edge); }
-.next-strip details { position:relative; font-size:12px; }
-.next-strip details ol { position:absolute; z-index:5; left:0; top:100%; min-width:180px; max-height:200px; overflow:auto; background:var(--v-canvas); border:1px solid var(--v-edge); }
 .next-spacer { flex:1; }
 .next-page { flex:1; min-height:0; min-width:0; overflow:auto; container-type:inline-size; isolation:isolate; }
 .next-dock-bar {flex:none;min-width:0;display:flex;justify-content:center;padding:0 20px max(40px,env(safe-area-inset-bottom));}
@@ -34,7 +25,7 @@
 @media (prefers-reduced-motion:reduce) { .next-tile {animation:none} }
 [data-motion=reduce] .next-tile {animation:none}
 
-.next-rail {position:absolute;right:0;top:0;bottom:0;overflow:auto;container:rail / inline-size;}
+.next-rail {position:absolute;right:0;top:0;bottom:0;overflow:auto;scrollbar-gutter:stable;container:rail / inline-size;}
 
 .loom-cmenu {position:fixed;z-index:100;padding:8px;min-width:180px;max-width:calc(100vw - 16px);background:var(--v-paper);border:1px solid var(--v-edge);border-radius:8px;box-shadow:0 12px 40px #0006;}
 .loom-cmenu__title {font-size:12px;color:var(--v-text-2);padding:4px 8px;}
@@ -55,19 +46,31 @@
 .next-tile[data-focused]::after{box-shadow:inset 0 0 0 1px var(--tile-ring),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
 .next-strip{min-height:32px;height:32px;padding:0 4px 0 0;gap:2px;user-select:none;background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)));border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border))}
 .next-tile[data-focused] .next-strip{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
-.next-strip>.next-app-key{display:grid;place-items:center;align-self:stretch;flex:none;width:44px;padding-left:6px;background:var(--t);color:var(--v-on-accent);clip-path:polygon(var(--next-cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--next-cut))}
+/* The key's right edge slopes in by 10px at the foot, so what shows is narrower than its box: the icon sits at the
+   box's middle with no padding pushing it right (it had 6px on the left, and read as 3px off toward the slope). */
+.next-strip>.next-app-key{display:grid;place-items:center;align-self:stretch;flex:none;width:44px;padding-left:0;background:var(--t);color:var(--v-on-accent);clip-path:polygon(var(--next-cut) 0,100% 0,calc(100% - 10px) 100%,0 100%,0 var(--next-cut))}
 .next-strip>.next-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 11px var(--font-display);text-transform:uppercase;letter-spacing:.12em}
 .next-strip>button:not(.next-app-key){height:26px;min-width:26px;padding:0 5px;color:var(--v-text-2);border-radius:0}
 .next-strip>button:focus-visible{outline:2px solid var(--t);outline-offset:-2px}
-.next-strip details{font:10px var(--loom-font-data,monospace);color:var(--v-text-3)}
+/* The three window controls, as the how-it-works site draws them (site.css .tile__acts): an outlined square (make big),
+   a line (send to the dock), a cross (close). Small quiet shapes in a hit area a finger or a pointer can find. */
+.next-strip>button.next-win{display:grid;place-items:center;flex:none;width:26px;padding:0;color:var(--v-text-3);background:none;cursor:pointer}
+.next-strip>button.next-win:hover,.next-strip>button.next-win:focus-visible{color:var(--v-text)}
+.next-win>i{display:block;width:10px;height:10px;box-sizing:border-box;border:1.5px solid currentColor}
+.next-win[data-act=dock]>i{border-width:0 0 1.5px}
+.next-win[data-act=close]>i{border:0;background:linear-gradient(45deg,transparent 44%,currentColor 44% 56%,transparent 56%),linear-gradient(-45deg,transparent 44%,currentColor 44% 56%,transparent 56%)}
 .next-page{margin:0 1px 1px;scrollbar-gutter:stable}
 [data-shell=phone] .next-tile{clip-path:none}
 [data-shell=phone] .next-strip{min-height:40px;height:40px}
-[data-shell=phone] .next-strip-title{max-width:35vw}
-@media (prefers-contrast:more){.next-tile::after{box-shadow:inset 0 0 0 2px var(--v-text)}}
+[data-shell=phone] .next-strip-title{max-width:60vw}
+[data-shell=phone] .next-strip>button.next-win{width:36px;height:36px}
+@media (prefers-contrast:more){.next-tile::after{box-shadow:inset 0 0 0 2px var(--v-text)} .next-strip>button.next-win{color:var(--v-text)}}
 [data-contrast=more] .next-tile::after{box-shadow:inset 0 0 0 2px var(--v-text)}
+[data-contrast=more] .next-strip>button.next-win{color:var(--v-text)}
 :root[data-look] .next-dock-bar{position:relative;pointer-events:auto;padding-bottom:max(40px,env(safe-area-inset-bottom))}
-:root[data-look] .next-dock-bar::before{left:calc(50% - 220px);right:calc(50% - 220px)}
+/* The hairline over the keys is the dock's own, as wide as the dock is, not the bar's at a fixed width. */
+:root[data-look] .next-dock-bar::before{content:none}
+:root[data-look] .next-dock::before{content:"";position:absolute;left:0;right:0;top:22px;height:1px;background:color-mix(in srgb,var(--v-pink) 35%,var(--v-border));box-shadow:var(--glow-bar) color-mix(in srgb,var(--v-pink) 30%,transparent);pointer-events:none}
 
 /* Hidden furniture reserves only its strip; temporary reveals overlay the same app boxes. */
 .next-rail[data-mode]:not([data-mode=always]){z-index:30;background:var(--v-canvas);border:1px solid var(--v-border);box-shadow:0 8px 32px #0005;transition:transform .26s,opacity .26s}
@@ -84,3 +87,13 @@
 [data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar:not([data-peek]){transform:translateY(100%);opacity:0;visibility:hidden;pointer-events:none}
 @media(prefers-reduced-motion:reduce){.next-rail,.next-dock-bar{transition:none!important}}
 [data-motion=reduce] .next-rail,[data-motion=reduce] .next-dock-bar{transition:none!important}
+
+/* The app switcher (Ctrl+`): the launcher's tiles, centred, with the one a release lands on marked. */
+.next-switcher{position:fixed;inset:0;z-index:80;margin:auto;width:fit-content;height:fit-content;max-width:min(720px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:16px;background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 55%,transparent),0 12px 40px #0006;animation:next-in .12s ease-out}
+.next-switcher .next-switch-item{gap:8px;padding:12px 4px;cursor:pointer}
+.next-switcher .next-switch-item[aria-selected=true]{background:color-mix(in srgb,var(--t) 16%,transparent);box-shadow:inset 0 0 0 2px var(--t)}
+.next-switch-name{max-width:100%;font:600 12.5px var(--font-display);letter-spacing:.03em;overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.next-switcher{animation:none}}
+[data-motion=reduce] .next-switcher{animation:none}
+@media (prefers-contrast:more){.next-switcher .next-switch-item[aria-selected=true]{box-shadow:inset 0 0 0 3px var(--v-text)}}
+[data-contrast=more] .next-switcher .next-switch-item[aria-selected=true]{box-shadow:inset 0 0 0 3px var(--v-text)}

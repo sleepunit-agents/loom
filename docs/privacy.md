@@ -1,60 +1,66 @@
 # Privacy & data locality
 
-loom is a local-only identity and memory layer. Nothing in the stack
-is designed to leave your machine, and there is no cloud account
-behind it. This doc explains exactly what lives where, what goes over
-the network, and how to verify what you install.
+loom runs on your own machine: one program (`loom serve`) and the data
+folder it owns. There is no cloud account behind it. This doc explains
+what lives where, what goes over the network, and how to verify what
+you install. For how the program is put together, see
+[`architecture.md`](architecture.md).
 
 ## Where your data lives
 
-Everything loom writes is on your disk, under paths you control.
+Everything loom writes is on your disk, in one home folder
+(`~/.config/loom` unless `--home` or `LOOM_HOME` says otherwise).
 
 | What | Where | Notes |
 |---|---|---|
-| Identity markdown (`IDENTITY.md`, `preferences.md`, `self-model.md`, `pursuits.md`) | `$LOOM_CONTEXT_DIR/` | Plain text. Yours to read, edit, back up, or delete. |
-| Memory store | `$LOOM_CONTEXT_DIR/memories.db` | Single SQLite file with a `sqlite-vec` vector index. |
-| Per-project / per-harness / per-model / procedure manifests | `$LOOM_CONTEXT_DIR/{projects,harnesses,models,procedures}/*.md` | Plain text, optional. |
-| Schema-version stamp | `$LOOM_CONTEXT_DIR/LOOM_STACK_VERSION` | Auto-written so tools know the layout version. |
+| The household database | `loom.db` | Members, agents, projects, conversations, tasks, approvals and the rest. One SQLite file. |
+| Each agent's identity pages | `agents/<agent>/` | `IDENTITY.md`, `preferences.md`, `self-model.md` and the pages beside them. Plain text. |
+| Each agent's memories and cards | `agents/<agent>/memories.db` | SQLite with a `sqlite-vec` vector index. |
+| Each agent's notes | `agents/<agent>/notes.db` and `agents/<agent>/note-files/` | Notes and the files attached to them. |
+| Knowledge and the people directory | `commons/knowledge.db`, `commons/people.db` | Shared by every agent of the household. |
+| Secret values | `secret-holder/` | Encrypted, and held by a separate process. Nowhere else. |
+| Where the household database, the Comms key and the commons are | `program.json` | Written at first install. Names no person and no agent. |
 | Embedding model cache | `$LOOM_FASTEMBED_CACHE_DIR` (default `~/.cache/loom/fastembed/`) | One ~33 MB ONNX file after first run. |
 
-`$LOOM_CONTEXT_DIR` defaults to `~/.config/loom/<agent>/`. Override
-with `LOOM_CONTEXT_DIR` or `--context-dir`.
-
-There is no daemon, no background service, no server process outside
-the MCP stdio connection your harness starts on demand. When the
-harness exits, loom exits.
+The words of a Comms thread are encrypted in `loom.db` with a key kept
+in the home folder.
 
 ## What crosses the network
 
-**Exactly one thing:** on first run, loom downloads the
-BGE-small-en-v1.5 ONNX model (~33 MB) into the cache dir above, over
-HTTPS, from
-`https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-en-v1.5.tar.gz`
-— a Google Cloud Storage bucket published by Qdrant. (Earlier versions
-of this page said Hugging Face. That was wrong; the host has always
-been the GCS bucket.) Set `LOOM_MODEL_BASE_URL` to fetch from
-somewhere else. After that download, every embedding — for `remember`,
-`recall`, and anywhere else semantic similarity is used — is computed
-entirely in-process on CPU. No further traffic leaves loom.
+**With nothing else set up, one thing:** on first use of memory, loom
+downloads the BGE-small-en-v1.5 ONNX model (~33 MB) into the cache dir
+above, over HTTPS, from
+`https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-en-v1.5.tar.gz`,
+a Google Cloud Storage bucket published by Qdrant. Set
+`LOOM_MODEL_BASE_URL` to fetch from somewhere else. After that
+download, every embedding is computed in-process on CPU.
 
 If you want to pre-seed the cache on an air-gapped machine, copy the
 cache directory from a machine that has run loom once.
 
+**What a household turns on makes its own connections,** each to the
+service it names and with the credential the household gave it:
+
+- Your browser, the command-line clients, and any worker machine you
+  enroll talk to `loom serve` over HTTP at the address you serve it on.
+- A Discord or Slack connection talks to Discord's or Slack's API.
+- Changes reads pull requests from GitHub's API.
+- An agent's run is a harness (Claude Code, Codex and others) started
+  on a worker machine. The harness talks to its model provider under
+  its own account; what it sends is that harness's business, and the
+  agent's instructions and the conversation are in it.
+- A browser that has allowed notifications is reached through its
+  vendor's push service. The notification carries no message words.
+
 ### What does *not* cross the network
 
-- No analytics, crash reporting, or usage telemetry leaves the machine —
-  there is no phone-home code in loom and no dependency that adds it.
-  The one observation log loom keeps is local: `recall` appends a line
-  per search to `<context>/telemetry/recall.jsonl` (query, hit/miss,
-  latency, scores) so `loom memory recall-stats` can tell you whether
-  recall is working. It is a plain file in the agent's own context dir;
-  `LOOM_RECALL_LOG=0` turns it off.
-- No cloud account, no login, no API key, no remote vector database.
-- No outbound call on session start, memory write, memory read,
-  pursuits update, or identity update.
-- No secrets. The stack contract forbids storing secrets in identity
-  or memory, and adapters that accept secrets are a
-  [security bug](../SECURITY.md#the-no-secrets-in-the-stack-invariant).
+- No analytics, crash reporting, or usage telemetry leaves the machine.
+  There is no phone-home code in loom and no dependency that adds it.
+  Measuring (timing roll-ups) is off by default and stays in `loom.db`.
+- No cloud account, no login to a loom service, no remote vector
+  database.
+- No secret values. They stay in the holder process's store and are
+  handed only to the run that was granted them.
 
 ## Telemetry policy
 
@@ -155,7 +161,7 @@ trustworthy. Pair it with:
 ## Reporting concerns
 
 If you find loom doing something this doc doesn't describe — an
-unexpected network call, a file written outside `$LOOM_CONTEXT_DIR`
-and the cache dir, a secret persisted to the stack — that's a
+unexpected network call, a file written outside the home folder
+and the cache dir, a secret value stored outside the holder — that's a
 security issue. See [`SECURITY.md`](../SECURITY.md) for how to
 report privately.

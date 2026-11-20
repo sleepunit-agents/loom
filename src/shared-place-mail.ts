@@ -1,0 +1,417 @@
+/** Mail that starts work in a named bridge conversation without a message from the bridge: a trigger's
+ * firing there (core/tempo) and a note one body of an agent hands to its body in another conversation
+ * (core/conversations/handoff.ts). What both need is said here once: where such a conversation is posted
+ * to, whether it still can be, who a job is working on the word of, and whether that person is still
+ * known. Who may do what with it is policy.ts's (maySchedule, mayHandTo). */
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { z } from 'zod';
+import type { DataDatabase } from './core/data/database.js';
+import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
+import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
+import { householdOwners, sharedSharing } from './shared-sharing.js';
+import { OperationError } from './core/operations/index.js';
+import type { HandoffToSelf } from './core/conversations/handoff.js';
+import type { ChannelTarget } from './core/conversations/channel-target.js';
+import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
+import { conversationPlace, discordPlace } from './pieces/bridges/place.js';
+import { postable } from './pieces/bridges/reply-api.js';
+import { jobMail, waitingMail } from './runtime/body-policy.js';
+import type { WorkerRunPolicy } from './runtime/worker.js';
+
+export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
+/** Why a channel target names no place loom can post to (pieces/bridges/reply-api.ts, postable). */
+export const UNPOSTABLE_REFUSAL = 'Nothing can be posted there: on Discord a thread is named as a channel of its own, and on Slack a thread is the time of the message that started it.';
+/** Whether a channel target somebody named is a place loom can post to: postable, and on Discord with no
+ * thread at all, since a conversation there is found by its channel alone. */
+export const targetPostable = (to: { platform: 'discord' | 'slack'; channel: string; thread?: string }): boolean => postable(to.platform, to) && !(to.platform === 'discord' && to.thread !== undefined);
+/** Each time this many more triggers stand at once naming one conversation, the agent's people are told
+ * (shared-place-triggers.ts, placeCrowded). It refuses nothing, for anybody. */
+export const PLACE_TRIGGERS_NOTICE_EVERY = 10;
+/** Each time one job on the word of anybody but owners has handed this many more notes, briefs to a peer agent counted with
+ * them, the agent's people are told (selfHandoff, handed). It refuses nothing: each note may open a conversation and
+ * start a job, so a job that hands many is made loud, not stopped. A job working for owners, and the agent's own
+ * work, is not counted. */
+export const NOTES_NOTICE_EVERY = 5;
+/** A chain of hand-offs this long, and each further one this long, is told to the household's owners. It refuses nothing. */
+export const CHAIN_NOTICE_EVERY = 25;
+
+type Place = { id: string; agent: string; venue: string; place: string };
+export type { OnWord };
+export const isBridgeVenue = (venue: string): venue is 'discord' | 'slack' => venue === 'discord' || venue === 'slack';
+
+/** Where a post in this conversation goes: read from its place (pieces/bridges/place.ts), on the agent's
+ * connection to that workspace. Nothing for a conversation that is not a bridge's or has no connection. */
+export function placeAddress(db: DataDatabase, cv: Place): { connection: string; workspace: string; channel: string; thread: string | null; direct: boolean } | undefined {
+  if (!isBridgeVenue(cv.venue)) return undefined;
+  let place: unknown; try { place = JSON.parse(cv.place); } catch { return undefined; }
+  if (!Array.isArray(place) || typeof place[0] !== 'string' || typeof place[1] !== 'string' || (place[2] !== null && typeof place[2] !== 'string')) return undefined;
+  const connection = db.select({ id: bridgeConnections.id }).from(bridgeConnections)
+    .where(and(eq(bridgeConnections.platform, cv.venue), eq(bridgeConnections.agent, cv.agent), eq(bridgeConnections.workspace, place[0]), isNull(bridgeConnections.removedAt))).get();
+  return connection ? { connection: connection.id, workspace: place[0], channel: place[1], thread: place[2], direct: place.length > 3 } : undefined;
+}
+/** The current conversation label is refreshed by Discord ingress. Older conversations kept only an id. */
+export function describePlace(db: DataDatabase, cv: Place, at = placeAddress(db, cv), includeSlackThread = true): string {
+  if (!at) return cv.venue;
+  if (cv.venue !== 'discord') return `${cv.venue} ${at.direct ? 'direct conversation' : 'channel ' + at.channel}${includeSlackThread && at.thread ? ', thread ' + at.thread : ''}`;
+  const saved = db.select({ label: conversations.label, member: conversations.member }).from(conversations).where(eq(conversations.id, cv.id)).get();
+  // A display label can be edited. A direct conversation always takes its scope and participant
+  // from the place and the mail, regardless of what someone called it.
+  const label = saved?.label;
+  if (!at.direct && label && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) {
+    const expected = at.thread ? /^Discord thread #[^\n]{1,100} under #[^\n]{1,100}$/u : /^Discord channel #[^\n]{1,100}$/u;
+    if (expected.test(label)) return label;
+  }
+  const message = db.select({ parent: bridgeIncoming.parent, user: bridgeIncoming.user, groupDm: bridgeIncoming.groupDm }).from(bridgeIncoming)
+    .where(eq(bridgeIncoming.conversation, cv.id)).orderBy(desc(bridgeIncoming.receivedAt)).get();
+  if (at.direct && !saved?.member && !message) return 'Discord direct message';
+  return discordPlace({ ...at, parent: message?.parent, groupDm: !!message?.groupDm, isDm: at.direct, user: message?.user ?? '' }, saved?.member ?? null);
+}
+
+/** Why nothing can be posted to this conversation now, by the rules a message arriving there is admitted
+ * by (pieces/bridges/incoming.ts): its connection is gone or not in use, or its channel is filtered out. A
+ * channel rule that was removed closes nothing: a mention there would still wake the agent. */
+export function placeClosed(db: DataDatabase, cv: Place): string | undefined {
+  const found = placeAddress(db, cv), at = found && { ...found, channel: ruleChannel(db, cv, found.channel) };
+  if (!at) return 'its connection is gone';
+  if (!db.select({ enabled: bridgeConnections.enabled }).from(bridgeConnections).where(eq(bridgeConnections.id, at.connection)).get()?.enabled) return 'its connection is not in use';
+  const filters = db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, at.connection)).all();
+  if (filters.some(f => f.rule === 'ignore' && f.channel === at.channel) || (!at.direct && filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === at.channel))) return 'its channel is filtered out';
+  return undefined;
+}
+/** The channel a conversation's rules are looked up by: a channel rule, a filter and a report target name
+ * a channel, and a Discord thread is under one. Admission reads the parent from the arriving message
+ * (pieces/bridges/incoming.ts, `parent ?? channel`); a conversation's own messages say the same, so the
+ * latest one is asked, and a conversation nobody has spoken in is its place's channel. The one lookup
+ * for every rule about a place: placeClosed, reportsTo and a note's target. */
+export function ruleChannel(db: DataDatabase, cv: { id: string }, placeChannel: string): string {
+  const said = cv.id ? db.select({ channel: bridgeIncoming.channel, parent: bridgeIncoming.parent }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, cv.id)).orderBy(desc(bridgeIncoming.receivedAt)).get() : undefined;
+  return said ? said.parent ?? said.channel : placeChannel;
+}
+/** Whether this person is still known to the household for this agent: a member in the household now, an
+ * outside account the agent's owner has given a tier, or the agent itself while it is not removed. By
+ * the person and not by the venue: the same answer wherever the conversation is. */
+export function stillKnown(db: DataDatabase, agent: string, who: Asker): boolean {
+  if (who.kind === 'member') return inHousehold({ kind: 'member', id: who.id }, sharedSharing(db));
+  if (who.kind === 'agent') return who.id === agent && !db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, agent)).get()?.removedAt;
+  return !!db.select({ tier: agentPeople.tier }).from(agentPeople).where(and(eq(agentPeople.agent, agent), eq(agentPeople.person, who.id))).get();
+}
+/** The reach of one person's word for this agent, as it stands now: the agent itself is its own work; a
+ * household owner and a member who has the agent are `owners`; anybody else is `others`. */
+export function wordReach(db: DataDatabase, agent: string, who: Asker): Woke {
+  if (who.kind === 'agent') return 'own';
+  const sharing = sharedSharing(db);
+  return who.kind === 'member' && (isHouseholdOwner({ kind: 'member', id: who.id }, sharing) || membersWithAgent(agent, sharing).includes(who.id)) ? 'owners' : 'others';
+}
+/** Why mail on this word is not delivered into a conversation that is one member's private one, or nothing:
+ * only that member's word, and the agent's own work (no word at all), go in. The one statement, asked where a
+ * firing is made and where a note is admitted; the doors ask it early so the caller hears why. */
+export function privateRefusal(member: string | null, word: Asker | undefined): string | undefined {
+  if (member === null || !word || word.kind === 'agent' || (word.kind === 'member' && word.id === member)) return undefined;
+  return `its conversation is private to the member ${member}, and ${named(word)}, who asked for it, is not that member`;
+}
+/** On whose word a job is working, read from its mail as the worker reads who is in the room
+ * (runtime/body-policy.ts): every person its mail is from, or was sent on the word of, and the member a
+ * private conversation is with. A job holds one asker's mail (askers, below: admission forms it so, and late
+ * mail joins only on the same key), so the people behind it are the agent's owners together, or one other
+ * person. This reading does not rely on that: if it is ever handed mixed mail, least reach wins. It is
+ * `owners` only if every one of them is a household owner or a member who has the agent; one other person
+ * makes it `others`. `person` is the one of least reach, for what is done on this job's word later: a guest
+ * before a member, a member before an owner.
+ *
+ * What counts as the agent's own work, said once: a job with nobody behind any of its mail, which is a
+ * lane's own start and a firing whose asker is the agent itself (mail from the schedule, on nobody's
+ * word, in a conversation that is no member's). Mail from an agent is never that: a note carries the
+ * word of the body that sent it, and one with no word (a body nobody could be named behind, another
+ * agent's bot writing in a channel) is anybody else's. */
+export function jobWord(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): { woke: Woke; person?: OnWord } {
+  const offer = offered(db, job);
+  return offer.word(offer.room());
+}
+/** Kits grant tools to one asker at a time. A legacy job holding different people's
+ * mail may still use the ordinary held-job doors, but inherits no individual's kit. */
+export function kitRoom(db: DataDatabase, job: {id:string; agent:string; conversation:string|null}) {
+  const offer=offered(db,job), room=offer.room(), word=offer.word(room);
+  const linked=db.select({id:inbox.id,source:inbox.source,sourceId:inbox.sourceId,fromId:inbox.fromId}).from(inbox)
+    .where(and(inArray(inbox.id,room.mail??[]),eq(inbox.fromKind,'person'),inArray(inbox.source,['slack','discord']))).all();
+  if (linked.some(item=>!linkedBridgeReceipt(db,job,item))) return {room,word:{woke:'others' as const}};
+  if (word.woke==='others' && word.person) {
+    const asker=word.person, kind=asker.kind==='member'?'person':'outside';
+    const member=job.conversation && db.select({member:conversations.member}).from(conversations).where(eq(conversations.id,job.conversation)).get()?.member;
+    if ((member && (asker.kind!=='member' || member!==asker.id)) || room.people.some(who=>who.kind!==kind || who.person!==asker.id))
+      return {room,word:{woke:'others' as const}};
+  }
+  return {room,word};
+}
+/** Whether a job is held to loom's tools: its word is anybody else's (policy.ts, loomToolsOnly). The one
+ * question every door asks of the job before it hands over a secret, a file or a kept session. */
+export function jobHeld(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): boolean {
+  return loomToolsOnly(jobWord(db, job).woke);
+}
+/** Why a body working for anybody but owners holds back nothing of its agent's: a pause holds every trigger the agent
+ * has, and muted mail starts no job and joins none, in whatever conversation it waits. */
+export const WORD_PAUSE_REFUSAL = 'This job is not working for the agent\'s owners: it does not pause or resume the agent. Stop a schedule the same person asked for here, or have an owner do it.';
+export const WORD_VOLUME_REFUSAL = 'This job is not working for the agent\'s owners: it does not change the volume of any mail.';
+const ASK_INSTEAD = 'If an owner should decide it, ask them a question with conversation.digest.';
+/** What a body on anybody else's word is told at each door it is refused. The rule behind them all: on such a word a
+ * body changes nothing outside its own conversation, except by asking the owners a question (`conversation.digest`
+ * with a `question`). A notice is pushed to the owners' phones in the agent's own name; a task, a household
+ * proposal and an approval card are the household's records, and an allowed card is an allowance to act. */
+export const HELD_REFUSALS = {
+  pause: WORD_PAUSE_REFUSAL, resume: WORD_PAUSE_REFUSAL, volume: WORD_VOLUME_REFUSAL,
+  // Switched off until an owner can grant a person or a project tools of their own: with loom's tools only such a
+  // body has nothing long-running to come back to.
+  schedule: 'A job that is not working for the agent\'s owners sets and changes no schedule yet. Ask the owners a question instead.',
+  notice: `This job is not working for the agent's owners: it raises and clears no notice. ${ASK_INSTEAD}`,
+  task: `This job is not working for the agent's owners: it makes and changes no task. ${ASK_INSTEAD}`,
+  propose: `This job is not working for the agent's owners: it proposes no change to the household. ${ASK_INSTEAD}`,
+  approval: `This job is not working for the agent's owners: it asks for no approval, and uses, reports on and withdraws none. ${ASK_INSTEAD}`,
+  question: 'This job is not working for the agent\'s owners: its question goes only to somebody who directs the agent, a member who has it, or a household owner when nobody has.',
+  questionWaits: 'This job is not working for the agent\'s owners: its question waits on no task and no approval. Ask it in words.',
+  questionLink: 'This job is not working for the agent\'s owners: its question carries no link. Say what you need in words.',
+  memory: 'This job is not working for the agent\'s owners: of what the agent keeps it may only add, a memory with memory.remember or a new note with memory.noteWrite. It changes, archives, restores, forgets, drafts and ratifies nothing, and writes no person or project card.',
+  note: 'This job is not working for the agent\'s owners: it writes a new note and overwrites none. Choose a path no note has.',
+  knowledge: 'This job is not working for the agent\'s owners: it writes nothing to the household\'s knowledge or its people.',
+} as const;
+/** On whose word the body of this job is writing, when that is anybody else's: the person as loom names them and the
+ * conversation, for the stamp loom puts on a memory or a note such a body adds. Nothing for a job on owners' word or
+ * the agent's own work. `line` is the same in words, for where a reader meets the memory. */
+export function writtenOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } } | undefined): { who: string; conversation: string | null; line: string; by: string } | undefined {
+  if (!work) return undefined;
+  const word = jobWord(db, work.job); if (word.woke !== 'others') return undefined;
+  const who = word.person ? named(word.person) : 'somebody loom cannot name', where = `${who} in conversation ${work.job.conversation}, who is not one of ${work.job.agent}'s owners`;
+  return { who, conversation: work.job.conversation, line: `[From loom: written while working for ${where}.]`, by: `${work.job.agent}, working for ${where}` };
+}
+/** Why the body of this job may not do this: its job works on anybody else's word (jobHeld). The one question for
+ * every door such a body is refused at, asked of the job and never of what the body says about itself. Nothing for
+ * a caller that is no job's body, and for a job on owners' word or the agent's own work. */
+export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } } | undefined, action: keyof typeof HELD_REFUSALS): string | undefined {
+  return work && jobHeld(db, work.job) ? HELD_REFUSALS[action] : undefined;
+}
+/** loom's line at the head of a question a body on anybody else's word asks a person (`conversation.digest`): on
+ * whose word the body was working, as loom names them. So an owner never reads a question a guest steered as the
+ * agent's own, and the job that later reads the owner's answer, which quotes the question, is told the same.
+ * Nothing for a job on owners' word or the agent's own work: its question is its own words alone.
+ * Given the question, it also refuses one such a job may not ask (throws an OperationError). */
+export const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.string()]);
+export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }) {
+  const word = jobWord(db, work.job);
+  if (word.woke !== 'others') return undefined;
+  // Such a question goes only to the people who direct the agent (tellOwners), not to whoever reads the room, and
+  // carries no link: a guest's job puts no address in front of an owner. Refused, not dropped, so the body hears why.
+  if (question && !tellOwners(db, work.job.agent).includes(question.to)) throw new OperationError('denied', HELD_REFUSALS.question);
+  if (question?.link !== undefined) throw new OperationError('denied', HELD_REFUSALS.questionLink);
+  // Nor does it wait on a task or an approval card: such a question takes no answer of its own, and holds the record where it is.
+  if (question?.waitsOnKind !== undefined) throw new OperationError('denied', HELD_REFUSALS.questionWaits);
+  const agent = work.job.agent[0].toUpperCase() + work.job.agent.slice(1);
+  const person = word.person;
+  let who = 'somebody loom cannot name', account = '';
+  if (person?.kind === 'member') who = 'the member ' + person.id;
+  if (person?.kind === 'outside') {
+    let identity: unknown;
+    try { identity = JSON.parse(person.id); } catch { /* An older word can lack an account key. */ }
+    const parsed = outsideAccount.safeParse(identity);
+    if (parsed.success) {
+      const [platform,workspace,user] = parsed.data;
+      const venue = platform === 'slack' ? 'Slack' : 'Discord';
+      who = `a ${venue} account`;
+      account = ` (account ${user} in workspace ${workspace})`;
+    }
+  }
+  return {line:`Asked while working for ${who}, who is not one of ${agent}'s owners${account}.`, outside:person?.kind==='outside' ? person.id : undefined};
+}
+/** Who is in a job's room, with the word it works on: what the dispatcher hands a worker with the job
+ * (runtime/dispatcher.ts). The room is read from the mail the job is offered: what admission marked for it,
+ * and mail the same asker wrote since (lateMailJoins). */
+export function jobRoom(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy & { word: Woke } {
+  const offer = offered(db, job), room = offer.room();
+  return { ...room, word: offer.word(room).woke };
+}
+/** Whether mail from a person, arrived after this job was admitted, joins it, or waits for the next job. It
+ * joins only when it is on the job's own key (askKey): the owners' class for an owners' job, and for anybody
+ * else's job that same person. Reach follows who asked (the owner's ruling, 2026-11-18): an owner who writes
+ * while a guest's job is queued or running is not answered by that job at the guest's reach, and a guest who
+ * writes while an owners' job runs is not answered at the owners'. Either waits for a job of its own. The one
+ * answer, for the mail a body is handed (core/conversations, pending) and for the room.
+ * Asked once for a job and then of each piece: the job's mail and its word are read once, however much waits. */
+export function lateMailJoins(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): (item: { id: string }) => boolean {
+  const offer = offered(db, job);
+  return item => offer.joins(item.id);
+}
+/** The mail of this job that makes its word anybody else's: each piece whose own room is. What is settled
+ * when such a job can never be run (runtime/dispatcher.ts), so that it waits for no later job. */
+export function othersMail(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): string[] {
+  const offer = offered(db, job);
+  return offer.room().mail!.filter(id => offer.word(offer.mail.room([id])).woke === 'others');
+}
+/** What a job is offered, decided once: its mail (runtime/body-policy.ts, jobMail), the word any room of it
+ * works on, and which late piece joins. Every question above is asked of one of these, so the mail and the
+ * household are read once per question, and each late piece is judged once. */
+function offered(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }) {
+  const mail = jobMail(db, job), word = wordOf(db, job);
+  // A job nothing is marked for was not started by admission, and is offered everything that waits.
+  const late = new Map(mail.late.map(item => [item.id, item])), judged = new Map<string, boolean>();
+  let own: string | undefined;
+  /** The key the job was formed on, by the mail admission marked for it. */
+  const key = () => own ??= askKey(word(mail.room(mail.marked)));
+  const joins = (id: string): boolean => {
+    const item = late.get(id); if (!item) return false;
+    if (!mail.admitted) return true;
+    if (item.waits) return false;
+    let answer = judged.get(id);
+    if (answer === undefined) judged.set(id, answer = askKey(word(mail.room([id]))) === key());
+    return answer;
+  };
+  return { mail, word, joins, room: () => mail.room([...mail.marked, ...mail.late.filter(item => joins(item.id)).map(item => item.id)]) };
+}
+/** The key mail is jobbed by: whose request it is. Mail on the owners' word, and the agent's own work, shares
+ * one key, as it shares a job. Mail on anybody else's word is keyed by the person, never by the class: one job
+ * holds one such person's mail (what each person and project is given will differ, so a job answers one).
+ * Mail on anybody else's word that names nobody (a sender loom cannot name, a member who has left, an agent's
+ * mail on nobody's word) cannot be keyed by a person: it shares the one key `nobody`, at the floor, and is
+ * never jobbed with anybody loom can name. */
+/** The key of mail on the owners' word and of the agent's own work: the one that is jobbed first (runtime/jobs.ts). */
+export const OWNERS_KEY = 'owners';
+const askKey = (word: { woke: Woke; person?: OnWord }): string => word.woke !== 'others' ? OWNERS_KEY : word.person ? JSON.stringify([word.person.kind, word.person.id]) : 'nobody';
+/** The key of each piece of mail waiting in a conversation (askKey), whichever job it was last marked for: what
+ * admission splits waiting mail by (runtime/jobs.ts), so that one job holds mail on one key. Read once, asked of each piece. */
+export function askers(db: DataDatabase, cv: { agent: string; conversation: string }): (item: string) => string {
+  const mail = waitingMail(db, cv), word = wordOf(db, cv), keys = new Map<string, string>();
+  return item => { let key = keys.get(item); if (key === undefined) keys.set(item, key = askKey(word(mail.room([item])))); return key; };
+}
+/** The word a room of this job's mail works on. The household and the conversation's member are read once. */
+function wordOf(db: DataDatabase, job: { agent: string; conversation: string | null }): (policy: WorkerRunPolicy) => { woke: Woke; person?: OnWord } {
+  const sharing = sharedSharing(db), have = new Set(membersWithAgent(job.agent, sharing));
+  const member = job.conversation ? db.select({ member: conversations.member }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.member : null;
+  const unvouched = new Map<string, boolean>();
+  /** Mail from an agent with nobody's word on it: a body nobody could be named behind. */
+  const unspoken = (mail: readonly string[]) => {
+    const unasked = mail.filter(id => !unvouched.has(id));
+    if (unasked.length) { const found = new Set(db.select({ id: inbox.id }).from(inbox).where(and(inArray(inbox.id, unasked), eq(inbox.fromKind, 'agent'), isNull(inbox.onWord))).all().map(row => row.id)); for (const id of unasked) unvouched.set(id, found.has(id)); }
+    return mail.some(id => unvouched.get(id));
+  };
+  return policy => {
+    const people = [...policy.people];
+    if (member) people.push(inHousehold({ kind: 'member', id: member }, sharing) ? { kind: 'person', person: member, tier: null } : { kind: 'unknown', person: null, tier: null });
+    if (unspoken(policy.mail ?? [])) return { woke: 'others' };
+    if (!people.length) return { woke: 'own' };
+    const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === null ? 0 : p.tier === 3 ? 2 : 1)
+      : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : have.has(p.person) ? 4 : 3;
+    const least = [...people].sort((a, b) => rank(a) - rank(b))[0], lowest = rank(least);
+    // Somebody nobody can name, or an outside account with no tier (a stranger), is behind it: nothing is done on such a word.
+    if (lowest === 0 || least.person === null) return { woke: 'others' };
+    return { woke: lowest >= 4 ? 'owners' : 'others', person: { kind: least.kind === 'person' ? 'member' : 'outside', id: least.person } };
+  };
+}
+/** The chain a note from this job continues: that of the note its job took, if it took one; and otherwise,
+ * when the note goes back to a conversation the last note here came through, that note's: the answer a
+ * person gave in between is part of the same exchange. */
+export function jobChain(db: DataDatabase, job: { id: string; conversation: string | null }, target?: string): { chain: string[]; startedAt: string } | undefined {
+  if (!job.conversation) return undefined;
+  const notes = db.select({ job: inbox.job, chain: inbox.chain, startedAt: inbox.chainStartedAt }).from(inbox)
+    .where(and(eq(inbox.conversation, job.conversation), eq(inbox.source, 'handoff'), isNotNull(inbox.chain))).orderBy(desc(inbox.seq)).all()
+    .map(item => ({ job: item.job, chain: JSON.parse(item.chain!) as string[], startedAt: item.startedAt! }));
+  return notes.find(note => note.job === job.id) ?? (target !== undefined && notes[0]?.chain.includes(target) ? notes[0] : undefined);
+}
+/** The channel a body working in this conversation for a guest may hand a note to, if any: the `reportsTo` of
+ * the channel's rule, when that rule says this agent answers there. Another agent's rule names where that
+ * agent's bodies report, not this one's. */
+export function reportsTo(db: DataDatabase, cv: Place): string | null {
+  const at = placeAddress(db, cv);
+  if (!at || at.direct || !isBridgeVenue(cv.venue)) return null;
+  return db.select({ reportsTo: bridgeChannels.reportsTo }).from(bridgeChannels)
+    .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)), eq(bridgeChannels.answers, cv.agent))).get()?.reportsTo ?? null;
+}
+/** Whom loom tells of what an agent's bodies do on anybody else's word: the members who have the agent, or the
+ * household's owners when nobody has it. The one audience for a stopped trigger and for every loud notice here. */
+export function tellOwners(db: DataDatabase, agent: string): string[] {
+  const have = membersWithAgent(agent, sharedSharing(db));
+  return have.length ? have : householdOwners(db);
+}
+/** A person as a body is told of them: by what kind they are and the id loom knows them by. */
+export const named = (who: { kind: string; id: string }): string => who.kind === 'member' ? `the member ${who.id}` : who.kind === 'agent' ? 'yourself' : `the outside account ${who.id}`;
+
+/** Whether the agent has a channel rule for this channel: it is who answers there. */
+export const ruled = (db: DataDatabase, agent: string, at: { platform: 'discord' | 'slack'; workspace: string; channel: string }): boolean =>
+  !!db.select({ answers: bridgeChannels.answers }).from(bridgeChannels).where(and(eq(bridgeChannels.platform, at.platform), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, at.channel), eq(bridgeChannels.answers, agent))).get();
+/** A channel as a channel rule's `reportsTo` names it, and as a target is compared with it. */
+export const channelKey = (platform: string, workspace: string, channel: string): string => JSON.stringify([platform, workspace, channel]);
+/** A channel target somebody named, resolved for this agent: the one reading of it, for a note and for an
+ * agent's own post. The agent has a rule for the channel (or it is `also`, the one channel the caller's own
+ * channel reports to); the address is one loom can post to; and nothing closes the place. Answers the place
+ * and the conversation there, if there is one; throws an OperationError to refuse. Reads only. */
+export function channelPlace(db: DataDatabase, agent: string, to: ChannelTarget, what: 'note' | 'post', also: string | null = null): { place: string; cv?: typeof conversations.$inferSelect } {
+  if (!ruled(db, agent, to) && channelKey(to.platform, to.workspace, to.channel) !== also) throw new OperationError('invalid', `A ${what} goes to a channel this agent has a rule for`);
+  if (!targetPostable(to)) throw new OperationError('invalid', UNPOSTABLE_REFUSAL);
+  const place = conversationPlace(to.workspace, { channel: to.channel, thread: to.thread ?? null, isDm: false }, null);
+  const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
+  const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+  return { place, cv };
+}
+/** A note from one body of an agent to its body in another conversation: the composition's half of
+ * `conversation.handoff` with `to`. The mail it writes starts the target conversation's job like any
+ * message; that body, with its own context, says what there is to say in its own words. */
+export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'person'; to: string; member: string; source: 'notice'; sourceId: string; fromKind: 'unknown'; words: string; refs: string[] }): unknown }, now: () => string): HandoffToSelf {
+  return {
+    word: work => jobWord(db, work.job).person,
+    target(work, to) {
+      const agent = work.cv.agent;
+      let conversation: string | undefined, open: { venue: 'discord' | 'slack'; place: string; label: string } | undefined, key: string, where: string, there: Place;
+      if ('conversation' in to) {
+        const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? placeAddress(db, cv) : undefined;
+        if (!cv || !at || cv.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another Discord or Slack conversation of this agent');
+        const closed = placeClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+        // One member's private conversation is handed to only on that member's word, or by the agent's own work.
+        const on = jobWord(db, work.job);
+        if (cv.member !== null && (on.woke !== 'own' && !on.person || privateRefusal(cv.member, on.person))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
+        there = cv;
+        conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = describePlace(db, cv, at, false);
+      } else {
+        // A channel the agent has a rule for; the conversation there is found, or opened.
+        // (Or the one channel its own channel's rule says it reports to: the owner named it there.)
+        const { place, cv } = channelPlace(db, agent, to, 'note', reportsTo(db, work.cv));
+        if (cv?.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another conversation');
+        there = cv ?? { id: '', agent, venue: to.platform, place };
+        conversation = cv?.id; if (!cv) open = { venue: to.platform, place, label: to.thread ?? to.channel };
+        key = channelKey(to.platform, to.workspace, to.channel); where = cv && to.platform === 'discord' ? describePlace(db, cv) : `${to.platform} channel ${to.channel}`;
+      }
+      const word = jobWord(db, work.job);
+      if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
+        throw new OperationError('denied', 'This body may hand a note only to the channel its own channel reports to, and its channel names none or another');
+      const hop = this.hop(work); if (hop) throw new OperationError('denied', hop);
+      const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = placeAddress(db, work.cv);
+      // Whether the body this reaches could hand a note back, as far as can be known now: it will work on this
+      // note's word at most, so the same questions are asked of the way back; and on anybody else's word a job a
+      // note started hands nowhere. Told so it does not try in vain.
+      const answerable = word.woke === 'owners' && !!from && !!word.person && (work.cv.member === null || (word.person.kind === 'member' && word.person.id === work.cv.member)) && !placeClosed(db, work.cv)
+        && mayHandTo(word.woke, channelKey(work.cv.venue, from.workspace, ruleChannel(db, work.cv, from.channel)), reportsTo(db, there));
+      const origin = from ? describePlace(db, work.cv, from, false) : `its own work (${work.cv.venue})`;
+      return { conversation, open, chain, startedAt: before?.startedAt ?? now(), ...(word.person ? { onWord: word.person } : {}),
+        told: `[A note from another body of yours, not a person speaking. It was working in ${origin} (conversation ${work.cv.id})${word.person ? `, for ${named(word.person)}` : ', on your own work'}. `
+          + `Saying what needs saying here, in ${where}, in your own words, is your job. ${answerable ? `To answer that body, hand a note back to conversation ${work.cv.id}.` : 'A note back to that body would be refused from here.'} `
+          + `Hand-offs before this one in this exchange: ${chain.length}${chain.length ? ` (through conversations ${chain.join(', ')})` : ''}. If this exchange is no longer making progress, stop and say so to a person instead of handing on.]` };
+    },
+    // A guest's word goes one hop: a job on anybody else's word that a note or a brief started hands nowhere, to its
+    // own body elsewhere or to a peer agent. One a person's message or a firing started may.
+    hop(work) {
+      return jobWord(db, work.job).woke === 'others' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'handoff'))).get()
+        ? 'A note or a brief started this job, and it is not working for the agent\'s owners: it hands nothing on. Say what there is to say here.' : undefined;
+    },
+    handed(work) {
+      // Loud, not a stop: the agent's people are told each time such a job has handed NOTES_NOTICE_EVERY more.
+      const word = jobWord(db, work.job);
+      if (word.woke !== 'others') return;
+      const mine = JSON.stringify([work.job.id]).slice(0, -1) + ',';
+      const count = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'), eq(inbox.fromId, work.job.agent))).all().filter(item => item.sourceId?.startsWith(mine)).length;
+      if (!count || count % NOTES_NOTICE_EVERY !== 0) return;
+      for (const member of tellOwners(db, work.job.agent)) mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `job-notes:${JSON.stringify([work.job.id, count])}`, fromKind: 'unknown',
+        words: `A job of ${work.job.agent} that is not working for its owners has handed ${count} notes and briefs${word.person ? `, on the word of ${named(word.person)}` : ''}, from conversation ${work.job.conversation}. Nothing was stopped: say stop in that conversation, or stop the job, if it should end.`, refs: [work.job.agent] });
+    },
+    sent(note) {
+      // Loud, not a stop: the household's owners are told once each time a chain grows by CHAIN_NOTICE_EVERY.
+      if (note.chain.length % CHAIN_NOTICE_EVERY !== 0) return;
+      const between = [...new Set([...note.chain, note.to])];
+      for (const member of householdOwners(db)) mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `handoff-chain:${JSON.stringify([note.chain[0], note.startedAt, note.chain.length])}`, fromKind: 'unknown',
+        words: `Bodies of ${note.agent} have handed ${note.chain.length} notes to each other in one exchange since ${note.startedAt}, between conversations ${between.join(', ')}. Nothing was stopped: say stop in either place if it should end.`, refs: [note.agent] });
+    },
+  };
+}

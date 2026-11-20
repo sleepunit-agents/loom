@@ -1,19 +1,22 @@
+import {SHA256_HEX} from './core/sha256-hex.js';
+import {readProgramSetupTokens} from './core/data/program-setup-read.js';
 /** Trusted owner-setup logic. Outside ownership and reply release belong at
  * Root's door; persistence is supplied by the schema-owned same-DB adapter. */
 import {z} from 'zod';
 import {types} from 'node:util';
-import {eq} from 'drizzle-orm';
+import {eq,isNull} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
 import type {Clock} from './core/clock.js';
-import {tokens} from './core/data/schema.js';
+import {members,tokens} from './core/data/schema.js';
+import {tokenLive} from './core/data/authentication.js';
 import {OperationError} from './core/operations/index.js';
 import {sharedTokens,sharedTokenInput,currentMemberToken} from './core/signin/shared-tokens.js';
 import {isReservedProgramOperation,normalizeProgramGrants,programSnapshot,sameProgramGrants,type ProgramGrantStore,type ProgramGrants} from './shared-program-access.js';
 const grants={records:z.array(z.string().min(1).max(200)).max(200),operations:z.array(z.string().min(1).max(200)).max(200)};
 export const programIssueInput=sharedTokenInput.options[0].omit({kind:true}).extend(grants).strict();
-export const programEditInput=z.object({fingerprint:z.string().regex(/^[0-9a-f]{64}$/),...grants}).strict();
+export const programEditInput=z.object({fingerprint:z.string().regex(SHA256_HEX),...grants}).strict();
 export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGrantStore,choices:()=>ProgramGrants){
- if(types.isAsyncFunction(store.read)||types.isAsyncFunction(store.write))throw Error('Program persistence must be synchronous SQLite');
+ if(types.isAsyncFunction(store.read)||types.isAsyncFunction(store.readMany)||types.isAsyncFunction(store.write))throw Error('Program persistence must be synchronous SQLite');
  const issuer=sharedTokens(db,clock);
  const catalogue=()=>{
   const value=choices();return normalizeProgramGrants({records:value.records,operations:value.operations.filter(name=>!isReservedProgramOperation(name))});
@@ -34,11 +37,16 @@ export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGran
  return {
   catalogue,
   list(){
-   return db.select().from(tokens).all().flatMap(token=>{
-    if(token.kind!=='owner'||!token.member)return[];
-    const value=programSnapshot(id=>store.read(id),token.fingerprint);if(!value)return[];
-    return[{fingerprint:token.fingerprint,label:token.label,member:token.member,createdAt:token.createdAt,expiresAt:token.expiresAt,revokedAt:token.revokedAt,
-     ended:!!token.revokedAt||!!token.expiresAt&&Date.parse(token.expiresAt)<=clock.now(),...value}];
+   return db.transaction(()=>{
+    const rows=readProgramSetupTokens(db),grants=store.readMany(rows.map(row=>row.fingerprint));
+    // Ended means what the door means (core/data/authentication.ts, currentToken): the token is no longer live,
+    // or its member has been removed. One read of who is in the household, however many tokens there are.
+    const present=new Set(db.select({id:members.id}).from(members).where(isNull(members.removedAt)).all().map(row=>row.id));
+    return rows.flatMap(token=>{
+     const input=grants.get(token.fingerprint);if(!input)return[];
+     const value=normalizeProgramGrants(input);
+     return[{...token,ended:!tokenLive(token,clock.now())||!present.has(token.member!),...value}];
+    });
    });
   },
   issue(input:z.input<typeof programIssueInput>){

@@ -62,11 +62,11 @@ function fixture(platform: 'discord' | 'slack') {
       bot: '123', tokenSecret: 'bot', secrets: fixtureSecrets, clock, beforeConnect: () => true,
       socket: socket as unknown as NonNullable<DiscordGatewayOptions['socket']>, random: () => 0.5,
       load: () => {
-        const c = receiver.checkpoint('discord');
+        const c = receiver.checkpoint('discord', 'identity');
         return c && { session: c.session, seq: c.sequence, url: c.resumeUrl };
       },
       commit: async (_event, c, raw) => {
-        receiver.discord('discord', raw, { session: c.session, sequence: c.seq, resumeUrl: c.url });
+        receiver.discord('discord', raw, { session: c.session, sequence: c.seq, resumeUrl: c.url, identity: 'identity' });
       },
       reset: async () => receiver.reset('discord'),
     });
@@ -141,6 +141,16 @@ it('Slack failed SQLite commit sends no ACK and retry on the replacement socket 
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
 
+it('requests guild events and commits managed-role dispatches through the Discord gateway', async () => {
+  const f=fixture('discord'); f.discord(); await settled();
+  const socket=f.sockets[0]; socket.emit('open'); socket.frame(hello); await settled();
+  expect(socket.sent()[0].d.intents & 1).toBe(1);
+  socket.frame(ready); await settled();
+  const bytes=socket.frame({op:0,t:'GUILD_ROLE_CREATE',s:2,d:{guild_id:'w',role:{id:'role',managed:true,tags:{bot_id:'foreign'}}}});
+  await settled();
+  expect(f.raw().some(row=>Buffer.from(row.event).equals(bytes))).toBe(true);
+});
+
 it('Discord resumes the SQLite cursor after reopen while missing metadata retains original bytes', async () => {
   const f = fixture('discord'), first = f.discord(); await settled();
   const s = f.sockets[0]; s.frame(hello); await settled(); s.frame(ready); await settled();
@@ -164,7 +174,7 @@ it('Discord failed raw insert rolls its cursor back and reconnect resumes the pr
   f.client.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON bridge_raw_events BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END");
   s.frame(message(f.now())); await settled();
   expect(s.terminate).toHaveBeenCalledOnce();
-  expect(f.receiver.checkpoint('discord')?.sequence).toBe(1);
+  expect(f.receiver.checkpoint('discord', 'identity')?.sequence).toBe(1);
   expect(f.raw()).toHaveLength(1); // READY, with no failed message receipt.
   f.client.exec('DROP TRIGGER fail_receipt'); f.clock.advance(1000); await settled();
   const next = f.sockets[1]; next.frame(hello); await settled();

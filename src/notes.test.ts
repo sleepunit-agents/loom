@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import BetterSqlite3 from 'better-sqlite3';
-import { citedPaths, expiresAt, LIFESPAN_DAYS, noteFilesDir, Notes } from './notes.js';
+import { expiresAt, LIFESPAN_DAYS, noteFilesDir, Notes } from './notes.js';
 
 const DAY = 86_400_000;
 
@@ -76,20 +75,5 @@ describe('notes', () => {
     now += 60 * DAY;
     expect(n.sweep([]).gone.sort()).toEqual(['making/after-sunday', 'planning/2026-10-01', 'r0210/run']);
     expect(n.list().map((r) => r.path).sort()).toEqual(['decisions/2026-10-30-x', 'teardowns/thing']);
-  });
-
-  it("citedPaths reads live memories and active knowledge pages, not archived ones", () => {
-    const mem = new BetterSqlite3(join(dir, 'memories.db'));
-    mem.exec('CREATE TABLE memories (title TEXT, content TEXT, archived INTEGER)');
-    mem.prepare('INSERT INTO memories VALUES (?, ?, 0)').run('DNS', 'see notes/homelab/2026-10-30-dns-health.md for the numbers');
-    mem.prepare('INSERT INTO memories VALUES (?, ?, 1)').run('old', 'notes/gone/x.md');
-    mem.close();
-    const kn = new BetterSqlite3(join(dir, 'knowledge.db'));
-    kn.exec('CREATE TABLE pages (title TEXT, body TEXT, status TEXT)');
-    kn.prepare("INSERT INTO pages VALUES (?, ?, 'active')").run('wunder', 'bench: note:homelab/2026-10-30-household-lock');
-    kn.close();
-    const c = citedPaths(dir);
-    expect([...c].sort()).toEqual(['note:homelab/2026-10-30-household-lock', 'notes/homelab/2026-10-30-dns-health.md']);
-    expect(existsSync(join(dir, 'memories.db'))).toBe(true);
   });
 });

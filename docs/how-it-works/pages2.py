@@ -6,7 +6,7 @@ from site_build import (PATH, N, NUM, TINT, FILE, key, plink, tile, page, foot, 
 from model import PLUMBING
 
 e = html.escape
-WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen"]
 
 # ───────────────────────── pieces
 def split_mock(search, folders, list_title, count, top, rows, reader, chips=()):
@@ -77,6 +77,38 @@ def how(panels):
         out.append(f'<div class="how__p t-{tint}"><h3>{title}</h3><div class="how__pic" aria-hidden="true">{pic}</div><p>{text}</p></div>')
     return f'<div class="how">{"".join(out)}</div>'
 
+# The three small pieces of Subscriptions that other pages show. Each opens Subscriptions at the right subscription.
+LEVELS = {"plenty": "ok", "getting full": "mid", "almost full": "high"}
+EST = "An estimate. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens."
+
+def meter_chip(name, pct, word):
+    """One subscription's fullest window: its label, a tiny bar and a word."""
+    return f'<span class="mchip" data-lv="{LEVELS[word]}"><b>{name}</b><i style="--w:{pct}%"></i><em>{word}</em></span>'
+
+def signin_mark(text, st="soon"):
+    """A dot beside a machine or a harness, only when a sign-in is gone (out) or about to end (soon)."""
+    return f'<span class="smark" data-st="{st}"><i></i>{text}</span>'
+
+def signin_item(title, sub):
+    """The notice the owner gets when a sign-in is gone or about to end."""
+    return f'<div class="askc"><b>{title}</b><small>{sub}</small><span class="yn"><span class="mbtn mbtn--on">Sign in</span><span class="mbtn">Open Subscriptions</span></span></div>'
+
+def hero_wide(title, kind, lead, does, blocks, cap):
+    """A hero whose first mock takes the full width. blocks: (class, label, html)."""
+    idx, tint = NUM[title], TINT[title]
+    b = "".join(f'<div class="{c}"><span class="lbl">{l}</span><div class="shadowed">{h}</div></div>' for c, l, h in blocks)
+    return f"""
+<section class="hero2">
+  <div class="hero2__text t-{tint}">
+    <div><p class="eyebrow">Page {idx} of {N} · {kind}</p><h1>{e(title)}</h1><p class="lead">{lead}</p></div>
+    <ul class="does">{"".join(f"<li>{d}</li>" for d in does)}</ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="two" aria-hidden="true">{b}</div>
+    <figcaption class="cap">{cap}</figcaption>
+  </figure>
+</section>"""
+
 OWNER = "A household owner sees everything, including what is private to another member."
 PRIVATE = "Private to a member means that member plus household owners."
 DOOR = "Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking."
@@ -86,7 +118,7 @@ def see(labels, items):
     li = "".join(f'<li><span class="key key--sm t-ink" aria-hidden="true">{chr(97 + i)}</span><span><b>{b}</b> {t}</span></li>' for i, (b, t) in enumerate(items))
     return (f'<div class="labels">{lab}</div>' if lab else "") + f'<ul class="see">{li}</ul>'
 
-def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_h, panels, labels, see_items, groups, note="", ref_extra="", chat=None, ctl=False):
+def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_h, panels, labels, see_items, groups, note="", ref_extra="", chat=None, ctl=False, hero=None, extra=""):
     idx = NUM[title]
     tint = TINT[title]
     n = sum(len(names) for _, names in groups)
@@ -94,7 +126,9 @@ def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_
           if n else "")
     if ctl:
         cap += CTL
-    if chat:
+    if hero:
+        pass
+    elif chat:
         hero = hero_two(idx, tint, kind, title, f"<b>{lead_b}</b> {lead}", does, fig, chat[0], cap, chat[1])
     else:
         hero = f'''
@@ -112,7 +146,7 @@ def app_page(title, kind, lead_b, lead, does, fig, cap, con_h, con_p, anat, how_
 </section>'''
     body = f'''
 {hero}
-
+{extra}
 <section class="band" aria-labelledby="con-h">
   <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">{con_h}</h2><p>{con_p} The number on each part is its page on the path.</p></div>
   {anat}
@@ -162,6 +196,8 @@ def approvals():
          "A rule answers one kind of request the same way every time, for a scope such as certain repositories or commands. A rule that names a person is a grant to that person. Only the household owner edits rules."),
         ("Asked for in chat", "cyan", card("cyan", "Change a setting", "Wake jonathan's inbox every minute", "Before: the default. After: 60 seconds."),
          "When a person asks an agent in chat to change a setting or do something dangerous, the agent proposes it. Loom shows an approval card inline, with exactly what will change, before and after. On Allow loom makes the change itself and records it. Ordinary work needs no card."),
+        ("A dangerous action", "pink", log(("propose", "an agent names it exactly"), ("allow", "a person says yes"), ("confirm", "and says yes a second time")),
+         "Revoking a token, revoking a machine and signing out a browser cannot be put back. An agent proposes one the same way as a settings change. Allowing it takes a second, explicit yes. Denying it takes one answer."),
         ("The record", "amber", log(("request", "art asks to merge"), ("allow", "jonathan allows"), ("use", "art merges")),
          "Loom keeps every request, answer and use in a record that is never edited. Steps an agent took under a tell-me-after rule are listed as reported steps."),
     ]
@@ -171,7 +207,7 @@ def approvals():
          "Shows a card inline in chat when a setting change or a dangerous action is asked for there.", "Holds standing rules, and keeps a permanent record of every request, answer and use."],
         tile("pink", "approvals", "Approvals", mock), "One approval shown two ways, with example content: as a request in the Approvals tile, and as a question with Allow and Deny inline in the conversation it was asked in.",
         "How an approval connects to other parts", "One approval, with a thread from each field that reaches another part.", anat,
-        "Requests, rules, chat and the record", panels,
+        "Requests, rules, chat, dangerous actions and the record", panels,
         [("agent", "cyan"), ("project", "violet"), ("member, when private", "pink")],
         [("Three labels.", "An approval carries the agent asking, the project it concerns, and a member when it is private to them."),
          ("Who sees it.", f"{OWNER} Anyone else sees approvals in their projects and approvals of agents they own. {PRIVATE}"),
@@ -181,20 +217,159 @@ def approvals():
                    + c_ask("Merge the pump order script?", "Checks pass and the task is done.", "Art merges it at this exact commit.", "The pull request stays open.", "github:owner/repo#12")), "Approvals"))
 
 # ───────────────────────── Tempo
+# The four kinds of thing on the calendar: a class for its colour, and the word the block carries.
+KIND = {"agent": "wakes an agent", "program": "a program decides", "loom": "loom itself", "once": "once"}
+
+def ev(kind, time, name, note, st="", on=False, fired=False):
+    """One block on the calendar. st: off (stopped or held), spent, bad (failed or lost), run (running now)."""
+    t = f"<time>{time}</time>" if time else ""
+    state = f' data-st="{st}"' if st else ""
+    return (f'<div class="ev k-{kind}{" ev--fired" if fired else ""}"{" data-on" if on else ""}{state}>'
+            f'{t}<b>{name}</b><em>{note}</em></div>')
+
+def st_attr(st):
+    return f' data-st="{st}"' if st else ""
+
+def hours(day, now, now_hour, full=None):
+    """day: {hour: [blocks]}. Every hour of the day gets a row; the now line sits inside its hour.
+    full: {hour: label} for the hours when a 5-hour window was almost full; those rows are shaded."""
+    full = full or {}
+    out = []
+    for h in range(24):
+        blocks = "".join(day.get(h, []))
+        line = f'<div class="now"><b>{now} · now</b></div>' if h == now_hour else ""
+        past = " data-past" if h < now_hour else ""
+        if h in full:
+            past += " data-full"
+            if full[h]:
+                blocks = f'<span class="full">{full[h]}</span>' + blocks
+        out.append(f'<div class="hr"{past}><time>{h:02d}:00</time><div>{blocks}{line}</div></div>')
+    return f'<div class="hours">{"".join(out)}</div>'
+
 def tempo():
-    mock = split_mock("Search tempo", [("Due", 2, True), ("Standing", 2), ("Household lanes", 1), ("Recent history", "")], "Tempo", 2, "Create trigger",
-        [("Check the pump delivery", "Nov 14, 2026, 8:31 AM CT · art", "a time · once", True),
-         ("Merge when allowed", "when the approval is answered · art", "an answer · once"),
-         ("night-shift", "22:00 CT · Every day · art", "a time · until stopped")],
-        reader("a time · once · art", "Check the pump delivery", "Due: Nov 14, 2026, 8:31 AM CT", ["Run now", "Cancel"],
-               [("Project", "pond"), ("Target", "an item in art's inbox"), ("Words", "See whether the pump has shipped. Comment on t-2190.")]),
-        chips=["Due 2", "Standing 2", "Household lanes 1", "Recent history"])
+    def f(label, n="", on=False, dot=""):
+        d = f'<i class="dot k-{dot}"></i>' if dot else ""
+        return f'<div class="sp__f"{" data-on" if on else ""}><span>{d}{label}</span><em>{n}</em></div>'
+    nav = ('<div class="sp__search">Search tempo</div>' + f("Day", "", True) + f("Week") + f("All triggers", 30) + f("History")
+           + '<span class="lbl">Kind</span>' + f("Wakes an agent", 17, dot="agent") + f("A program decides", 7, dot="program")
+           + f("Loom itself", 3, dot="loom") + f("Once", 3, dot="once")
+           + '<span class="lbl">Whose</span>' + f("Household lanes", 10) + f("art", 18) + f("mark", 2)
+           + '<span class="lbl">State</span>' + f("Standing", 25) + f("Stopped", 2) + f("Held", 2) + f("Spent", 1))
+    week = "".join(f'<div{" data-on" if on else ""}><b>{d}</b><em>{n}</em><span>{only}</span></div>' for d, n, only, on in [
+        ("Mon 9", 15, "", False), ("Tue 10", 16, "landscape", False), ("Wed 11", 16, "wondering", False), ("Thu 12", 15, "", False), ("Fri 13", 15, "", False),
+        ("Sat 14", 19, "morning-brief, intro-skipper release check", True), ("Sun 15", 19, "morning-brief, groom, goals-review, memory-consolidation", False)])
+    waits = "".join(f'<div class="wait"><span class="lbl">{title}</span>{body}</div>' for title, body in [
+        ("A pull request changing", ev("agent", "", "coordinate", "art · watching 2 · last fired 10:42")),
+        ("An answer arriving", ev("once", "", "Merge when allowed", "art · when the approval is answered")),
+        ("A job stopping", '<span class="meta">Nothing waiting.</span>'),
+        ("An alert firing", ev("agent", "", "alert triage", "art · last fired 13:05"))])
+    allday = (ev("program", "", "lidarr-backlog", "every 2 hours · last 14:00, nothing to do · next 16:00")
+              + ev("program", "", "house-branch-sweep", "every 4 hours · last 12:00, woke art · next 16:00")
+              + ev("loom", "", "model sign-ins", "every machine · tells jonathan when one is signed out or ends within 3 days"))
+    day = {
+        0: [ev("agent", "00:00", "plan-night", "art · night shift · running since 23:41 Friday · done 02:52 · 410k out · peak 640k")],
+        3: [ev("agent", "03:07", "continuity check", "mark · held: mark is paused · would have run 03:07", "off"),
+            ev("agent", "03:13", "knowledge-triage", "art · done · 9 min"),
+            ev("loom", "03:37", "nightly backup", "loom · done · 4 min")],
+        4: [ev("loom", "04:14", "offsite copy", "loom · done · 11 min"),
+            ev("agent", "04:17", "knowledge-verify", "art · lost · workshop went quiet", "bad")],
+        5: [ev("agent", "05:17", "knowledge-expand", "art · stopped Nov 10 · would have run 05:17", "off")],
+        7: [ev("program", "07:17", "prowlarr-cf-check", "program · failed · it could not sign in", "bad")],
+        8: [ev("agent", "08:31", "plan", "art · done · 6 min", on=True)],
+        9: [ev("program", "09:07", "morning-brief", "program · told jonathan"),
+            ev("program", "09:17", "ship-nag", "program · stopped Nov 12 · would have run 09:17", "off"),
+            ev("once", "09:19", "Follow up on t-2175", "art · done · spent", "spent")],
+        10: [ev("agent", "10:42", "coordinate fired", "github:owner/repo#12 changed · art · done · 2 min", fired=True)],
+        13: [ev("agent", "13:05", "alert triage fired", "attic went quiet · art looked · told jonathan", fired=True)],
+        14: [ev("agent", "14:31", "plan-afternoon", "art · running · 16 min so far", "run")],
+        15: [ev("once", "15:30", "Check the pump delivery", "art · due")],
+        16: [ev("program", "16:44", "intro-skipper release check", "program · Saturdays")],
+        19: [ev("program", "19:17", "prowlarr-cf-check", "program")],
+        22: [ev("program", "22:44", "tending", "program · four repositories")],
+        23: [ev("agent", "23:17", "reflect", "art"),
+             ev("agent", "23:17", "retro", "mark · held: mark is paused · would run 23:17", "off"),
+             ev("agent", "23:41", "plan-night", "art · night shift")],
+    }
+    uday = "".join(f'<div>{meter_chip(n, pct, word)}<span>{line}</span></div>' for n, pct, word, line in [
+        ("Claude subscription", 22, "plenty", "92% of the 5-hour window at its fullest today, at 02:40 · 22% now · 38% of the week"),
+        ("Codex subscription", 71, "getting full", "74% of the 5-hour window at its fullest today, at 13:30 · 71% now · 64% of the week")])
+    later = ('<div class="cal__sec"><span class="lbl">Not this week</span>'
+             + ev("agent", "Dec 1", "monthly identity review", "art · on the 1st of each month") + '</div>')
+    runs = "".join(f'<li{st_attr(st)}><time>{t}</time><span>{how_}</span><em>{cost}</em><u>conversation ›</u></li>' for t, how_, cost, st in [
+        ("Sat, Nov 14 · 08:31", "done · set 3 follow-ups", "6 min · 31k out · peak 210k", ""),
+        ("Fri, Nov 13 · 08:31", "done · set 1 follow-up", "5 min · 27k out · peak 190k", ""),
+        ("Thu, Nov 12 · 08:31", "failed · the model sign-in had ended", "12 sec · nothing used", "bad"),
+        ("Wed, Nov 11 · 08:31", "done · set 2 follow-ups", "7 min · 36k out · peak 240k", "")])
+    read = reader("wakes an agent · standing", "plan", "a time · until stopped · set by art", ["Run now", "Stop", "*Ask art to change it"],
+                  [("What for", "Shapes art's day and sets follow-ups for later."), ("When", "Every day at 08:31 CT"), ("Next", "Sun, Nov 15, 2026, 08:31 CT"),
+                   ("Words", "Read last night's reflection and the open tasks. Choose today's work. Set a follow-up for anything to check later."),
+                   ("Runs as", "art, as its own work"), ("Project", "none: it plans across art's projects"),
+                   ("Machine", "prefers workshop · needs nothing"), ("Model", "best, on the Claude subscription")],
+                  f'<div class="sec"><span class="lbl">Its share, last 7 days</span><span>about 6% of the Claude week</span><span class="meta">{EST}</span></div>'
+                  f'<div class="sec"><span class="lbl">Recent runs</span><ol class="runs">{runs}</ol></div>')
+    cal = (f'<div class="tile__body sp cal"><div class="sp__nav">{nav}</div><div class="sp__list">'
+           '<div class="cal__top"><b>Sat, Nov 14, 2026</b><em>Central time</em><span class="cal__go"><span class="mbtn">‹</span><span class="mbtn">Today</span><span class="mbtn">›</span>'
+           '<span class="mbtn mbtn--on">Day</span><span class="mbtn">Week</span></span></div>'
+           f'<div class="cal__sec"><span class="lbl">Subscriptions today</span><div class="uday">{uday}</div></div>'
+           f'<div class="wk7">{week}</div>'
+           f'<div class="cal__sec"><span class="lbl">Waiting on something</span><div class="waits">{waits}</div></div>'
+           f'<div class="cal__sec"><span class="lbl">Through the day</span><div class="waits">{allday}</div></div>'
+           f'{hours(day, "14:47", 14, {0: "", 1: "Claude · 5-hour window almost full", 2: "", 3: ""})}{later}</div>'
+           f'<div class="sp__read">{read}</div></div>')
+    hist = "".join(f'<li{st_attr(st)}><time>{t}</time><b>{what}</b><span>{started}</span><em>{ended}</em></li>' for t, what, started, ended, st in [
+        ("14:31", "plan-afternoon", "woke art", "running · 16 min so far · 40k out", ""),
+        ("14:00", "lidarr-backlog", "its program ran", "done · nothing to do · 2 sec", ""),
+        ("13:05", "alert triage", "woke art: attic went quiet", "done · 3 min · 9k out · peak 120k · told jonathan", ""),
+        ("10:42", "coordinate", "woke art: github:owner/repo#12 changed", "done · 2 min · 6k out · peak 95k", ""),
+        ("09:19", "Follow up on t-2175", "woke art", "done · 4 min · 14k out · peak 130k · spent", ""),
+        ("09:17", "ship-nag", "nothing: it is stopped", "did not fire", "off"),
+        ("09:07", "morning-brief", "its program ran", "done · told jonathan · 3 sec", ""),
+        ("08:31", "plan", "woke art", "done · 6 min · 31k out · peak 210k", ""),
+        ("07:17", "prowlarr-cf-check", "its program ran", "failed · it could not sign in to Prowlarr · 1 sec", "bad"),
+        ("04:17", "knowledge-verify", "woke art", "lost · workshop went quiet after 11 min · 22k out · peak 180k", "bad"),
+        ("03:37", "nightly backup", "loom ran it", "done · 4 min", ""),
+        ("03:07", "continuity check", "nothing: mark is paused", "held", "off")])
+    history = ('<div class="tile__body"><div class="cal__top"><b>History</b><em>Sat, Nov 14, 2026 · 12 of 27</em></div>'
+               f'<ol class="hist"><li class="hist__h"><time>When</time><b>What fired</b><span>What it started</span><em>How it ended</em></li>{hist}</ol></div>')
     tchat = chat("Tempo settings", c_me("Change tempo so my inbox wakes me every minute.") + c_art("I can do that. Here is exactly what would change.")
                  + '<div class="msg msg--ask"><div class="msg__b"><b>Change a setting: how long jonathan\'s inbox waits before waking him</b><small>Before: the default</small><small>After: 60 seconds</small>'
                    '<small>Yes: loom makes the change and records it. No: nothing changes.</small><span class="yn"><span class="mbtn mbtn--on t-cyan">Allow</span><span class="mbtn">Deny</span></span></div></div>')
+    tint = TINT["Tempo"]
+    does = ["Shows a day as a calendar, with each trigger at the time it fires.", "Opens any trigger to show what it does, when it runs next and how its recent runs ended.",
+            "Shows how full each subscription was through the day, and what each run used.",
+            "Fires on a time, a pull request changing, an answer arriving, a job stopping or an alert firing.",
+            "Drops an item in an inbox, or runs an operation that needs no agent.", "Holds an agent's triggers while the agent is paused."]
+    hero = hero_wide("Tempo", "an app", "<b>Triggers: what starts work without anyone asking.</b> A trigger fires in code and drops an item in someone's inbox. A non-empty inbox is what starts an agent or notifies a person.", does,
+        [("two__w", "In the Tempo tile: one day, with plan opened", tile(tint, "clock", "Tempo", cal)),
+         ("two__a", "The same day as history", tile(tint, "clock", "Tempo", history)), ("two__b", "In a chat", tchat)],
+        "The Tempo tile with example triggers on one Saturday, and plan opened beside the day. Below it, the same day as history, and a settings change asked for in chat: the agent proposes it, and loom shows an approval card inline with before and after.")
+    legend = '<div class="legend">' + "".join(ev(k, "", KIND[k], note) for k, note in [
+        ("agent", "plan · art"), ("program", "ship-nag"), ("loom", "nightly backup"), ("once", "Check the pump delivery")]) + "</div>"
+    see_panels = [
+        ("One day", "violet", opts(("Day", "one day, hour by hour"), ("Week", "seven days side by side"), ("All triggers", "every trigger, by its next time")),
+         "Tempo opens on today, in the household's time zone. Each trigger is a block at the time it fires, and a line marks now. Above the line a block says how its run ended. Below the line it says what is coming. The arrows move one day at a time. The list at the side narrows the calendar to one kind, one state, one agent or the household's own lanes. Week shows seven days, so a trigger that runs on Sundays or on Wednesdays is on its day. All triggers lists every one by its next time, and that is where a monthly one is found. A trigger that fires many times a day sits in one row above the hours."),
+        ("Four kinds", "cyan", legend,
+         "Each block is one of four kinds, with its own colour and its own word. Wakes an agent: a body of the agent does a job each time. A program decides: a small program of the household's runs with no model, and wakes an agent or tells a person only when there is something to do. Loom itself: no agent and no program of the household's, such as the nightly backup or watching model sign-ins on every machine. Once: it fires one time at a set time, and then it is spent."),
+        ("No clock time", "amber", opts(("pull request", "coordinate"), ("answer", "Merge when allowed"), ("job", "nothing waiting"), ("alert", "alert triage")),
+         "Some triggers fire when something happens, not at a time: a pull request changing, an answer arriving, a job stopping, an alert firing. They have no place on the hours. They sit in a strip above the day, each under what it waits for. When one fires, a block with a dashed edge appears at the time it happened."),
+        ("State", "pink", opts(("standing", "it will fire at its next time"), ("stopped", "someone stopped it"), ("held", "its agent is paused"), ("spent", "it fired once and is finished")),
+         "Most triggers are standing. A stopped trigger stays on the calendar, struck through. It says when it was stopped and when it would have run next. A trigger whose agent is paused is held, and says so the same way. A one-off that has fired is spent. A run that failed or was lost is marked on its block."),
+        ("Open one", "violet", card("amber", "a program decides · stopped", "ship-nag", "Program: ship-nag. It checks for finished work that has not shipped. Stopped Nov 12 by jonathan. Next would have been 09:17 CT."),
+         "Click a block and it opens beside the day. It says what the trigger is for in one sentence, when it runs and when it runs next. It says what it does: the words handed to the agent, or the program's name and what it checks. It says who it runs as and for which project, which machine it needs or prefers, and which model. Its recent runs are listed with the time, how each ended, how long it took, what it used and a link to its conversation. It also says what share of the subscription's week it took over the last seven days. Run now fires it once. Stop and Start turn it off and on. To change it, ask the agent: it proposes the change, and loom shows an approval card with before and after."),
+        ("The day's history", "cyan", log(("08:31", "plan woke art · done"), ("07:17", "prowlarr-cf-check · failed"), ("04:17", "knowledge-verify · lost")),
+         "History lists everything that fired on the day being viewed, newest first: what fired, what it started and how that ended. A run that failed or was lost is in the list, with the reason. So is a trigger that was stopped or held at its time."),
+        ("What it used", "amber", '<div class="uday"><div>' + meter_chip("Claude subscription", 22, "plenty") + '<span>92% at its fullest today</span></div></div>' + log(("6 min", "time taken"), ("31k out", "tokens the model wrote"), ("peak 210k", "its largest context")),
+         "The household runs on subscriptions, so Tempo shows no money. It shows what is scarce: each subscription's 5-hour window and its week. Above the hours, one line for each subscription says how full its 5-hour window was at its fullest today and how much of the week is used. These are the provider's own readings, so they are exact. Hours with stripes are the hours when a 5-hour window was almost full: work scheduled there was competing with a person. Hours with no stripes had room that went unused. Each run says how long it took, how many tokens the model wrote and its largest context. A trigger's share of the week is an estimate. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens. The detail is in " + plink("Subscriptions") + "."),
+    ]
+    extra = f"""
+<section class="band" aria-labelledby="cal-h">
+  <div class="band__head"><span class="tag">The calendar</span><h2 id="cal-h">One day, four kinds, state, opening one, history and what it used</h2><p>What a person sees in the Tempo tile and what they can do there.</p></div>
+  {how(see_panels)}
+</section>
+"""
     anat = anatomy("trigger", "Check the pump delivery", [
         ("owner", "agent art", "l", "People and projects", "Who set it: the household, an agent or a person."),
-        ("source = time", "Nov 14, 8:31 AM"),
+        ("source = time", "Nov 14, 15:30"),
         ("source = pull request", "a pull request changing", "r", "Changes", "A pull request changing can fire a trigger."),
         ("source = answer", "an answer arriving", "l", "Approvals", "Waiting on an approval is a once-only trigger on that answer."),
         ("source = job", "a job stopping", "r", "Machines and jobs", "A job stopping can fire a trigger."),
@@ -203,9 +378,9 @@ def tempo():
         ("then", "a non-empty inbox starts the agent", "r", "Conversations", "The agent's body starts in that conversation and takes everything waiting at once."),
     ])
     panels = [
-        ("A trigger's four parts", "violet", opts(("source", "a time, a pull request changing, an answer arriving, a job stopping"), ("lifespan", "until stopped, for today, the next time only"),
+        ("A trigger's four parts", "violet", opts(("source", "a time, a pull request changing, an answer arriving, a job stopping, an alert firing"), ("lifespan", "until stopped, for today, the next time only"),
                                                  ("owner", "who set it"), ("target", "run an operation, or drop an item in an inbox")),
-         "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer."),
+         "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them."),
         ("Fire, inbox, start", "pink", flow("trigger", "fires", "inbox", "settles", "agent"),
          "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers."),
         ("The sweep", "cyan", log(("Changes", "2 open, oldest 3 days"), ("Tasks", "4 ready, oldest 6 days"), ("Approvals", "1 pending, 2 hours")),
@@ -215,19 +390,14 @@ def tempo():
         ("Three settings", "violet", opts(("settle", "how long an inbox waits before waking its owner"), ("dim", "how long before a dimmed item returns to full"), ("mute", "how long a mute lasts: 7 days by default")),
          "The timings are settings a person can change, each with a default. Loom keeps a row only for a person or agent that has changed them."),
     ]
-    return app_page("Tempo", "an app", "Triggers: what starts work without anyone asking.",
-        "A trigger fires in code and drops an item in someone's inbox. A non-empty inbox is what starts an agent or notifies a person.",
-        ["Lists what is standing and what is due.", "Fires on a time, a pull request changing, an answer arriving or a job stopping.",
-         "Drops an item in an inbox, or runs an operation that needs no agent.", "Holds an agent's triggers while the agent is paused."],
-        tile("violet", "clock", "Tempo", mock),
-        "The Tempo tile with example triggers, and a settings change asked for in chat: the agent proposes it, and loom shows an approval card inline with before and after.",
+    return app_page("Tempo", "an app", "", "", does, "", "",
         "How a trigger connects to other parts", "One trigger, with a thread from each part of it that reaches another page.", anat,
         "Four parts, firing, the sweep, volume and settings", panels,
         [("owner", "cyan"), ("for an agent or a person", "pink"), ("project", "violet")],
         [("What it carries.", "A trigger names who set it, the agent or person it is for, and its project."),
-         ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own."),
+         ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them."),
          ("Checked at the door.", DOOR)],
-        [("", ["triggers", "trigger_log", "agent_pauses", "tempo_settings"])], chat=(tchat, "Tempo"))
+        [("", ["triggers", "trigger_log", "program_firings", "trigger_edits", "agent_pauses", "tempo_settings"])], hero=hero, extra=extra)
 
 # ───────────────────────── 5 Changes
 def changes():
@@ -235,9 +405,9 @@ def changes():
              '<div class="sec"><span class="lbl">Merge answer</span><span class="sp__acts"><span class="mbtn mbtn--on">Yes, merge it</span><span class="mbtn">Not yet</span><span class="mbtn">Always for pond</span></span></div>'
              '<div class="sec"><span class="lbl">Tasks</span><span>Order the pump <span class="chip">t-2190</span></span></div>')
     mock = split_mock("Search changes", [("All changes", 2, True), ("Waiting on you", 1), ("Lately", ""), ("loom", ""), ("pond", 2)], "Changes", 2, "Refresh",
-        [("Add the pump order script", "github:owner/repo#12 · pond", "CI green, approved, Waiting on you", True),
-         ("Fix the winter checklist link", "github:owner/repo#13 · pond", "CI running")],
-        reader("github:owner/repo#12 · pond", "Add the pump order script", "CI green, approved, Waiting on you", [], [], extra),
+        [("Add the pump order script", "github:owner/repo#12 · pond", "Checks passing, approved, Waiting on you", True),
+         ("Fix the winter checklist link", "github:owner/repo#13 · pond", "Checks running")],
+        reader("github:owner/repo#12 · pond", "Add the pump order script", "Checks passing, approved, Waiting on you", [], [], extra),
         chips=["All changes 2", "Waiting on you 1", "Lately", "pond 2"])
     anat = anatomy("github:owner/repo#12 · change", "Add the pump order script", [
         ("repository, agent", "owner/repo · opened by art", "l", "People and projects", "Its repository files it under a project. An agent's GitHub login says which agent opened it."),
@@ -268,8 +438,8 @@ def changes():
          ("Checked at the door.", DOOR)],
         [("", ["changes", "change_checks", "change_people", "change_tasks", "change_sync"])],
         chat=(chat("Pond pump", c_art('The order script is up as <span class="chip">github:owner/repo#12</span>.')
-                   + c_ref("Pull request", "Add the pump order script", "CI green, approved, Waiting on you")
-                   + c_work(("Add the pump order script", "CI green, approved, Waiting on you · github:owner/repo#12 · Made here"))), "Changes"))
+                   + c_ref("Pull request", "Add the pump order script", "Checks passing, approved, Waiting on you")
+                   + c_work(("Add the pump order script", "Checks passing, approved, Waiting on you · github:owner/repo#12 · Made here"))), "Changes"))
 
 # ───────────────────────── 6 Inbox
 def inbox():
@@ -325,7 +495,7 @@ def machines():
         <div class="sec"><span class="lbl">The worker runs</span><span>Reply in Pond pump <span class="chip">running</span></span></div></div>
       <div class="panel"><span class="lbl">Several computers</span><h4>Workers spread out</h4>
         <div class="sec"><span class="lbl">Machine: attic</span><span><span class="chip">loom</span></span></div>
-        <div class="sec"><span class="lbl">Machine: workshop</span><span><span class="chip">worker</span> gpu:5090</span><span class="meta">may run art</span></div>
+        <div class="sec"><span class="lbl">Machine: workshop</span><span><span class="chip">worker</span> gpu:5090</span>{signin_mark("Claude sign-in ends in 2 days")}<span class="meta">may run art</span></div>
         <div class="sec"><span class="lbl">Machine: den</span><span><span class="chip">worker</span></span><span class="meta">may run art · mark</span></div></div>
       <div class="panel"><div class="agent" style="border:0;padding:0;background:none">{FACE_A}<div><b>Art</b><i>working</i></div></div>
         <div class="sec"><span class="lbl">Runtime jobs · 2</span><span><b>Reply in Pond pump</b><br><span class="meta">running · Box attic</span><br><span class="meta">Queued 9:14 AM</span></span>
@@ -342,13 +512,13 @@ def machines():
     ])
     panels = [
         ("A job's life", "cyan", flow("queued", "claimed", "running", "ends", "done"),
-         "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be waiting, stopped or lost."),
+         "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost."),
         ("Retries", "pink", flow("job 1", "retry of", "job 2", "retry of", "job 3"),
          "A job that fails to start is tried again, up to three times. Each retry is a new job that points back at the one before."),
         ("Boxes", "violet", gate("Its owner says which agents may run there", "An agent can be lent a machine", "A box can report health and never run agents", "An always-on box raises an alert when it goes quiet"),
          "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine."),
         ("Run settings", "amber", opts(("house", "the repository that defines it"), ("boxes", "preferred machines, in order"), ("may use", "named secrets, ports, a GPU")),
-         "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given."),
+         "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the <a href=\"houses.html\">Houses</a> page."),
     ]
     return app_page("Machines and jobs", "no app of its own", "Where agents run and what they are running.",
         "There are always two programs: loom and a worker. A worker runs agents' bodies and builds, on the same machine as loom or on another. Nothing runs inside loom itself.",
@@ -362,7 +532,7 @@ def machines():
          ("Who sees it.", f"{OWNER} Anyone else sees jobs in their projects and jobs of agents they own. {PRIVATE}"),
          ("Boxes.", "A box belongs to the member who owns it, and lists the agents allowed to run there."),
          ("Checked at the door.", DOOR)],
-        [("Machines", ["boxes", "box_agents", "box_facts"]), ("Jobs", ["jobs", "job_needs"]),
+        [("Machines", ["boxes", "box_agents", "box_facts", "box_readings", "box_alert_settings"]), ("Jobs", ["jobs", "job_needs", "job_usage"]),
          ("How each agent runs", ["agent_run_settings", "agent_boxes", "agent_house_secrets", "agent_house_ports", "agent_people", "agent_denied_tools"])])
 
 # ───────────────────────── 8 Discord and Slack
@@ -637,43 +807,158 @@ def memory():
     ])
     panels = [
         ("What an agent keeps", "cyan", opts(("memories", "in seven categories"), ("knowledge pages", "facts, with their sources"), ("people cards", "what it knows about a person"),
-                                             ("project cards", "a project's card"), ("identity", "its creed, preferences and self-model")),
-         "Memories, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household."),
+                                             ("project cards", "a project's card"), ("notes", "working documents, kept by path"), ("identity", "its creed, preferences and self-model")),
+         "Memories, notes, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household. Identity also holds a page for each harness, model, role and project the agent works in, loaded when asked for, and a summary of what its other bodies did in the last 24 hours."),
         ("Top of mind", "pink", opts(("hot", "used or written lately"), ("warm", "cooling"), ("cool", "not used in a while")),
-         "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning."),
+         "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning. A memory can be given a time to live, and is archived when that runs out. A lesson the agent was taught can be confirmed or contradicted later, which raises or lowers how much it is trusted."),
+        ("Notes", "cyan", opts(("keep", "until removed"), ("while", "60 days after its last change"), ("short", "14 days after its last change")),
+         "A memory is a fact. A note is a document: a handoff, a review, a pile of evidence. A note is kept by path, written whole, and read by asking for it by name. It is never recalled by meaning and never fills the top of mind. A memory usually says a note exists and where. Each note has a lifespan, and a change restarts it."),
         ("Changing a memory", "violet", log(("propose", "a draft recall cannot see"), ("ratify", "the draft becomes real"), ("archive", "set aside, can be restored"), ("forget", "deleted, and the deletion recorded")),
          "A change saves the earlier version first. Loom keeps the newest ten versions of each memory, knowledge page and person card, and any of them can be restored."),
         ("Knowledge", "amber", opts(("Fresh", ""), ("Getting old", ""), ("Due a check", "")),
          "A knowledge page is a fact about the world that says where it came from. Without a source it stays provisional. Pages are re-checked every 30 days."),
     ]
     files = ('<p class="muted">Memory is not in loom\'s database. It lives in files, and it is the one kind of data loom treats as precious.</p><ul class="plumb">'
-             "<li><code>each agent's folder</code><span>Its memories and their history, drafts awaiting ratification, people cards, project cards, and its identity files.</span></li>"
+             "<li><code>each agent's folder</code><span>Its memories and their history, drafts awaiting ratification, its notes and their earlier versions, people cards, project cards, and its identity files.</span></li>"
              "<li><code>shared by the household</code><span>Knowledge pages and the people directory.</span></li></ul>")
     return app_page("Memory", "two apps and each agent's own files", "What an agent remembers and knows.",
-        "Memories, knowledge pages, people cards and project cards. This is the one kind of data loom treats as precious.",
+        "Memories, notes, knowledge pages, people cards and project cards. Memories are the one kind of data loom treats as precious. Notes come second.",
         ["Keeps each agent's memories in that agent's own files.", "Recalls by meaning, and keeps what is used most at the top of mind.",
+         "Keeps notes: longer working documents, by path, each with a lifespan.",
          "Keeps knowledge pages with where each fact came from, and re-checks them.", "Shows what happened each day in Activity."],
         tile("cyan", "knowledge", "Knowledge", mock), "The Knowledge tile, drawn with example pages: folders, the list, and the page that is open. People, Projects and Activity are tiles of their own.",
         "How a memory connects to other parts", "One memory, with a thread from each part of it that reaches another page.", anat,
-        "What is kept, top of mind, changes and knowledge", panels,
+        "What is kept, top of mind, notes, changes and knowledge", panels,
         [("agent", "cyan")],
-        [("Memories and cards.", "The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories."),
-         ("Knowledge.", "Knowledge pages are shared by the household. Household owners see them."),
-         ("Precious.", "Agents' memories are the only data loom treats as precious.")],
+        [("Memories, notes and cards.", "The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories or notes."),
+         ("Knowledge.", "Knowledge pages are shared by the household. Household owners and household agents can read and write them, including agents in terminal sessions without a job. Non-owner members cannot."),
+         ("Precious.", "Agents' memories are the only data loom treats as precious."),
+         ("Notes come second.", "Every backup and every move to a new home carries all of an agent's notes, whatever their lifespan. They are not on a par with memories: a note still ends when its lifespan does.")],
         [], ref_extra=files)
 
-# ───────────────────────── Models and accounts
+# ───────────────────────── Subscriptions
 def models():
-    fig = '''<div class="panels">
-      <div class="panel t-cyan"><span class="lbl">What its owner and household owners see</span><h4>Main subscription</h4><span class="meta">owner jonathan · one provider</span>
-        <div class="sec"><span class="lbl">Usage</span><ul class="bars"><li style="grid-template-columns:minmax(0,1fr) 44px"><i style="--w:58%"></i><span>58%</span></li></ul><span class="meta">read 9:10 AM · resets Thu</span></div>
-        <div class="sec"><span class="lbl">Signed in on</span><span>attic · workshop</span></div>
-        <div class="sec"><span class="lbl">Has room</span><span>yes</span></div></div>
-      <div class="panel t-amber"><span class="lbl">What anyone else sees</span><h4>Main subscription</h4>
-        <div class="sec"><span class="lbl">Level</span><span><span class="chip">getting full</span></span><span class="meta">one of: plenty, getting full, almost full</span></div></div>
-      <div class="panel t-violet"><span class="lbl">Art's models, in order</span><h4>Allowed and preferred</h4>
-        <div class="sec"><span class="lbl">1</span><span>its preferred model</span></div><div class="sec"><span class="lbl">2</span><span>the next it may use</span></div></div>
-    </div>'''
+    tint = TINT["Subscriptions"]
+    def f(label, n="", on=False):
+        return f'<div class="sp__f"{" data-on" if on else ""}><span>{label}</span><em>{n}</em></div>'
+    def meter(label, pct, word, text):
+        return f'<div class="meter" data-lv="{LEVELS[word]}"><span>{label}</span><i style="--w:{pct}%"></i><em>{text}</em></div>'
+    def signins(rows):
+        out = []
+        for st, machine, what, state, act in rows:
+            a = '<span class="mbtn mbtn--on">Sign in</span>' if act else ""
+            out.append(f'<li data-st="{st}"><i></i><span><b>{machine}</b> · {what}</span><em>{state}</em>{a}</li>')
+        return f'<ul class="signins">{"".join(out)}</ul>'
+    def bars(rows, go=""):
+        return '<ul class="bars bars--use">' + "".join(
+            f'<li><b>{n}</b><i style="--w:{w}%"></i><span>about {w}%</span><u>{go if g else ""}</u></li>' for n, w, g in rows) + "</ul>"
+    def switch(*names):
+        return '<span class="sp__acts">' + "".join(f'<span class="mbtn{" mbtn--on" if i == 0 else ""}">{n}</span>' for i, n in enumerate(names)) + "</span>"
+    def subc(label, owner, pct, word, line, mark="", on=False):
+        return (f'<div class="subc"{" data-on" if on else ""}><b>{label}</b><span class="meta">{owner}</span>{meter_chip("fullest window", pct, word)}'
+                f'<span>{line}</span>{mark}</div>')
+    def service(name, n, body="", rollup=""):
+        if body:
+            return f'<div class="svc"><div class="svc__h"><i>▾</i><b>{name}</b><em>{n}</em></div>{body}</div>'
+        return f'<div class="svc"><div class="svc__h"><i>▸</i><b>{name}</b><em>{n} · {rollup}</em></div></div>'
+    EST_LINE = "Shares are estimates. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens."
+
+    nav = ('<div class="sp__search">Search subscriptions</div>' + f("Subscriptions", 8, True) + f("Where it all went") + f("Models")
+           + '<span class="lbl">Show</span>' + f("Needs attention", 3))
+    lst = ('<div class="cal__top"><b>Subscriptions</b><em>8 across 4 services · Sat, Nov 14, 2026</em><span class="cal__go"><span class="mbtn mbtn--on">Add a subscription</span></span></div>'
+           + service("Claude", "2 subscriptions",
+                     subc("Claude subscription", "jonathan's", 38, "plenty", "3 sign-ins", signin_mark("one ends in 2 days"), on=True)
+                     + subc("Mark's Claude", "mark's own · added today", 0, "plenty", "1 sign-in", signin_mark("not signed in yet", "out")))
+           + service("Codex", "1 subscription", subc("Codex subscription", "jonathan's", 71, "getting full", "3 sign-ins"))
+           + service("Gemini", "1 subscription", subc("Gemini subscription", "jonathan's", 12, "plenty", "1 sign-in", signin_mark("signed out", "out")))
+           + service("Mistral", "4 subscriptions", rollup="fullest: getting full"))
+    read = ('<span class="meta">Claude · jonathan\'s</span><h4>Claude subscription</h4>'
+            '<div class="sec"><span class="lbl">Usage</span><span><span class="chip">plenty</span> read Nov 14, 2026, 2:45 PM CT</span>'
+            + meter("5-hour window", 22, "plenty", "22% · resets 4:10 PM") + meter("Week", 38, "plenty", "38% · resets Thu")
+            + '<span class="lbl">Where it went this week</span>' + switch("By trigger", "By agent", "By conversation")
+            + bars([("plan-night <small>night shift</small>", 41, True), ("knowledge-verify", 14, True), ("reflect", 11, True), ("knowledge-expand", 9, True),
+                    ("no trigger <small>chats a person started</small>", 9, False), ("plan", 6, True), ("everything else", 10, False)], "Tempo ›")
+            + f'<span class="meta">{EST_LINE}</span></div>'
+            '<div class="sec"><span class="lbl">Sign-ins · 3</span>'
+            + signins([("ok", "workshop", "Claude Code · in houses", "signed in · ends Nov 19", False),
+                       ("soon", "workshop", "Claude Code · on the machine itself", "signed in · ends Nov 16, in 2 days", True),
+                       ("old", "den", "Claude Code · in houses", "last known: signed in · ends Nov 17", False)])
+            + '<span class="meta">Machine den is not reporting. Its sign-in shows what loom last knew.</span></div>'
+            '<div class="sec"><span class="lbl">Settings</span><dl class="kv">'
+            + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in [("Label", "Claude subscription"), ("Whose", "jonathan"), ("Machines", "workshop · den"), ("Agents", "art · mark"),
+                                                              ("Keep free", "5% of each window, for jonathan"), ("Tell me", "3 days before a sign-in ends")])
+            + '</dl></div><div class="sp__acts"><span class="mbtn mbtn--on">Ask art to change it</span><span class="mbtn">Remove</span></div>')
+    home = (f'<div class="tile__body sp cal subs"><div class="sp__nav">{nav}</div><div class="sp__list">{lst}</div><div class="sp__read">{read}</div></div>')
+    add = ('<div class="tile__body"><div class="cal__top"><b>Add a subscription</b><em>four steps</em></div><div class="use__pad">'
+           + c_step("1 · Choose the service", '<span class="sp__acts"><span class="mbtn mbtn--on">Claude</span><span class="mbtn">Codex</span><span class="mbtn">Gemini</span><span class="mbtn">Mistral</span></span>')
+           + c_step("2 · Label it and say whose it is", '<span class="field">Mark\'s Claude</span><span class="field">mark</span>')
+           + c_step("3 · Choose its machines", '<span class="checks"><span data-on>den</span><span>workshop</span><span>attic</span></span>')
+           + c_step("4 · Sign in on each", "<span>den · Claude Code · in houses: not signed in yet</span>"
+                    '<span class="sp__acts"><span class="mbtn mbtn--on">Sign in</span></span><span class="meta">Loom gives a page to open and, where the service shows one, a code to paste.</span>')
+           + '</div></div>')
+    schat = chat("Subscriptions", c_me("Keep 10% of the Claude subscription free for me.") + c_art("I can do that. Here is exactly what would change.")
+                 + '<div class="msg msg--ask"><div class="msg__b"><b>Change a setting: how much of each window the Claude subscription keeps free for jonathan</b><small>Before: 5%</small><small>After: 10%</small>'
+                   '<small>Yes: loom makes the change and records it. No: nothing changes.</small><span class="yn"><span class="mbtn mbtn--on t-cyan">Allow</span><span class="mbtn">Deny</span></span></div></div>')
+    went = ('<div class="tile__body"><div class="cal__top"><b>Where it all went</b><em>every subscription · this week so far</em>'
+            f'<span class="cal__go">{switch("By trigger", "By agent", "By conversation")}</span></div><div class="use__pad">'
+            + bars([("plan-night <small>41% of Claude subscription</small>", 41, True), ("house-branch-sweep <small>33% of Codex subscription</small>", 33, True),
+                    ("retro <small>18% of Codex subscription</small>", 18, True), ("knowledge-verify <small>14% of Claude subscription</small>", 14, True),
+                    ("reflect <small>11% of Claude subscription</small>", 11, True), ("no trigger <small>9% of Claude subscription</small>", 9, False)], "Tempo ›")
+            + f'<span class="meta">Each bar is a share of one subscription\'s week. {EST_LINE}</span></div></div>')
+    def order(agent, rows):
+        return (f'<div class="sec"><span class="lbl">{agent}</span>'
+                + "".join(f'<span><span class="chip">{i}</span> {r}</span>' for i, r in enumerate(rows, 1)) + '</div>')
+    mods = ('<div class="tile__body"><div class="cal__top"><b>Models</b><em>allowed and preferred, in order</em></div><div class="use__pad">'
+            + order("art", ["its preferred model, on Claude subscription", "the next it may use, on Claude subscription", "the next, on Codex subscription"])
+            + order("mark", ["its preferred model, on Codex subscription", "the next it may use, on Mark's Claude"]) + '</div></div>')
+    does = ["Lists every subscription to a model service, grouped by service, with how full it is.",
+            "Adds a subscription: choose the service, label it, choose its machines, sign in.",
+            "Opens one to show its usage, its sign-ins and its settings.",
+            "Shows where a week went, by trigger, by agent or by conversation.",
+            "Gives each agent a primary conversational model, and the models it may use in order.",
+            "Shares each account's capacity across the agents that draw on it.",
+            "Starts each body in its model's harness, on a worker machine.", "Records the model each job asked for and each turn used."]
+    hero = hero_wide("Subscriptions", "an app", "<b>Every subscription to a model service, in one home.</b> A service is who you subscribe to, such as Claude, Codex or Gemini. A subscription is one account with a service, and a household can hold several with the same one. This app says how full each is, where it is signed in and how it is set up. The rest of loom shows one small piece of this, and only when it matters.", does,
+        [("two__w", "In the Subscriptions tile: the list, with one subscription opened", tile(tint, "settings", "Subscriptions", home)),
+         ("two__a", "Add a subscription", tile(tint, "settings", "Subscriptions", add)), ("two__b", "In a chat", schat),
+         ("two__a", "Where it all went", tile(tint, "settings", "Subscriptions", went)), ("two__b", "Models", tile(tint, "settings", "Subscriptions", mods))],
+        "The Subscriptions tile with example content: the list grouped by service, one subscription opened, the steps to add one, a settings change asked for in chat, the household's week and each agent's models. This is what a subscription's owner and household owners see. Anyone else sees a subscription's label and its level in words: plenty, getting full or almost full.")
+    views = [
+        ("The list", "cyan", service("Claude", "2 subscriptions", subc("Mark's Claude", "mark's own", 9, "plenty", "1 sign-in")) + service("Mistral", "4 subscriptions", rollup="fullest: getting full " + signin_mark("1 signed out", "out")),
+         "One card for each subscription, under a heading for its service. A card has the label its owner gave it, whose it is, its fullest window and its sign-ins in one line. A heading can be closed. A closed heading says how many subscriptions it holds and how full the fullest is, and carries a sign-in mark if any of them needs attention. So the list reads the same with three subscriptions or with thirty-five across ten services. Search finds one by label, service, owner or machine. Needs attention shows only the ones with a sign-in that is gone or ending, or a window that is almost full."),
+        ("Add a subscription", "violet", log(("1", "choose the service"), ("2", "label it, say whose it is"), ("3", "choose its machines"), ("4", "sign in on each")),
+         "Add a subscription is at the top of the list. Choose the service from the ones loom knows how to use. Give it a label and say whose it is. Choose the machines it should be signed in on. Then sign in on each: loom gives a page to open and, where the service shows one, a code to paste. The subscription is in the list as soon as it is added, with each sign-in marked not signed in yet until it is done. The same thing can be asked for in chat. The agent proposes it and loom shows a card to allow. Signing in stays on the screen, because it needs a person at a page."),
+        ("Usage", "cyan", meter("5-hour window", 22, "plenty", "22% · resets 4:10 PM") + meter("Week", 71, "getting full", "71% · resets Mon") + meter("Week", 93, "almost full", "93% · resets Thu"),
+         "The first part of an open subscription. Its windows are meters, each with when it resets. Loom reads how full each window is every five minutes, from the provider. The level is the fullest window in words: plenty, getting full or almost full. Under the meters is where the week went, by trigger, by agent or by conversation, biggest first. Opening a row goes to that trigger in " + plink("Tempo") + " or to that conversation. The shares are estimates. The provider gives one reading for the whole subscription, so runs that overlap are split by their tokens. Usage is shown once for each subscription, never for each sign-in, because every sign-in of a subscription draws on the same windows."),
+        ("Sign-ins", "pink", signins([("ok", "workshop", "Claude Code · in houses", "signed in · ends Nov 19", False), ("soon", "workshop", "Claude Code · on the machine itself", "ends in 2 days", False),
+                                      ("out", "workshop", "Gemini CLI · in houses", "signed out", False), ("old", "den", "Codex · in houses", "last known: signed in", False)]),
+         "The second part. One line for each sign-in: the machine, the harness, the place, its state and when it ends. In houses is the sign-in the houses on a machine use. On the machine itself is the machine user's own. A sign-in that is signed out, or ends in three days or less, has a Sign in action. A harness whose files give no end date, such as Codex, shows none. A machine that is not reporting shows its sign-ins in grey as last known, with no warning, because loom cannot tell."),
+        ("Settings", "amber", opts(("label", "the name people see"), ("whose", "the member who owns it"), ("machines", "where it is enabled"), ("agents", "who may use it"), ("keep free", "a share of each window, for the person"), ("tell me", "days before a sign-in ends")),
+         "The third part: how the subscription is set up. Its label, whose it is, which machines it is enabled on, which agents may use it, how much of each window to keep free for the person, which is that window's reserve, and how many days ahead to tell its owner that a sign-in is ending. To change one, ask an agent in chat: it proposes the change, and loom shows a card with before and after. Removing a subscription is a dangerous action, so it takes a second, explicit yes."),
+        ("Where it all went", "violet", bars([("art", 78, False), ("mark", 13, False), ("no agent", 9, False)]),
+         "The household's whole week, from the side list: every subscription together, by trigger, by agent or by conversation. Each bar says which subscription it drew on and its share of that subscription's week. These are the same estimates."),
+        ("Models", "amber", opts(("1", "its preferred model"), ("2", "the next it may use")),
+         "Each agent has a list of the models it may use, in order of preference, and each model draws on one subscription. The first is its primary conversational model."),
+    ]
+    pieces = [
+        ("A meter chip", "cyan", '<div class="pieces">' + meter_chip("Codex subscription", 71, "getting full") + meter_chip("Mark's Claude", 93, "almost full") + "</div>",
+         "One subscription's fullest window, as a tiny bar and a word, with the subscription's label so two with one service are told apart. It is in the desk's ticker only when a window is getting full or almost full. It is on a job's detail, and at the top of Tempo's day."),
+        ("A sign-in mark", "pink", '<div class="pieces">' + signin_mark("workshop · Claude sign-in ends in 2 days") + signin_mark("workshop · Gemini CLI signed out", "out") + "</div>",
+         "A dot beside a machine or a harness. It shows only when a sign-in is signed out or ends in three days or less. It is on the " + plink("Machines and jobs") + " page beside a machine, and on a job that could not be placed because its machine is signed out."),
+        ("An inbox item", "violet", signin_item("Claude subscription on workshop, on the machine itself, ends in 2 days", "from Subscriptions · a sign-in"),
+         "The notice the owner gets when a sign-in is gone or about to end. Sign in starts the provider's own sign-in on that machine, and loom shows the page to open and the code. There is one item for each sign-in. It closes itself when the sign-in is good again."),
+    ]
+    extra = f"""
+<section class="band" aria-labelledby="use-h">
+  <div class="band__head"><span class="tag">The Subscriptions app</span><h2 id="use-h">The list, adding one, and the three parts of each</h2><p>What a person sees in the Subscriptions tile and what they can do there.</p></div>
+  {how(views)}
+</section>
+
+<section class="band" aria-labelledby="else-h">
+  <div class="band__head"><span class="tag">Everywhere else</span><h2 id="else-h">Three small pieces</h2><p>The detail lives in Subscriptions. Everywhere else shows at most one of these three pieces, and only when it matters. Each one opens Subscriptions at the right subscription.</p></div>
+  {how(pieces)}
+</section>
+"""
     anat = anatomy("one job", "Reply in Pond pump", [
         ("agent_models", "art's models, in order", "l", "People and projects", "Each agent has a list of the models it may use, in order of preference. A member owns each account."),
         ("model", "the model this job was asked to use"),
@@ -685,24 +970,20 @@ def models():
         ("Per agent, per account", "cyan", opts(("model", "chosen per agent"), ("capacity", "shared per account and window")),
          "The primary conversational model is per agent. Capacity is shared per actual subscription, account and window, so two agents on one account draw down the same allowance."),
         ("Quota", "amber", card("amber", "Fuel", "58% of the week", "resets Thu"),
-         "An account's use is counted in windows that reset, such as five hours and seven days. A reserve of about five percent is the starting point. It can be lent near a reset when the forecast is safe, and is not a rigid floor."),
-        ("Runners", "violet", opts(("claude", ""), ("codex", "")),
-         "A runner is the program on a machine that starts bodies. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration."),
+         "An account's use is counted in windows that reset, such as five hours and seven days. Each window keeps a share free for the person: its reserve, five percent unless it is changed. The reserve can be lent near a reset when the forecast is safe, and is not a rigid floor."),
+        ("Harnesses", "violet", opts(("claude", ""), ("codex", "")),
+         "A harness is the program a model runs in, such as Claude Code or Codex. A worker starts each body in the harness its model needs; in a house, loom's own body program starts it. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration."),
         ("Signing in to an account", "pink", card("pink", "Kept apart", "A separate private program", "The runtime calls it as a configured command."),
-         "Signing in to a model account is handled by a separate private program. The runtime handles which account, which runner and which model a body uses."),
+         "Signing in to a model account is handled by a separate private program. The runtime handles which account, which harness and which model a body uses."),
     ]
-    return app_page("Models and accounts", "part of the runtime", "Which model a body runs on, and the accounts it draws from.",
-        "The runtime handles model accounts, runners and which model a body uses.",
-        ["Gives each agent a primary conversational model.", "Shares each account's capacity across the agents that draw on it.",
-         "Starts each body through a runner on a worker machine.", "Records the model each job asked for and each turn used."],
-        fig, "One account seen two ways, with example content: its owner and household owners see everything, anyone else sees the label and a coarse level. On the right, an agent's models in order.",
+    return app_page("Subscriptions", "an app", "", "", does, "", "",
         "How a model choice connects to other parts", "One job, with a thread from each part of it that reaches another page.", anat,
-        "Models, quota, runners and account sign-in", panels,
+        "Models, quota, harnesses and account sign-in", panels,
         [("owner", "cyan")],
         [("The owner and household owners.", "They see everything about an account: usage, when it resets, and where it is signed in."),
          ("Anyone else.", "They see only the account's label and a coarse level: plenty, getting full, or almost full."),
          ("Checked at the door.", DOOR)],
-        [("", ["model_accounts", "model_account_boxes", "agent_models"])])
+        [("Subscriptions", ["model_accounts", "model_account_windows"]), ("Sign-ins", ["model_account_boxes", "model_account_logins", "account_signins"]), ("Models and what a run used", ["agent_models", "job_usage"])], hero=hero, extra=extra)
 
 # ───────────────────────── Outside programs
 def outside():
@@ -734,7 +1015,7 @@ def outside():
         ("Narrow tokens", "amber", opts(("a member", "what that person may see"), ("an agent", "a token that is one agent"), ("a runner", "only the jobs assigned to it"), ("a program", "only what an owner granted")),
          "Anything outside loom calls the API with a token. Someone else's program is a caller with a token: it sees only the record types and operations a household owner granted it."),
         ("One program, one data folder", "pink", card("pink", "Install", "npm install -g @jbarket/loomai", "then loom serve"),
-         "There is one loom per home: one program and one data folder. Beyond Node and npm nothing is required. A restart is an acceptable deploy."),
+         "There is one loom per home: one program and one data folder. Loom itself needs nothing beyond Node and npm. A machine whose worker runs houses also needs git and a container engine. A restart is an acceptable deploy."),
         ("Parts can be replaced", "violet", flow("tasks role", "filled by", "one module"),
          "Each part is a module with a declared, typed interface. A role has one implementation at a time, so replacing the task store means writing another module that fills the tasks role. A bridge is replaced the same way."),
         ("The phone", "cyan", card("cyan", "After the desk", "The phone", "calls the same API"),
@@ -751,6 +1032,230 @@ def outside():
          ("Installed means trusted.", "Loom's own parts never ask each other for permission."),
          ("The rule.", f"{OWNER} Anyone else sees what is in their projects, plus what belongs to agents they own. {PRIVATE}")],
         [("", ["tokens"])])
+
+# ───────────────────────── Tools for agents
+def tools():
+    def row(text, how_):
+        return f'<li><p>{text}</p><span class="at">{how_}</span></li>'
+    G = "the general tools"
+    parts = [
+        ("Memory", "cyan", [
+            row("Load its identity: creed, preferences and top of mind, and on request its self-model, the last 24 hours, and the pages for its harness, model, role and project.", "identity"),
+            row("Save a memory, find memories by meaning, edit one, delete one.", "remember · recall · update · forget"),
+            row("See recent activity across its bodies.", "episodes"),
+            row("Write a note, read one by path, list notes under a prefix.", "note_write · note_read · note_list"),
+            row("Search knowledge pages, read one, and add one.", "knowledge_recall · knowledge_read · knowledge_write"),
+            row("Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.", "knowledge_edit · knowledge_check · knowledge_restore"),
+            row("Draft a memory and ratify it. Archive a memory, restore it, or bring back an earlier version.", "memory_propose · memory_drafts · memory_ratify · memory_archive · memory_restore · memory_history"),
+            row("Read and write its cards on people and on projects, by slug, or list them.", "person · person_write · project · project_write"),
+        ]),
+        ("Conversations and inbox", "pink", [
+            row("Reply, show a progress card, report what it is doing, and title the conversation.", G + ", with a job"),
+            row("Write a digest, with a question for a person when it needs one.", G + ", with a job"),
+            row("Hand a piece of work to another agent.", G + ", with a job"),
+            row("Read the items addressed to it.", "inbox"),
+            row("Confirm each item it has dealt with.", G + ", with a job"),
+        ]),
+        ("Work", "violet", [
+            row("Tasks: see what is ready, read one, create, edit, move to another project, claim or hand back, comment, close or reopen.", "task_ready · task · task_create · task_edit · task_move_to_project · task_claim · task_comment · task_close"),
+            row("Tasks: move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.", G),
+            row("Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G + ", with a job"),
+            row("Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser, merging one project into another. Loom carries it out.", "propose"),
+            row("Ask to be let onto a project it is not on. A household owner answers each such card; no standing rule does.", "propose"),
+            row("Propose that a project be retired, or revived. A retired project keeps everything; its unfinished tasks are shelved, not work, until it is revived.", "propose"),
+            row("See the approvals it may see, and which are still waiting.", "approvals"),
+            row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
+            row("Tempo: set a trigger, stop it, or run it now.", G),
+            row("Discord and Slack: reply to an incoming message.", G + ", with a job"),
+            row("Discord and Slack: read the attachments a message carried.", G),
+            row("Secrets: request one with a reason and a length of time, and check on the request.", G),
+        ]),
+        ("Settings and reads", "amber", [
+            row("Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.", "propose"),
+            row("Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.", "loom_query"),
+        ]),
+    ]
+    secs = "".join(f'<section class="t-{t}"><h2>{e(g)}</h2><ul>{"".join(items)}</ul></section>' for g, t, items in parts)
+    panels = [
+        ("Named tools", "cyan", opts(("identity", "who the agent is"), ("remember, recall", "its memories"), ("task_ready, task_claim", "the work queue")),
+         "What an agent does often has a tool with a plain name. Each named tool maps to one operation or one read, so a tool that works means the operation under it works."),
+        ("Three general tools", "violet", opts(("loom_commands", "lists the operations and what each takes"), ("loom_command", "calls one"), ("loom_query", "reads through the data endpoint")),
+         "Everything else on these pages is reached with three general tools. Nothing an agent may do is out of reach for want of a named tool."),
+        ("With a job, or without", "pink", opts(("a body with a job", "works in one conversation"), ("a terminal session", "no job and no conversation")),
+         "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in. When it proposes something, the card it files is where a conversation about it can begin."),
+        ("What it will not do", "amber", log(("credentials", "made by a person, never through a tool"), ("settings", "proposed, then allowed by a person"), ("secret values", "handed over only under a grant")),
+         "Three things stay out. An agent cannot make a token, a sign-in link or a passkey. It cannot change a setting directly: it proposes the change and a person allows it. It is handed a secret's value only under a grant."),
+    ]
+    idx = NUM["Tools for agents"]
+    body = f'''
+<section class="hero2">
+  <div class="hero2__text t-cyan">
+    <div><p class="eyebrow">Page {idx} of {N} · the door, for agents</p><h1>Tools for agents</h1>
+    <p class="lead"><b>An agent reaches loom through MCP, with its own token.</b> Its tools call the same operations as the web app and the command line, through the same permission check.</p></div>
+    <p class="lead">{sum(len(i) for _, _, i in parts)} things an agent can do, in {len(parts)} groups. Each names the tool that does it.</p>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">Named tools, general tools, jobs and limits</h2><p></p></div>
+  {how(panels)}
+</section>
+<div class="dec">{secs}</div>
+{foot(idx)}
+'''
+    return page(idx, "Tools for agents · loom", body)
+
+# ───────────────────────── Houses (beside Machines and jobs; proposed, not yet on the guided path)
+HOUSEFILE = """# The house of the agent Fern: the image a body of hers runs in.
+# A loom worker builds it from this repository at one commit, on the core house loom provides.
+# The worker hands every build the core house's image under this name.
+ARG LOOM_CORE
+FROM ${LOOM_CORE}
+
+# Furniture: what this agent wants beyond the core. The core already has the system, git, Node,
+# Claude Code and Codex, the home at /home/agent, a body file for each harness, and both labels.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \\
+ && rm -rf /var/lib/apt/lists/* \\
+ && git config --global user.name "Fern"
+
+# This repository's own files, at the place every house keeps its repository. A body starts there.
+COPY . /home/agent/repo"""
+BODYFILE = """{"command": "/usr/local/bin/claude", "cwd": "/home/agent/repo", "reach": "all"}"""
+
+def houses():
+    idx = NUM["Machines and jobs"]
+    def row(text, at):
+        return f'<li><p>{text}</p><span class="at">{at}</span></li>'
+    def group(title, tint, items):
+        return f'<section class="t-{tint}"><h2>{e(title)}</h2><ul>{"".join(items)}</ul></section>'
+    def band(tag, hid, title, intro, inner):
+        return f'<section class="band" aria-labelledby="{hid}"><div class="band__head"><span class="tag">{tag}</span><h2 id="{hid}">{title}</h2><p>{intro}</p></div>{inner}</section>'
+
+    what = how([
+        ("A container for a body", "cyan", flow("job", "starts", "container", "from", "house image"),
+         "A body is one run of an agent on a machine. It runs in a container, and the image that container is made from is the agent's house. The house holds what the agent works with: its harnesses (a harness is the program a model runs in, such as Claude Code or Codex), its tools, and its own repository."),
+        ("One worker, any agent", "violet", gate("A container engine", "git", "The loom worker, signed in to loom"),
+         "A worker runs any agent's house. Nothing is installed or configured on the machine for an agent: once a machine has a worker that loom knows, any agent allowed to run there can be sent to it, and its house is built there the first time it is needed. What a machine does hold is model sign-ins, which belong to accounts and not to agents."),
+        ("A core house, and the agent's furniture", "pink", opts(("loom", "provides the core house"), ("the Housefile", "adds the agent's own things"), ("no Housefile", "the core house and the repository")),
+         "Loom provides a core house: the system, the basic tools and the harnesses, laid out the same for every agent. An agent's own repository adds to it with one file, called a Housefile, which is an ordinary container build file. An agent that names no Housefile lives in the core house with its repository copied in."),
+    ])
+
+    named = '<div class="dec">' + group("An agent's run settings name its house", "amber", [
+        row("<b>Repository.</b> The address of the git repository that holds the Housefile. It must be an <code>https://</code> address.", "set by the agent's owners"),
+        row("<b>Housefile.</b> The file's path inside the repository, for example <code>Housefile</code> or <code>house/Housefile</code>. Left empty, the agent has no Housefile: it runs in the core house with its repository copied in, and a card that proposes this says so in words.", "set by the agent's owners · may be empty"),
+        row("<b>Branch.</b> The branch to build. Each job builds the commit that branch is at when the job starts.", "set by the agent's owners"),
+        row("<b>Repository secret.</b> For a private repository: the stored secret that fetches it. Left empty for a public one.", "a stored secret, named here"),
+        row("<b>Startup secrets.</b> Stored secrets a body is handed when it starts, each under an alias. The alias is the name of the environment variable the body finds it in.", "a stored secret and an alias, each"),
+    ]) + group("Who decides", "pink", [
+        row("An agent's owners set its run settings. An agent can propose a change to its own; a person allows it before it takes effect.", f'{plink("People and projects")} · {plink("Tools for agents")}'),
+        row("A secret named here is still a stored secret: who may use it, and whether a person is asked first, is decided by its own rule.", plink("Secrets")),
+        row("A job keeps the repository, Housefile and branch its agent had when the job was admitted. Changing the settings does not change a job already waiting.", plink("Machines and jobs")),
+    ]) + '</div>'
+
+    housefile = f"""<div class="two"><pre class="req">{e(HOUSEFILE)}</pre>
+<p class="note">A complete Housefile. Everything loom needs of a house comes with the core, the body files among them. A body file is one line, such as <code>{e(BODYFILE)}</code>: the harness program in the image, the directory it starts in, and <code>reach</code>, which is <code>loom</code> for loom's own tools only or <code>all</code> for the harness's own tools as well (files, a shell, the web). A Housefile may put its own body file over the core's. One that does not start from the core still works, when its image has the labels and the layout below by itself.</p></div>
+<div class="dec">""" + group("What the image must say", "cyan", [
+        row("<code>loom.house</code> is the version of this agreement between a house and loom, and of the layout beside it. It is <code>2</code>. An image that says <code>1</code> is refused.", "a label"),
+        row("<code>loom.house.harnesses</code> names the harnesses the house serves, with a space between: <code>claude</code>, <code>codex</code>, <code>agy</code>. It is the one thing houses differ in that loom must know before it starts a body.", "a label"),
+        row("An environment. A body runs with the image's <code>ENV</code>, and as the image's <code>USER</code>. Loom sets two variables of its own: the home, and the body's scratch directory. The image's <code>WORKDIR</code> is not read.", "ENV · USER"),
+    ]) + group("Where things are in every house", "violet", [
+        row("<b>The home</b> is <code>/home/agent</code>. No path in a house is named for its agent: who lives there is the repository it was built from. Loom sets <code>HOME</code> to it when a body starts.", "/home/agent"),
+        row("<b>The agent's repository</b> is at <code>/home/agent/repo</code>. Every body starts in that directory.", "/home/agent/repo"),
+        row("<b>Node</b> is at <code>/usr/local/bin/node</code>, Node 22 or later. Loom's body program is run with it. The core house has it.", "/usr/local/bin/node"),
+        row("<b>A harness's body file</b> is at <code>/etc/loom/body/&lt;harness&gt;.json</code>, one for each harness the house serves.", "/etc/loom/body"),
+        row("<b>An account's sign-in</b> appears at <code>/run/loom/login/&lt;harness&gt;</code> when a body starts. The core house points Claude Code and Codex there.", "/run/loom/login"),
+        row("<b>The user.</b> The core house names none, so a body in it runs as the container's root. On a machine whose engine runs without root, that is the worker's own user outside the container, the one that can write the mounted sign-in.", "root inside the container"),
+        row("A repository must not assume its own name in a path, a home other than <code>$HOME</code>, or a user of some name. A house that wants an older path makes a link to the fixed one.", "the same on every machine"),
+    ]) + group("What the image must not hold", "amber", [
+        row("A copy of loom. Loom mounts its own body program into every container at <code>/opt/loom</code>, so the image must keep nothing there.", "nothing at /opt/loom"),
+        row("A declared volume. Loom checks that a container has exactly the storage it asked for, and an image that declares a <code>VOLUME</code> is refused.", "no VOLUME"),
+        row("A credential. A sign-in, a token or a key in an image is in every copy of that image. A body gets its model sign-in and its secrets when it starts, from outside the image.", "nothing secret"),
+        row("Anything that is not in the repository, in the core house or at a public address. The build is given the repository's files and the core house's name, and nothing else: no secret, no file of the machine.", "builds from the repository and the core"),
+    ]) + '</div>'
+
+    steps = how([
+        ("1 · Fetch", "cyan", log(("https only", "no ssh, no path, no plain http"), ("no user settings", "none of the machine user's git configuration or credentials"), ("one commit", "the branch as it is now")),
+         "The worker fetches the branch with the machine's git, into a copy of the repository it keeps for itself. Git is used to store and hand back the repository's objects, and nothing more: it runs with none of the machine user's settings, takes no address but an https one, and is not asked to check out, inspect or run anything. The reason is that whoever may set an agent's house chooses the address, and must not thereby borrow the machine user's access or have a program started. A repository secret is given to that one fetch and kept nowhere."),
+        ("2 · The files of the commit", "violet", log(("goes in", "every file, byte for byte; links as links"), ("left out", "submodules"), ("refused", "over 100 MiB a file, 1 GiB in all, 50,000 files")),
+         "The worker writes the build's input itself: every file of the commit, byte for byte, with whether it is executable, and every symbolic link as a link. Nothing in the repository changes what goes in: files that tell git to leave things out, substitute text or convert line endings are ordinary files here. A submodule is left out. A commit past the limits, or with a file name that could land outside the build (an absolute name, a name with <code>..</code> in it, one name twice), fails the job before anything is sent."),
+        ("3 · Build", "pink", flow("core house", "then", "the Housefile", "builds", "image"),
+         "The machine's container engine builds the Housefile, on the core house. The worker builds the core house first when the machine does not have it: from a definition that comes with loom, never from an image someone published, so a machine whose worker was installed a moment ago needs nothing else. The core's build counts toward the same limit. A build has 30 minutes unless the machine's configuration says otherwise, and 60 at most; a job still waiting then fails, saying the build ran out of time. While a house builds, the worker goes on telling loom the job is alive, so a long build does not lose the job. Before there was a core house, a first build of a house with the same tools from a bare base image took about ten minutes on a small machine and made an image of about 1.5 GB. The core house has been built once on a machine, on 2026-11-17 through rootless Podman 5.4.2: an image of 1.29 GB with Node 24.18.1, Claude Code 2.1.326 and Codex 0.164.0, on which a house with no Housefile was built and a body started. No harness has yet signed in or called a model from it."),
+        ("4 · Found again", "amber", opts(("the same commit", "the image is reused"), ("a new commit", "built, reusing unchanged steps"), ("a new week", "built again, once")),
+         "An image is named for its repository, its Housefile, its commit and the core house it was built on. The next job at the same commit finds the image and starts at once. A new commit is built, and the engine reuses the steps that did not change. The core house is built again once in each new week, which keeps its system current, and when a new loom changes its definition; each house is then built again on its next job. A job that already has its image is never interrupted for this. No image holds any of loom itself."),
+    ])
+
+    runtime = '<div class="dec">' + group("What a body is given when it starts", "cyan", [
+        row("<b>Loom's body program.</b> The program that takes the job, starts the harness and reports back. It comes from the worker's own installation, read-only, so it is always the one that matches the loom that is running.", "mounted at /opt/loom"),
+        row("<b>Its account's sign-in.</b> A model sign-in is a directory of files that the harness's program rewrites when it renews, so it cannot be in an image. The machine's configuration names one directory for each account and harness, and a body gets the one for its job's account and no other, at <code>/run/loom/login/&lt;harness&gt;</code> in every house on every machine. It is the same directory for every body on that account, never a copy: a renewal changes the sign-in, so copies would cancel each other. Loom does not read, clean or write anything in it.", "mounted at /run/loom/login"),
+        row("<b>Its agent's own directories.</b> The machine's configuration can give an agent directories of the machine, read-only unless it says otherwise: a little state kept between bodies, say. Each lands under the home, at the path the configuration gives, and never on the repository. A body gets its own agent's and never another agent's.", "from the machine's configuration"),
+        row("<b>Its startup secrets.</b> Each is in the environment of the harness under its alias. They are handed over when the body starts, not before, and are in no image.", plink("Secrets")),
+        row("<b>What its house was built from.</b> Three environment variables that loom sets, whatever the image says: <code>LOOM_HOUSE_REPOSITORY</code> (the address, which never holds a credential), <code>LOOM_HOUSE_BRANCH</code> and <code>LOOM_HOUSE_COMMIT</code>, the exact commit the image was built from, so a repository can make the copy of itself a real checkout.", "set by loom"),
+        row("<b>Its job.</b> The work, and a credential of its own that is good for this one job.", plink("Signing in")),
+    ]) + group("What it is not given", "amber", [
+        row("The engine socket stays with the worker. A worker configured to pass it through stops at startup, and a job requesting nested containers cannot start.", "container engine"),
+        row("The worker refuses mounts overlapping its configuration, credentials, private state or protected server storage. Apply the same protection to custom storage paths in the worker configuration.", "private storage"),
+    ]) + '</div>'
+
+    several = how([
+        ("Slots", "violet", opts(("slots", "4 unless the machine says otherwise"), ("at most", "16")),
+         "A worker runs several jobs side by side, each in a slot. A house being built takes one slot, so another agent's job, whose house is already built, starts in a free one. Two jobs that want the same new image wait for one build. Loom keeps no count of a machine's jobs: a worker asks for a job only when it has a free slot."),
+        ("Bodies on one account", "pink", opts(("Claude Code", "4 at once"), ("Codex", "1 at a time"), ("either", "as the machine says")),
+         "Bodies on one model account share its sign-in, as several sessions of one person do, and each harness's own program renews it when it needs to. Loom has no renewer and no lock of its own. Claude Code takes a lock in the sign-in directory and reads the sign-in again before it renews; that was read in the program, in the version the core house pins, and has not been tested here with two bodies renewing at once. For Codex it is not established what happens then, so its bodies run one at a time on an account unless the machine's configuration says more. If a renewal is refused all the same, that body fails and its work is tried again. A job beyond the limit waits, and loom shows it as starting."),
+        ("What is kept on the disk", "cyan", log(("images", "two a house, ten in all"), ("repositories", "the eight used most recently"), ("leftovers", "unnamed images after a day, build cache after a week")),
+         "After a build the worker removes what it no longer needs: house images beyond the two newest of each house and the ten newest in all, never one a job is using. A core house stays while a house image that is kept was built on it, which in practice is this week's and last week's. It keeps its copies of the eight repositories used most recently. It also asks the engine to remove unnamed images older than a day and build cache unused for a week, which reaches every such leftover on that engine, not only loom's."),
+    ])
+
+    wrong = '<div class="dec">' + group("A job fails, and the worker carries on", "pink", [
+        row("<b>Build failed.</b> The address is not https, the branch or Housefile is not there, the secret does not fetch the repository, the commit is past a limit, a step of the Housefile failed, or the core house could not be built (a download address that does not answer, say).", "worker build · exit code 22"),
+        row("<b>The build ran out of time.</b> The fetch, the core house's build when it was needed, and the house's build together took longer than the build's limit.", "worker build time · exit code 32"),
+        row("<b>The house image does not meet the image contract</b>, followed by what is at fault: <code>loom.house</code>, <code>loom.house.harnesses</code> or <code>VOLUME</code>.", "worker house · exit code 30"),
+        row("<b>Launch failed.</b> Node or the repository is not in the image at its place, or the engine could not start the container.", "worker launch · exit code 23"),
+        row("<b>Runner failed.</b> The machine has no sign-in directory for the job's account and harness.", "worker runner · exit code 27"),
+        row("<b>Body config.</b> The harness's body file is not in the image at its place, or is not a body file.", "body config · exit code 16"),
+    ]) + group("The worker stops when it starts, with one line", "amber", [
+        row("<b>git 2.32.0 or later, which fetches each house's repository, could not be run on this machine.</b>", "worker exit code 54"),
+        row("<b>The directory the worker is installed in cannot give containers the body program.</b> The worker's packages are not inside its own directory.", "worker exit code 55"),
+        row("<b>A path the configuration gives to containers, or an engine socket, cannot be used.</b> The line ends with the key of the entry at fault, never a path.", "worker exit code 52"),
+        row("<b>The directory the worker is installed in has no definition of the core house.</b> The install is not a whole one.", "worker exit code 56"),
+        row("<b>The configuration has a key that a worker with container bodies no longer takes.</b> A build command, a runner, directories listed for every agent at once, or a place in the container for a sign-in. The line ends with the key.", "worker exit code 53"),
+    ]) + '</div>'
+
+    needs = '<div class="dec">' + group("What a machine needs", "cyan", [
+        row("A container engine that serves the Docker Engine API on a socket: Docker, or Podman.", "the engine"),
+        row("git 2.32 or later.", "to fetch"),
+        row("Network access from the engine's builds to Debian's mirrors, nodejs.org, Claude Code's release address and the npm registry: the core house is built from them, once a week.", "to build the core"),
+        row("The loom worker, installed with its packages inside its own directory, as <code>npm install -g</code> does. An install that shares packages with a project, the npx cache and pnpm are not supported.", "to run bodies"),
+        row("A token for the machine, and a configuration that names the engine's socket.", plink("Signing in")),
+    ]) + group("Not supported", "amber", [
+        row("A repository at an <code>ssh</code> address, or fetched with a deploy key.", "https only"),
+        row("Submodules. A submodule's files are not in the build.", "left out"),
+        row("Git LFS. A file kept in LFS reaches the build as the small pointer file the commit holds.", "pointer only"),
+        row("A base image in a registry that needs a sign-in, unless the engine itself is signed in to it. Loom passes no registry credential.", "the engine's own"),
+    ]) + group("Not built yet", "violet", [
+        row("The harness <code>agy</code> in the core house. There is no install of it pinned to a version and a checksum to put there; a house that wants it installs it in its own Housefile and lists it in the label.", "not in the core"),
+        row("A check, with real sign-ins, of two bodies on one account renewing at the same moment. Until it is done for Codex, its bodies run one at a time.", "to be run by a person"),
+        row("A conversation's harness session carried from one body to the next. Today each body starts its harness afresh.", "stated direction"),
+    ]) + '</div>'
+
+    body = f"""
+<section class="hero2">
+  <div class="hero2__text t-cyan">
+    <div><p class="eyebrow">Beside page {idx} · where a body runs</p><h1>Houses</h1>
+    <p class="lead"><b>A house is the container image an agent's body runs in.</b> Loom provides the core of it; one file in the agent's own repository, the Housefile, adds the rest.</p></div>
+    <p class="lead">Any worker builds and runs any agent's house. Nothing is set up on a machine for an agent.</p>
+  </div>
+</section>
+{band("What it is", "what-h", "A house, a worker and a Housefile", "", what)}
+{band("Where it is named", "named-h", "An agent's run settings", "", named)}
+{band("The Housefile", "file-h", "What a house says about itself", "An ordinary container build file that starts from the core house. Where things are inside a house is the same in every house, so the image says only two things with labels, and the core says both. Loom reads labels, and not a file inside the image, because an image's labels can be read without starting anything from it.", housefile)}
+{band("How it works", "how-h", "When a job needs a house", "", steps)}
+{band("At run time", "run-h", "What is not in the image", "", runtime)}
+{band("On one machine", "many-h", "Several jobs at once, and the disk", "", several)}
+{band("When it goes wrong", "wrong-h", "What a person sees", "", wrong)}
+{band("Limits", "limits-h", "What a machine needs, and what is not there", "", needs)}
+<footer class="foot"><p>Houses sits beside <b>Machines and jobs</b>.</p><a class="btn" href="{FILE["Machines and jobs"]}">Machines and jobs <span aria-hidden="true">›</span></a></footer>
+"""
+    return page(idx, "Houses · loom", body, beside="Machines and jobs")
 
 # ───────────────────────── Measuring
 def measuring():
@@ -817,6 +1322,7 @@ def decided():
             d("Household owners see everything, including another member's private thread.", "People and projects", "Conversations"),
             d("Whatever is installed is trusted. Permission is checked only for callers from outside.", "Signing in", "Outside programs"),
             d("An outside program has one door: the API with a token.", "Outside programs"),
+            d("An agent reaches loom through MCP: named tools for what it does every session, three general tools for everything else. It cannot make credentials, and it proposes a settings change instead of making it.", "Tools for agents"),
             d("Every task has an owner.", "Tasks"),
         ]),
         ("Data", "cyan", [
@@ -824,14 +1330,15 @@ def decided():
             d("SQLite by default. The database is a configuration choice.", "How a tile gets its data"),
             d("One query endpoint in a community standard, GraphQL, generated from the same schema. Changes arrive as subscriptions over a websocket.", "How a tile gets its data"),
             d("Agents' memories are the only data loom treats as precious.", "Memory"),
+            d("Notes come second to memories. Every backup and every move carries all of them, whatever their lifespan, but they are not irreplaceable.", "Memory"),
         ]),
         ("Running", "violet", [
             d("The clock is part of tempo: triggers, the inbox as the pile, the sweep, volume.", "Tempo", "Inbox"),
             d("Measuring is off unless a household owner turns it on. Loom is instrumented once in the standard way, and measurements go to a monitoring tool you already run, to loom's own store, or both. Agents can read the local store.", "Measuring"),
             d("There are always two programs, loom and a worker. Nothing runs inside loom itself. A worker may share loom's machine.", "Machines and jobs"),
             d("Tempo's timings are adjustable per person, with defaults.", "Tempo"),
-            d("The runtime handles model accounts, runners and which model a body uses.", "Models and accounts"),
-            d("An account's owner and household owners see its detail. Everyone else sees a summary.", "Models and accounts"),
+            d("The runtime handles model accounts, harnesses and which model a body uses.", "Subscriptions"),
+            d("An account's owner and household owners see its detail. Everyone else sees a summary.", "Subscriptions"),
         ]),
     ]
     secs = "".join(f'<section class="t-{t}"><h2>{e(g)}</h2><ul>{"".join(items)}</ul></section>' for g, t, items in groups)
@@ -852,5 +1359,5 @@ def decided():
 def pages():
     return [("desk.html", desk()), ("approvals.html", approvals()), ("tempo.html", tempo()), ("changes.html", changes()), ("inbox.html", inbox()),
             ("memory.html", memory()), ("machines.html", machines()), ("models.html", models()), ("bridges.html", bridges()), ("secrets.html", secrets()),
-            ("people.html", people()), ("signing-in.html", signing()), ("outside.html", outside()), ("data.html", data()), ("measuring.html", measuring()),
-            ("decided.html", decided())]
+            ("people.html", people()), ("signing-in.html", signing()), ("outside.html", outside()), ("tools.html", tools()), ("data.html", data()), ("measuring.html", measuring()),
+            ("decided.html", decided()), ("houses.html", houses())]

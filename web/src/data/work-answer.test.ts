@@ -38,3 +38,12 @@ it('preserves immutable answer IDs on plain HTTP where crypto.subtle is unavaila
   expect(JSON.parse(String(request.mock.calls[0][1]!.body)).id).toBe(id);
  }finally{vi.unstubAllGlobals();}
 });
+it('says the program\'s own refusal of an approval answer as it is, and nothing else a failed answer carries', async () => {
+  const request = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ok:false,code:'conflict',message:'At least one household owner must remain'},{status:409}))
+    .mockResolvedValueOnce(Response.json({ok:false,code:'unavailable',message:'Operation could not complete'},{status:503}))
+    .mockResolvedValueOnce(Response.json({ok:false,code:'conflict',message:'x'.repeat(201)},{status:409}));
+  await expect(sendWorkAnswer(answer,request)).rejects.toMatchObject({name:'WorkRefused',message:'At least one household owner must remain'});
+  for (let n=0;n<2;n++) await expect(sendWorkAnswer(answer,request)).rejects.toThrow('Could not confirm your answer. Try again.');
+  const merge = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ok:false,code:'conflict',message:'The merge request changed. Open it again.'},{status:409}));
+  await expect(sendWorkAnswer({piece:'changes',id:'github:house/pond#1',head:'a'.repeat(40),approval:'a-merge',answer:'yes'},merge)).rejects.toThrow('Could not confirm your answer. Try again.');
+});

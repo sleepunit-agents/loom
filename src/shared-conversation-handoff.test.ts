@@ -28,8 +28,11 @@ async function create(f:Awaited<ReturnType<typeof fixture>>,id='handoff'){
 function receive(f:Awaited<ReturnType<typeof fixture>>,cv:string){
  const row=f.db.select().from(s.jobs).where(eq(s.jobs.conversation,cv)).get()!;expect(row).toBeDefined();
  const token='body_'+'d'.repeat(64);
+ // These tests move the clock by days with no worker reporting. They are about the brief, not about a silent
+ // job, so the silence sweep is stopped. (A report stamped in the future no longer hides a job from it.)
+ f.root.services.runtime.close();
  f.root.writes.run(()=>{
-  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()+100*86400000).toISOString()}).where(eq(s.jobs.id,row.id)).run();
+  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()).toISOString()}).where(eq(s.jobs.id,row.id)).run();
   f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional child',kind:'agent',agent:'mark',job:row.id,createdAt:new Date(f.clock.now()).toISOString()}).run();
  });
  const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:row.id,conversation:cv,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init))});clean.push(()=>sdk.close());return{sdk,job:row.id,token};
@@ -48,15 +51,18 @@ it('hands a real private brief through one inherited conversation, settled job a
  const {sdk,job}=receive(f,cv.id);
  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:'alice',project:'pond',brief:''});
  expect(await sdk.takeAndAccept(async item=>{expect(item).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',words:brief.words,keepUntil:new Date(handoffDeadline(stored,14)).toISOString()});})).toMatchObject({accepted:1});
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('taken');await sdk.settle();
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('done');
  for(const table of [s.inbox,s.jobs,s.operationResults,s.conversations,s.turns])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(brief.words);
  expect(f.db.$client.serialize().includes(Buffer.from(brief.words))).toBe(false);
 });
-it.each(['ordinary-agent','member','missing-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
+it.each(['ordinary-agent','member','missing-agent','removed-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
  const f=await fixture();let token=bodyCredentials.body,input:unknown=brief;
  if(mode==='ordinary-agent')token=bodyCredentials.agent;
  if(mode==='member')token=bodyCredentials.member;
  if(mode==='missing-agent')input={...brief,agent:'missing'};
+ // A removed agent keeps its rows, and the lists that named it; it is nobody to hand work to.
+ if(mode==='removed-agent')f.root.writes.run(()=>f.db.update(s.agents).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.agents.id,'mark')).run());
  if(mode==='foreign-project')f.root.writes.run(()=>f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run());
  if(mode==='foreign-owner')f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());
  if(mode==='spoofed-parent')input={...brief,parent:'other-job'};
@@ -215,10 +221,10 @@ it.each(['project','owner'] as const)('withholds a pending public brief after %s
  release();const response=await pending;expect(response.status).toBe(403);expect(await response.text()).not.toContain(brief.words);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('waiting');
 });
-it('keeps private handoff body words visible to a household owner who is not its member',async()=>{
+it('keeps private handoff body words from a household owner who is not its member',async()=>{
  const f=await fixture(),created=await create(f),token='fictional-owner-body-read-'.repeat(4);
  f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();});
- const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toEqual({data:{inboxItem:null}});
 });
 
 it.each(['project','owner'] as const)('withdraws published public handoff originals and clones after %s assignment changes',async kind=>{
@@ -227,4 +233,110 @@ it.each(['project','owner'] as const)('withdraws published public handoff origin
  const response=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(response.status).toBe(200);const copy=response.clone();
  if(kind==='project')f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();else f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();
  await expect(response.text()).rejects.toThrow('Data access ended');await expect(copy.text()).rejects.toThrow('Data access ended');
+});
+
+it('keeps a handed-off direct message direct, so its words reach no wider audience than the message had',async()=>{
+ // An unlinked sender's direct message: nobody's private thread, in no project, shown only to the agent's owners.
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,project:null,direct:true}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f,'direct');
+ expect(f.db.select({direct:s.conversations.direct,member:s.conversations.member,project:s.conversations.project}).from(s.conversations).where(eq(s.conversations.id,created.conversation)).get()).toEqual({direct:true,member:null,project:null});
+ // The same brief sent again finds the same conversation, still direct.
+ expect((await create(f,'direct')).conversation).toBe(created.conversation);
+ // The agent it was handed to still takes it.
+ f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
+});
+
+it.each(['success','failure','archive','transient','occupied'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+ const f=await bodyFixture(clean,{modelRoles:()=>[
+  {model:'first',provider:'claude',harness:'claude',series:'first'},
+  {model:'reviewer',provider:'openai',harness:'codex',series:'reviewer'}]});
+ const {db,root}=f,now=()=>new Date(f.clock.now()).toISOString();
+ await f.send('Please get a cold review','start-review');
+ db.insert(s.agentModels).values([{agent:'art',model:'first',position:0},{agent:'art',model:'reviewer',position:1}]).run();
+ db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
+ db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();
+ db.update(s.boxes).set({hostsAny:true,lastSeenAt:now()}).run();
+ const request={harness:'codex',label:'Review pull request',clientId:'review-one',words:'Read commit abc.'};
+ expect((await f.call('handoff',request,'unavailable')).status).toBe(503);
+ db.insert(s.modelAccounts).values({id:'paid',owner:'alice',provider:'openai',label:'Subscription',hasRoom:true}).run();
+ db.insert(s.modelAccountWindows).values({account:'paid',window:'week',usage:0.1,usageReadAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000}).run();
+ db.insert(s.modelAccountBoxes).values({account:'paid',box:'box'}).run();
+ const next=async(id:string,capable:boolean)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
+ await next('advertise',true);
+ const response=await f.call('handoff',request,'launch');
+ expect(response.status,JSON.stringify(await response.clone().json())).toBe(200);
+ const child=(await response.json()).value.conversation;
+ db.update(s.inbox).set({state:'done',job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
+ db.update(s.jobs).set({state:'done',endedAt:now()}).where(eq(s.jobs.id,'job')).run();
+ f.clock.advance(60_000);
+ expect((await (await next('legacy',false)).json()).value).toBeNull();
+ const poll=await next('poll',true);
+ const assignment=(await poll.json()).value;
+ expect(assignment).toMatchObject({conversation:child,review:true,agent:'art',harness:'codex',model:'reviewer'});
+ const token='body_'+'c'.repeat(64);
+ db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,assignment.id)).run();
+ db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional reviewer',kind:'agent',agent:'art',job:assignment.id,createdAt:now()}).run();
+ const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:assignment.id,conversation:child,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
+ clean.push(()=>sdk.close());
+ if(mode==='archive'){
+  db.update(s.threads).set({archivedAt:now()}).where(eq(s.threads.id,f.thread.id)).run();
+  await expect(sdk.reply({clientId:'no',words:'withheld',model:'reviewer'})).rejects.toThrow();
+  return;
+ }
+ if(mode==='failure'||mode==='transient'){
+  let refused=false;
+  if(mode==='transient')f.gate(async()=>{if(!refused){refused=true;throw Error('Temporary key unavailability');}});
+  root.services.runtime.stop(assignment.id,'alice','write-off');
+  if(mode==='transient'){
+   await vi.waitFor(()=>expect(refused).toBe(true));
+   await new Promise(resolve=>setImmediate(resolve));
+   f.clock.advance(30_001);
+  }
+  await vi.waitFor(()=>expect(db.select().from(s.messages).where(eq(s.messages.kind,'reply')).all()).toHaveLength(1));
+  const failure=db.select().from(s.messages).where(eq(s.messages.kind,'reply')).get()!;
+  expect(await f.key.open(failure.words!)).toContain('the job was stopped');return;
+ }
+ // The original requester is finished. A different body can already be holding its thread when the child replies.
+ let holding:string|undefined;
+ if(mode==='occupied'){
+  await f.send('Another question for the coordinator','while-reviewing');
+  f.clock.advance(60_000);
+  const queued=db.select().from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),eq(s.jobs.state,'queued'))).get()!;
+  expect(queued).toBeDefined();holding=queued.id;
+  db.update(s.jobs).set({state:'running',box:'box',heardAt:now()}).where(eq(s.jobs.id,holding)).run();
+ }
+ const reply={clientId:'review-result',words:'PRIVATE REVIEW FINDINGS',model:'reviewer'};
+ const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:assignment.id,token}}));
+ expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/codex',cwd:'/fictional',reach:'all'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native:async(_job,context)=>{expect(context).toContain(request.words);return {text:reply.words,model:'reviewer',actions:[]};},error:()=>{}})).toBe(0);
+ await sdk.reply(reply);
+ const replies=db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.kind,'reply'))).all();
+ expect(replies).toHaveLength(1);expect(await f.key.open(replies[0].words!)).toBe(reply.words);
+ const mail=db.select().from(s.inbox).where(and(eq(s.inbox.conversation,f.thread.conversation),eq(s.inbox.source,'handoff'))).all();
+ expect(mail).toHaveLength(1);expect(mail[0]).toMatchObject({onWord:'alice',thread:f.thread.id,messageSeq:replies[0].seq,words:null});
+ const readAsCoordinator=async(id:string,token:string)=>{
+  db.update(s.jobs).set({box:'box',state:'running',heardAt:now()}).where(eq(s.jobs.id,id)).run();
+  db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional coordinator '+id,kind:'agent',agent:'art',job:id,createdAt:now()}).run();
+  const receiver=bodyConversationClient({url:'https://loom.invalid',token,job:id,conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(url,init))});
+  clean.push(()=>receiver.close());
+  const received:string[]=[];
+  await receiver.takeAndAccept(async item=>{if(item.words)received.push(item.words);});if(id===holding)await receiver.settle();
+  return received;
+ };
+ if(holding){
+  expect(replies[0].run).toBe(assignment.id);
+  expect(db.select().from(s.jobs).where(eq(s.jobs.id,holding)).get()?.state).toBe('running');
+  const earlier=await readAsCoordinator(holding,'body_'+'b'.repeat(64));
+  expect(earlier).toContain('Another question for the coordinator');
+  const finish=await root.http.request('/api/runtime/finish',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.runner},body:JSON.stringify({id:'finish-intervening-job',input:{job:holding,exitCode:0,logTail:''}})});
+  expect(finish.status).toBe(200);
+ }
+ f.clock.advance(60_000);
+ const coordinator=db.select().from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),eq(s.jobs.state,'queued'))).get()!;
+ expect(coordinator).toBeDefined();
+ const received=await readAsCoordinator(coordinator.id,'body_'+'e'.repeat(64));
+ expect(received).toContain(reply.words);
+ root.services.comms!.delete(f.thread.id);
+ expect(root.services.conversations.item(mail[0].id)).toMatchObject({state:'resolved',words:null,thread:null});
+ expect(db.$client.serialize().includes(Buffer.from(reply.words))).toBe(false);
 });

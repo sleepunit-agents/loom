@@ -44,7 +44,7 @@ it.each(['all','record'] as const)('admits a current member cookie for %s window
   expect((await f.call({ cookie: 'loom_ui='+agentCookie })).status).toBe(403);
   expect(f.db.select().from(tasks).get()?.title).toBe('Saved');
   expect(f.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({ n: 1 });
-  for (const door of ['mcp','direct'] as const)
+  for (const door of ['direct'] as const)
     expect(await f.root.operations.callAsync(door, { kind: 'member', id: 'sam' }, 'private.save', { id: f.id }, 'save', true)).toMatchObject({ ok: false, code: 'denied' });
 });
 it.each(['session','token','expiry'] as const)('rechecks the exact cookie %s after preparation without effects or receipt', async reason => {

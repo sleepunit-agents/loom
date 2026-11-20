@@ -6,7 +6,7 @@ export const tempoQuery = `query Tempo {
   tempoTimezone
   triggers {
     id ownerKind owner sourceKind watches times days lifespan targetKind target toKind to
-    project instructions file note enabled state nextDueAt lastFiredAt createdAt changedAt
+    project needs prefers instructions file note enabled state nextDueAt lastFiredAt createdAt changedAt
   }
   triggerLog(orderBy: {seq: {direction: desc, priority: 0}}, limit: 200) {
     seq trigger at event note
