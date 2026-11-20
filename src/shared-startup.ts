@@ -88,7 +88,19 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  let client:Database.Database|undefined,app:Awaited<ReturnType<typeof serveShared>>|undefined,operator:Awaited<ReturnType<typeof listenOperatorLinks>>|undefined;
  let holder:Awaited<ReturnType<typeof startSharedHolder>>|undefined;
  let closing:Promise<void>|undefined,adapters:SharedStartupAdapters={};
- const close=()=>closing??=(async()=>{try{await operator?.close();}finally{try{const pending=app?.close();try{await holder?.close();}finally{await pending;}}finally{try{await adapters.close?.();}finally{try{client?.close();}finally{await release();}}}}})();
+ const close = () => closing ??= (async () => {
+  const errors: unknown[] = [];
+  const attempt = async (releaseResource: () => unknown) => {
+   try { await releaseResource(); } catch (error) { errors.push(error); }
+  };
+  await attempt(() => operator?.close());
+  await Promise.all([attempt(() => app?.close()), attempt(() => holder?.close())]);
+  await attempt(() => adapters.close?.());
+  await attempt(() => client?.close());
+  await attempt(release);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, 'Multiple errors while closing the shared home');
+ })();
  try{
   // First-install publication must be durable before the holder writes values.
   const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
@@ -153,5 +165,10 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   /** For the code that started this program in its own process: the link the operator socket would give. */
   const signinLink=(member?:string)=>`${publicOrigin??app!.url}${issue({request:'link',label:'Local sign-in',ttl:LINK_MS/1000,agent:false,...(member?{member}:{})})}`;
   return {...app,close,signinLink};
- }catch(error){await close();throw error;}
+ } catch (error) {
+  try { await close(); } catch (cleanupError) {
+   throw new AggregateError([error, cleanupError], 'Shared home startup and cleanup failed', { cause: error });
+  }
+  throw error;
+ }
 }
