@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { jobs, conversations } from './core/data/schema.js';
+import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
@@ -21,6 +21,9 @@ import { workerAssignment } from './runtime/worker-http.js';
 import { claimedJobStates } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 
+import { changeReviewStore } from './apps/change-reviews.js';
+import { coldReviewReport, reviewOutcome } from './runtime/cold-review-report.js';
+
 const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
 export function registerSharedRuntime(operations: Operations, db: DataDatabase, options: {
@@ -31,6 +34,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   applyProgram(job: Job, result: ProgramResult, changed: (table: string, id: string) => void): void;
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun, options.workRoles, new Set(Object.keys(harnesses)));
+  const reviewStore = changeReviewStore(db, options.now);
+  const roundFor = (job: string) => db.select().from(changeReviewRounds).where(eq(changeReviewRounds.job, job)).get();
   const stopped=new WeakSet<object>();
   /** The jobs a poll ended as ones no harness can hold, by the poll's input: told of once the write is committed. */
   const unplaced=new WeakMap<object,string[]>();
@@ -57,7 +62,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), coldReviews:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
@@ -67,7 +72,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (input.execution !== 'container') throw new OperationError('denied',
         'This server gives jobs only to container workers. Update the worker and configure container.socket.');
       const ended: string[] = [], poll: { stampOnly?: boolean } = {};
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults, input.coldReviews);
       // An idle worker asks about once a second. A poll that gave no work and moved only the machine's
       // last-seen time is not a change to tell every open window of.
       if (poll.stampOnly && !ended.length) ctx.stampOnly?.();
@@ -110,9 +115,15 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
     // exitBy: whose code it is, as the worker says. A worker from before it was asked leaves it out, and the row then says nobody's.
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), programResult: z.json().optional() }).strict(), output: ack,
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional(), programResult: z.json().optional(), coldReview: coldReviewReport.optional() }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
+      if (input.coldReview || roundFor(input.job)) {
+        // The findings belong only to the protected round. Check their stored value on replay.
+        const report = input.coldReview;
+        const evidence = report && [report.change, report.headCommit, report.before, report.after];
+        return createHash('sha256').update(JSON.stringify({ job: input.job, exit: input.exitCode, by: input.exitBy, evidence })).digest('hex');
+      }
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
       const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member, direct: conversations.direct }).from(conversations)
         .where(eq(conversations.id, job.conversation)).get() : undefined;
@@ -123,10 +134,29 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       return createHash('sha256').update(privateOutput
         ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '', exitBy: input.exitBy ?? null }) : canonical).digest('hex');
     },
+    validateReplay(_viewer, input) {
+      if (!input.coldReview) {
+        if (input.programResult !== undefined && roundFor(input.job)) throw new OperationError('invalid', 'Incompatible job result');
+        return;
+      }
+      const round = roundFor(input.job), result = reviewOutcome(input.exitCode, input.coldReview, input.exitBy);
+      if (input.programResult !== undefined || !round || round.verdict !== result.verdict || round.findings !== result.findings)
+        throw new OperationError('conflict', 'Review report differs from the filed result');
+    },
     run(ctx, input) {
       const box = runner(ctx.viewer), job = dispatcher.jobs.get(input.job);
       let exitCode = input.exitCode;
-      if (job.startedByKind === 'program') {
+      const round = roundFor(input.job);
+      if (input.coldReview && (!round || job.state !== 'running' || input.coldReview.change !== round.change ||
+          input.coldReview.headCommit !== round.headCommit))
+        throw new OperationError('invalid', 'Report does not match a running review assignment');
+      if (round) {
+        if (job.startedByKind === 'program' || input.programResult !== undefined) throw new OperationError('invalid', 'Incompatible job result');
+        const result = reviewOutcome(exitCode, input.coldReview, input.exitBy);
+        if (result.verdict === 'NONE' && exitCode === 0) exitCode = 1;
+        reviewStore.finish({ job: input.job, change: round.change, headCommit: round.headCommit, ...result });
+        ctx.changed('change', round.change);
+      } else if (job.startedByKind === 'program') {
         if (job.state === 'running' && exitCode === 0) {
           let result: ProgramResult | undefined;
           try { result = parseProgramResult(JSON.stringify(input.programResult) ?? ''); }
@@ -145,7 +175,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
           }
         }
       } else if (input.programResult !== undefined) throw new OperationError('invalid', 'Program result requires a program job');
-      dispatcher.finish(box, input.job, exitCode, job.startedByKind === 'program' ? '' : input.logTail, input.exitBy);
+      dispatcher.finish(box, input.job, exitCode, round || job.startedByKind === 'program' ? '' : input.logTail, input.exitBy);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return { ok: true as const };
     },
     after: input => options.jobEnded(input.job),

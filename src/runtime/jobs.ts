@@ -1,3 +1,4 @@
+import { closePendingReview, hasChangeReview } from '../apps/change-reviews.js';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
@@ -386,7 +387,7 @@ export class Jobs {
 
   /** Queue the next attempt of work whose last attempt ended with a reason to run again, if it has any left. */
   private retry(before: Job, at: string, earliest = -Infinity): Job | undefined {
-    if (before.startedByKind === 'program') return undefined;
+    if (before.startedByKind === 'program' || hasChangeReview(this.db, before.id)) return undefined;
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
     if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
@@ -499,6 +500,7 @@ export class Jobs {
     const firing = program && this.db.select().from(programFirings).where(eq(programFirings.job, job.id)).get();
     const line = firing && (state === 'done' ? firing.line : 'Program did not complete.');
     const ended = this.db.update(jobs).set({ ...values, ...(line && {endedNote: line}), state }).where(eq(jobs.id, job.id)).returning().get()!;
+    closePendingReview(this.db, job.id, ended.endedAt ?? this.now());
     const started = program && this.db.select({ at: turns.at }).from(turns).where(and(eq(turns.run, job.id), eq(turns.kind, 'action'))).get();
     const began = program ? started && started.at : job.claimedAt;
     const wallMs = began && ended.endedAt ? Math.max(0, Date.parse(ended.endedAt) - Date.parse(began)) : null;

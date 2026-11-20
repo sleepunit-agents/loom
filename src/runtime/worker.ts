@@ -1,3 +1,4 @@
+import type { ColdReviewReport } from './cold-review-report.js';
 import type { HouseProgram, ProgramResult } from './house-program.js';
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
@@ -36,6 +37,7 @@ export interface WorkerAssignment {
   venue?: string | null;
   venueDescription?: string;
   review?: true;
+  coldReview?: { change: string; headCommit: string };
   model: string;
   account: string;
   /** How many accounts of this job's provider are signed in on this machine, the placed one included.
@@ -55,7 +57,7 @@ export interface WorkerBody {
   /** `own` is true when the body ended by itself with this code, and not because it was killed. An
    * executor that cannot tell leaves it out. `signalled` is true when a signal ended it, so the code is
    * the executor's word for that (WORKER_EXIT.killed) and not the body's. */
-  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; programResult?: ProgramResult }>;
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean; programResult?: ProgramResult; coldReview?: ColdReviewReport }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
@@ -83,7 +85,7 @@ export interface WorkerExecutor {
 }
 export interface WorkerControl {
   /** Claims once on the server. An uncertain response is never retried locally. */
-  next(): Promise<WorkerAssignment | undefined>;
+  next(coldReviews?: true): Promise<WorkerAssignment | undefined>;
   /** Private one-attempt input, never part of the assignment/receipt. */
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   /** Parent generates raw bytes locally; the server receives only a fingerprint. */
@@ -93,7 +95,7 @@ export interface WorkerControl {
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running', signal?: AbortSignal): Promise<boolean>;
   /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
-  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult): Promise<void>;
+  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy, programResult?: ProgramResult, coldReview?: ColdReviewReport): Promise<void>;
 }
 export interface WorkerSchedule {
   every(ms: number, callback: () => void): () => void;
@@ -129,7 +131,7 @@ const STAGE_SAID: Partial<Record<keyof typeof WORKER_EXIT, string>> = {
  * A worker process can call again after this resolves, or run several independent
  * slots. Never call this from loom's server/composition root. */
 export async function workOnce(input: {
-  box: string; control: WorkerControl; executor: WorkerExecutor; signal: AbortSignal;
+  box: string; control: WorkerControl; executor: WorkerExecutor; coldReviewExecutor?: WorkerExecutor; signal: AbortSignal;
   schedule?: WorkerSchedule; heartbeatMs?: number;
   /** A clock that only goes forward, in milliseconds; a test names its own. */
   now?: () => number;
@@ -139,7 +141,7 @@ export async function workOnce(input: {
    * one worker. Left out, the job waits for nothing: right for a worker with one slot. */
   turns?: WorkerTurns;
 }): Promise<WorkerResult> {
-  const { control, executor } = input;
+  const { control } = input;
   const interval = input.heartbeatMs ?? REPORT_MS;
   if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
@@ -148,11 +150,16 @@ export async function workOnce(input: {
   let unreachableSince: number | undefined;
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
   let lastDispatch = now();
-  try { job = await control.next(); } catch { return 'abandoned'; }
+  try { job = input.coldReviewExecutor ? await control.next(true) : await control.next(); } catch { return 'abandoned'; }
   if (!job) return 'idle';
   if (job.box !== input.box) throw new Error('Assignment belongs to another worker');
   // Snapshot input before giving asynchronous adapters control of it.
   const assignment = structuredClone(job);
+  const executor = assignment.coldReview ? input.coldReviewExecutor : input.executor;
+  if (!executor || (assignment.coldReview && assignment.program)) {
+    try { await control.finish(assignment.id, WORKER_EXIT.runner, '', 'worker'); return 'finished'; }
+    catch { return 'abandoned'; }
+  }
   const abort = new AbortController();
   let bootstrap: BodyBootstrap | undefined;
   let programInputs: Map<string, Buffer> | undefined;
@@ -218,9 +225,10 @@ export async function workOnce(input: {
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
-  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult): Promise<WorkerResult> => {
+  const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult, review?: ColdReviewReport): Promise<WorkerResult> => {
     try {
-      if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
+      if (assignment.coldReview) await control.finish(assignment.id, exitCode, '', by, undefined, review);
+      else if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
       else await control.finish(assignment.id, exitCode, logTail, by);
       return 'finished';
     }
@@ -231,7 +239,7 @@ export async function workOnce(input: {
     let stage: keyof typeof WORKER_EXIT = 'input';
     try {
       if (abort.signal.aborted) return 'abandoned';
-      const repositoryInput=await control.repositoryInput?.(assignment.id,abort.signal);
+      const repositoryInput=assignment.coldReview ? undefined : await control.repositoryInput?.(assignment.id,abort.signal);
       stage = 'build';
       try {
         if(abort.signal.aborted)return 'abandoned';
@@ -259,6 +267,7 @@ export async function workOnce(input: {
         if (!programInputs || programInputs.size !== aliases.length ||
             !aliases.every(name => programInputs!.has(name))) throw new Error('Program secrets unavailable');
       }
+      if (assignment.coldReview && body.acceptsBootstrap) throw new UnservedJobError('Cold review cannot use a body credential');
       if (!assignment.program && body.acceptsBootstrap) {
         stage = 'enroll';
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');
@@ -301,7 +310,7 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string; signalled?: boolean; programResult?: ProgramResult }, failed: 'release' | 'reap' | undefined = 'release';
+    let result: Awaited<WorkerBody['exited']>, failed: 'release' | 'reap' | undefined = 'release';
     try {
       try {
         if (assignment.program) {
@@ -338,7 +347,7 @@ export async function workOnce(input: {
     // loom's body program is the one given a body's credential, anything else is the machine's own runner.
     const by = failed || result.signalled ? 'worker' : bootstrap ? 'body' : 'runner';
     if (assignment.program) return await report(result.exitCode, failed ? logTail(result.logTail) : '', by, result.exitCode === 0 ? result.programResult : undefined);
-    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by);
+    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by, undefined, result.coldReview);
   } finally {
     eraseBootstrap(bootstrap); eraseProgramInputs();
     clearTimeout(probeTimer!); clearTimeout(expiryTimer!);

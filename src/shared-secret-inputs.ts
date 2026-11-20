@@ -1,3 +1,4 @@
+import { hasChangeReview } from './apps/change-reviews.js';
 import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
 import {startupRequestId,repositoryRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
@@ -56,7 +57,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
   const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&!(caller.body&&jobHeld(db,job))&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
-  if(!valid())throw new PrivateInputError('denied');
+  if(!valid()||hasChangeReview(db,job!.id))throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
    if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;

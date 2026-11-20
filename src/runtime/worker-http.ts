@@ -14,6 +14,7 @@ import type { SignInReason } from './account-signin-reasons.js';
 import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
+import { coldReviewReport } from './cold-review-report.js';
 import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
@@ -28,6 +29,7 @@ export const workerAssignment = z.object({
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
   program: houseProgramSchema.optional(),
+  coldReview: coldReviewReport.pick({ change: true, headCommit: true }).optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
 });
 export interface WorkerHttpOptions {
@@ -223,13 +225,16 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => {
+    next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
-      try {return (await call('next',{...poll,reviewResults:true},workerAssignment.nullable())) ?? undefined;}
-      catch(error){
-        if(!(error instanceof WorkerOperationFailure && error.schemaRefusal))throw error;
-        return (await call('next',poll,workerAssignment.nullable())) ?? undefined;
+      const versions = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
+      for (const capabilities of versions) {
+        try { return (await call('next', { ...poll, ...capabilities }, workerAssignment.nullable())) ?? undefined; }
+        catch (error) {
+          if (!(error instanceof WorkerOperationFailure && error.schemaRefusal)) throw error;
+        }
       }
+      return (await call('next', poll, workerAssignment.nullable())) ?? undefined;
     },
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
@@ -244,8 +249,8 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail, exitBy, programResult) => {
-      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult }, ack, undefined, id, remaining));
+    finish: async (job, exitCode, logTail, exitBy, programResult, coldReview) => {
+      await reportWithRetry(input, 'finish', (id, remaining) => call('finish', { job, exitCode, logTail, exitBy, programResult, coldReview }, ack, undefined, id, remaining));
     },
   };
 }

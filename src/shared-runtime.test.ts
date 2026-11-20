@@ -1,3 +1,5 @@
+import { change as fixtureChange } from './pieces/changes/change.fixture.js';
+import { changeReviewStore } from './apps/change-reviews.js';
 import {testProgramPin} from './runtime/pinned-program.fixture.js';
 import {sealHandoff} from './core/conversations/handoff-words.js';
 import Database from 'better-sqlite3';
@@ -671,4 +673,115 @@ it('a live report-only worker returns a memory sample to an authorized body over
   expect(audit.value).toContainEqual(expect.objectContaining({agent:'art',job:job.id,outcome:'answered',bytes:expect.any(Number)}));
   expect(f.db.select().from(operationResults).all().some(row=>JSON.stringify(row).includes('Mem:'))).toBe(false);
  }finally{stop();await running;bootstrap.erase?.();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+
+it('files a worker review only on its assigned job, change and commit, atomically with completion', async () => {
+  const f = fixture(), queued = f.send();
+  const change = 'github:acme/app#3', headCommit = 'a'.repeat(40), tree = 'b'.repeat(64);
+  const row = fixtureChange();
+  f.root.services.changes.put(row);
+  const review = changeReviewStore(f.db, f.now);
+  const report = { change, headCommit, before: tree, after: tree, reply: 'Original findings\nVERDICT: CLEAR' };
+  const input = { job: queued.id, exitCode: 0, exitBy: 'runner', logTail: 'discard this output', coldReview: report };
+  review.assign({ job: queued.id, change, headCommit, tier: 'high', round: 1 });
+  expect(await f.control.next()).toBeUndefined();
+  expect((await f.control.next(true))?.id).toBe(queued.id);
+  await expect(f.control.enrollBody!(queued.id, new AbortController().signal)).rejects.toThrow();
+  await expect(f.control.repositoryInput!(queued.id, new AbortController().signal)).rejects.toThrow();
+  expect((await f.call('finish', input, 'before-start')).status).toBe(400);
+  expect(review.history(change)[0].verdict).toBeNull();
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('starting');
+  await f.control.started(queued.id, 'image');
+  f.root.services.changes.put({ ...row, head: { ...row.head, id: 'c'.repeat(40) } });
+  for (const credential of [otherCredential, ownerCredential, agentCredential]) {
+    expect((await f.call('finish', input, 'wrong-authority', credential)).status).toBe(403);
+  }
+  expect((await f.call('finish', { ...input, coldReview: { ...report, headCommit: 'c'.repeat(40) } }, 'wrong-head')).status).toBe(400);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, change: 'github:other/project#1' } }, 'wrong-change')).status).toBe(400);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  expect(review.history(change)[0].verdict).toBeNull();
+  f.client.exec("CREATE TRIGGER review_receipt_failure BEFORE INSERT ON operation_results WHEN NEW.operation='runtime.finish' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect((await f.call('finish', input, 'atomic')).status).toBe(503);
+  expect(review.history(change)[0].verdict).toBeNull();
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+  f.client.exec('DROP TRIGGER review_receipt_failure');
+  expect((await f.call('finish', input, 'atomic')).status).toBe(200);
+  expect((await f.call('finish', input, 'atomic')).status).toBe(200);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'Other findings\nVERDICT: CLEAR' } }, 'atomic')).status).toBe(409);
+  for (const receipt of f.db.select().from(operationResults).all()) {
+    expect(Buffer.from(receipt.result).toString()).not.toContain('Original findings');
+  }
+  expect(review.history(change)).toMatchObject([{ current: false, verdict: 'CLEAR', findings: report.reply }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null });
+});
+
+it.each(['mismatch', 'missing verdict'])('checks the discarded reply on a %s receipt retry', async mode => {
+  const f = fixture(), job = f.send(), row = fixtureChange(), tree = 'a'.repeat(64);
+  f.root.services.changes.put(row);
+  const store = changeReviewStore(f.db, f.now);
+  store.assign({ change: row.id, headCommit: row.head.id, job: job.id, round: 1, tier: 'high' });
+  await f.control.next(true);
+  await f.control.started(job.id, 'image');
+  const report = { change: row.id, headCommit: row.head.id, before: tree, after: mode === 'mismatch' ? 'b'.repeat(64) : tree, reply: 'private failed reply' };
+  const input = { job: job.id, exitCode: 0, exitBy: 'runner', logTail: '', coldReview: report };
+  expect((await f.call('finish', input, 'retry')).status).toBe(200);
+  expect((await f.call('finish', input, 'retry')).status).toBe(200);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'other reply' } }, 'retry')).status).toBe(409);
+  expect(store.history(row.id)[0].findings).not.toContain(report.reply);
+});
+
+it.each(['unchanged', 'changed', 'missing'] as const)('delivers the %s review from the worker client and closes the assigned round', async evidence => {
+  const f = fixture(), job = f.send(), row = fixtureChange();
+  f.root.services.changes.put(row);
+  const store = changeReviewStore(f.db, f.now);
+  store.assign({ change: row.id, headCommit: row.head.id, job: job.id, round: 1, tier: 'high' });
+  const tree = 'a'.repeat(64);
+  const report = { change: row.id, headCommit: row.head.id, before: tree, after: evidence === 'changed' ? 'b'.repeat(64) : tree,
+    reply: '- MAJOR — unhandled case\nVERDICT: CLEAR' };
+  expect(await f.control.next()).toBeUndefined();
+  const finish = vi.spyOn(f.control, 'finish');
+  const ordinary = { build: vi.fn(), start: vi.fn() };
+  const outcome = await workOnce({ box: 'worker', control: f.control, signal: new AbortController().signal,
+    schedule: { every: () => () => {} }, executor: ordinary, coldReviewExecutor: {
+      build: async assignment => {
+        expect(assignment).toMatchObject({ coldReview: { change: row.id, headCommit: row.head.id }, brief: '', conversation: null,
+          house: { repository: 'https://github.com/acme/app.git', file: '', branch: row.head.ref } });
+        expect(assignment.run).toBeUndefined();
+        return 'fixture-image';
+      },
+      start: () => ({ spawned: Promise.resolve(), release: async () => {}, stop: async () => {},
+        exited: Promise.resolve({ exitCode: 0, logTail: 'private reviewer log', ...(evidence !== 'missing' && { coldReview: report }) }),
+      }),
+    } });
+  expect(ordinary.build).not.toHaveBeenCalled();
+  expect(finish.mock.calls[0][2]).toBe('');
+  expect(outcome).toBe('finished');
+  const valid = evidence === 'unchanged';
+  expect(store.history(row.id)).toMatchObject([{ verdict: valid ? 'BLOCKING' : 'NONE', current: true }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: valid ? 'done' : 'failed', logTail: null });
+  if (!valid) expect(store.history(row.id)[0].findings).not.toContain('unhandled case');
+});
+
+it('refuses review reports and late assignments on an ordinary running job', async () => {
+  const f = fixture(), job = f.send(), row = fixtureChange();
+  f.root.services.changes.put(row);
+  await f.control.next();
+  await f.control.started(job.id, 'image');
+  const identity = { change: row.id, headCommit: row.head.id };
+  expect(() => changeReviewStore(f.db).assign({ ...identity, job: job.id, tier: 'medium', round: 1 })).toThrow('unclaimed');
+  const report = { ...identity, before: 'b'.repeat(64), after: 'b'.repeat(64), reply: 'VERDICT: CLEAR' };
+  expect((await f.call('finish', { job: job.id, exitCode: 0, logTail: '', coldReview: report })).status).toBe(400);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()?.state).toBe('running');
+});
+
+it('ends a lost review with no verdict or ordinary successor', async () => {
+  const f = fixture(), job = f.send(), row = fixtureChange();
+  f.root.services.changes.put(row);
+  const reviews = changeReviewStore(f.db, f.now);
+  reviews.assign({ change: row.id, headCommit: row.head.id, job: job.id, tier: 'medium', round: 1 });
+  await f.control.next(true);
+  f.clock.advance(150_001);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()?.state).toBe('lost');
+  expect(reviews.history(row.id)).toMatchObject([{ verdict: 'NONE', completedAt: expect.any(String) }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).all()).toEqual([]);
 });
