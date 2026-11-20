@@ -2,7 +2,7 @@
  * reconnect replay or read cache; an uncertain attempt keeps its retry ID. */
 import {newId} from '../data/id';
 import type {Call,CallState,Result,Failure} from '../data/store';
-type Operation='mind.knowledgeAdd'|'mind.knowledgeVerify'|'mind.knowledgeRecheck'|'mind.personAdd';
+type Operation='mind.knowledgeAdd'|'mind.knowledgeAnnotate'|'mind.knowledgeVerify'|'mind.knowledgeRecheck'|'mind.personAdd';
 type Send=(url:string,init:RequestInit)=>Promise<Response>;
 const unavailable:Failure={ok:false,code:'unavailable',message:'Memory could not save this change'};
 const denied:Failure={ok:false,code:'denied',message:'Memory access ended'};

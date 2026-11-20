@@ -177,6 +177,15 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(a,'A shared new fact').count()).toBe(1);
     await b.getByRole('button',{name:'Open fact',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'A shared new fact',exact:true}).count()).toBe(1);
+    await row(a,'A shared new fact').click();
+    await b.getByRole('combobox',{name:'Annotation type'}).selectOption('outdated');
+    await b.getByRole('textbox',{name:'Annotation',exact:true}).fill('The reference manual changed');
+    await b.getByRole('button',{name:'Save annotation'}).click();
+    const savedAnnotation=a.getByRole('region',{name:'Recent annotations'});
+    await expect.poll(()=>savedAnnotation.innerText()).toContain('The reference manual changed');
+    expect(await savedAnnotation.innerText()).toContain('outdated · owner');
+    await expect.poll(()=>a.getByText(/Asked to be checked again/).count()).toBe(1);
+    expect(await source.getVerifications('a-shared-new-fact')).toHaveLength(1);
     }catch(error){
       for(const [name,page] of [['desktop',a],['phone',b]] as const){
         // Inspect the actual shell and reader. Never serialize URLs, history

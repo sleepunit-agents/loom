@@ -349,6 +349,10 @@ it('requires a recorded supersession for cross-author replacements and rejects s
   const posted=await mark.call('loom_command',dispute);
   expect(JSON.parse(posted.text).ok).toBe(true);
   expect((await mark.call('loom_command',dispute)).text).toBe(posted.text);
+  const annotation={operation:'mind.knowledgeAnnotate',input:{slug,kind:'outdated',words:'Calibration has changed'},id:'outdated-once'};
+  const annotated=await art.call('loom_command',annotation);
+  expect(JSON.parse(annotated.text).ok).toBe(true);
+  expect((await art.call('loom_command',annotation)).text).toBe(annotated.text);
   const disputed=await read();
   expect(disputed).toContain('First measurement\n\nSecond observation');
   expect(disputed).toContain('dispute by mark');
@@ -359,6 +363,7 @@ it('requires a recorded supersession for cross-author replacements and rejects s
   for(let n=0;n<11;n++)expect((await art.call('knowledge_write',{mode:'append',slug,body:'Follow-up '+n})).error).toBe(false);
   const final=await read();
   expect(final).toContain('Corrected measurement');
+  expect(final.match(/Calibration has changed/g)).toHaveLength(1);
   expect(final.match(/Check the calibration \(Instrument log\)/g)).toHaveLength(1);
   expect(final.match(/mark replaced revision/g)).toHaveLength(1);
   expect(final).toContain('Repeated the test (Bench log 17)');

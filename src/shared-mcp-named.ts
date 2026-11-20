@@ -298,7 +298,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    const page=data.memoryKnowledgePage;if(!page)return 'No knowledge page '+input.slug;
    const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','',page.body];
    if(page.sources?.length)lines.push('','## Sources',...page.sources.map(row=>'- '+row.locator));
-   if(page.annotations?.length)lines.push('','## Annotations',...page.annotations.map(row=>'- '+row.kind+' by '+row.actor+' on '+row.created+' — '+row.words+' ('+row.evidence+')'));
+   if(page.annotations?.length)lines.push('','## Annotations',...page.annotations.map(row=>'- '+row.kind+' by '+row.actor+' on '+row.created+' — '+row.words+(row.evidence?' ('+row.evidence+')':'')));
    if(page.supersessions?.length)lines.push('','## Supersessions',...page.supersessions.map(row=>'- '+row.actor+' replaced revision '+row.revision+' on '+row.created+' — '+row.reason+' ('+row.evidence+')'));
    if(page.history?.length)lines.push('','## Earlier versions',...page.history.map(row=>'- '+row.id+' ('+row.op+', replaced '+row.replacedAt+(row.actor?' by '+row.actor:'')+')'));
    return lines.join('\n');
