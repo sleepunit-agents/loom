@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expiresAt, LIFESPAN_DAYS, noteFilesDir, Notes } from './notes.js';
+import { expiresAt, LIFESPAN_DAYS, MAX_FILE_BYTES, noteFilesDir, Notes } from './notes.js';
 
 const DAY = 86_400_000;
 
@@ -53,6 +54,43 @@ describe('notes', () => {
     expect(blobs()).toEqual([f1.sha256]);
     n.delete('making/session-2');
     expect(blobs()).toEqual([]);
+  });
+
+  it('stores the full binary attachment limit, an empty file, and rejects oversize replacement', () => {
+    n.write('fixtures/upload', 'files', { lifespan: 'keep', by: 'art' });
+    const content = Buffer.alloc(MAX_FILE_BYTES, 0xff);
+    content[0] = 0;
+    const file = n.attach('fixtures/upload', 'full.bin', content);
+    expect(file).toMatchObject({bytes:content.length, sha256:createHash('sha256').update(content).digest('hex')});
+    expect(n.attach('fixtures/upload', 'empty.bin', Buffer.alloc(0)).bytes).toBe(0);
+    expect(()=>n.attach('fixtures/upload', 'full.bin', Buffer.alloc(MAX_FILE_BYTES+1))).toThrow(/at most/);
+    expect(readFileSync(n.filePath('fixtures/upload', 'full.bin')!).equals(content)).toBe(true);
+  });
+
+  it('keeps committed attachment bytes when a surrounding receipt rolls back', () => {
+    const path = 'fixtures/receipt', name = 'sample.bin';
+    n.write(path, 'attachment', { lifespan:'short', by:'art' });
+    const old = n.attach(path, name, Buffer.from('original'));
+    now += LIFESPAN_DAYS.short * DAY;
+    for (const change of [
+      ()=>n.attach(path, name, Buffer.from('replacement')),
+      ()=>n.delete(path),
+      ()=>n.sweep([]),
+    ]) {
+      expect(()=>n.atomicWrite(()=>{
+        change();
+        const reader = new Notes(dir, () => now, {readonly:true});
+        try {
+          expect(reader.read(path)?.fileList).toEqual([old]);
+          expect(readFileSync(reader.filePath(path, name)!, 'utf8')).toBe('original');
+        } finally { reader.close(); }
+        throw Error('receipt failed');
+      })).toThrow('receipt failed');
+      expect(n.read(path)?.fileList).toEqual([old]);
+      expect(readFileSync(n.filePath(path, name)!, 'utf8')).toBe('original');
+      const root = noteFilesDir(dir);
+      expect(readdirSync(root).flatMap(shard=>readdirSync(join(root,shard)))).toEqual([old.sha256]);
+    }
   });
 
   it('a sweep lets expired notes go, but keeps the ones a memory or page cites, the pinned, and keep', () => {
