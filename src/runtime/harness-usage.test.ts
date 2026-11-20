@@ -44,3 +44,16 @@ it('counts repeated Codex tool events once per id and includes an interrupted ca
  expect(codexUsage([event('item.started','a'),event('item.completed','a'),event('item.completed','a'),event('item.started','b')]))
   .toMatchObject({source:'transcript',tools:{recall:2},toolCalls:2});
 });
+
+it('records the first parent call independently of later calls and nested agents',()=>{
+ const [assistant,result]=rows('claude');
+ const child={...assistant,agent_id:'nested',message:{...assistant.message,id:'child',usage:{...assistant.message.usage,input_tokens:8000}}};
+ const later={...assistant,message:{...assistant.message,id:'later',usage:{...assistant.message.usage,input_tokens:9000}}};
+ expect(claudeUsage([child,assistant,later,result])).toMatchObject({firstContext:4288,largestContext:13286});
+ const reusedChild={...child,message:{...child.message,id:assistant.message.id}};
+ expect(claudeUsage([assistant,reusedChild,result]).firstContext).toBe(4288);
+ for(const placeholder of [{...assistant,error:'api'},{...assistant,aborted:true},{...assistant,message:{...assistant.message,model:'<synthetic>'}}])
+  expect(claudeUsage([placeholder,later,result]).firstContext).toBeUndefined();
+ expect(claudeUsage([result]).firstContext).toBeUndefined();
+ expect(claudeUsage([{...assistant,message:{...assistant.message,id:undefined}},later,result]).firstContext).toBeUndefined();
+});

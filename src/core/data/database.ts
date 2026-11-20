@@ -363,6 +363,8 @@ const upgrades: readonly (readonly string[])[] = [
    "INSERT INTO box_alert_settings (singleton) VALUES (1)"],
   // 21: only a body's acknowledgment establishes when it received an item.
   ["ALTER TABLE inbox ADD COLUMN first_accepted_at text CHECK (first_accepted_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', first_accepted_at) = first_accepted_at or strftime('%Y-%m-%dT%H:%M:%fZ', first_accepted_at) = first_accepted_at, 0))"],
+  // 22: keep the measured input of the job’s first model call.
+  ["ALTER TABLE job_usage ADD COLUMN first_context integer"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

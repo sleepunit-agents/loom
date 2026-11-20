@@ -1089,6 +1089,7 @@ export const jobUsage = sqliteTable('job_usage', {
   modelCalls: integer('model_calls'),
   toolCalls: integer('tool_calls'),
   tools: text('tools', {mode: 'json'}).$type<Record<string, number>>(),
+  firstContext: integer('first_context'),
   largestContext: integer('largest_context'),
   wallMs: integer('wall_ms'),
   harness: text('harness'),

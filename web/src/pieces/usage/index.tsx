@@ -8,13 +8,13 @@ export const conversationsQuery = `query UsageConversations($from:String!, $to:S
 }`;
 export const jobsQuery = `query UsageJobs($from:String!, $to:String!, $conversation:String) {
   conversationJobUsage(from:$from,to:$to,conversation:$conversation){id title runKind linkedWakeJob state observations usage{
-    harness model source tokensIn tokensOut cacheRead cacheWritten modelCalls toolCalls tools{name count} largestContext wallMs
+    harness model source tokensIn tokensOut cacheRead cacheWritten modelCalls toolCalls tools{name count} firstContext largestContext wallMs
   }}
 }`;
 interface Group {key:string|null; title:string|null; totalTokens:number|null; jobCount:number; retryCount:number}
 const metrics = {
   tokensIn:'Input tokens',tokensOut:'Output tokens',cacheRead:'Cache read',cacheWritten:'Cache written',
-  modelCalls:'Model calls',toolCalls:'Tool calls',largestContext:'Largest context',wallMs:'Wall time (ms)',
+  modelCalls:'Model calls',toolCalls:'Tool calls',firstContext:'First-call context',largestContext:'Largest context',wallMs:'Wall time (ms)',
 } as const;
 type Measurement = Record<keyof typeof metrics,number|null> & {
   harness:string|null; model:string|null; source:string; tools:{name:string;count:number}[]|null;

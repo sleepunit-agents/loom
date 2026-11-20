@@ -12,7 +12,7 @@ const requiredText = {type: new GraphQLNonNull(GraphQLString)};
 const counters = Object.fromEntries(additive.map(name => [name, counter]));
 const toolType = new GraphQLObjectType({name:'JobToolCount',fields:{name:requiredText,count:counter}});
 const usageType = new GraphQLObjectType({name:'JobUsageMetrics',fields:{
-  ...counters, largestContext:counter, totalTokens:counter, source:requiredText, harness:text, model:text,
+  ...counters, firstContext:counter, largestContext:counter, totalTokens:counter, source:requiredText, harness:text, model:text,
   tools:{type:new GraphQLList(new GraphQLNonNull(toolType))},
 }});
 const recordType = new GraphQLObjectType({name:'JobUsageRecord',fields:{

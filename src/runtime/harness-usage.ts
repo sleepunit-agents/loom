@@ -31,11 +31,19 @@ function toolCounts(names:unknown[]){
 
 export function claudeUsage(rows:unknown[]):UsageReport{
  const messages=new Map<string,Row>(), tools=new Map<string,unknown>();
+ let firstParentId: string | null | undefined;
+ let firstContext:number|null=null;
  let sawAssistant=false, allMessages=true, allTools=true;
  for(const row of rows.map(object)){
   if(row.type!=='assistant')continue;
   sawAssistant=true;
   const message=object(row.message);
+  // Stream order identifies the first parent call. A result's iterations may cover only its last response.
+  if(row.parent_tool_use_id==null && !row.agent_id){
+   const measured=!row.error && !row.aborted && message.model!=='<synthetic>' && typeof message.id==='string';
+   if(firstParentId===undefined)firstParentId=measured ? message.id as string : null;
+   if(measured && message.id===firstParentId)firstContext=inputSize(object(message.usage));
+  }
   if(typeof message.id==='string')messages.set(message.id,object(message.usage));
   else allMessages=false;
   if(!Array.isArray(message.content)){allTools=false;continue;}
@@ -62,6 +70,7 @@ export function claudeUsage(rows:unknown[]):UsageReport{
  return {source:reported?'report':'transcript',
   tokensIn:inputSize(usage)??sum(transcript.map(inputSize)),tokensOut:measure('output_tokens'),
   cacheRead:measure('cache_read_input_tokens'),cacheWritten:measure('cache_creation_input_tokens'),
+  ...(firstContext!==null && {firstContext}),
   modelCalls:turns.length||null,largestContext:contexts.length&&contexts.every(n=>n!==null)?contexts.reduce((maximum,size)=>Math.max(maximum,size),0):null,
   ...(sawAssistant&&allTools?toolCounts([...tools.values()]):{tools:null,toolCalls:null})};
 }

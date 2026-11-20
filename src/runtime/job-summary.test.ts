@@ -108,11 +108,11 @@ it('reads historical usage and counts only visible jobs over a half-open queue-t
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(f.summaries) }) });
   const result = await graphql({schema, source: `{
     jobUsage(id:"private"){id}
-    old:jobUsage(id:"old"){usage{source tokensIn tools{name}} observations}
+    old:jobUsage(id:"old"){usage{source tokensIn firstContext tools{name}} observations}
     retry:jobUsage(id:"retry"){observations}
     jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"day"){key jobCount retryCount totalTokens}
   }`});
-  expect(result).toEqual({data:{jobUsage:null,old:{usage:{source:'none',tokensIn:null,tools:null},observations:[]},
+  expect(result).toEqual({data:{jobUsage:null,old:{usage:{source:'none',tokensIn:null,firstContext:null,tools:null},observations:[]},
     retry:{observations:['This job was a retry.']},jobUsageRollup:[{key:'2026-11-14',jobCount:2,retryCount:1,totalTokens:null}]}});
 });
 
@@ -123,7 +123,7 @@ it('counts complete firings in a reused wake conversation, with all retries and 
     const at = `2026-11-${day}T01:00:00Z`;
     f.add(id,'done',{conversation:'cv',queuedAt:at,retryOf});
     f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:input,tokensOut:output,model:'reported',cacheRead:2,
-      largestContext:32768,toolCalls:0,tools:{}}).run();
+      firstContext:1024,largestContext:32768,toolCalls:0,tools:{}}).run();
     if (delivery) {
       f.db.insert(inbox).values({id:delivery,job:id,conversation:'cv',toKind:'agent',to:'art',source:'trigger',sourceId:'lane:'+delivery,
         fromKind:'schedule',state:'done',at,changedAt:at}).run();
@@ -134,14 +134,14 @@ it('counts complete firings in a reused wake conversation, with all retries and 
   add('latest',13,20,0); add('latest-retry',14,0,20,'d4','latest');
   const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
   const query = `{
-    conversationJobUsage(conversation:"cv",from:"2026-11-14T01:00:00Z",to:"2026-11-15T00:00:00Z"){id observations usage{tools{name count} totalTokens}}
+    conversationJobUsage(conversation:"cv",from:"2026-11-14T01:00:00Z",to:"2026-11-15T00:00:00Z"){id observations usage{tools{name count} firstContext totalTokens}}
     byTrigger:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"trigger"){key jobCount retryCount tokensIn tokensOut cacheRead totalTokens largestContext}
     byModel:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"model"){key}
     byConversation:jobUsageRollup(from:"2026-11-10T00:00:00Z",to:"2026-11-20T00:00:00Z",groupBy:"conversation"){key title}
   }`;
   const large = 'This job used a large context and made no tool calls.';
   expect(await graphql({schema,source:query})).toEqual({data:{
-    conversationJobUsage:[{id:'latest-retry',observations:[large,'This job was a retry.','This trigger’s latest run used at least twice its earlier median tokens.'],usage:{tools:[],totalTokens:20}}],
+    conversationJobUsage:[{id:'latest-retry',observations:[large,'This job was a retry.','This trigger’s latest run used at least twice its earlier median tokens.'],usage:{tools:[],firstContext:1024,totalTokens:20}}],
     byTrigger:[{key:'lane',jobCount:5,retryCount:1,tokensIn:535,tokensOut:45,cacheRead:10,totalTokens:580,largestContext:32768}],
     byModel:[{key:'reported'}],byConversation:[{key:'cv',title:'Night shift'}],
   }});

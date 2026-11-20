@@ -117,3 +117,20 @@ it.each(['declared','streamed'] as const)('does not retry a %s oversized non-tak
  await expect(f.client.reply({clientId:'reply',words:'PRIVATE REPLY'})).rejects.toThrow('Conversation body request failed');
  expect(f.fetcher).toHaveBeenCalledTimes(1);expect(new URL(String(f.fetcher.mock.calls[0][0])).pathname).toBe('/api/conversation/message');expect(cancelled).toBe(true);
 });
+
+it('stores first-call context and preserves older counters when an older coordinator rejects the new field',async()=>{
+ const report={source:'report' as const,firstContext:1024,largestContext:3072,tokensIn:4096};
+ const current=await fixture();expect(await current.client.usage(report)).toEqual({saved:true});
+ expect(current.db.select().from(s.jobUsage).get()).toMatchObject(report);
+ const old=await fixture(),native=old.fetcher.getMockImplementation()!;
+ const deadlines=vi.spyOn(old.clock,'at'),start=old.clock.now();
+ old.fetcher.mockImplementation(async(url,init)=>{
+  if(JSON.parse(String(init?.body)).input.firstContext===undefined)return native(url,init);
+  old.clock.advance(900);
+  return Response.json({ok:false,code:'invalid'},{status:400});
+ });
+ expect(await old.client.usage(report,1000)).toEqual({saved:true});
+ expect(deadlines.mock.calls.filter(([at])=>at===start+1000)).toHaveLength(2);
+ expect(deadlines.mock.calls.some(([at])=>at===start+1900)).toBe(false);
+ expect(old.db.select().from(s.jobUsage).get()).toMatchObject({firstContext:null,largestContext:3072,tokensIn:4096});
+});
