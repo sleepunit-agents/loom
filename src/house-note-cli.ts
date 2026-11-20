@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SHA256_HEX_WITHIN } from './core/sha256-hex.js';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import type { ServeIo } from './index.js';
@@ -57,7 +58,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
       input={operation,path,lifespan:values.lifespan,id:values.id??generatedReceipt,body:values.body??await stdinBody()};
     }
   }catch{io.stderr('Invalid note arguments or input.\n'+usage);return 2;}
-  const cap=/^([1-9][0-9]{0,4})\.([a-f0-9]{64})$/.exec(env.LOOM_BODY_HOUSE_NOTE??'');
+  const cap=new RegExp('^([1-9][0-9]{0,4})\\.('+SHA256_HEX_WITHIN+')$').exec(env.LOOM_BODY_HOUSE_NOTE??'');
   if(!cap||Number(cap[1])>65535){io.stderr('Loom note needs an active worker job with shell access.\n');return 1;}
   if(generatedReceipt)io.stderr('Write receipt --id '+generatedReceipt+'\n');
   try{
