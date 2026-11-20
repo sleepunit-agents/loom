@@ -1,4 +1,4 @@
-import { wakeSource } from '../core/tempo/wake-sources.js';
+import { wakeReadOrder, wakeSource } from '../core/tempo/wake-sources.js';
 import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -40,7 +40,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     if (!row) throw new Error('Change not found');
     return row;
   };
-  const store = (raw: Change, readAt: number) => {
+  const store = (raw: Change, readAt: number, order: ReturnType<typeof wakeReadOrder>) => {
     const c = changeSchema.parse(raw), repository = repoId(c.repo).slice(7);
     const project = projectFor(db, repository);
     // Attribution comes from the household's GitHub account rows, never a branch prefix.
@@ -84,11 +84,11 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     db.delete(changeTasks).where(eq(changeTasks.change, id)).run();
     const cited = tasksCited(c);
     if (cited.length) for (const task of db.select({ id: tasks.id }).from(tasks).where(inArray(tasks.id, cited)).all()) db.insert(changeTasks).values({ change: id, task: task.id }).run();
-    wakeSource(db, { kind: 'change', id, change: c, readAt });
+    wakeSource(db, { kind: 'change', id, change: c, readAt, order });
     return get(id);
   };
   return {
-    put(input: Change) { return commit(() => store(input, Date.parse(now()))); },
+    put(input: Change) { return commit(() => store(input, Date.parse(now()), wakeReadOrder())); },
     get(id: string): ChangeDetail {
       return { ...get(id), checksDetail: db.select().from(changeChecks).where(eq(changeChecks.change, id)).all(),
         people: db.select().from(changePeople).where(eq(changePeople.change, id)).orderBy(asc(changePeople.role), asc(changePeople.login)).all(),
@@ -101,17 +101,17 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
       // previous complete cache intact and marks the sync failed for the tile.
       try {
         const repositories = [...new Set(db.select().from(projectRepositories).all().map(r => repoId(r.repository).slice(7)))];
-        const rows: { change: Change; readAt: number }[] = [];
+        const rows: { change: Change; readAt: number; order: ReturnType<typeof wakeReadOrder> }[] = [];
         for (const repository of repositories) {
           projectFor(db, repository);
-          const readAt = Date.parse(now());
+          const readAt = Date.parse(now()), order = wakeReadOrder();
           for (const c of await read(repository, readAt)) {
             if (repoId(c.repo).slice(7) !== repository) throw new Error('Reader returned another repository');
-            rows.push({ change: c, readAt });
+            rows.push({ change: c, readAt, order });
           }
         }
         return commit(() => {
-          const stored = rows.map(row => store(row.change, row.readAt));
+          const stored = rows.map(row => store(row.change, row.readAt, row.order));
           db.insert(changeSync).values({ readAt: now(), failed: false, nextAt }).onConflictDoUpdate({ target: changeSync.singleton, set: { readAt: now(), failed: false, nextAt } }).run();
           return stored;
         });

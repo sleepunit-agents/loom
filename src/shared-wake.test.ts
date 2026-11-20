@@ -1,3 +1,4 @@
+import { ConversationMail } from './core/conversations/mail.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { bodyCredentials as keys, bodyFixture, credentialHash } from '../test/fixtures/conversation-body.js';
@@ -12,7 +13,8 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
 async function fixture(options: Parameters<typeof bodyFixture>[1] = {}) {
-  const f = await bodyFixture(cleanup, options);
+  let upstream = change();
+  const f = await bodyFixture(cleanup, { changes: { read: async () => [upstream] }, ...options });
   const now = () => new Date(f.clock.now()).toISOString();
   f.db.insert(s.projectRepositories).values({ project: 'pond', repository: 'acme/app' }).run();
   f.db.insert(s.agentModels).values({ agent: 'art', model: 'model', position: 0 }).run();
@@ -34,15 +36,20 @@ async function fixture(options: Parameters<typeof bodyFixture>[1] = {}) {
   };
   const row = (id: string) => f.db.select().from(s.wakes).where(eq(s.wakes.id, id)).get()!;
   const mail = (id: string) => f.db.select().from(s.inbox).where(eq(s.inbox.sourceId, id)).all();
-  const put = (value: Partial<Change> = {}) => f.root.services.changes.put(change(value));
+  const put = (value: Partial<Change> = {}) => {
+    upstream = change(value);
+    return f.root.services.changes.put(upstream);
+  };
   const query = async (query: string, token = keys.body) => {
     const response = await f.root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query }) });
     return await response.json() as { data?: Record<string, unknown>; errors?: unknown[] };
   };
-  const body = (member: string, n: number, venue: 'loom' | 'discord' = 'loom') => {
-    f.db.insert(s.memberAgents).values({ member, agent: 'art' }).onConflictDoNothing().run();
-    f.db.insert(s.projectMembers).values({ member, project: 'pond' }).onConflictDoNothing().run();
-    const place = venue === 'discord' ? '["guild","channel",null]' : 'thread-' + n;
+  const body = (member: string | null, n: number, venue = 'loom') => {
+    if (member) {
+      f.db.insert(s.memberAgents).values({ member, agent: 'art' }).onConflictDoNothing().run();
+      f.db.insert(s.projectMembers).values({ member, project: 'pond' }).onConflictDoNothing().run();
+    }
+    const place = 'thread-' + n;
     const conversation = f.root.services.conversations.open({ agent: 'art', member, project: 'pond', venue, label: 'Other private work', place });
     const job = { ...f.db.select().from(s.jobs).where(eq(s.jobs.id, 'job')).get()!, id: 'body-' + n, member, conversation: conversation.id };
     f.db.insert(s.jobs).values(job).run();
@@ -68,7 +75,8 @@ it('accepts only a runtime body and scopes replay, listing, cancelling and reads
   const input = { what: 'in:1', note: 'Fictional self-note' };
   const denied = await f.post('tempo.wake', input, keys.agent);
   expect(denied).toMatchObject({ ok: false, message: 'Only a runtime body in its own conversation can use wakes.' });
-  for (const token of [keys.member, terminal]) expect(await f.post('tempo.wake', input, token)).toEqual(denied);
+  const otherVenues = ['discord', 'slack', 'wake', 'handoff', 'terminal'].map((venue, i) => f.body('alice', i + 3, venue).token);
+  for (const token of [keys.member, terminal, ...otherVenues]) expect(await f.post('tempo.wake', input, token)).toEqual(denied);
   const first = await f.ask(input, keys.body, 'shared-id');
   expect(await f.ask(input, keys.body, 'shared-id')).toBe(first);
   expect(await f.post('tempo.waits', {}, other.token)).toMatchObject({ ok: true, value: [] });
@@ -102,7 +110,7 @@ it('delivers due mail once on the original word and waits behind the body', asyn
   expect(f.mail(id)).toEqual([]);
   f.clock.advance(1);
   expect(f.row(id)).toMatchObject({ state: 'fired', onWord: { kind: 'member', id: 'alice' } });
-  expect(f.mail(id)).toMatchObject([{ conversation: f.cv, job: null, onWordKind: 'member', onWord: 'alice', state: 'waiting' }]);
+  expect(f.mail(id)).toMatchObject([{ conversation: f.cv, thread: f.thread.id, job: null, onWordKind: 'member', onWord: 'alice', state: 'waiting' }]);
   expect(f.mail(id)[0].words).toContain('Resume fixture work.');
   const item = f.mail(id)[0].id;
   expect((await f.query(`{ inboxItem(id:"${item}"){id} }`, other.token)).data).toEqual({ inboxItem: null });
@@ -111,6 +119,9 @@ it('delivers due mail once on the original word and waits behind the body', asyn
   const successor = f.db.select().from(s.jobs).where(eq(s.jobs.conversation, f.cv)).all().find(j => j.id !== 'job');
   expect(successor).toMatchObject({ member: 'alice', conversation: f.cv, state: 'queued' });
   expect(f.mail(id)[0].job).toBe(successor?.id);
+  f.db.update(s.jobs).set({ state: 'running', box: 'box' }).where(eq(s.jobs.id, successor!.id)).run();
+  const bodyMail = new ConversationMail(f.root.services.comms!);
+  expect((await bodyMail.prepareTake(f.cv, successor!.id))()[0]?.words).toContain('Resume fixture work.');
   f.clock.advance(120_000);
   expect(f.mail(id)).toHaveLength(1);
 });
@@ -178,6 +189,11 @@ it('authorizes untracked repository reads up front and refuses a rename without 
   const id = await f.ask({ what: 'acme/app#3' });
   expect(read).toHaveBeenCalledTimes(1);
   expect(f.db.select().from(s.changes).all()).toEqual([]);
+  read.mockResolvedValueOnce([]);
+  expect(await f.post('tempo.wake', { what: 'acme/app#404' })).toEqual(out);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(await f.post('tempo.wake', { what: 'elsewhere/app#404' })).toEqual(out);
+  expect(read).toHaveBeenCalledTimes(2);
   read.mockResolvedValueOnce([change({ id: 'github:renamed/app#3', repo: 'github:renamed/app' })]);
   expect(await f.post('tempo.wake', { what: 'acme/app#3' })).toEqual(out);
   expect(f.db.select().from(s.wakes).all().map(row => row.id)).toEqual([id]);
@@ -239,32 +255,19 @@ it('holds due times while paused, then fires a live one and expires an old one',
   expect(f.mail(old)).toEqual([]);
 });
 
-it('enforces both waiting caps and lets cancellation free a slot', async () => {
-  const f = await fixture(), b = f.body('alice', 2), c = f.body('alice', 3);
+it('enforces a cap per conversation without counting other conversations', async () => {
+  const f = await fixture(), b = f.body('alice', 2), c = f.body('bob', 3);
   const ids = [];
   for (let i = 0; i < 20; i++) ids.push(await f.ask({ what: 'in:1' }));
   expect(await f.post('tempo.wake', { what: 'in:1' })).toMatchObject({ ok: false, message: 'Too many waiting wakes.' });
   for (let i = 0; i < 20; i++) await f.ask({ what: 'in:1' }, b.token);
-  for (let i = 0; i < 10; i++) await f.ask({ what: 'in:1' }, c.token);
+  for (let i = 0; i < 20; i++) await f.ask({ what: 'in:1' }, c.token);
   expect(await f.post('tempo.wake', { what: 'in:1' }, c.token)).toMatchObject({ ok: false, message: 'Too many waiting wakes.' });
   expect(await f.post('tempo.wakeCancel', { id: ids[0] })).toMatchObject({ ok: true });
-  await f.ask({ what: 'in:1' }, c.token);
+  await f.ask({ what: 'in:1' });
 });
 
-it('ends a bridge wake when the place has closed before the due time', async () => {
-  const f = await fixture(), bridge = f.body('alice', 2, 'discord');
-  f.db.insert(s.secrets).values({ name: 'FIXTURE', description: '', changedAt: f.now(), changedBy: 'alice' }).run();
-  f.db.insert(s.bridgeConnections).values({ id: 'bridge', agent: 'art', platform: 'discord', workspace: 'guild',
-    botUser: 'bot', tokenSecret: 'FIXTURE', enabled: true, state: 'connected', stateAt: f.now() }).run();
-  const id = await f.ask({ what: 'in:1' }, bridge.token);
-  f.root.writes.run(() => f.db.update(s.bridgeConnections).set({ enabled: false }).where(eq(s.bridgeConnections.id, 'bridge')).run());
-  f.clock.advance(60_000);
-  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The watch ended because its conversation closed.' });
-  expect(f.mail(id)).toEqual([]);
-});
-
-
-it.each(['archived', 'deleted'] as const)('leaves already-written mail to ordinary admission after a thread is %s', async state => {
+it.each(['archived', 'deleted'] as const)('settles already-written wake mail when a thread is %s', async state => {
   const f = await fixture();
   const id = await f.ask({ what: 'in:1' });
   f.clock.advance(60_000);
@@ -273,10 +276,12 @@ it.each(['archived', 'deleted'] as const)('leaves already-written mail to ordina
     if (state === 'archived') f.root.services.comms!.threads.archive(f.thread.id, true);
     else f.root.services.comms!.delete(f.thread.id);
   });
+  expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The watch ended because its conversation closed.' });
   expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
   f.clock.advance(10_000);
-  expect(f.mail(id)[0].job).toMatch(/^job-/);
-  expect(f.row(id).state).toBe('fired');
+  expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: 'The watch ended because its conversation closed.' });
 });
 
 it('ignores a slow poll that began before the untracked baseline even when timestamps tie', async () => {
@@ -287,11 +292,13 @@ it('ignores a slow poll that began before the untracked baseline even when times
   const poll = f.root.refreshChanges!();
   try {
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-    f.clock.advance(1000);
     const id = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
     release([change({ head: head('a'), checks: passed })]);
     await poll;
     expect(f.row(id).state).toBe('waiting');
+    const second = await f.ask({ what: 'acme/app#3' });
+    f.put({ head: head('b'), checks: running });
+    expect(f.row(second)).toMatchObject({ state: 'waiting', reading: null });
     f.put({ head: head('b'), checks: passed });
     expect(f.mail(id)[0]?.words).toContain('finished on bbbbbbb');
   } finally { release([]); }
@@ -304,23 +311,127 @@ it('refuses a tracked repository redirect and ends an existing watch without the
   f.put({ sourceRepository: 'renamed/app', url: 'https://github.com/renamed/app/pull/3' });
   const refused = await f.post('tempo.wake', { what: 'acme/app#3' });
   expect(refused).toEqual(await f.post('tempo.wake', { what: 'missing/project#3' }));
-  expect(f.row(id)).toMatchObject({ state: 'ended', why: WATCH_ENDED });
+  expect(f.row(id)).toMatchObject({ state: 'ended', why: WATCH_ENDED, key: '', condition: null, baseline: null, reading: null, note: null });
   expect(f.mail(id)).toEqual([]);
 });
 
 it('keeps the transactional observer attached while shutdown drains an in-flight poll', async () => {
   let release!: (rows: Change[]) => void;
-  const read = vi.fn(() => new Promise<Change[]>(resolve => { release = resolve; }));
+  const read = vi.fn(() => new Promise<Change[]>(resolve => { release = resolve; })).mockResolvedValueOnce([change()]);
   const f = await fixture({ changes: { read } });
-  f.put();
   const id = await f.ask({ what: 'acme/app#3' });
   const poll = f.root.refreshChanges!();
   try {
-    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     const closing = f.root.close();
     release([change({ title: 'Changed during shutdown' })]);
     await Promise.all([closing, poll]);
     expect(f.row(id).state).toBe('fired');
     expect(f.mail(id)).toHaveLength(1);
   } finally { release?.([]); }
+});
+
+
+it('lets a successor body see and cancel its predecessor’s wait and shows the recent outcome', async () => {
+  const f = await fixture();
+  const id = await f.ask({ what: 'in:1' });
+  expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
+  const job = { ...f.db.select().from(s.jobs).where(eq(s.jobs.id, 'job')).get()!, id: 'successor', state: 'running' as const, endedAt: null };
+  f.db.insert(s.jobs).values(job).run();
+  const token = credentialHash('successor');
+  f.db.insert(s.tokens).values({ kind: 'agent', fingerprint: credentialHash(token), label: 'Successor', agent: 'art', job: job.id, createdAt: f.now() }).run();
+  expect(await f.post('tempo.waits', {}, token)).toMatchObject({ ok: true, value: [{ id, state: 'waiting' }] });
+  expect(await f.post('tempo.wakeCancel', { id }, token)).toMatchObject({ ok: true });
+  const pending = await f.ask({ what: 'in:1' }, token);
+  expect(await f.post('tempo.waits', {}, token)).toMatchObject({ ok: true, value: [
+    { id: pending, state: 'waiting' }, { id, state: 'ended', why: 'The watch was cancelled.' },
+  ] });
+  f.db.update(s.wakes).set({ endedAt: new Date(f.clock.now() - 86_400_001).toISOString() }).where(eq(s.wakes.id, id)).run();
+  expect(await f.post('tempo.waits', {}, token)).toMatchObject({ ok: true, value: [{ id: pending }] });
+});
+
+it('waits for a usable model and retains an intervening pull request event for the sweep', async () => {
+  const f = await fixture();
+  const timed = await f.ask({ what: 'in:1' }), pull = await f.ask({ what: 'acme/app#3' });
+  f.db.delete(s.agentModels).run();
+  f.put({ title: 'Changed while unavailable' });
+  f.clock.advance(60_000);
+  for (const id of [timed, pull]) {
+    expect(f.row(id).state).toBe('waiting');
+    expect(f.mail(id)).toEqual([]);
+  }
+  f.db.insert(s.agentModels).values({ agent: 'art', model: 'model', position: 0 }).run();
+  f.clock.advance(30_000);
+  for (const id of [timed, pull]) expect(f.mail(id)).toHaveLength(1);
+});
+
+it.each(['agent access', 'project access', 'model', 'pause'] as const)('settles already-written wake mail after losing %s before admission', async loss => {
+  const f = await fixture();
+  const id = await f.ask({ what: 'in:1' });
+  f.clock.advance(60_000);
+  expect(f.mail(id)[0]?.state).toBe('waiting');
+  if (loss === 'agent access') f.db.delete(s.memberAgents).run();
+  if (loss === 'project access') f.db.delete(s.projectMembers).run();
+  if (loss === 'model') f.db.delete(s.agentModels).run();
+  if (loss === 'pause') f.root.services.tempo.triggers.pause('art');
+  expect(await f.post('runtime.finish', { job: 'job', exitCode: 0, logTail: '' }, keys.runner)).toMatchObject({ ok: true });
+  f.clock.advance(30_000);
+  if (loss === 'pause') {
+    f.root.services.tempo.triggers.resume('art');
+    f.clock.advance(30_000);
+  }
+  expect(f.row(id).state).toBe('ended');
+  expect(f.mail(id)[0]).toMatchObject({ job: null, state: 'resolved', words: null });
+});
+
+it('fires a due time first seen after day 14', async () => {
+  const f = await fixture();
+  const id = await f.ask({ what: 'in:1' });
+  f.db.update(s.wakes).set({ askedAt: new Date(f.clock.now() - WAKE_MS).toISOString(), key: f.now() }).where(eq(s.wakes.id, id)).run();
+  f.clock.advance(60_000);
+  expect(f.row(id).state).toBe('fired');
+  expect(f.mail(id)).toHaveLength(1);
+});
+
+it('uses the same full check reading at registration and on polls, including overlapping names', async () => {
+  const f = await fixture();
+  const contexts = [{ name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }, { name: 'test', status: 'IN_PROGRESS', conclusion: null }];
+  const checks = { ...failed, running: ['test'], total: 2, contexts };
+  f.put({ checks });
+  const finish = await f.ask({ what: 'acme/app#3', when: 'checks-finished' });
+  const review = await f.ask({ what: 'acme/app#3', when: 'review' });
+  expect(JSON.parse(f.row(finish).baseline!).checks).toEqual(contexts);
+  f.put({ checks: { ...checks, contexts: [...contexts].reverse() } });
+  expect(f.row(finish).reading).toBeNull();
+  expect(f.row(review).reading).toBeNull();
+  f.put({ checks: { ...failed, total: 2, contexts: [contexts[0], contexts[0]] } });
+  expect(f.mail(finish)[0]?.words).toContain('finished');
+});
+
+
+it('fences wake words in MCP inbox and waits', async () => {
+  const f = await fixture();
+  const { token } = f.body(null, 2);
+  const note = '# Wake note\n\n[link](https://example.com)\r\n~~~';
+  const id = await f.ask({ what: 'in:1', note }, token);
+  f.clock.advance(60_000);
+  for (const name of ['inbox', 'waits', 'loom_query', 'loom_command']) {
+    const response = await f.root.http.request('/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments:
+        name === 'loom_query' ? { query: '{inboxItems{body{words}}}' }
+          : name === 'loom_command' ? { operation: 'tempo.waits', input: {}, id: 'read-waits' } : {} } }),
+    });
+    expect(response.status).toBe(200);
+    const { result } = await response.json() as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(result.isError).not.toBe(true);
+    const { text } = result.content[0];
+    if (name === 'inbox' || name === 'waits') expect(text).toContain('    # Wake note\n    \n    [link](https://example.com)\n    ~~~');
+    else {
+      expect(text).not.toContain('[link]');
+      expect(JSON.stringify(JSON.parse(text))).toContain(JSON.stringify(note).slice(1, -1));
+    }
+    if (name === 'waits') expect(text).toContain(id + ' · fired');
+  }
 });

@@ -199,7 +199,7 @@ area("conversations", "Conversations",
     ("conversation", "id", "The conversation.", "conversations"),
     ("who_kind", "choice(person, agent)", "A person or another agent.", ""),
     ("who", "text", "Their short name.", "")]),
-  T("wakes", "A one-shot watch shared with its asking conversation. No body runs to wait for it.", [
+  T("wakes", "A one-shot watch shared with its asking Loom conversation. No body runs to wait for it.", [
     ("id", "id", "The watch and its mail source identifier.", ""),
     ("agent", "id", "The agent who asked.", "agents"),
     ("conversation", "id", "Where it was asked and where any mail goes.", "conversations"),
@@ -211,7 +211,7 @@ area("conversations", "Conversations",
     ("baseline, reading", "text", "Original reading and latest accepted reading of a pull request.", ""),
     ("state", "choice(waiting, fired, ended)", "Whether the watch is still waiting, fired, or ended without firing.", ""),
     ("asked_at, ended_at", "time", "When the watch began and finished.", ""),
-    ("why", "text", "Why a watch ended without firing.", "")]),
+    ("why", "text", "Why a watch fired or ended.", "")]),
   T("turns", "One row per thing said or done in a conversation. No words are kept here.", [
     ("conversation", "id", "The conversation.", "conversations"),
     ("seq", "number", "Its position in the conversation.", ""),

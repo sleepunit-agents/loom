@@ -1,3 +1,4 @@
+import { toolJson } from './tool-json.js';
 import {BodyContactExpired} from './body-contact.js';
 /** Portable tools composed into the receiving body's single local MCP server. */
 import {randomUUID} from 'node:crypto';
@@ -65,7 +66,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
      }
     }else return unavailable();
     if(current.aborted)return unavailable();
-    return{...(object(value)&&value.ok===false?{isError:true}:{}),content:[{type:'text',text:JSON.stringify(value)}]};
+    return{...(object(value)&&value.ok===false?{isError:true}:{}),content:[{type:'text',text:toolJson(value)}]};
    }catch(error){if(error instanceof BodyContactExpired)return{isError:true,content:[{type:'text',text:error.message}]};return unavailable();}finally{if(client){client.close();active.delete(client);}}
   },
   close(){abort.abort();for(const client of active)client.close();active.clear();},

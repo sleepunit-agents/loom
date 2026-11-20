@@ -1,3 +1,4 @@
+import { toolJson } from './runtime/tool-json.js';
 import {presentedCredential} from './core/data/authentication.js';
 import {guardedResponse,responseAvailability} from './core/data/guarded-response.js';
 /** MCP is an adapter over the canonical shared HTTP operations and query door. */
@@ -33,7 +34,7 @@ export async function sharedMcpRequest(options:{request:Request;clock:Clock;fetc
    if(name==='loom_query')value=await client.query(programToolDefinitions[2][2].parse(args));
    else if(name==='loom_commands')value=await options.command('runtime.commandCatalog',programToolDefinitions[0][2].parse(args),randomUUID());
    else{const input=programToolDefinitions[1][2].parse(args);value=await options.command(input.operation,input.input,input.id);}
-   return {content:[{type:'text' as const,text:JSON.stringify(value)}],...(value&&typeof value==='object'&&'ok'in value&&value.ok===false?{isError:true}:{})};
+   return {content:[{type:'text' as const,text:toolJson(value)}],...(value&&typeof value==='object'&&'ok'in value&&value.ok===false?{isError:true}:{})};
   }catch{return {isError:true,content:[{type:'text' as const,text:'Tool unavailable; outcome may be uncertain'}]};}
  });
  registerNamedTools(server,{agent:options.agent,valid:options.valid,query:input=>client.query(input),command:options.command});

@@ -6,7 +6,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
 import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
-import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
+import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, mayRunPrivateWork, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
@@ -94,6 +94,13 @@ export function stillKnown(db: DataDatabase, agent: string, who: Asker): boolean
   if (who.kind === 'agent') return who.id === agent && !db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, agent)).get()?.removedAt;
   return !!db.select({ tier: agentPeople.tier }).from(agentPeople).where(and(eq(agentPeople.agent, agent), eq(agentPeople.person, who.id))).get();
 }
+export function wakeWordAllowed(db: DataDatabase, cv: typeof conversations.$inferSelect, word: Asker): boolean {
+  const sharing = sharedSharing(db);
+  if (!sharing.agents?.includes(cv.agent) || word.kind === 'outside' || privateRefusal(cv.member, word)) return false;
+  if (word.kind === 'member') return mayRunPrivateWork({ agent: cv.agent, member: word.id, project: cv.project ?? undefined }, sharing);
+  return word.id === cv.agent && (!cv.project || !!sharing.projects[cv.project]?.agents.includes(cv.agent));
+}
+
 /** The reach of one person's word for this agent, as it stands now: the agent itself is its own work; a
  * household owner and a member who has the agent are `owners`; anybody else is `others`. */
 export function wordReach(db: DataDatabase, agent: string, who: Asker): Woke {

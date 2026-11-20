@@ -4,8 +4,8 @@ import { wakes } from '../data/schema.js';
 
 export const wakeConditions = wakes.condition.enumValues;
 export type WakeCondition = typeof wakeConditions[number];
-/** How many waits one agent may have pending, how long one may live, and how long its words may be. */
-export const WAKES_PER_CONVERSATION = 20, WAKES_MAX = 50, WAKE_DAYS = 14, WAKE_MS = WAKE_DAYS * DAY_MS, WAKE_NOTE_MAX = 2_000, WAKE_WORDS_MAX = 4_000;
+/** How many waits one conversation may have pending, how long one may live, and how long its words may be. */
+export const WAKES_PER_CONVERSATION = 20, WAKE_DAYS = 14, WAKE_MS = WAKE_DAYS * DAY_MS, WAKE_NOTE_MAX = 2_000, WAKE_WORDS_MAX = 4_000;
 /** A time may be asked for at most this far ahead: the life of a wait less a clear margin, so a time wake always
  * comes due well before the sweep that ends old waits could meet it (src/shared-wake.ts). */
 export const WAKE_TIME_MARGIN_MS = 3_600_000, WAKE_TIME_MOST_MS = WAKE_MS - WAKE_TIME_MARGIN_MS;

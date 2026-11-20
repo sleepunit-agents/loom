@@ -1,3 +1,4 @@
+import { closeThreadWakes } from '../tempo/wake-mail.js';
 import { wakeSource } from '../tempo/wake-sources.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
@@ -277,6 +278,7 @@ export class CommsMessages {
     this.db.transaction(() => {
       if (this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get()) return;
       const { thread } = this.context(threadId), at = this.now();
+      closeThreadWakes(this.db, thread, at);
       this.db.insert(deletedThreads).values({ id: threadId, conversation: thread.conversation, at }).run();
       this.db.delete(inboxRefs).where(inArray(inboxRefs.item, this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.thread, threadId)))).run();
       this.db.update(inbox).set({ thread: null, messageSeq: null,

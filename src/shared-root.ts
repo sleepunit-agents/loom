@@ -70,7 +70,7 @@ import { registerTerminalSession } from './shared-terminal-session.js';
 import { registerJobUsage } from './shared-job-usage.js';
 import { registerConversationSessions } from './shared-conversation-sessions.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
-import { sharedChangesReader } from './shared-changes-reader.js';
+import { sharedChangesReader, sharedWakeReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
@@ -381,7 +381,10 @@ export function sharedRoot(options: {
 
   startupCleanups.push(()=>commsLifetime?.close());
 
-  const pullReader = options.changes && ('read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github, true));
+  const changesSource = options.changes;
+  const pullReader = changesSource && ('read' in changesSource
+    ? async (repo: string, number: number, at: number) => (await changesSource.read(repo, at)).find(row => row.number === number)
+    : sharedWakeReader(changesSource.github));
   wakeWatches = installWakes(db, clock, operations, services.conversations, bodyScope, pullReader);
   startupCleanups.push(wakeWatches.close);
   const settingsBinding = sharedTempoSettings(bodyScope);

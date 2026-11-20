@@ -1,3 +1,5 @@
+import { isWakeMail, settleWakeMail, WAKE_CLOSED, wakeBlocked, wakeConversationClosed, workSetup } from '../core/tempo/wake-mail.js';
+import { WATCH_ENDED } from '../core/tempo/wake.js';
 import { wakeSource } from '../core/tempo/wake-sources.js';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
@@ -6,10 +8,10 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns } from '../core/data/schema.js';
+import { agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns, wakes } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
-import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
+import { OWNERS_KEY, askers, named, privateRefusal, stillKnown, wakeWordAllowed } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { finishProgramFiring, logTrigger } from '../core/tempo/triggers.js';
@@ -179,7 +181,22 @@ export class Jobs {
       if (conversation.venue === 'terminal') return { declined: 'This conversation runs on its terminal' };
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
       const waits = () => this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
-      const waiting = waits();
+      let waiting = waits();
+      let setup: ReturnType<typeof workSetup> | undefined;
+      let settledWake = false;
+      const recheckWakes = () => {
+        waiting = waiting.filter(item => {
+          if (!isWakeMail(item) || item.job === existing?.id) return true;
+          const wake = item.sourceId && this.db.select().from(wakes).where(eq(wakes.id, item.sourceId)).get();
+          const why = wakeConversationClosed(this.db, conversation) ? WAKE_CLOSED
+            : !wake || !wakeWordAllowed(this.db, conversation, wake.onWord) ? WATCH_ENDED
+            : wakeBlocked(this.db, conversation.agent, setup ??= workSetup(this.db, conversation.agent));
+          if (!why) return true;
+          settleWakeMail(this.db, item, this.now(), why);
+          settledWake = true;
+          return false;
+        });
+      };
       // The jobs loom set aside for an owner whose mail still waits: that mail starts a job again, with nobody writing.
       const aside = () => { const bound = [...new Set(waiting.flatMap(item => item.job ? [item.job] : []))];
         return new Map((bound.length ? this.db.select().from(jobs).where(and(inArray(jobs.id, bound), eq(jobs.state, 'stopped'), eq(jobs.endedNote, SET_ASIDE_NOTE))).all() : []).map(row => [row.id, row])); };
@@ -187,10 +204,11 @@ export class Jobs {
       /** Mail that may start a job: mail no job has been formed for, and mail of a job loom set aside. */
       const fresh = (item: typeof waiting[number]) => item.job === null || setAside.has(item.job);
       if (existing) {
+        if (existing.state === 'queued') recheckWakes();
         const behind = waiting.filter(item => item.job !== existing.id && fresh(item)), held = waiting.filter(item => item.job === existing.id);
         // Owners first: a queued job nobody has claimed, on anybody else's key, with owners' mail behind it, is set aside.
         const key = existing.state === 'queued' && held.length && behind.length ? askers(this.db, { agent: conversation.agent, conversation: conversationId }) : undefined;
-        if (!key || key(held[0].id) === OWNERS_KEY || !behind.some(item => key(item.id) === OWNERS_KEY)) return { job: existing, behind: behind.length > 0 };
+        if (!key || key(held[0].id) === OWNERS_KEY || !behind.some(item => key(item.id) === OWNERS_KEY)) return { job: existing, behind: behind.length > 0, ...(settledWake ? { noticed: true } : {}) };
         this.end(existing, 'stopped', { endedAt: this.now(), endedNote: SET_ASIDE_NOTE });
         setAside = aside();
       }
@@ -211,12 +229,12 @@ export class Jobs {
         if (last?.state === 'stopped' && last.endedReason === 'stop') return {};
       }
       // Work is about to start for what waits here. First, what was sent on the word of somebody no longer known is dropped.
+      if (!existing) recheckWakes();
       const gone = this.wordUnknown(conversation.agent, conversation.member, waiting), mail = waiting.filter(item => !gone.has(item.id));
-      if (!mail.some(fresh)) return gone.size ? { noticed: true } : {};
-      const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
-      const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
+      if (!mail.some(fresh)) return gone.size || settledWake ? { noticed: true } : {};
+      const { settings, model, removed } = setup ?? workSetup(this.db, conversation.agent);
       // A removed agent keeps its history and its mail, and does not run.
-      if (this.db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, conversation.agent)).get()?.removedAt)
+      if (removed)
         return this.declined(conversation.agent, mail, 'the agent has been removed');
       if (!settings) return this.declined(conversation.agent, mail, 'the agent has no run settings');
       if (!model) return this.declined(conversation.agent, mail, 'the agent has no model to run on');
@@ -248,7 +266,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation, encrypted brief or wake note is copied into the job.
-        state: 'queued', prefers, brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff' && !(item.source === 'notice' && item.fromKind === 'schedule' && item.sourceId?.startsWith('wake-'))).map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', prefers, brief: !keepJobText(conversation) ? '' : mine.filter(item => item.source !== 'handoff' && !isWakeMail(item)).map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,

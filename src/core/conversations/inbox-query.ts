@@ -1,3 +1,4 @@
+import { isWakeMail } from '../tempo/wake-mail.js';
 import { readAll } from '../data/execution.js';
 import { waitsOnShelvedTask } from '../data/project-in-use.js';
 import { selectedQueryFields } from '../data/queries.js';
@@ -302,7 +303,7 @@ export class InboxQueries {
       if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||handoffDeadline(current,days)<=Date.parse(this.now()))return null;
       retainedUntil?.(until);return {words};
     }
-    if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
+    if (!item.thread || isWakeMail(item)) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
     const row = () => this.readSet?(()=>{const message=this.readSet!.message(item),thread=this.readSet!.thread(item.thread!);return message&&thread?{message,conversation:thread.conversation}:undefined;})():this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))
       .where(and(eq(messages.thread, item.thread!), eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, id))).get();

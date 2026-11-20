@@ -1,18 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, inArray, lte, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Clock } from './core/clock.js';
+import { DAY_MS } from './core/day.js';
 import type { Conversations } from './core/conversations/index.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agentPauses, approvals, changeChecks, changePeople, changes, conversations, deletedThreads, inbox, jobs, projectRepositories, threads, wakes } from './core/data/schema.js';
+import { approvals, changes, conversations, inbox, jobs, projectRepositories, wakes } from './core/data/schema.js';
 import { jobUnended } from './core/data/job-states.js';
 import { operation, OperationError, type Operations } from './core/operations/index.js';
-import { changeHappened, changeName, finished, readWatched, storedWatch, wakeClause, wakeInput, WAKE_MS, WAKE_WORDS_MAX, WAKES_MAX, WAKES_PER_CONVERSATION, WATCH_ENDED, type ChangeFacts, type Watched } from './core/tempo/wake.js';
-import { observeWakeSources, type WakeSource } from './core/tempo/wake-sources.js';
-import type { PullRequestReader } from './apps/changes.js';
+import { changeHappened, changeName, finished, readWatched, storedWatch, wakeClause, wakeInput, WAKE_MS, WAKE_WORDS_MAX, WAKES_PER_CONVERSATION, WATCH_ENDED, type ChangeFacts, type Watched } from './core/tempo/wake.js';
+import { observeWakeSources, wakeReadOrder, type WakeSource } from './core/tempo/wake-sources.js';
+import type { WakePullReader } from './pieces/changes/github.js';
 import type { Change } from './pieces/changes/model.js';
-import { holds, inHousehold, mayRunPrivateWork, tableRules, type Asker, type Viewer } from './policy.js';
-import { isBridgeVenue, placeClosed, privateRefusal, stillKnown } from './shared-place-mail.js';
+import { holds, inHousehold, tableRules, type Asker, type Viewer } from './policy.js';
+import { wakeWordAllowed } from './shared-place-mail.js';
+import { WAKE_CLOSED, wakeBlocked, wakeConversationClosed, wakeThread } from './core/tempo/wake-mail.js';
 import { asking } from './shared-place-triggers.js';
 import { conversationQuestionPolicy } from './shared-conversation-questions.js';
 import { sharedSharing } from './shared-sharing.js';
@@ -20,24 +22,13 @@ import { sharedSharing } from './shared-sharing.js';
 type Wake = typeof wakes.$inferSelect;
 type Conversation = typeof conversations.$inferSelect;
 type Work = { cv: Conversation; job: Pick<typeof jobs.$inferSelect, 'id' | 'agent' | 'conversation'> };
-type Reading = { facts: ChangeFacts; updated: number; readAt: number; fingerprint: string; finishedHead: string | null; rerunning: boolean };
+type Reading = { facts: ChangeFacts; updated: number; readAt: number; order?: ReturnType<typeof wakeReadOrder>; fingerprint: string; finishedHead: string | null; rerunning: boolean; checks?: Change['checks']['contexts']; ready?: string };
 const BODY_REQUIRED = 'Only a runtime body in its own conversation can use wakes.';
 const WATCH_REFUSAL = 'That is not something you can watch.';
 const CANCEL_REFUSAL = 'That is not one of your waits.';
 const EXPIRED = 'The watch ended after 14 days.';
-const CLOSED = 'The watch ended because its conversation closed.';
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const refuse = (message: string): never => { throw new OperationError('denied', message); };
-
-function livePlace(db: DataDatabase, cv: Conversation, word: Asker): string | undefined {
-  if (db.select({ id: deletedThreads.id }).from(deletedThreads).where(eq(deletedThreads.conversation, cv.id)).get()
-      || db.select({ archivedAt: threads.archivedAt }).from(threads).where(eq(threads.conversation, cv.id)).get()?.archivedAt
-      || isBridgeVenue(cv.venue) && placeClosed(db, cv)) return CLOSED;
-  const sharing = sharedSharing(db);
-  if (!sharing.agents?.includes(cv.agent) || !stillKnown(db, cv.agent, word) || privateRefusal(cv.member, word)) return WATCH_ENDED;
-  if (word.kind === 'member' && !mayRunPrivateWork({ agent: cv.agent, member: word.id, project: cv.project ?? undefined }, sharing)) return WATCH_ENDED;
-  if (cv.project && !sharing.projects[cv.project]?.agents.includes(cv.agent)) return WATCH_ENDED;
-}
 
 function watchable(db: DataDatabase, cv: Conversation, word: Asker, job: string, watched: Watched): 'cached' | 'repository' | undefined {
   const key = watched.kind === 'time' ? watched.at : watched.id;
@@ -77,42 +68,35 @@ function watchable(db: DataDatabase, cv: Conversation, word: Asker, job: string,
 }
 
 const names = (values: string[]) => [...new Set(values)].sort();
-function reading(facts: ChangeFacts, updated: string | null, readAt: number, text: string, people: unknown): Reading {
+function checkFingerprint(checks: Reading['checks']) {
+  return checks?.map(check => JSON.stringify([check.name, check.status, check.conclusion])).sort();
+}
+function reading(facts: ChangeFacts, updated: string | null, readAt: number, text: string, people: unknown, checks: Reading['checks'], order: ReturnType<typeof wakeReadOrder>): Reading {
   const sourceUpdated = Date.parse(updated ?? '') || 0;
-  return { facts, updated: sourceUpdated, readAt,
-    fingerprint: digest([facts, sourceUpdated, text, people]), finishedHead: finished(facts) ? facts.head : null, rerunning: false };
+  return { facts, updated: sourceUpdated, readAt, order,
+    checks, fingerprint: digest([facts, sourceUpdated, text, people, checkFingerprint(checks)]), finishedHead: finished(facts) ? facts.head : null, rerunning: false };
 }
 
-function freshReading(c: Change, readAt: number): Reading {
+function freshReading(c: Change, readAt: number, order: ReturnType<typeof wakeReadOrder>): Reading {
   return reading({ state: c.state, draft: c.draft, head: c.head.id, title: c.title, checks: c.checks.state,
     failing: names(c.checks.failing), running: names(c.checks.running),
     review: c.review.state, reviewers: names(c.people.filter(person => person.role === 'reviewer').map(person => person.login)),
-    mergeable: c.mergeable }, c.updated, readAt, c.body, names([...c.people.map(p => p.role + ':' + p.login), 'author:' + c.author.login]));
-}
+    mergeable: c.mergeable }, c.updated, readAt, c.body, names([...c.people.map(p => p.role + ':' + p.login), 'author:' + c.author.login]), c.checks.contexts, order);
 
-function cachedReading(db: DataDatabase, id: string, readAt: number): Reading | undefined {
-  const row = db.select().from(changes).where(eq(changes.id, id)).get();
-  if (!row) return;
-  const checks = db.select().from(changeChecks).where(eq(changeChecks.change, id)).all();
-  const people = db.select().from(changePeople).where(eq(changePeople.change, id)).all();
-  return reading({ state: row.state, draft: row.draft, head: row.headCommit, title: row.title, checks: row.checks,
-    failing: names(checks.filter(c => c.state === 'failing').map(c => c.name)), running: names(checks.filter(c => c.state === 'running').map(c => c.name)),
-    review: row.review, reviewers: names(people.filter(p => p.role === 'reviewer').map(p => p.login)),
-    mergeable: row.mergeable }, row.updatedAt, readAt, row.body, names(people.map(p => p.role + ':' + p.login)));
 }
 
 export function installWakes(db: DataDatabase, clock: Clock, operations: Operations, mail: Conversations,
-  body: (viewer: Viewer) => Work | undefined, read?: PullRequestReader) {
+  body: (viewer: Viewer) => Work | undefined, read?: WakePullReader) {
   const stamp = () => new Date(clock.now()).toISOString();
   const waiting = eq(wakes.state, 'waiting');
   function end(wake: Wake, why: string) {
-    db.update(wakes).set({ state: 'ended', endedAt: stamp(), why }).where(and(eq(wakes.id, wake.id), waiting)).run();
+    db.update(wakes).set({ state: 'ended', endedAt: stamp(), why, ...(why === WATCH_ENDED ? { key: '', condition: null, baseline: null, reading: null, note: null } : {}) }).where(and(eq(wakes.id, wake.id), waiting)).run();
   }
   function fire(wake: Wake, words: string) {
-    db.update(wakes).set({ state: 'fired', endedAt: stamp() }).where(and(eq(wakes.id, wake.id), waiting)).run();
+    db.update(wakes).set({ state: 'fired', endedAt: stamp(), why: 'The watched condition happened.' }).where(and(eq(wakes.id, wake.id), waiting)).run();
     // Conversation mail starts the next job. Its deduplication key is the wake itself.
     mail.send({ toKind: 'agent', to: wake.agent, conversation: wake.conversation, source: 'notice', sourceId: wake.id,
-      fromKind: 'schedule', words: ('Wake from loom. ' + words).slice(0, WAKE_WORDS_MAX - (wake.note?.length ?? 0) - 2) + (wake.note ? '\n\n' + wake.note : ''),
+      fromKind: 'schedule', thread: wakeThread(db, wake.conversation)?.id, words: ('Wake from loom. ' + words).slice(0, WAKE_WORDS_MAX - (wake.note?.length ?? 0) - 2) + (wake.note ? '\n\n' + wake.note : ''),
       ...(wake.onWord.kind !== 'agent' ? { onWordKind: wake.onWord.kind, onWord: wake.onWord.id } : {}) });
   }
   function outcome(watched: Watched, at: number): string | undefined {
@@ -135,21 +119,28 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
   }
   function evaluate(wake: Wake, event?: WakeSource) {
     const at = clock.now();
-    if (at - Date.parse(wake.askedAt) >= WAKE_MS) return end(wake, EXPIRED);
+    const expired = at - Date.parse(wake.askedAt) >= WAKE_MS;
+    const due = wake.kind === 'time' && Date.parse(wake.key) <= at;
+    if (expired && !due) return end(wake, EXPIRED);
     const cv = db.select().from(conversations).where(eq(conversations.id, wake.conversation)).get();
-    if (!cv || cv.agent !== wake.agent) return end(wake, CLOSED);
-    const closed = livePlace(db, cv, wake.onWord);
-    if (closed) return end(wake, closed);
+    if (!cv || cv.agent !== wake.agent || wakeConversationClosed(db, cv)) return end(wake, WAKE_CLOSED);
+    if (!wakeWordAllowed(db, cv, wake.onWord)) return end(wake, WATCH_ENDED);
     const watched = storedWatch(wake.kind, wake.key);
     if (!watchable(db, cv, wake.onWord, wake.job, watched)) return end(wake, WATCH_ENDED);
 
+    const blocked = wakeBlocked(db, wake.agent);
+    if (expired && blocked) return end(wake, EXPIRED);
+    const before = JSON.parse(wake.reading ?? wake.baseline ?? 'null') as Reading | null;
     if (event?.kind === 'change') {
       if (watched.kind === 'change' && event.change.sourceRepository !== undefined && event.change.sourceRepository !== watched.repository) return end(wake, WATCH_ENDED);
-      const before = JSON.parse(wake.reading ?? wake.baseline ?? 'null') as Reading | null;
       const baseline = JSON.parse(wake.baseline ?? 'null') as Reading | null;
-      const next = freshReading(event.change, event.readAt);
-      if (before && (next.updated < before.updated || next.readAt < before.readAt
-          || next.fingerprint === before.fingerprint)) return;
+      const next = freshReading(event.change, event.readAt, event.order);
+      const olderRead = before?.order?.process === event.order.process && before.order.sequence > event.order.sequence;
+      if (before && (olderRead || next.updated < before.updated || next.readAt < before.readAt
+          || next.fingerprint === before.fingerprint)) {
+        if (before.ready && !blocked) fire(wake, before.ready);
+        return;
+      }
       const condition = wake.condition ?? 'changed';
       let words: string | undefined;
       if (condition === 'checks-finished') {
@@ -162,13 +153,15 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
       } else if (condition !== 'changed' || next.fingerprint !== baseline?.fingerprint) {
         words = changeHappened(condition, changeName(wake.key), condition === 'changed' ? baseline?.facts : before?.facts, next.facts);
       }
-      if (words) fire(wake, words);
-      else if (next.facts.state !== 'open') end(wake, 'The watch ended because the pull request closed.');
-      else db.update(wakes).set({ reading: JSON.stringify(next) }).where(and(eq(wakes.id, wake.id), waiting)).run();
+      if (before?.facts.head === next.facts.head) words ??= before.ready;
+      if (words && !blocked) return fire(wake, words);
+      if (!words && next.facts.state !== 'open') return end(wake, 'The watch ended because the pull request closed.');
+      if (words) next.ready = words;
+      db.update(wakes).set({ reading: JSON.stringify(next) }).where(and(eq(wakes.id, wake.id), waiting)).run();
       return;
     }
-    if (wake.kind === 'time' && db.select().from(agentPauses).where(eq(agentPauses.agent, wake.agent)).get()) return;
-    const words = outcome(watched, at);
+    if (blocked) return;
+    const words = before?.ready ?? outcome(watched, at);
     if (words) fire(wake, words);
   }
   const close = observeWakeSources(db, event => {
@@ -180,7 +173,10 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
     }
     for (const wake of db.select().from(wakes).where(and(waiting, eq(wakes.kind, event.kind), eq(wakes.key, event.id))).all()) evaluate(wake, event);
   });
-  const current = (viewer: Viewer) => body(viewer) ?? refuse(BODY_REQUIRED);
+  const current = (viewer: Viewer) => {
+    const work = body(viewer);
+    return work?.cv.venue === 'loom' ? work : refuse(BODY_REQUIRED);
+  };
   const receiptPartition = (viewer: Viewer) => {
     const { cv, job } = current(viewer);
     return JSON.stringify([cv.id, job.id]);
@@ -188,33 +184,34 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
   function allowed(viewer: Viewer, input: z.infer<typeof wakeInput>) {
     const { cv, job } = current(viewer);
     const word = asking(db, viewer, cv.agent, { cv, job });
-    if (livePlace(db, cv, word)) refuse(WATCH_REFUSAL);
+    if (wakeConversationClosed(db, cv) || !wakeWordAllowed(db, cv, word)) refuse(WATCH_REFUSAL);
     const watched = readWatched(input.what, clock.now());
     if (input.when && watched.kind !== 'change') throw new OperationError('invalid', 'A condition is for a pull request.');
-    const way = watchable(db, cv, word, job.id, watched) ?? refuse(WATCH_REFUSAL);
+    if (!watchable(db, cv, word, job.id, watched)) refuse(WATCH_REFUSAL);
     const pending = (filter: ReturnType<typeof eq>) => db.select({ n: count() }).from(wakes).where(and(waiting, filter)).get()!.n;
-    if (pending(eq(wakes.conversation, cv.id)) >= WAKES_PER_CONVERSATION || pending(eq(wakes.agent, cv.agent)) >= WAKES_MAX)
+    if (pending(eq(wakes.conversation, cv.id)) >= WAKES_PER_CONVERSATION)
       throw new OperationError('conflict', 'Too many waiting wakes.');
-    return { cv, job, word, watched, way };
+    return { cv, job, word, watched };
   }
   operations.register(operation({
     name: 'tempo.wake', input: wakeInput, output: z.object({ id: z.string() }), write: true, refuses: true,
     receiptPartition, may: () => true,
     async prepare(input, { viewer }) {
-      const { way, watched } = allowed(viewer, input);
-      if (way !== 'repository' || watched.kind !== 'change') return;
-      const at = clock.now();
+      const { watched } = allowed(viewer, input);
+      if (watched.kind !== 'change') return;
+      // The project's authorized repository may be read even when the number doesn't exist.
+      // Requests outside that scope were refused above, before any forge call.
+      const at = clock.now(), order = wakeReadOrder();
       try {
-        const change = (await read?.(watched.repository, at))?.find(c => c.id === watched.id && c.repo === `github:${watched.repository}` && (c.sourceRepository ?? watched.repository) === watched.repository);
-        return change ? freshReading(change, at) : null;
+        const change = await read?.(watched.repository, Number(watched.id.split('#')[1]), at);
+        return change && change.id === watched.id && change.repo === `github:${watched.repository}`
+          && (change.sourceRepository ?? watched.repository) === watched.repository ? freshReading(change, at, order) : null;
       } catch { return null; }
     },
     run({ viewer }, input, prepared) {
-      const { cv, job, word, watched, way } = allowed(viewer, input);
+      const { cv, job, word, watched } = allowed(viewer, input);
       const key = watched.kind === 'time' ? watched.at : watched.id;
-      const baseline = watched.kind === 'change'
-        ? way === 'cached' ? cachedReading(db, key, clock.now()) : prepared as Reading | null
-        : null;
+      const baseline = watched.kind === 'change' ? prepared as Reading | null : null;
       if (watched.kind === 'change' && !baseline) refuse(WATCH_REFUSAL);
       if (baseline?.facts.state && baseline.facts.state !== 'open' || outcome(watched, clock.now()))
         throw new OperationError('invalid', 'That has already happened.');
@@ -226,12 +223,16 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
     },
   }));
   operations.register(operation({
-    name: 'tempo.waits', input: z.object({}).strict(), output: z.array(z.object({ id: z.string(), what: z.string(), note: z.string().nullable() })),
+    name: 'tempo.waits', input: z.object({}).strict(), output: z.array(z.object({ id: z.string(), what: z.string().nullable(), note: z.string().nullable(), state: z.enum(wakes.state.enumValues), why: z.string().nullable() })),
     may: () => true,
     run({ viewer }) {
       const { cv } = current(viewer);
-      return db.select().from(wakes).where(and(waiting, eq(wakes.conversation, cv.id))).orderBy(asc(wakes.askedAt), asc(wakes.id)).all()
-        .map(wake => ({ id: wake.id, what: wakeClause(storedWatch(wake.kind, wake.key), wake.condition ?? undefined), note: wake.note }));
+      const here = eq(wakes.conversation, cv.id);
+      const since = new Date(clock.now() - DAY_MS).toISOString();
+      const pending = db.select().from(wakes).where(and(here, waiting)).orderBy(asc(wakes.askedAt), asc(wakes.id)).all();
+      const recent = db.select().from(wakes).where(and(here, gte(wakes.endedAt, since))).orderBy(desc(wakes.endedAt), asc(wakes.id)).all();
+      return [...pending, ...recent].map(wake => ({ id: wake.id, state: wake.state, why: wake.why,
+        what: wake.key ? wakeClause(storedWatch(wake.kind, wake.key), wake.condition ?? undefined) : null, note: wake.note }));
     },
   }));
   operations.register(operation({
@@ -247,8 +248,7 @@ export function installWakes(db: DataDatabase, clock: Clock, operations: Operati
   return {
     close,
     sweep() {
-      const at = stamp(), old = new Date(clock.now() - WAKE_MS).toISOString();
-      for (const wake of db.select().from(wakes).where(and(waiting, or(lte(wakes.askedAt, old), and(eq(wakes.kind, 'time'), lte(wakes.key, at))))).all()) evaluate(wake);
+      for (const wake of db.select().from(wakes).where(waiting).all()) evaluate(wake);
     },
   };
 }

@@ -1,3 +1,4 @@
+import { isWakeMail } from '../tempo/wake-mail.js';
 import { wordsKept } from './retention.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from './private-inbox-words.js';
@@ -24,7 +25,7 @@ export class ConversationMail {
   constructor(readonly comms: CommsMessages) {}
 
   private privateMessages(items: Item[]): Map<string, { message: typeof messages.$inferSelect; conversation: string }> {
-    const ids = items.filter(item => item.thread !== null).map(item => item.id);
+    const ids = items.filter(item => item.thread !== null && !isWakeMail(item)).map(item => item.id);
     if (!ids.length) return new Map();
     const rows = this.comms.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread)).where(inArray(messages.inboxItem, ids)).all();
@@ -49,7 +50,7 @@ export class ConversationMail {
     const beforeRefs = refs();
     const prepared = new Map<string, string | null>();
     for (const item of items) {
-      if (!item.thread) {
+      if (!item.thread || isWakeMail(item)) {
         if(hasPrivateInboxPayload(db,item)){
           const envelope=privateInboxEnvelope(item.words)!;
           prepared.set(item.id,privateInboxDeadline(item,keepDays())>Date.parse(now())?await key.open(Buffer.from(envelope.cipher,'base64')):null);continue;
@@ -79,7 +80,7 @@ export class ConversationMail {
       for (const item of items) {
         const live = current.get(item.id);
         if (!live || content(live) !== content(item)) throw new Error('Mail changed; prepare again');
-        if (!item.thread) {if(item.source==='handoff'&&handoffDeadline(live,keepDays())<=Date.parse(now())||hasPrivateInboxPayload(db,item)&&privateInboxDeadline(live,keepDays())<=Date.parse(now()))words.set(item.id,null);continue;}
+        if (!item.thread || isWakeMail(item)) {if(item.source==='handoff'&&handoffDeadline(live,keepDays())<=Date.parse(now())||hasPrivateInboxPayload(db,item)&&privateInboxDeadline(live,keepDays())<=Date.parse(now()))words.set(item.id,null);continue;}
         const before = privateRows.get(item.id)!, after = currentRows.get(item.id);
         if (!after || after.conversation !== conversation || after.message.thread !== item.thread || after.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
         // Retention is checked at release, even if ciphertext was swept during
@@ -105,7 +106,7 @@ export class ConversationMail {
     conversations.pending(conversation, job); // also validates done-item retries
     const item = conversations.item(itemId), cv = conversations.conversation(conversation);
     if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
-    if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
+    if(item.thread&&!isWakeMail(item)){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
     return item;
   }
   private delivered(item: Item): void {

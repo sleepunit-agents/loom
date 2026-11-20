@@ -5,7 +5,7 @@ import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import {projects,projectRepositories} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
-import {sharedChangesReader} from './shared-changes-reader.js';
+import {sharedChangesReader,sharedWakeReader} from './shared-changes-reader.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw=JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
@@ -44,10 +44,12 @@ it('validates configured bindings at startup',()=>{
 
 it('refuses a repository redirect before returning any wake baseline', async () => {
  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
-  expect(JSON.parse(String(init?.body)).query).toContain('nameWithOwner');
-  return Response.json({ data: { repository: { nameWithOwner: 'renamed/app', pullRequests: { nodes: [raw], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+  const { query, variables } = JSON.parse(String(init?.body));
+  expect(query).toContain('pullRequest(number:$number)');
+  expect(variables).toEqual({ owner: 'acme', name: 'app', number: 1 });
+  return Response.json({ data: { repository: { nameWithOwner: 'renamed/app', pullRequest: raw } } });
  });
- const read = sharedChangesReader({ source: { read: async () => Buffer.from('SYNTHETIC_TOKEN') }, bindings: { acme: 'forge' }, request: fetcher }, true);
- await expect(read('acme/app', Date.parse('2026-11-05T12:00:00Z'))).rejects.toThrow('GitHub read unavailable');
+ const read = sharedWakeReader({ source: { read: async () => Buffer.from('SYNTHETIC_TOKEN') }, bindings: { acme: 'forge' }, request: fetcher });
+ await expect(read('acme/app', 1, 0)).resolves.toBeUndefined();
  expect(fetcher).toHaveBeenCalledTimes(1);
 });

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Home fills the desk with a single live agent’s face, current work and conversations. Removed agents leave active rosters and choices while their history stays readable.
+- One-shot wakes are limited to Loom conversations. They recheck access and readiness before delivery, use fresh GitHub baselines, and show recent outcomes in `waits`.
 - Runtime bodies can ask loom to wake them in the same conversation when a pull request changes, a job ends, an approval or question is answered, or a time arrives.
 
 - Tasks is drawn as its page on the how-it-works site: six small actions in one row with one filled (Claim, or Close when the task is yours and in progress) and Ask a person, Parent and Blocked by… behind More; Goal, Why, Done when and a task's relations as labelled facts, a related task as its title and an id chip that opens it, and no heading over nothing. Claim, Unclaim and Reopen act at once; every other action opens its form in place under the actions (Escape or Cancel closes it) instead of in a dialog, and Blocked by lists what blocks the task with a Remove beside each. People and agents are said by name with no kind word, comments carry a short time in the household's zone, a pull request is the same bordered card a conversation shows, Create task sits in the list's head, the Closed folder is called Recently closed, and projects and epics carry counts.

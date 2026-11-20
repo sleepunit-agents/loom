@@ -1,3 +1,4 @@
+import { isWakeMail } from './core/tempo/wake-mail.js';
 import { wakeConditions, wakeInput } from './core/tempo/wake.js';
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
@@ -353,19 +354,23 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     return '## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(answer?' · '+answer:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why;
    }).join('\n\n---\n\n');
   });
+ // Indentation fences every line, including line breaks in caller-supplied words.
+ const plainBlock = (words: string) => words.split(/\r\n?|\n/).map(line => '    '+line).join('\n');
  tool('inbox','List what is in your inbox, newest first. state narrows it: '+inbox.state.enumValues.join(', ')+'.',
   z.object({state:z.enum(inbox.state.enumValues).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
-   const data=await read<{inboxItems:{id:string;source:string;state:string;fromKind:string;fromId:string|null;at:string;body:{words:string|null;why:string|null}|null}[]}>(
-    'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
-   return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words??'(no words kept)')+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
+   const data=await read<{inboxItems:{id:string;source:string;sourceId:string|null;state:string;fromKind:string;fromId:string|null;at:string;body:{words:string|null;why:string|null}|null}[]}>(
+    'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source sourceId state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
+   return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words == null ? '(no words kept)' : isWakeMail(row) ? plainBlock(row.body.words) : row.body.words)+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
   });
- tool('wake_me_when', 'Ask loom to do the waiting. Only a runtime body can ask. The next job receives the wake in this conversation, on the same asker’s word. The wait ends if the conversation closes or access is lost. Watch github:owner/repo#12 in this conversation’s project (when: '+wakeConditions.join(', ')+', default changed), job:<id> in this conversation or started by this body, approval:<id> or question:<id> filed here, or at:<time with offset> or in:<minutes> up to 14 days less an hour away. Waits last up to 14 days. An optional plain-text note comes back with the wake.',
+ tool('wake_me_when', 'Ask loom to do the waiting. Only a runtime body in a Loom Comms or project conversation can ask. The next job receives the wake in this conversation, on the same asker’s word. The wait ends if the conversation closes or access is lost. Watch github:owner/repo#12 in this conversation’s project (when: '+wakeConditions.join(', ')+', default changed), job:<id> in this conversation or started by this body, approval:<id> or question:<id> filed here, or at:<time with offset> or in:<minutes> up to 14 days less an hour away. Event waits expire after 14 days. A due time can still fire after downtime. An optional plain-text note comes back with the wake.',
   wakeInput, async input => 'Waiting. ID: '+((await run('tempo.wake', input)) as {id:string}).id);
- tool('waits', 'List waiting wakes and their notes in this runtime body’s own conversation.', z.object({}).strict(), async input => {
-  const rows = (await run('tempo.waits', input)) as {id:string;what:string;note:string|null}[];
-  // Indented code blocks keep subjects and notes plain, including embedded newlines.
-  return rows.length ? rows.map(row => [row.id+' · '+row.what, row.note].filter(Boolean).join('\n').split(/\r\n?|\n/).map(line => '    '+line).join('\n')).join('\n\n') : 'You are waiting on nothing.';
+ tool('waits', 'List waiting wakes followed by wakes that fired or ended in the last 24 hours in this runtime body’s Loom conversation.', z.object({}).strict(), async input => {
+  const rows = (await run('tempo.waits', input)) as {id:string;what:string|null;note:string|null;state:string;why:string|null}[];
+  const format = (row: typeof rows[number]) => plainBlock([row.id+' · '+[row.state, row.what].filter(Boolean).join(' · '), row.why, row.note].filter(Boolean).join('\n'));
+  const waiting = rows.filter(row => row.state === 'waiting').map(format);
+  const recent = rows.filter(row => row.state !== 'waiting').map(format);
+  return [waiting.join('\n\n') || 'You are waiting on nothing.', ...(recent.length ? ['Recent outcomes\n\n'+recent.join('\n\n')] : [])].join('\n\n');
  });
  tool('wake_cancel', 'Cancel a waiting wake in this runtime body’s own conversation.', z.object({id:z.string().min(1).max(200)}).strict(),
   async input => { await run('tempo.wakeCancel', input); return 'Cancelled.'; });
