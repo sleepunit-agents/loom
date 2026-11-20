@@ -20,7 +20,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
 }) {
   const deadlines=new QueryDeadlines(options.now);
   const hasConversations=!!db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get();
-  const knowledge = knowledgeQueryFields({path: options.sources?.commons.knowledge, sharing: options.sharing, now: options.now});
+  const knowledge = knowledgeQueryFields({timezone:()=>householdTimezone(db),path: options.sources?.commons.knowledge, sharing: options.sharing, now: options.now});
   try {
     // The list of agents is read through each time: it follows the household (pieces/mind/sources.ts).
     const sources = options.sources;

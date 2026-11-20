@@ -27,7 +27,7 @@ vi.mock('../../web/node_modules/graphql-ws/dist/index.js',()=>({createClient:(op
 }}));
 vi.mock('../../web/src/memory/commands',()=>({memoryCall:wire.call}));
 vi.mock('../../web/src/data',()=>({call:wire.call,useRecords:()=>{throw Error('Memory tiles must not read legacy records');}}));
-vi.mock('../../web/src/kit',()=>({Split:(p:any)=>h('main',{'data-tile':p.label},p.list,p.reader),List:(p:any)=>h('div',null,p.children),Row:(p:any)=>h('button',{onClick:p.onClick},p.title),Empty:(p:any)=>h('p',null,p.title),Loading:(p:any)=>h('p',null,p.label),Error:(p:any)=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',Markdown:(p:any)=>h('p',null,p.text)}));
+vi.mock('../../web/src/kit',()=>({Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:'section',Facts:'dl',Fact:'dd',Split:(p:any)=>h('main',{'data-tile':p.label},p.list,p.reader),List:(p:any)=>h('div',null,p.children),Row:(p:any)=>h('button',{onClick:p.onClick},p.title),Empty:(p:any)=>h('p',null,p.title),Loading:(p:any)=>h('p',null,p.label),Error:(p:any)=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',Markdown:(p:any)=>h('p',null,p.text)}));
 import Knowledge from '../../web/src/pieces/knowledge';
 import People from '../../web/src/pieces/people';
 import Projects from '../../web/src/pieces/projects';

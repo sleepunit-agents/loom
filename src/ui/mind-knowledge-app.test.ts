@@ -4,7 +4,7 @@ import { act, create } from '../../web/node_modules/react-test-renderer/index.js
 import type { CallState, Snapshot } from '../../web/src/data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,access:{records:[{id:'knowledge',allowed:true,canVerify:true,canRecheck:true}],status:'live'} as Snapshot,call:vi.fn()}));
 vi.mock('../../web/src/memory/commands',()=>({memoryCall:f.call}));
-vi.mock('../../web/src/memory/query',()=>({useMemoryQuery:(s:any)=>s?.query.includes('HouseholdTimezone')?{status:'live',value:'America/Chicago'}:s?.query.includes('MemoryKnowledgeAccess')?{status:f.access.status,value:f.access.records[0]}:s?.query.includes('query MemoryKnowledge {')?{status:f.feed.status,value:{pages:f.feed.records}}:{status:f.detail.status,value:f.detail.records[0]??null}}));
+vi.mock('../../web/src/memory/query',()=>({useMemoryQuery:(s:any)=>s?.query.includes('MemoryKnowledgeAccess')?{status:f.access.status,value:f.access.records[0]}:s?.query.includes('query MemoryKnowledge {')?{status:f.feed.status,value:{pages:f.feed.records,timezone:'America/Chicago'}}:{status:f.detail.status,value:f.detail.records[0]??null}}));
 vi.mock('../../web/src/kit',()=>({
   Search:'input',Reader:'article',Title:'h1',Meta:'p',Section:'section',Facts:'dl',Fact:'dd',
   Markdown:(p:{text:string})=>h('div',null,p.text),

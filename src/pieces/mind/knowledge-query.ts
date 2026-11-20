@@ -31,13 +31,14 @@ const revision = new GraphQLObjectType({ name:'MemoryKnowledgeRevision', fields:
 } });
 const access=new GraphQLObjectType({name:'MemoryKnowledgeAccess',fields:Object.fromEntries(['allowed','canAdd','canVerify','canRecheck'].map(name=>[name,{type:new GraphQLNonNull(GraphQLBoolean)}]))});
 const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
+ timezone:text,
  total:{type:new GraphQLNonNull(GraphQLInt)}, checkDays:{type:new GraphQLNonNull(GraphQLInt)},recentDays:{type:new GraphQLNonNull(GraphQLInt)},
  pages:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary)))},
 } });
 
 const match = new GraphQLObjectType({ name:'MemoryKnowledgeMatch', fields:{ slug:requiredText,title:requiredText,domain:requiredText,updated:requiredText,verified_at:text,freshness_anchor:text,sla_class:text,body:requiredText } });
 
-export function knowledgeQueryFields(options: { path?:string; sharing():Sharing; now():number }): {
+export function knowledgeQueryFields(options: { path?:string; timezone?():string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
  nextDeadline():number|undefined;
  sweep(checkingAgent:string):SweepPart;
@@ -69,7 +70,7 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
   sweep(checkingAgent){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent);},
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
-   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?read():null},
+   memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone}:null},
    // One statement, no access stamp: every word must appear in the title, body or domain.
    memoryKnowledgeSearch:{type:new GraphQLList(new GraphQLNonNull(match)),args:{query:{type:new GraphQLNonNull(GraphQLString)},domain:{type:GraphQLString},first:{type:GraphQLInt}},
     resolve:(_source,args:{query:string;domain?:string|null;first?:number|null},context)=>{

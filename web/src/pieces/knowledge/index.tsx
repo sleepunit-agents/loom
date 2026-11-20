@@ -50,8 +50,8 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
   const addAnswer = useSyncExternalStore(addRequest?.subscribe ?? noop, addRequest?.getSnapshot ?? (() => idle));
   const access = useMemoryQuery(memoryQueries.knowledgeAccess());
   const permission = access.status === 'live' ? access.value : undefined;
-  const zone = useMemoryQuery(memoryQueries.householdTimezone()).value ?? undefined;
   const index = useMemoryQuery(memoryQueries.knowledge());
+  const zone = index.value?.timezone;
   const feed = {status:index.status,records:(index.value?.pages??[]).map(page=>({...page,id:page.slug}))};
   const selectedPage = useMemoryQuery(selected?memoryQueries.page(selected):undefined);
   const detail = {status:selectedPage.status,records:selectedPage.value?[{...selectedPage.value,id:selectedPage.value.slug}]:[]};
