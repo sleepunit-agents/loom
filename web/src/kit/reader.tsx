@@ -5,6 +5,16 @@ import { useId, useState, type ComponentProps, type ReactNode } from 'react';
 import { LinkButton } from './app';
 import './reader.css';
 
+/** Show an identifier compactly and let a reader reveal and select its full value. */
+export function ShortIdentifier({value,length=8}:{value:string;length?:number}){
+  const [expanded,setExpanded]=useState(false);
+  if(value.length<=length)return <span>{value}</span>;
+  return <button type="button" className="loom-reader__identifier" title={value}
+    aria-label={value} aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>
+    {expanded?value:value.slice(0,length)}
+  </button>;
+}
+
 /** The open item: an article that stacks its parts with one gap and wraps every word. */
 export function Reader({ className = '', ...props }: ComponentProps<'article'>) {
   return <article {...props} className={`loom-reader ${className}`} />;

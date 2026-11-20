@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
-vi.mock('../../kit', () => ({
+vi.mock('../../kit', async () => ({
+  ShortIdentifier:(await vi.importActual<typeof import('../../kit/reader')>('../../kit/reader')).ShortIdentifier,
   ...Object.fromEntries(['List', 'Row', 'NoteRow', 'Empty', 'Error', 'Loading', 'Button', 'LinkButton', 'Actions', 'Search', 'Input', 'Textarea', 'Field', 'Fields', 'Reader', 'Meta', 'Title', 'Facts', 'Fact', 'Section', 'Disclosure', 'Clamp', 'Body', 'Chip', 'RefCard', 'Markdown'].map(name => [name, (props: { children?: ReactNode }) => h(name, props, props.children)])),
   Split: (props: { list?: ReactNode; reader?: ReactNode; listTop?: ReactNode; listAction?: ReactNode; folders?: unknown; listTitle?: ReactNode; listCount?: number; backLabel?: string }) => h('Split', { folders: props.folders, listTitle: props.listTitle, listCount: props.listCount, backLabel: props.backLabel }, props.listAction, props.listTop, props.list, props.reader),
 }));
@@ -83,6 +84,11 @@ it('says every state in plain words, keeps a row to one short state, and puts de
   expect(tree.root.findByType('Clamp').props.long).toBe(true); expect(tree.root.findByType('Markdown').props.text).toBe(long);
   const details = tree.root.findByType('Disclosure'); expect(details.props.label).toBe('Details');
   const commit = details.findByProps({ title: 'a'.repeat(40) }); expect(commit.props.children).toBe('aaaaaaaa');
+  expect(commit.props['aria-label']).toBe(change.headCommit);
+  await act(async()=>commit.props.onClick());
+  expect(commit.props.children).toBe(change.headCommit);
+  await act(async()=>commit.props.onClick());
+  expect(commit.props.children).toBe('aaaaaaaa');
   expect(buttons().filter((b: { props: { variant?: string } }) => b.props.variant === 'primary').map((b: { props: { children: string } }) => b.props.children)).toEqual(['Yes, merge it']);
 });
 
