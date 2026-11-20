@@ -104,7 +104,8 @@ it('lets a body call every named tool it is offered, each answered as the door a
  expect(await use('memory_drafts')).toContain('FICTIONAL DRAFT');await use('memory_ratify',{id:draft});
  await use('note_write',{path:'work/pump',body:'FICTIONAL NOTE',lifespan:'keep'});expect(await use('note_read',{path:'work/pump'})).toContain('FICTIONAL NOTE');expect(await use('note_list')).toContain('work/pump');
  await use('knowledge_write',{title:'Fictional pump page',domain:'fictional',body:'FICTIONAL PAGE'});
- expect(await use('knowledge_recall',{query:'pump'})).toContain('FICTIONAL PAGE');
+ await use('knowledge_write',{mode:'append',slug:'fictional-pump-page',body:'EXTRA FINDING'});
+ expect(await use('knowledge_recall',{query:'pump'})).toContain('FICTIONAL PAGE\n\nEXTRA FINDING');
  await use('knowledge_edit',{slug:'fictional-pump-page',body:'FICTIONAL PAGE REVISED'});
  const kept=Number(/^- (\d+) \(/m.exec((await use('knowledge_read',{slug:'fictional-pump-page'})).split('## Earlier versions')[1])![1]);
  await use('knowledge_check',{slug:'fictional-pump-page',outcome:'still-true'});await use('knowledge_restore',{slug:'fictional-pump-page',revision:kept});
