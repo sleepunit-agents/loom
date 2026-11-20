@@ -652,6 +652,41 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
  expect(f.db.select().from(turns).all().at(-1)).toMatchObject({conversation:cv,kind:'reply',run:'other'});
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
 });
+it('delivers a scheduled result once in its original Slack thread after another job finishes there',async()=>{
+ const {f,cv,once}=await sharedPlace(), store=runnable(f);
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ const trigger=once({ownerKind:'member',owner:'owner',times:new Date(f.clock.now()+1000).toISOString()});
+ expect(await f.call('tempo','set',trigger,token.owner)).toMatchObject({status:200});
+ f.clock.advance(1000);
+ const firing=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
+ expect(firing).toMatchObject({conversation:cv,onWordKind:'member',onWord:'owner',job:null,state:'waiting'});
+ const reply={id:randomUUID(),text:'The nightly check finished.',model:'observed'}, receipt=randomUUID();
+ expect(await f.call('bridges','reply',reply,token.body,receipt)).toMatchObject({status:403});
+ expect(f.root.services.conversations.pending(cv,'body').map(item=>item.id)).not.toContain(firing.id);
+ f.root.writes.run(()=>{
+  f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+ });
+ const successor=store.admission(cv).job!;
+ const credential='e'.repeat(64), stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'running',box:'box',claimedAt:stamp,heardAt:stamp}).where(eq(jobs.id,successor.id)).run();
+  f.db.insert(tokens).values({fingerprint:createHash('sha256').update(credential).digest('hex'),kind:'agent',label:'Scheduled worker',agent:'art',job:successor.id,createdAt:stamp}).run();
+  f.root.services.conversations.take(cv,successor.id);
+ });
+ expect(await f.call('bridges','reply',reply,credential,receipt)).toMatchObject({status:200});
+ await f.root.services.bridges.daemon!.idle();
+ expect(await f.call('bridges','reply',reply,credential,receipt)).toMatchObject({status:200});
+ expect(await f.call('bridges','reply',reply,credential)).toMatchObject({status:200});
+ await f.root.services.bridges.daemon!.idle();
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{id:reply.id,conversation:cv,channel:'CROOM',thread:'1794432000.000001',state:'sent'}]);
+ expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{conversation:cv,run:successor.id}]);
+ expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{send:reply.id,part:0,postedId:'1794432000.000009'}]);
+ const posts=f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'));
+ expect(posts).toHaveLength(1);
+ expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({channel:'CROOM',thread_ts:'1794432000.000001',text:reply.text});
+});
+
 it('stops such a trigger, with one notice, when its asker is no longer known or its conversation cannot be posted to',async()=>{
  const {f,once,allowed}=await sharedPlace();
  const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('place-trigger-stopped:'));
