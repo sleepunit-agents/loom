@@ -25,6 +25,13 @@ function Reader({ page, zone, open, canVerify, canRecheck, request, act }: { pag
     {(page.checks?.length ?? 0) > 0 && <Section label="Recent checks"><ol>{page.checks.map((check, index) =>
       <li key={index}>{check.outcome === 'confirmed' ? 'Still true' : check.outcome === 'stale' ? 'Asked to check again' : check.outcome} · {date(check.at, zone)}{check.by && ` · ${check.by}`}</li>
     )}</ol></Section>}
+    {!!page.annotations?.length && <Section label="Recent annotations"><ul className="grid gap-3">
+      {page.annotations.map(annotation => <li key={annotation.id}>
+        <Meta>{annotation.kind} · {annotation.actor} · {date(annotation.created, zone)}</Meta>
+        <p className="whitespace-pre-wrap">{annotation.words}</p>
+        {annotation.evidence && <p className="whitespace-pre-wrap">Evidence: {annotation.evidence}</p>}
+      </li>)}
+    </ul></Section>}
     <Section label="Sources">{page.sources.length ? <dl className="grid gap-3">{page.sources.map((source,n) => <div key={n}><dt>{source.kind}</dt><dd>{source.claim}{source.locator && <> · {source.href ? <a className="underline" href={source.href} target="_blank" rel="noreferrer">{source.locator}</a> : source.locator}</>}</dd></div>)}</dl> : <p>No sources recorded</p>}</Section>
     <Section label="Cited by">{page.citedBy.length ? <List label="Cited by">{page.citedBy.map(p => <Row key={p.slug} title={p.title} onClick={() => open(p.slug)} />)}</List> : <p>No referring pages</p>}</Section>
     {(page.sourcing || page.by) && <Facts><Fact label="Sourcing">{page.sourcing}</Fact><Fact label="Written by">{page.by}</Fact></Facts>}
