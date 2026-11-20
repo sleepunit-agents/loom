@@ -31,9 +31,9 @@ function LiveBridges({ path, go }: { path?: string; go?: (path: string) => void 
       // is shown to (policy.ts, rules.reviewsReply). The door decides; a reply this person may not review is refused there.
       send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
     }:{
-      create:route.folder==='sends'?null:route.folder==='connections'?<ConnectionControl agents={agents}/>:route.folder==='channels'?<ChannelControl agents={agents}/>:<PersonControl/>,
-      connection:id=>{const row=snapshot.connections.find(row=>row.id===id);return row&&<ConnectionControl key={JSON.stringify(row)} row={row} filters={snapshot.filters.filter(f=>f.connection===id)}/>;},
-      channel:row=><ChannelControl key={JSON.stringify(row)} row={row} agents={agents}/>,person:row=><PersonControl key={JSON.stringify(row)} row={row}/>,
+      create:route.folder==='sends'?null:route.folder==='connections'?<ConnectionControl go={navigate} agents={agents}/>:route.folder==='channels'?<ChannelControl go={navigate} agents={agents}/>:<PersonControl go={navigate}/>,
+      connection:id=>{const row=snapshot.connections.find(row=>row.id===id);return row&&<ConnectionControl go={navigate} key={JSON.stringify(row)} row={row} filters={snapshot.filters.filter(f=>f.connection===id)}/>;},
+      channel:row=><ChannelControl go={navigate} key={JSON.stringify(row)} row={row} agents={agents}/>,person:row=><PersonControl go={navigate} key={JSON.stringify(row)} row={row}/>,
       send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
     }}/>;
 }

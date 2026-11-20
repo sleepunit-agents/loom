@@ -14,7 +14,7 @@ export function verifyAccessChange(db,title){
 
 // Play the fictional agent in the disposable home. The owner sends the request
 // and answers the resulting card in the actual signed-in browser.
-async function approveRequestedChange({page,app,composer,change,input,expectedWords}){
+export async function approveRequestedChange({page,app,composer,change,input,expectedWords,exists}){
  const db=app.services.comms.db.$client;
  const words=await composer.getByRole('textbox',{name:/^Message\b/}).inputValue();
  check(expectedWords(words),'The prepared message differs from the requested change');
@@ -30,8 +30,7 @@ async function approveRequestedChange({page,app,composer,change,input,expectedWo
  const {agent,conversation,member}=deliveries[0];
  const card=app.writes.run(()=>app.services.setup.propose(agent,{change,input,why:'Fictional request from the example owner.'},{conversation,member,project:null})).value;
  check(card.state==='pending','The fictional setting did not wait for approval');
- const exists=change==='project'?'SELECT id FROM projects WHERE id=?':'SELECT id FROM members WHERE id=?';
- check(!db.prepare(exists).get(input.id),'The change took effect before approval');
+ check(!exists(),'The change took effect before approval');
  await page.goto(new URL('/p/approvals-preview/approval/'+encodeURIComponent(card.id),app.url).href);
  const answer=page.getByRole('region',{name:'Approvals tile',exact:true}).getByRole('group',{name:'Answer approval',exact:true});
  const receipt=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:6000});
@@ -63,6 +62,7 @@ export async function accessAction({page,tile,title,app,out}){
    const form=tile.getByRole('form',{name:'Add member',exact:true});await form.getByRole('textbox',{name:'Member name',exact:true}).fill('walkthrough-person');
    await activate(form.getByRole('button',{name:'Request new member',exact:true}));
    await approveRequestedChange({page,app,composer:form.locator('..'),change:'member',input:{id:'walkthrough-person',role:'member',fullOwner:false,agents:[]},
+    exists:()=>db.prepare('SELECT id FROM members WHERE id=?').get('walkthrough-person'),
     expectedWords:words=>words==='Please propose adding household member walkthrough-person with the member role. Own every agent: no. Assigned agents: none.'});
    verifyAccessChange(db,title);
    await page.goto(originalUrl);
@@ -74,6 +74,7 @@ export async function accessAction({page,tile,title,app,out}){
    const originalUrl=page.url(),input={id:'walkthrough-sharing',name:'Walkthrough sharing',members:['alex'],agents:[],repositories:[]};
    await activate(form.getByRole('button',{name:'Review new project',exact:true}));
    await approveRequestedChange({page,app,composer:tile.getByRole('region',{name:'Project change request'}),change:'project',input,
+    exists:()=>db.prepare('SELECT id FROM projects WHERE id=?').get(input.id),
     expectedWords:words=>words.startsWith('Please propose creating')&&JSON.stringify(JSON.parse(words.slice(words.indexOf('{'))))===JSON.stringify(input)});
    verifyAccessChange(db,title);
    await page.goto(originalUrl);
