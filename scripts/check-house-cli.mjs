@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Run on the worker machine after building a self-contained release directory.
- * Usage: node scripts/check-house-cli.mjs <Podman image ID> <worker release directory>
+ * Usage: node scripts/check-house-cli.mjs <Podman image ID> <worker release directory> [mapped unprivileged UID/GID]
  * The image receives the worker's read-only program and no account or agent mounts.
  */
 import {execFileSync} from 'node:child_process';
@@ -9,8 +9,8 @@ import {mkdtempSync,rmSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
-const [image, directory] = process.argv.slice(2);
-if (process.argv.length !== 4 || !/^(?:sha256:)?[a-f0-9]{12,64}$/.test(image ?? '')) {
+const [image, directory, user='65534'] = process.argv.slice(2);
+if ((process.argv.length < 4 || process.argv.length > 5 || !/^[1-9][0-9]{0,4}$/.test(user)) || !/^(?:sha256:)?[a-f0-9]{12,64}$/.test(image ?? '')) {
   throw Error('Expected a local image ID and the self-contained worker release directory');
 }
 const program = realpathSync(directory);
@@ -24,6 +24,9 @@ const probe = `
   import assert from 'node:assert/strict';
   import {execFileSync} from 'node:child_process';
   import {readFileSync} from 'node:fs';
+  import {execFile} from 'node:child_process';
+  import {promisify} from 'node:util';
+  import {bodySecretTools} from '${BODY_PROGRAM_TARGET}/dist/runtime/body-secret-tools.js';
   import {bodyCommandEnvironment} from '${BODY_PROGRAM_TARGET}/dist/runtime/worker-mounts.js';
   const env = bodyCommandEnvironment('${BODY_PROGRAM}',process.env);
   const version = JSON.parse(readFileSync('${BODY_PROGRAM_TARGET}/package.json','utf8')).version;
@@ -35,9 +38,34 @@ const probe = `
     assert.equal(found,flags==='-lc' ? '${HOUSE_CLI_TARGET}' : '${BODY_PROGRAM_TARGET}/${HOUSE_CLI_FILE}');
     console.log(shell,flags,found,version);
   }
+  // The offline image has no household credential. A job-local listener serves fixture notes.
+  const notes=new Map();
+  const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
+    token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
+      let value;
+      if(name==='loom_command'){
+        assert.equal(args.operation,'memory.noteWrite');
+        notes.set(args.input.path,{...args.input,updated:'2026-01-01',pinned:false,files:0});
+        value={ok:true,value:{saved:true}};
+      }else{
+        assert.equal(args.variables.agent,'fixture');
+        value={data:args.variables.path?{memoryNote:notes.get(args.variables.path)}:{memoryNotes:[...notes.values()]}};
+      }
+      return {content:[{type:'text',text:JSON.stringify(value)}]};
+    }}});
+  try{
+    for(const [shell,flags,path] of [['/bin/sh','-c','fixture/normal'],['/bin/bash','-lc','fixture/login']]){
+      const run=async command=>(await promisify(execFile)(shell,[flags,command],{env:{...env,LOOM_BODY_HOUSE_NOTE:tools.houseNote}})).stdout;
+      assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
+      assert.equal((await run('loom note read '+path)).trim(),'words');
+      assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
+      console.log(shell,flags,'note write/read/list passed');
+    }
+  }finally{await tools.close();}
+
 `;
 execFileSync('podman',['run','--rm','--pull=never','--network=none','--read-only','--cap-drop=ALL',
-  '--user','65534:65534','--env','LOOM_BODY_OWN_HARNESS=0',
+  '--user',user+':'+user,'--env','LOOM_BODY_OWN_HARNESS=0',
   ...mounts.flatMap(({source,target,readOnly})=>{
     if (!readOnly) throw Error('Expected a read-only program mount');
     return ['--volume',source+':'+target+':ro'];

@@ -601,3 +601,44 @@ it('lets no body set or clear loom\'s stamp of whose word a memory was written o
  for(const [id,claim] of [['clear',null],['replace',{who:'the member alice'}]] as const)expect((await f.call('update',{id:forged.result.value.ids[0],metadata:{written_on_word:claim,colour:id}},'stamp-'+id)).status).toBe(200);
  expect(read()).toEqual({written_on_word:stamp,colour:'replace'});
 });
+
+it('runs the house note CLI against a running job and refuses the same shell handle after the job ends',async()=>{
+ const {execFile}=await import('node:child_process');
+ const {promisify}=await import('node:util');
+ const {houseNoteCli}=await import('./house-note-cli.js');
+ const {bodyProgramTools}=await import('./runtime/body-program-tools.js');
+ const {bodySecretTools}=await import('./runtime/body-secret-tools.js');
+ const f=await fixture(),signal=new AbortController().signal;
+ const access={url:f.url,token:raw.body,signal,agent:'art',job:'job',conversation:f.thread.conversation,clock:f.clock};
+ const tools=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(tools.close);
+ const sentinel='fictional-protected-receipt';
+ const local=await bodySecretTools({...access,alsoSecret:()=>[Buffer.from(sentinel)],houseNotes:{denied:[],call:tools.call}});clean.push(local.close);
+ const env={LOOM_BODY_HOUSE_NOTE:local.houseNote};
+ const run=async(...args:string[])=>{
+   let out='',err='';
+   const code=await houseNoteCli(args,{stdout:s=>out+=s,stderr:s=>err+=s},env);
+   return {code,out,err};
+ };
+ const write=['write','field/log','--lifespan','short','--body','first reading','--id','one-reading'];
+ expect(await run(...write)).toMatchObject({code:0});
+ const edit=await run('write','field/log','--body','later reading','--json');
+ expect(edit.code).toBe(0);
+ const receipt=JSON.parse(edit.out).id;expect(receipt).toMatch(/^[a-f0-9-]{36}$/);
+ expect(edit.err).toContain('--id '+receipt);
+ expect(await run(...write)).toMatchObject({code:0});
+ const refused=await run(...write.slice(0,-1),sentinel);
+ expect(refused.code).toBe(1);
+ expect(refused.err).toContain('Reuse the supplied --id');
+ expect(refused.out+refused.err).not.toContain(sentinel);
+ const executable=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','read','field/log'],{env:{...process.env,...env}});
+ expect(executable.stdout).toBe('later reading\n');
+ const list=await run('list','field/','--json');expect(list.code).toBe(0);
+ expect(JSON.parse(list.out)).toMatchObject([{path:'field/log',bytes:13,pinned:false}]);
+ for(const text of ['--help','-h']){
+   expect(await run('write','field/literal','--body',text,'--lifespan','short')).toMatchObject({code:0});
+   expect(await run('read','field/literal')).toMatchObject({code:0,out:text+'\n'});
+ }
+ expect(await run('read','field/missing')).toMatchObject({code:3,out:''});
+ f.db.update(s.jobs).set({state:'done'}).run();
+ expect(await run('read','field/log')).toMatchObject({code:1,out:''});
+},30000);

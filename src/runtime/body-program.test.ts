@@ -522,3 +522,19 @@ it.each([true,false])('continues an acknowledged wake when the coordinator suppo
  const lesson = 'Lessons recorded by earlier runs of this trigger:\nCount both sources.';
  expect(native).toHaveBeenCalledWith(expect.anything(),supported ? expect.stringContaining(lesson) : expect.not.stringContaining(lesson),expect.any(AbortSignal));
 });
+
+it.each(['all','loom'] as const)('hands the note capability to the house harness only with full reach (%s)',async reach=>{
+ const f=fixture();
+ let issued:string|undefined;
+ const harness=vi.spyOn(adapters,'bodyHarness').mockImplementation((_name,input)=>async()=>{
+   issued=input.env.LOOM_BODY_HOUSE_NOTE;
+   return {text:'done',model:'observed',actions:[]};
+ });
+ try{
+   const code=await bodyProgram({...f.options,native:undefined,read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house',reach}),
+     env:{LOOM_BODY_OWN_HARNESS:'0',LOOM_BODY_HOUSE_NOTE:'stale'}});
+   expect(code).toBe(0);
+   if(reach==='all')expect(issued).toMatch(/^[1-9][0-9]*\.[0-9a-f]{64}$/);
+   else expect(issued).toBeUndefined();
+ }finally{harness.mockRestore();}
+});
