@@ -126,10 +126,10 @@ it('keeps the successful stamp after a stale check and recomputes backlinks from
  await store.writePage({slug:'fact',title:'Fact',domain:'fiction',body:'Fictional fact'});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'[[fact]]'});
  await store.verifyPages({slug:'fact',verified_at:'2026-11-10T00:00:00.000Z',verifier:'checker'});
- const f=fixture(path),read=()=>f.query('{memoryKnowledgePage(slug:"fact"){fresh verified_at checked{outcome} citedBy{slug}}}');
+ const f=fixture(path),read=()=>f.query('{memoryKnowledgePage(slug:"fact"){fresh verified_at checked{outcome} checks{at outcome by} citedBy{slug}}}');
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'fresh',citedBy:[{slug:'ref'}]}}});
  await store.verifyPages({slug:'fact',outcome:'stale',verified_at:'2026-11-11T00:00:00.000Z'});
- expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'due',verified_at:'2026-11-10T00:00:00.000Z',checked:{outcome:'stale'}}}});
+ expect(await read()).toMatchObject({data:{memoryKnowledgePage:{fresh:'due',verified_at:'2026-11-10T00:00:00.000Z',checked:{outcome:'stale'},checks:[{at:'2026-11-11T00:00:00.000Z',outcome:'stale'},{at:'2026-11-10T00:00:00.000Z',outcome:'confirmed',by:'checker'}]}}});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'No link',mode:'replace'});
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[]}}});
  await store.writePage({slug:'ref',title:'Reference',domain:'fiction',body:'/knowledge/fact',mode:'replace'});
