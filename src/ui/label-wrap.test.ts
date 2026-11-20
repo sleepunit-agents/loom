@@ -21,7 +21,7 @@ it('keeps human-readable labels in the app and walkthrough site free of ellipses
         const selector=rule[1].replace(/\/\*[\s\S]*?\*\//g,'').trim();
         if(/text-overflow\s*:\s*ellipsis/.test(rule[2])&&selector!==exceptions.get(file))offending.push(file+' '+selector);
       }
-    }else if(/\btruncate\b/.test(source))offending.push(file);
+    }else if(/\b(?:truncate|line-clamp-\d+)\b/.test(source))offending.push(file);
   }
   expect(offending).toEqual([]);
 });
