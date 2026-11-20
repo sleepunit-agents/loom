@@ -1,24 +1,30 @@
 import { readAll } from '../data/execution.js';
+import { waitsOnShelvedTask } from '../data/project-in-use.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxAnswer,hasPrivateInboxPayload,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
-import { wordsDeadline } from './retention.js';
+import { wordsDeadline, wordsKept } from './retention.js';
+import { answerable } from './answer-rule.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
 import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
-import { actionResults, household, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
+import { actionResults, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
 type Projected=Item&{[projected]?:Record<string,unknown>};
 const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
+export type QuestionAsker = (viewer:Viewer, account:string)=>string|undefined;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
+
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
 export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
 
@@ -27,17 +33,27 @@ export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
     readonly now: () => string = () => new Date().toISOString(),
     private readonly volumeAllowed: (viewer: Viewer, item: Item) => boolean = () => false,
-    private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>) {}
+    private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>,
+    /** Who may answer an item, supplied by the door from the household's rule: called once for a viewer, it
+     * returns the answer for each item on the household facts it read then. No default allow. */
+    private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false,
+    private readonly questionAsker?: QuestionAsker) {}
+
+  private namedQuestion(viewer: Viewer, item: Item, body: Body): Body {
+    if (!this.questionAsker || viewer.kind !== 'member' || viewer.id !== item.to || item.toKind !== 'person' ||
+        item.source !== 'thread' || !item.answers || item.onWordKind !== 'outside' || !item.onWord) return body;
+    const name = this.questionAsker(viewer,item.onWord);
+    return name ? {...body,words:`Working for ${name}.\n${body.words}`} : body;
+  }
 
   private allowed(viewer: Viewer) {
     const allowed = this.policy(viewer, getTableColumns(inbox));
     if (!is(allowed, SQL)) throw new Error('SQL Inbox visibility required');
     return allowed;
   }
-  private keepDays() { if(this.readSet)return this.readSet.days; return this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14; }
+  private keepDays() { if(this.readSet)return this.readSet.days; return commsKeepDays(this.db); }
   private retainedMessage(message: typeof messages.$inferSelect | undefined, days: number): boolean {
-    return !!message?.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    return !!message?.words && wordsKept(message, days, this.now());
   }
   private current(viewer: Viewer, id: string) {
     if(this.readSet)return this.readSet.item(id);
@@ -50,9 +66,7 @@ export class InboxQueries {
   }
   canAnswer(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
-    return viewer.kind === 'member' && !!item && item.toKind === 'person' && item.to === viewer.id
-      && item.state === 'waiting' && !!item.answers && !item.waitsOnKind
-      && !['task','approval','secret-request'].includes(item.source);
+    return !!item && answerable(item) && this.mayAnswer(viewer)(item);
   }
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
@@ -73,7 +87,9 @@ export class InboxQueries {
     const before=readInboxSet(this.db,ids,this.allowed(viewer),words);
     if(items.some(row=>JSON.stringify(row)!==JSON.stringify(before.item(row.id))))throw Error('Inbox changed; retry the query');
     const key=Object.assign(Object.create(this.key) as WordsKey,{open:(bytes:Uint8Array)=>this.key.open(bytes)});
-    const service=new InboxQueries(this.db,key,this.policy,this.now,this.volumeAllowed);
+    // One reading of the household's facts answers "can answer" for the whole page.
+    const answerer=fields.has('canAnswer')?this.mayAnswer(viewer):undefined;
+    const service=new InboxQueries(this.db,key,this.policy,this.now,this.volumeAllowed,undefined,answerer?()=>answerer:this.mayAnswer);
     service.readSet=before;
     const permissions=fields.has('canSetVolume')?this.volumeBatch?.(viewer,items):undefined;
     const deadlines:number[]=[];
@@ -97,11 +113,18 @@ export class InboxQueries {
       if(after.fingerprint!==before.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))throw Error('Inbox changed; retry the query');
       if(permissions&&this.volumeBatch&&JSON.stringify([...this.volumeBatch(viewer,items)].sort())!==JSON.stringify([...permissions].sort()))throw Error('Inbox permissions changed; retry the query');
     }
+    // Resolve names after the last asynchronous read, against this recipient's current permissions.
+    for(const row of rows){
+      const body=row[projected].body as Body|null|undefined;
+      if(body)row[projected].body=this.namedQuestion(viewer,row,body);
+    }
     for(const at of deadlines)retainedUntil(at);
     return rows;
   }
   private folderWhere(folder?: InboxFilter['folder']) {
-    if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers))!;
+    // A question about a shelved task does not ask for attention: it is out of "needs you" while its project
+    // is retired, and back when the project is revived. Nothing about the item is changed.
+    if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers), sql`not ${waitsOnShelvedTask(inbox)}`)!;
     if (folder === 'alerts') return and(eq(inbox.state, 'waiting'), eq(inbox.source, 'notice'), isNull(inbox.answers))!;
     if (folder === 'fyi') return and(eq(inbox.state, 'waiting'), isNull(inbox.answers))!;
     if (folder === 'answered') return inArray(inbox.state, ['answered', 'resolved', 'done']);
@@ -206,8 +229,7 @@ export class InboxQueries {
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
-    if (viewer.kind !== 'member') return [];
-    return this.db.select().from(actionResults).where(eq(actionResults.member, viewer.id))
+    return this.db.select().from(actionResults).where(sqlRule(rules.ownNotice, viewer, getTableColumns(actionResults)))
       .orderBy(desc(sql`julianday(${actionResults.at})`), desc(actionResults.id)).limit(limit).all();
   }
   refs(viewer: Viewer, id: string): string[] {
@@ -222,7 +244,7 @@ export class InboxQueries {
   }
   private deadline(message: Pick<typeof messages.$inferSelect, 'at' | 'keepUntil'> | undefined): string | null {
     const days = this.keepDays();
-    if (!message?.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
+    if (!message?.keepUntil) return null;
     const at = wordsDeadline(message, days);
     return Number.isFinite(at) ? new Date(at).toISOString() : null;
   }
@@ -294,7 +316,7 @@ export class InboxQueries {
       if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||handoffDeadline(current,days)<=Date.parse(this.now()))return null;
       retainedUntil?.(until);return {words};
     }
-    if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
+    if (!item.thread) return item.words === null ? null : this.namedQuestion(viewer,item,{ words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link });
     const row = () => this.readSet?(()=>{const message=this.readSet!.message(item),thread=this.readSet!.thread(item.thread!);return message&&thread?{message,conversation:thread.conversation}:undefined;})():this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))
       .where(and(eq(messages.thread, item.thread!), eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, id))).get();

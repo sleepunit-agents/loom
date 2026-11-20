@@ -1,17 +1,17 @@
 import { internalCaller, isInternalCaller, wasInternalCaller, closeInternalCallers } from '../internal.js';
-import { statement } from '../db/index.js';
-import type { OperationReceipt, ReceiptPersistence } from './receipts.js';
-import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
+import { RECEIPT_MS, type OperationReceipt, type ReceiptPersistence } from './receipts.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 import type { Db } from '../db/index.js';
-import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
 import type { Measuring, TimingTarget } from '../measuring/index.js';
-export type Door = 'http' | 'socket' | 'mcp' | 'direct';
+/** How a call arrived: from outside, through the HTTP command door, or from installed code. The /mcp route is
+ * not a door of its own: it maps tool names onto 'http' calls (src/shared-mcp.ts). The live socket carries
+ * reads only, so it is not one either. */
+export type Door = 'http' | 'direct';
 /** A transport supplies this capability only after authenticating its session. */
-const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && (door === 'socket' || door === 'http');
+const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && door === 'http';
 export type Code = 'denied' | 'not-found' | 'invalid' | 'conflict' | 'unavailable';
 export type Failure = { ok: false; code: Code; message: string };
 export type Result = { ok: true; value: unknown } | Failure;
@@ -23,12 +23,32 @@ export interface Change { type: string; id: string }
  * Sources store this receipt atomically with their effects; it is not an intent.
  */
 export interface WriteReceipt { viewer: string; id: string; name: string; inputHash: string; expires: number }
-export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt>; window?: boolean }
+export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number; receipt?: Readonly<WriteReceipt>; window?: boolean;
+  /** Say that this call wrote nothing anybody is shown but a last-seen style time, and nothing that decides who
+   * may read what. Readers are then not woken for it at once (core/data/writes.ts). Only an operation that has
+   * checked what it wrote may say so, and one that also announces a change is not believed. */
+  stampOnly?(): void }
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
+/** The reply for something thrown while an operation ran. An OperationError is the
+ * operation's own answer. With `refuses`, a plain Error from the service underneath
+ * is one too: its message was written for the caller. Storage errors (they carry a
+ * `code`) and anything long or empty stay behind one fixed line. */
+function thrown(error: unknown, refuses: boolean | undefined): Failure {
+  if (error instanceof OperationError) return failure(error.code, error.message);
+  if (refuses && error instanceof Error && !('code' in error) && error.message.length > 0 && error.message.length <= 200) return failure('invalid', error.message);
+  return failure('unavailable', 'Operation could not complete');
+}
 export interface Operation<I = unknown> {
-  /** Sensitive authority results must recheck current policy even on receipt replay. */
+  /** The service this calls refuses bad requests by throwing a plain Error whose
+   * message is meant for the caller. Report those as `invalid`, not as an outage. */
+  refuses?: boolean;
+  /** A retry of a write is answered from its receipt, or from a recovered outside commit, only for a
+   * caller who may still make the call: `may` is asked again first. That is the rule for every write and
+   * needs no flag. An operation says `false` (or decides per call) only when its own `may` reads state that
+   * its write changes, so that asking again would refuse the honest retry of a write that succeeded; it
+   * then answers for what a caller who has since lost the right can learn from the stored result. */
   recheckPolicy?: boolean | ((viewer: Viewer, input: I) => boolean);
   /** Per-record window gate, evaluated before replay with the exact authenticated Viewer.
    * A piece may admit an independently proved acknowledgement-only body control. */
@@ -44,7 +64,7 @@ export interface Operation<I = unknown> {
    * This is NOT an external-effect commit protocol: concurrent preparations may
    * run and a later transaction/authentication check may still fail. A writer to
    * another store needs its own durable reconciliation and idempotency protocol. */
-  prepare?(input: I, context: { readonly viewer: Viewer; readonly receipt?: Readonly<WriteReceipt> }): Promise<unknown>;
+  prepare?(input: I, context: { readonly viewer: Viewer; readonly receipt?: Readonly<WriteReceipt>; readonly signal?: AbortSignal }): Promise<unknown>;
   /** Reserve external work synchronously in the preflight transaction, after
    * recovery and permission checks. Commit metadata only, never external effects.
    * A piece must guard this reservation in its global recovery hook and retain it
@@ -52,6 +72,8 @@ export interface Operation<I = unknown> {
   admit?(ctx: Context, input: I): void;
   /** Validate a matching cached receipt inside the transaction, including any
    * prepared source snapshot. Must not mutate; throw OperationError to refuse. */
+  /** Re-open private source evidence before validating an existing receipt. */
+  prepareReplay?(input: I): boolean;
   validateReplay?(viewer: Viewer, input: I, prepared?: unknown): void;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
@@ -73,12 +95,15 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
   return JSON.stringify(value);
 }
+/** A receipt is kept by who the credential is: its kind and id. What a door wrote on the viewer for the
+ * rules to read (the member a body works for) is not part of the key, so a retry still finds its receipt;
+ * an operation that must not replay across such a change binds it through inputHash. */
 function callerKey(viewer: Viewer): string {
-  return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical(viewer);
+  return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical({ kind: viewer.kind, id: viewer.id });
 }
 /** Shared connection write boundary supplied only by trusted composition. */
 export interface OperationWrites {
-  run<T>(operation: () => T): { value: T; notificationErrors: unknown[] };
+  run<T>(operation: () => T, stampOnly?: () => boolean): { value: T; notificationErrors: unknown[] };
 }
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
@@ -88,20 +113,15 @@ export class Operations {
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   private measuring?: Pick<Measuring, 'run' | 'runAsync'>;
-  /** Fresh composition supplies receipts backed by THIS connection. Effects and
-   * receipts then commit in one transaction without creating legacy tables.
-   * Omit only while using the legacy bootstrap; never mix stores/connections.
-   */
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; receiptScope?: (viewer:Viewer)=>string|undefined } = {}) {
-    if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
+  /** The receipt store must be backed by THIS connection, so that an effect and its receipt commit in one
+   * transaction. The dispatcher keeps no receipt table of its own. */
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; receiptScope?: (viewer:Viewer)=>string|undefined }) {
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
-    if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
-
     this.expire();
   }
-  private transaction<T>(run: () => T, write: boolean): T {
+  private transaction<T>(run: () => T, write: boolean, stampOnly?: () => boolean): T {
     if (!write || !this.options.writes) return this.db.transaction(run)();
-    const committed = this.options.writes.run(run);
+    const committed = this.options.writes.run(run, stampOnly);
     for (const error of committed.notificationErrors) {
       this.report(error);
     }
@@ -113,39 +133,27 @@ export class Operations {
   private report(error: unknown): void {
     try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
   }
-  close() { closeInternalCallers(this); this.stopExpiry?.(); unregisterBuiltinServices(this); }
+  close() { closeInternalCallers(this); this.stopExpiry?.(); }
   private expire() {
     this.stopExpiry?.();
     this.expireReceipts(this.clock.now());
-    const next = this.options.receipts ? this.options.receipts.nextExpiry() :
-      (statement(this.db, 'SELECT min(expires) AS next FROM core_operations').get() as { next: number | null }).next ?? undefined;
+    const next = this.options.receipts.nextExpiry();
     this.stopExpiry = next === undefined ? undefined : this.clock.at(next, () => this.expire());
   }
   private expireReceipts(now: number) {
-    if (this.options.receipts) this.options.receipts.expire(now);
-    else statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
+    this.options.receipts.expire(now);
   }
   private receipt(caller: string, id: string): OperationReceipt | undefined {
-    if (this.options.receipts) return this.options.receipts.get(caller, id);
-    const row = statement(this.db, 'SELECT * FROM core_operations WHERE viewer=? AND id=?').get(caller, id) as
-      { name: string; input_hash: string; result: string; expires: number } | undefined;
-    return row && { caller, id, operation: row.name, inputHash: row.input_hash, result: JSON.parse(row.result) as Result, expires: row.expires };
+    return this.options.receipts.get(caller, id);
   }
   private saveReceipt(receipt: OperationReceipt, recovery = false) {
-    if (this.options.receipts) {
-      if (recovery) this.options.receipts.recover(receipt);
-      else this.options.receipts.insert(receipt);
-    } else {
-      const sql = 'INSERT INTO core_operations VALUES (?,?,?,?,?,?)' + (recovery ?
-        ' ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires' : '');
-      statement(this.db, sql).run(receipt.caller, receipt.id, receipt.operation, receipt.inputHash, JSON.stringify(receipt.result), receipt.expires);
-    }
+    if (recovery) this.options.receipts.recover(receipt);
+    else this.options.receipts.insert(receipt);
   }
   register<I>(op: Operation<I>) {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
     if (op.admit && (!op.write || !op.prepare || !op.recover)) throw new Error('Admission needs a prepared write and global recovery');
     this.ops.set(op.name, op);
-    invalidateBuiltinServices(this.db);
     if (op.write && op.recover) this.recoveries.add(op.recover);
   }
   /** Trusted in-process recovery from a piece's durable journal, without the
@@ -176,7 +184,7 @@ export class Operations {
             recovered = candidate;
           }
         }
-        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > Math.min(receipt.expires, now + 30 * 86400_000))
+        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > Math.min(receipt.expires, now + RECEIPT_MS))
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
         const serialized = JSON.stringify(answer);
@@ -227,15 +235,11 @@ export class Operations {
   }
   measureWith(measuring: Pick<Measuring, 'run' | 'runAsync'> | undefined): void { this.measuring = measuring; }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
-  /** MCP registration is a hook; it dispatches exactly like the other doors. */
-  registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
-    for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
+  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true, signal?: AbortSignal): Promise<Result> {
+    if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid, signal);
+    return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid, signal));
   }
-  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
-    if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid);
-    return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid));
-  }
-  private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+  private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true, signal?: AbortSignal): Promise<Result> {
     if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     if (!valid()) return failure('denied', 'Authentication ended');
     if(!this.outsideAllowed(door,viewer,name))return failure('denied','Permission denied');
@@ -256,10 +260,10 @@ export class Operations {
         receipt = prior.receipt;
       } else if (!this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
       if(!valid()||!this.outsideAllowed(door,viewer,name))return failure('denied','Authentication ended');
-      const prepared = await op.prepare?.(parsed.data, {viewer, receipt});
+      const prepared = await op.prepare?.(parsed.data, {viewer, receipt, ...(signal ? {signal} : {})});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
-    } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
+    } catch (error) { return thrown(error, op.refuses); }
   }
   call(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
     if (!this.measuring || !this.ops.has(name)) return this.dispatch(door, viewer, name, input, id);
@@ -281,14 +285,17 @@ export class Operations {
     if (op.requiresWindow?.(parsed.data, viewer) && !signedInWindow(door, viewer, window)) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
-    let result: Result | PreparationNeeded;
+    let result: Result | PreparationNeeded, stampOnly = false;
     if (this.db.inTransaction && !this.frames.length) return failure('unavailable', 'Operations must own the outer transaction');
     this.frames.push(changes);
     try {
       result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
         if (!this.outsideAllowed(door,viewer,name)) return failure('denied','Permission denied');
-        if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
+        // Before any receipt or recovered commit is looked at: see recheckPolicy. A read has neither, and is
+        // checked once, below.
+        const recheck = typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy !== false;
+        if ((op.windowOnly || op.write && recheck) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         const who = callerKey(viewer);
         const fingerprint = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         // Keep the canonical principal for existing durable recovery journals.
@@ -300,13 +307,14 @@ export class Operations {
           const old = this.receipt(who, id!);
           if (old) {
             if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
+            if (preflight && op.prepare && op.prepareReplay?.(parsed.data)) return new PreparationNeeded(undefined);
             op.validateReplay?.(viewer, parsed.data, prepared);
             if(!this.outsideAllowed(door,viewer,name))throw new OperationError('denied','Permission denied');
             this.completedWriteDeadlines.set(old.result,old.expires);
             return old.result;
           }
         }
-        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
+        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + RECEIPT_MS } } : {}), changed: (type, id) => { changes.push({ type, id }); }, stampOnly: () => { stampOnly = true; } };
         let recovered: RecoveredWrite | undefined;
         if (op.write) for (const recover of this.recoveries) {
           recovered = recover(ctx);
@@ -331,12 +339,12 @@ export class Operations {
         const answer: Result = { ok: true, value: op.output.parse(value ?? null) };
         const serialized = JSON.stringify(answer);
         if (op.write) this.saveReceipt({ caller: who, id: id!, operation: name, inputHash: body,
-          result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + 30 * 86400_000 });
+          result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + RECEIPT_MS });
         const completed=JSON.parse(serialized) as Result;
-        if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + 30 * 86400_000);
+        if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + RECEIPT_MS);
         return completed;
-      }, !!op.write);
-    } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
+      }, !!op.write, () => stampOnly && !changes.length);
+    } catch (e) { result = thrown(e, op.refuses); }
     finally { this.frames.pop(); }
     if (result instanceof PreparationNeeded) return result;
     if (!result.ok && op.rejected) {

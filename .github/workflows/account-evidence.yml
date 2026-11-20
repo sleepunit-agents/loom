@@ -9,7 +9,6 @@ on:
       - 'src/shared-serve.ts'
       - 'src/shared-root.ts'
       - 'src/shared-credentials.ts'
-      - 'src/fixture.ts'
       - 'src/ui/account-next.integration.test.ts'
       - '.github/workflows/account-evidence.yml'
 permissions:
@@ -19,6 +18,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   screenshots:
+    # Browser tests are off while the web app waits its turn (Jonathan, 2026-11-16). Set the repository
+    # variable LOOM_BROWSER_TESTS to 'on' to bring them back.
+    if: vars.LOOM_BROWSER_TESTS == 'on'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

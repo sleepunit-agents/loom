@@ -11,7 +11,7 @@ export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole
   tasks:{read(viewer,q){
    const selected=readProjectTasks(db,viewer);
    const rows:ProjectTask[]=selected.rows.map(row=>({
-    id:row.id,title:row.title,status:row.status,priority:row.priority,createdAt:row.createdAt,comments:selected.comments(row.id),description:row.description,goal:row.goal,why:row.why,
+    id:row.id,title:row.title,status:row.status,shelved:row.shelved,priority:row.priority,createdAt:row.createdAt,comments:selected.comments(row.id),description:row.description,goal:row.goal,why:row.why,
     ...(row.project?{project:row.project}:{}),...(row.assignee&&row.assigneeKind===viewer.kind?{assignee:row.assignee}:{}),...(row.startedAt?{startedAt:row.startedAt}:{}),...(row.closedAt?{closedAt:row.closedAt}:{}),...(row.closeReason?{closeReason:row.closeReason}:{}),...(row.sourceKind&&row.sourceId?{source:row.sourceKind+':'+row.sourceId}:{}),
    }));
    const links=selected.links;

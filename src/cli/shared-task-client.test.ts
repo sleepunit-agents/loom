@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {Readable} from 'node:stream';
 import {createServer,type Server} from 'node:http';
 import {createDataSchema} from '../core/data/database.js';
-import {members,tokens,tasks} from '../core/data/schema.js';
+import {members,tokens,tasks,projects,projectMembers} from '../core/data/schema.js';
 import {eq} from 'drizzle-orm';
 import {serveShared} from '../shared-serve.js';
 import {FakeClock} from '../core/clock.js';
@@ -150,4 +150,24 @@ it('never follows an actual cross-origin 307 with its credential on reads or wri
  expect((await f.invoke(['ready'])).code).toBe(1);
  expect((await f.invoke(['command',JSON.stringify({action:'claim',id:'t-fictional'})])).code).toBe(1);
  expect(targetCalls).toBe(0);
+});
+it('moves tasks to a project with the same command, and prints the ones that moved',async()=>{
+ const f=await fixture(),mine=f.create('Mine'),also=f.create('Also mine'),hidden=f.create('Private Bob task','bob');
+ f.app.writes.run(()=>{f.db.insert(projects).values({id:'pond',name:'Pond'}).run();f.db.insert(projectMembers).values({project:'pond',member:'alice'}).run();f.app.services.tasks.edit(also.id,{project:'pond'},{kind:'member',id:'alice'});});
+ const moved=await f.invoke(['command',JSON.stringify({action:'moveToProject',ids:[mine.id,also.id],project:'pond'})]);
+ expect(moved.code,moved.out+moved.err).toBe(0);expect(JSON.parse(moved.out)).toEqual({ok:true,moved:[mine.id]});
+ expect(f.app.services.tasks.get(mine.id)).toMatchObject({project:'pond',comments:[{actor:'alice',text:'Moved from no project to project pond'}]});
+ // One task the caller may not act on refuses them all.
+ const refused=await f.invoke(['command',JSON.stringify({action:'moveToProject',ids:[mine.id,hidden.id],project:null})]);
+ expect(refused.code).toBe(1);expect(f.app.services.tasks.get(mine.id).project).toBe('pond');
+});
+it('marks a shelved task in list and show with a field of its own, and leaves its stored status as it is',async()=>{
+ const f=await fixture(),parked=f.create('Parked'),live=f.create('Live');
+ f.app.writes.run(()=>{f.db.insert(projects).values({id:'phasecraft',name:'Phasecraft'}).run();f.db.insert(projectMembers).values({project:'phasecraft',member:'alice'}).run();f.app.services.tasks.edit(parked.id,{project:'phasecraft'},{kind:'member',id:'alice'});});
+ const listed=async()=>Object.fromEntries((JSON.parse((await f.invoke(['list'])).out).tasks as {id:string;status:string;isReady:boolean;isShelved:boolean}[]).map(row=>[row.id,[row.status,row.isReady,row.isShelved]]));
+ expect(await listed()).toEqual({[parked.id]:['open',true,false],[live.id]:['open',true,false]});
+ f.app.writes.run(()=>f.app.services.projects.setRetired({project:'phasecraft'},true));
+ expect(await listed()).toEqual({[parked.id]:['open',false,true],[live.id]:['open',true,false]});
+ expect(JSON.parse((await f.invoke(['show',parked.id])).out).task).toMatchObject({id:parked.id,status:'open',isShelved:true});
+ expect(JSON.parse((await f.invoke(['ready'])).out).entries.map((row:{id:string})=>row.id)).toEqual([live.id]);
 });

@@ -16,7 +16,7 @@ raw `walkthrough.json`. Read all three counts: met, not met, and not checkable y
 A successful evidence job does not mean loom meets the site. To regenerate the
 report from an existing run: `node scripts/rebuild-report.mjs <artifact-directory>`.
 
-Start with **Page summary** in `report.md`: each of the 18 guided pages and the
+Start with **Page summary** in `report.md`: each of the 19 guided pages and the
 front page has met, not met and not checkable yet counts, an overall result,
 an owning task, and a link to its promise list. A page is **not met** if any
 promise failed; otherwise it is **not checkable yet** while any promise is

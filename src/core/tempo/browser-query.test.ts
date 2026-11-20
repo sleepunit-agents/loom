@@ -14,6 +14,7 @@ it('executes the actual browser selection against generated shared tables and bo
     const shared=createDataSchema(db);
     db.exec(`INSERT INTO triggers (id,owner_kind,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at)
       VALUES ('tr-1','household','time','once','operation','test','Example',1,'standing','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z')`);
+    db.prepare('UPDATE triggers SET needs=?, prefers=? WHERE id=?').run('["gpu"]', '["local"]', 'tr-1');
     const insert = db.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (?,'tr-1','2026-11-14T00:00:00Z','set','Example')");
     db.transaction(() => { for (let i = 1; i <= 201; i++) insert.run(i); })();
     // Trusted fixture policies test the generated shape, not external authority.
@@ -22,7 +23,7 @@ it('executes the actual browser selection against generated shared tables and bo
     } }), tempoQueryFields(shared,{kind:'member',id:'owner'}));
     const result = await graphql({ schema, source: tempoQuery });
     expect(result.errors).toBeUndefined();
-    expect(result.data?.triggers).toMatchObject([{ id: 'tr-1', enabled: true, note: 'Example' }]);
+    expect(result.data?.triggers).toMatchObject([{ id: 'tr-1', enabled: true, note: 'Example', needs: ['gpu'], prefers: ['local'] }]);
     expect(result.data?.triggerLog).toHaveLength(200);
     expect((result.data?.triggerLog as {seq: number}[])[0].seq).toBe(201);
     expect(result.data?.agentPauses).toEqual([]);

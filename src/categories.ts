@@ -1,11 +1,13 @@
 /**
- * Shared memory category vocabulary — the single source of truth for
- * write-side category enforcement across MCP schemas and the CLI
- * (store-convergence spec, "One boundary discipline").
+ * The memory category vocabulary, once. The commands that write a memory
+ * (src/pieces/mind/semantic-commands.ts) and the terminal tools over them
+ * (src/shared-mcp-named.ts) both take their list from here.
  *
- * Reads (recall / memory_list / forget) intentionally accept arbitrary
- * strings so memories written before the vocabulary existed (e.g.
- * legacy "general") stay reachable. Only writes are enforced.
+ * A memory is written with one of these, and recall may be narrowed to one of
+ * them. A draft (memory.propose) may carry any category; it must be one of
+ * these by the time it is ratified. Memories written before the vocabulary
+ * existed (e.g. legacy "general") are still read: nothing that reads a stored
+ * row checks its category against this list.
  */
 export const MEMORY_CATEGORIES = [
   'user',
@@ -31,6 +33,3 @@ export const FEEDBACK_CATEGORY = 'feedback';
 
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
-export function isMemoryCategory(value: string): value is MemoryCategory {
-  return (MEMORY_CATEGORIES as readonly string[]).includes(value);
-}

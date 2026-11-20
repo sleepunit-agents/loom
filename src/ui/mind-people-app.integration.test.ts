@@ -1,5 +1,5 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,6 +70,8 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       await page.screenshot({path:join(shots,`people-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     relationship.write({slug:'jonathan',summary:'Updated from outside the app'});
+    // External file writes are observed at the next program sweep. Drive its fixture clock.
+    clock.advance(60_000);
     await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     expect(app.memory.people.read('art:jonathan',{kind:'member',id:'owner'})?.card.summary).toBe('Updated from outside the app');
     phase='reload';await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
@@ -114,6 +116,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     await expect.poll(()=>b.getByRole('heading',{name:'Robin New',exact:true}).count()).toBe(1);
     expect(await b.getByText('Helps with the workshop',{exact:true}).count()).toBe(1);
     directory.archive({slug:'casey',reason:'fixture archive',actor:'owner'});
+    clock.advance(60_000);
     await expect.poll(()=>row(a,'Casey Smith').count()).toBe(0);
     }catch(error){
       // Fixture-only content; omit addresses, sign-in links, cookies and input values.
@@ -136,4 +139,4 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       console.error('People fixture diagnostics',diagnostics);throw error;
     }
   } finally {await browser.close();await fixture.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+});

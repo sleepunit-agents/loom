@@ -139,9 +139,53 @@ it('notifies lifecycle observers after commit, isolates errors and removes close
   writes.observe(()=>seen.push('other'));
   expect(()=>writes.run(()=>{throw new Error('rollback');})).toThrow('rollback');
   expect(seen).toEqual([]);
-  expect(writes.run(()=>writes.run(()=>undefined)).notificationErrors).toHaveLength(1);
+  const write=(name:string)=>()=>{db.update(projects).set({name}).where(eq(projects.id,'pond')).run();};
+  expect(writes.run(()=>writes.run(write('Nested'))).notificationErrors).toHaveLength(1);
   expect(seen).toEqual(['tempo','other']);
   stop();
-  expect(writes.run(()=>undefined).notificationErrors).toHaveLength(1);
+  expect(writes.run(write('Again')).notificationErrors).toHaveLength(1);
   expect(seen).toEqual(['tempo','other','other']);
+});
+
+it('tells nobody of a commit that wrote no row', () => {
+  const refreshAccess = vi.fn(), changed = vi.fn(), stamped = vi.fn(), observer = vi.fn();
+  const writes = new DataWrites(db, { refreshAccess, changed, stamped });
+  writes.observe(observer);
+  expect(writes.run(() => db.select().from(projects).all().length)).toEqual({ value: 1, notificationErrors: [] });
+  // An update that matches no row is no write either.
+  writes.run(() => { db.update(projects).set({ name: 'Nobody' }).where(eq(projects.id, 'absent')).run(); });
+  for (const told of [refreshAccess, changed, stamped, observer]) expect(told).not.toHaveBeenCalled();
+  writes.run(() => { db.update(projects).set({ name: 'Somebody' }).where(eq(projects.id, 'pond')).run(); });
+  expect(refreshAccess).toHaveBeenCalledOnce(); expect(changed).toHaveBeenCalledOnce(); expect(observer).toHaveBeenCalledOnce();
+  expect(stamped).not.toHaveBeenCalled();
+});
+
+it('tells a stamp-only commit to the stamp listener alone, and any run that does not vouch makes it an ordinary one', () => {
+  const refreshAccess = vi.fn(), changed = vi.fn(), stamped = vi.fn(), observer = vi.fn();
+  const writes = new DataWrites(db, { refreshAccess, changed, stamped });
+  writes.observe(observer);
+  const stamp = () => { db.update(members).set({ joinedAt: '2026-11-14T22:00:01.000Z' }).where(eq(members.id, 'sam')).run(); };
+  const share = () => { db.insert(projectMembers).values({ project: 'pond', member: 'sam' }).onConflictDoNothing().run(); db.delete(projectMembers).run(); };
+  writes.run(stamp, () => true);
+  expect(stamped).toHaveBeenCalledOnce();
+  for (const told of [refreshAccess, changed, observer]) expect(told).not.toHaveBeenCalled();
+  // The claim is asked after the work, so it can depend on what was written.
+  let vouched = true;
+  writes.run(() => { stamp(); vouched = false; }, () => vouched);
+  expect(changed).toHaveBeenCalledTimes(1); expect(refreshAccess).toHaveBeenCalledTimes(1); expect(observer).toHaveBeenCalledTimes(1);
+  // A change of access inside a stamp-only run, made through the boundary without a claim, is told at once.
+  writes.run(() => { stamp(); writes.run(share); }, () => true);
+  expect(changed).toHaveBeenCalledTimes(2); expect(refreshAccess).toHaveBeenCalledTimes(2);
+  writes.run(() => { writes.run(stamp, () => true); share(); });
+  expect(changed).toHaveBeenCalledTimes(3);
+  // The claim of one commit does not carry into the next.
+  writes.run(stamp, () => true); writes.run(share);
+  expect(changed).toHaveBeenCalledTimes(4); expect(stamped).toHaveBeenCalledTimes(2);
+});
+
+it('tells a stamp-only commit as any other where nobody listens for stamps', () => {
+  const refreshAccess = vi.fn(), changed = vi.fn();
+  const writes = new DataWrites(db, { refreshAccess, changed });
+  writes.run(() => { db.update(members).set({ joinedAt: '2026-11-14T22:00:01.000Z' }).where(eq(members.id, 'sam')).run(); }, () => true);
+  expect(refreshAccess).toHaveBeenCalledOnce(); expect(changed).toHaveBeenCalledOnce();
 });

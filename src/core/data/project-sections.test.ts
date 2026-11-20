@@ -31,8 +31,12 @@ it('bounds Project task and change batches while hidden dependencies still block
    expect(result.groups?.flatMap(g=>g.items)).toHaveLength(n+1);
   }
  }
- expect(taskCount).toBe(4);expect(changeCount).toBe(1);
+ expect(taskCount).toBe(3);expect(changeCount).toBe(1);
  service.close(hidden.id,'done');expect(sections.tasks.read(viewer,q).groups?.find(g=>g.title==='Ready')?.items.map(i=>i.ref)).toContain(blocked);
+ db.update(projects).set({retiredAt:now}).where(eq(projects.id,'pond')).run();
+ const retired=sections.tasks.read(viewer,q).groups??[];
+ expect(retired.find(g=>g.title==='Ready')?.items??[]).toHaveLength(0);
+ expect(retired.find(g=>g.title==='Shelved')?.items.map(item=>item.ref)).toContain(blocked);
  db.delete(projectMembers).where(eq(projectMembers.member,'peer')).run();expect(sections.tasks.read(viewer,q).groups).toEqual([]);expect(sections.changes.read(viewer,q).groups).toEqual([]);
  expect(db.select().from(taskLinks).all()).toHaveLength(1);
 });

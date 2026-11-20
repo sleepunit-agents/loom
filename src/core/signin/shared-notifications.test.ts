@@ -27,9 +27,14 @@ it('enrolls only a current personal browser, keeps endpoints/keys private, and r
  expect((await f.call('notifications/subscribe',input)).status).toBe(200);
  const own=(await f.read()).data.account.notifications,other=(await f.read('other')).data.account.notifications;
  expect(own).toEqual({publicKey:f.vapid.publicKey,devices:[{ref:expect.any(String),device:'Phone'}]});expect(other.devices).toEqual([]);expect(JSON.stringify(own)).not.toContain(sub.endpoint);expect(JSON.stringify(own)).not.toContain(sub.keys.auth);
- expect((await f.call('notifications/subscribe',input,'other')).status).toBe(409);
  expect((await f.call('notifications/removeDevice',{ref:own.devices[0].ref},'other')).status).toBe(404);
- expect((await f.call('notifications/removeDevice',{ref:own.devices[0].ref})).status).toBe(200);expect(f.db.select().from(notificationDevices).all()).toEqual([]);
+ // The same browser, now signed in as someone else, takes its notifications over: one endpoint, one current person.
+ expect((await f.call('notifications/subscribe',{...input,device:'Shared laptop'},'other')).status).toBe(200);
+ expect((await f.read()).data.account.notifications.devices).toEqual([]);
+ const taken=(await f.read('other')).data.account.notifications.devices;expect(taken).toEqual([{ref:expect.any(String),device:'Shared laptop'}]);
+ expect(f.db.select().from(notificationDevices).all()).toHaveLength(1);
+ expect((await f.call('notifications/removeDevice',{ref:taken[0].ref})).status).toBe(404);
+ expect((await f.call('notifications/removeDevice',{ref:taken[0].ref},'other')).status).toBe(200);expect(f.db.select().from(notificationDevices).all()).toEqual([]);
 });
 it('pushes only currently visible settled full-volume Inbox items, once, without their words',async()=>{
  const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});f.item('allowed');f.item('muted',{volume:'mute'});f.item('hidden',{member:'other'});f.item('other-person',{to:'other',member:'other'});

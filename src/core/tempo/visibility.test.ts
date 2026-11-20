@@ -37,43 +37,48 @@ beforeEach(() => {
   rows.forEach((row, i) => {
     insert.run(...row, row[0], `words ${row[0]}`);
     client.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (?,?,'2026-11-14T00:00:00Z','set',?)").run(i + 1, row[0], `log ${row[0]}`);
+    client.prepare("INSERT INTO trigger_edits (seq,trigger,at,by_kind,\"by\",\"before\") VALUES (?,?,'2026-11-14T00:00:00Z','member','owner',?)").run(i + 1, row[0], `was ${row[0]}`);
   });
 });
 afterEach(() => client.close());
 const schemaFor = (viewer: Viewer) => dataQueries(client, {
-  tables: ['triggers','triggerLog','agentPauses'], visibility: tempoVisibility(viewer),
+  tables: ['triggers','triggerLog','triggerEdits','agentPauses'], visibility: tempoVisibility(viewer),
 });
-const source = '{ triggers(orderBy:{id:{direction:asc,priority:0}}) { id instructions } triggerLog(orderBy:{seq:{direction:asc,priority:0}}) { trigger note } agentPauses(orderBy:{agent:{direction:asc,priority:0}}) { agent } }';
+const source = '{ triggers(orderBy:{id:{direction:asc,priority:0}}) { id instructions } triggerLog(orderBy:{seq:{direction:asc,priority:0}}) { trigger note } triggerEdits(orderBy:{seq:{direction:asc,priority:0}}) { trigger before } agentPauses(orderBy:{agent:{direction:asc,priority:0}}) { agent } }';
 const shared = ['b-project','c-owned','g-operation'];
 
 it.each([
   [{kind:'member',id:'owner'}, ['a-hidden',...shared.slice(0,2),'d-person','e-authored','f-global','g-operation'], ['art','hidden','mark']],
-  [{kind:'member',id:'sam'}, shared, ['art','mark']],
+  // sam also sees the trigger sam set for sam, though it is in no project.
+  [{kind:'member',id:'sam'}, ['b-project','c-owned','d-person','g-operation'], ['art','mark']],
   [{kind:'agent',id:'art'}, shared, ['art','mark']],
   [{kind:'agent',id:'mark'}, ['b-project','g-operation'], ['art','mark']],
-  [{kind:'member',id:'other'}, [], []],
+  // other is on no project and owns no agent, but set two triggers, one of them for other.
+  [{kind:'member',id:'other'}, ['b-project','c-owned'], []],
   [{kind:'member',id:'absent'}, [], []],
   [{kind:'agent',id:'absent'}, [], []],
   [{kind:'runner',id:'owner'}, [], []],
   [{kind:'service',id:'art'}, [], []],
-] as const)('applies project OR recipient-agent visibility for %j', async (viewer, ids, pauses) => {
+] as const)('applies project, recipient-agent and own-trigger visibility for %j', async (viewer, ids, pauses) => {
   const result = await graphql({schema:schemaFor(viewer), source});
   expect(result.errors).toBeUndefined();
   expect(result.data?.triggers).toEqual(ids.map(id => ({id,instructions:`words ${id}`})));
   expect(result.data?.triggerLog).toEqual(ids.map(trigger => ({trigger,note:`log ${trigger}`})));
+  expect(result.data?.triggerEdits).toEqual(ids.map(trigger => ({trigger,before:`was ${trigger}`})));
   expect(result.data?.agentPauses).toEqual(pauses.map(agent => ({agent})));
 });
 
 it('filters before root pagination and correlated generated relations', async () => {
+  client.prepare('UPDATE triggers SET needs=?, prefers=? WHERE id=?').run('["linux"]', '["fast"]', 'b-project');
   statements.length = 0;
   const result = await graphql({schema:schemaFor({kind:'member',id:'sam'}),source:`{
     triggers(orderBy:{id:{direction:asc,priority:0}},limit:1) { id triggerLogByTrigger { trigger note triggerRow { id } } }
-    triggerLog(orderBy:{seq:{direction:asc,priority:0}},limit:1) { trigger triggerRow { id instructions } }
+    triggerLog(orderBy:{seq:{direction:asc,priority:0}},limit:1) { trigger triggerRow { id instructions needs prefers } }
   }`});
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({
     triggers:[{id:'b-project',triggerLogByTrigger:[{trigger:'b-project',note:'log b-project',triggerRow:{id:'b-project'}}]}],
-    triggerLog:[{trigger:'b-project',triggerRow:{id:'b-project',instructions:'words b-project'}}],
+    triggerLog:[{trigger:'b-project',triggerRow:{id:'b-project',instructions:'words b-project',needs:['linux'],prefers:['fast']}}],
   });
   const reads=statements.filter(s=>/^select /i.test(s));
   expect(reads).toHaveLength(2);
@@ -88,7 +93,8 @@ it('rechecks project membership, agent ownership, recipient and owner role in re
   for(const schema of [sam,owner]) {
     const result=await graphql({schema,source});
     expect(result.errors).toBeUndefined();
-    expect(result.data).toEqual({triggers:[],triggerLog:[],agentPauses:[]});
+    // Losing projects and agents leaves a person only the trigger they set for themselves.
+    expect(result.data).toEqual(schema===sam?{triggers:[{id:'d-person',instructions:'words d-person'}],triggerLog:[{trigger:'d-person',note:'log d-person'}],triggerEdits:[{trigger:'d-person',before:'was d-person'}],agentPauses:[]}:{triggers:[],triggerLog:[],triggerEdits:[],agentPauses:[]});
   }
   expect((await graphql({schema:art,source})).data?.triggers).toEqual([{id:'c-owned',instructions:'words c-owned'}]);
   client.exec("UPDATE triggers SET \"to\"='hidden' WHERE id='c-owned'");
@@ -140,7 +146,8 @@ it('captures identity scalars and cannot bypass denial with aliases or filters',
   viewer.id='owner';
   const result=await graphql({schema,source:'{ stolen:triggers(where:{id:{eq:"a-hidden"}},limit:1){id instructions} logs:triggerLog{note} }'});
   expect(result.errors).toBeUndefined();
-  expect(result.data).toEqual({stolen:[],logs:[]});
+  // The schema keeps the identity it was built for: other's own two triggers, never the owner's view.
+  expect(result.data).toEqual({stolen:[],logs:[{note:'log b-project'},{note:'log c-owned'}]});
   expect(schema.getMutationType()).toBeUndefined();
 });
 it('shows recipient-free agent operation triggers to that agent and its owners, with current ownership rechecked',async()=>{
@@ -171,4 +178,15 @@ it('does not turn authorship of an explicitly addressed operation into agent-own
   expect((result.data?.triggers as {id:string}[]).map(t=>t.id)).not.toContain('explicit-operation');
   expect((result.data?.triggerLog as {trigger:string}[]).map(t=>t.trigger)).not.toContain('explicit-operation');
  }
+});
+
+it('keeps program state and configuration out of table projections, including filters and relations', async () => {
+  const schema = schemaFor({ kind: 'member', id: 'sam' });
+  for (const source of [
+    '{ triggers { program } }',
+    '{ triggerLog { triggerRow { programState } } }',
+    '{ triggers(where:{programState:{eq:"draft"}}) { id } }',
+    '{ triggers(where:{OR:[{readStateFrom:{eq:"private"}}]}) { id } }',
+    '{ triggers(orderBy:{program:{direction:asc,priority:0}}) { id } }',
+  ]) expect((await graphql({ schema, source })).errors?.length).toBeGreaterThan(0);
 });

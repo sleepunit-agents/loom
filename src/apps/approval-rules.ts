@@ -1,13 +1,18 @@
 /** Standing answers over the approved table. The caller supplies trusted actingFor
  * member ID context; query text or a merely readable record cannot supply that identity. */
+import {parseMergeTarget} from './merge-target.js';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { OperationError } from '../core/operations/index.js';
 import { approvalRules, members, projects } from '../core/data/schema.js';
-export const approvalRuleKind=z.enum(['merge','command','setting','dangerous']);
+import { householdOwners, sharedSharing } from '../shared-sharing.js';
+import { isNobody, rulesPerson } from '../policy.js';
+export const approvalRuleKind=z.enum(approvalRules.kind.enumValues);
 const scope=z.string().trim().min(1).max(256).refine(value=>!/[\u0000-\u001f\u007f]/.test(value),'Invalid scope');
-export const approvalRuleInput=z.object({kind:approvalRuleKind,scope,person:z.string().max(100).default(''),tier:z.enum(['ask','tell','do']).nullable()}).strict();
+/** What a standing rule may answer: the column's own choices. */
+export const approvalTier=z.enum(approvalRules.tier.enumValues);
+export const approvalRuleInput=z.object({kind:approvalRuleKind,scope,person:z.string().max(100).default(''),tier:approvalTier.nullable()}).strict();
 export type RuleInput=z.input<typeof approvalRuleInput>;
 type Rule=typeof approvalRules.$inferSelect;
 /** Linear-space wildcard matching; a pattern cannot introduce a regular expression. */
@@ -22,7 +27,11 @@ function matches(pattern:string,text:string){
   return previous[letters.length];
 }
 export function approvalRulesService(db:DataDatabase,now:()=>string){
-  const owner=(id:string)=>db.select().from(members).where(and(eq(members.id,id),eq(members.role,'owner'))).get();
+  const owner=(id:string)=>householdOwners(db).includes(id);
+  /** Whose rules answer for this principal (a card's `acting_for`): policy.ts, `rulesPerson`. */
+  const personFor=(actingFor:string,kind:Rule['kind']='merge'):string|undefined=>{
+    return rulesPerson(actingFor,kind,sharedSharing(db));
+  };
   const canonical=(input:RuleInput)=>{
     const value=approvalRuleInput.parse(input);
     if(value.scope.startsWith('project:')){
@@ -35,6 +44,7 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
     return value;
   };
   return {
+    validate:canonical,
     set(input:RuleInput,by:string){
       return db.transaction(()=>{
         if(!owner(by))throw new OperationError('denied','A household owner is required');
@@ -44,16 +54,16 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
         return key;
       });
     },
+    personFor,
     list(){return db.select().from(approvalRules).orderBy(asc(approvalRules.kind),asc(approvalRules.scope),asc(approvalRules.person)).all();},
     /** No executor: a trusted caller consumes this answer in its own current
      * command/approval checks. Unknown principals always ask. Named-person
      * grants never become household rules and stale setters grant nothing. */
     resolve(input:{kind:Rule['kind'];target:string;project?:string|null;actingFor:string}):Pick<Rule,'tier'|'scope'|'person'|'setBy'>|undefined{
-      if(!input.actingFor||['unknown','?'].includes(input.actingFor)||input.target.length>8192)return;
-      const principal=db.select().from(members).where(eq(members.id,input.actingFor)).get();
-      if(!principal)return;
-      const person=principal.role==='owner'?'':input.actingFor;
-      const target=input.kind==='merge'?/^github:([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#[1-9][0-9]*@[a-f0-9]{40}$/.exec(input.target)?.[1]:input.target;
+      if(isNobody(input.actingFor)||input.target.length>8192)return;
+      const person=personFor(input.actingFor,input.kind);
+      if(person===undefined)return;
+      const target=input.kind==='merge'?parseMergeTarget(input.target)?.repository:input.target;
       if(!target)return;
       const lookup=input.kind==='merge'?`github:${target.toLowerCase()}`:target;
       const hits=db.select().from(approvalRules).where(and(eq(approvalRules.kind,input.kind),eq(approvalRules.person,person))).all().flatMap(rule=>{

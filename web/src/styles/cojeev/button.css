@@ -21,6 +21,9 @@
 .v-btn[data-slot].-danger:not(:disabled):not([aria-disabled="true"]):hover { background:color-mix(in oklab,var(--v-danger-fill) 88%,black); }
 :root[data-mode="dark"] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]:not([aria-busy="true"])) { background:var(--v-pink); color:var(--v-on-accent); }
 :root[data-mode="dark"] .v-btn[data-slot]:is(.-ghost,.-outline) { color:var(--v-text); }
+/* Quiet danger keeps its ink over the outline's. */
+:root .v-btn[data-slot].-danger-quiet:not(:disabled):not([aria-disabled="true"]) { color:var(--v-danger-ink); }
+.v-btn[data-slot].-danger-quiet:not(:disabled):not([aria-disabled="true"]):hover { background:color-mix(in srgb,var(--v-danger) 10%,transparent); }
 .v-btn[data-slot] .v-icon { width:18px; height:18px; }
 .v-btn[data-slot][aria-busy="true"] { position:relative; cursor:progress; gap:var(--s-3); }
 .v-btn__loading[data-slot] { display:inline-flex; align-items:center; justify-content:center; flex:none; pointer-events:none; }

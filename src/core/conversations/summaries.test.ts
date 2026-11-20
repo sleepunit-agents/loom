@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -58,7 +59,7 @@ it('returns only the latest agent reply, selected lazily through the shared quer
   await commsPersonAnswer(f);
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'card', words: 'Later progress' });
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
-  const contextValue = { viewer: { kind: 'member', id: 'owner' } };
+  const contextValue = { viewer: { kind: 'member', id: 'alice' } };
   const metadata = await graphql({ schema, source: '{ recentConversations(agent:"art") { label place } }', contextValue });
   expect(metadata.errors).toBeUndefined(); expect(f.opens()).toBe(0);
   expect(JSON.parse(JSON.stringify(metadata.data))).toEqual({ recentConversations: [{ label: 'Private pump', place: f.thread.id }] });
@@ -74,17 +75,17 @@ it('withholds words when sharing, exact ciphertext, retention or the thread chan
     await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Private answer' });
     f.onOpen(() => {
       if (change === 'scope') f.db.update(conversations).set({ member: 'bob' }).where(eq(conversations.id, f.thread.conversation)).run();
-      if (change === 'sharing') f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run();
+      if (change === 'sharing') f.db.update(members).set({ removedAt: '2026-11-14T18:00:00.000Z' }).where(eq(members.id, 'alice')).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Replacement') }).run();
       if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
       if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-16T18:00:00.000Z' }).run();
       if (change === 'expiry') f.setTime('2026-11-29T18:00:00.000Z');
       if (change === 'delete') f.comms.delete(f.thread.id);
     });
-    if (path === 'internal') expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation), change).toBeNull();
+    if (path === 'internal') expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation), change).toBeNull();
     else {
       const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
-      const result = await graphql({ schema, source: '{ recentConversations(agent:"art") { lastAnswer { words } } }', contextValue: { viewer: { kind: 'member', id: 'owner' } } });
+      const result = await graphql({ schema, source: '{ recentConversations(agent:"art") { lastAnswer { words } } }', contextValue: { viewer: { kind: 'member', id: 'alice' } } });
       expect(JSON.stringify(result.data), change).not.toContain('Private answer');
     }
   }
@@ -95,7 +96,7 @@ it('never falls back to an older answer when the latest reply words are unavaila
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Older' });
   const latest = await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Latest' });
   f.db.update(messages).set({ words: null }).where(eq(messages.seq, latest.seq)).run();
-  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(0);
 });
 it('applies a shortened household keep time to existing replies before decrypting', async () => {
@@ -103,7 +104,7 @@ it('applies a shortened household keep time to existing replies before decryptin
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Old answer' });
   f.db.insert(household).values({ commsDays: 1 }).run();
   f.setTime('2026-11-15T18:00:00.000Z');
-  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(0);
 });
 
@@ -111,7 +112,7 @@ it('withholds words after an earlier stored deadline even when message age is st
   const f = setup();
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Answer' });
   f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).run();
-  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(0);
 });
 it('enforces the fourteen-day household keep maximum at the database boundary', () => {
@@ -131,7 +132,7 @@ it('withholds last-answer wording at an equal whole-second stored deadline', asy
   const f = setup();
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Expired answer' });
   f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
-  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(0);
 });
 
@@ -140,7 +141,7 @@ it('rechecks the independent household age deadline after opening the latest ans
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Household expiry' });
   f.db.insert(household).values({ commsDays: 1 }).run();
   f.onOpen(() => f.setTime('2026-11-15T18:00:00.000Z'));
-  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'alice' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(1);
 });
 
@@ -160,7 +161,7 @@ it('selects the latest reply across all visible conversations before bounding, i
 });
 
 it('bounds the generated recent-answer selection at two and ten conversations', async () => {
-  const f = setup(), viewer = { kind: 'member', id: 'owner' };
+  const f = setup(), viewer = { kind: 'member', id: 'alice' };
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
   const source = '{ recentConversations(agent:"art",limit:25,answeredOnly:true) { id lastAnswer { at words } } }';
   const read = async () => {
@@ -185,8 +186,21 @@ it('reads timestamp-only last answers without loading ciphertext or opening word
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Private answer' });
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
   f.statements.length = 0;
-  const result = await graphql({ schema, source: 'query($words:Boolean!){recentConversations(agent:"art"){reply:lastAnswer{...Stamp words @include(if:$words)}}} fragment Stamp on ConversationLastAnswer{when:at}', variableValues: { words: false }, contextValue: { viewer: { kind: 'member', id: 'owner' } } });
+  const result = await graphql({ schema, source: 'query($words:Boolean!){recentConversations(agent:"art"){reply:lastAnswer{...Stamp words @include(if:$words)}}} fragment Stamp on ConversationLastAnswer{when:at}', variableValues: { words: false }, contextValue: { viewer: { kind: 'member', id: 'alice' } } });
   expect(result.errors).toBeUndefined(); expect(result.data).toMatchObject({ recentConversations: [{ reply: { when: '2026-11-14T18:00:00.000Z' } }] });
   expect(f.opens()).toBe(0);
   expect(f.statements.filter(statement => statement.includes('from "messages"')).every(statement => !/select[^]*"words",/.test(statement))).toBe(true);
+});
+
+it('answers the card’s one request (web talk.tsx): recent conversations and the latest answered one, side by side', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Private answer' });
+  const source = /cardTalkQuery = `([^`]+)`/.exec(readFileSync(new URL('../../../web/src/pieces/attention/talk.tsx', import.meta.url), 'utf8'))![1];
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
+  const read = (id: string) => graphql({ schema, source, variableValues: { agent: 'art', limit: 3 }, contextValue: { viewer: { kind: 'member', id } } });
+  const mine = await read('alice'); expect(mine.errors).toBeUndefined();
+  expect(mine.data).toMatchObject({ recent: [{ id: f.thread.conversation, agent: 'art', venue: 'loom', place: f.thread.id }],
+    answered: [{ id: f.thread.conversation, venue: 'loom', place: f.thread.id, lastAnswer: { words: 'Private answer' } }] });
+  // Another member reads neither the conversation nor its answer.
+  const theirs = JSON.stringify((await read('bob')).data); expect(theirs).not.toContain(f.thread.id); expect(theirs).not.toContain('Private answer'); expect(theirs).toContain('"answered":[]');
 });

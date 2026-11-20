@@ -13,7 +13,7 @@
 // angle, after a few seconds, a fair chance to come back. Waiting on you is south only (it's looking at him), and turns
 // back to south first; error and done may stay angled. A turn is a cut at the rest frame.
 //
-// What plays is the agent's manifest (src/household.ts): per state and facing, its animations (a row of a sheet, its
+// What plays is the agent's manifest (src/desk-sprite-layout.ts): per state and facing, its animations (a row of a sheet, its
 // frame count) with weights, one picked by weight at each beat among the facing's own (say the usual idle at 85, a
 // rare neck crack at 15), a rare one never twice in a row. A facing's animations differ from south's, on purpose; a facing with none for a state uses that
 // state's south (south-west: south-east's, mirrored, first).
@@ -43,9 +43,9 @@ const FACINGS = ['south', 'south-east', 'south-west'] as const;
 type Facing = typeof FACINGS[number];
 /** One animation: a row of a sheet, its frame count, its weight among its state's animations in that facing. */
 type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; rest?: number };
-/** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
+/** The agent's manifest (src/desk-sprite-layout.ts SpriteManifest): its states by PixelLab's names. */
 type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>>;
-  /** drawn smaller or larger (src/household.ts: 0.5 to 1.5), and moved, in the sheet's pixels: tuned per agent in the file */
+  /** drawn smaller or larger (src/desk-sprite-layout.ts: 0.5 to 1.5), and moved, in the sheet's pixels: tuned per agent in the file */
   scale?: number; offset?: [number, number];
   /** A small avatar's crop of its rest frame (idle, south), in the cell's pixels; else a 24-pixel square over the top
    * of what's drawn there (PixelAvatar). */

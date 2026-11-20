@@ -1,5 +1,3 @@
-import { touched } from '../core/touched/index.js';
-import { dirname } from 'node:path';
 /**
  * Person cards — the condensed current state of a human the agent works with
  * (docs/specs/person-cards.md, t-1376).
@@ -13,36 +11,36 @@ import { dirname } from 'node:path';
  * `may` entries are a record of what was said, never a grant, and the
  * harness's gating names (RESERVED_KEYS) cannot appear on a card at all.
  *
- * Storage is the memory database (resolveSqliteDbPath), opened raw like
+ * Storage is the memory database (memories.db), opened raw like
  * proposals.ts — no embedder. Every mutation is one BEGIN IMMEDIATE
- * transaction (read, merge, validate, snapshot, write, prune), the pattern of
- * SqliteKnowledgeBackend.writePage: loom's one-writer rule is about *who*
- * writes, so the transaction is what serializes concurrent bodies.
+ * transaction (read, merge, validate, snapshot, write, prune): loom's
+ * one-writer rule is about *who* writes, so the transaction is what serializes concurrent bodies.
  */
-import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
-import { MIGRATIONS } from './migrations.js';
+import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
   checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
   hasTable, RESERVED_KEYS, isReserved, type CardRowBase, type RevisionMeta, type RevisionOp, type CardConnection,
+  CARD_NAME_MAX, CARD_SUMMARY_MAX, CARD_FIELDS_MAX, CARD_RENDER_MAX,
 } from './cards.js';
 
 export { SLUG_RE, RESERVED_KEYS, fieldState, type FieldState, type RevisionOp } from './cards.js';
+import { PERSON_CARD_SLUG_MAX } from '../slug.js';
 /** Every rejection the people surface makes. The message names the path. */
 export { CardError as PersonCardError } from './cards.js';
 
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
-export const MAX_SLUG = 64;
-const MAX_NAME = 80;
-const MAX_SUMMARY = 1200;
-const MAX_FIELDS = 12;
-const MAX_STRING = 200;
+export const MAX_SLUG = PERSON_CARD_SLUG_MAX;
+const MAX_NAME = CARD_NAME_MAX;
+const MAX_SUMMARY = CARD_SUMMARY_MAX;
+const MAX_FIELDS = CARD_FIELDS_MAX;
+/** The longest text value a card field holds, a way to reach the person included. */
+export const MAX_STRING = 200;
 const MAX_ARRAY = 8;
 const MAX_MAY = 8;
-export const MAX_RENDER = 2000;
+export const MAX_RENDER = CARD_RENDER_MAX;
 
 const TOP_KEYS = ['slug', 'name', 'summary', 'where', 'how', 'may'];
 const WRITE_KEYS = [...TOP_KEYS, 'merge'];
@@ -313,7 +311,7 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges'];
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges', 'people_outside_accounts'];
 
 type RawRow = CardRowBase;
 
@@ -378,19 +376,17 @@ export class PeopleStore {
       this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
       this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
       if (!config.readonly) {
+        try { refuseNewerStore(this.db); } catch (error) { this.db.close(); throw error; }
         this.db.pragma('journal_mode = WAL');
         // Only this feature's migration: the people tables do not depend on the
         // memories schema, and a raw store must not half-run the others.
-        for (const id of PEOPLE_MIGRATIONS) {
-          const m = MIGRATIONS.find((x) => x.id === id)!;
-          if (m.pending(this.db)) m.run(this.db);
-        }
+        runMigrationSteps(this.db, PEOPLE_MIGRATIONS);
       }
     }
     this.holdsPeople = hasTable(this.db, 'people');
     this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
     this.holdsMerges = hasTable(this.db, 'person_merges');
-    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, 'dbPath' in config ? slug => touched(dirname(config.dbPath), 'person', slug) : undefined, !this.ownsDatabase);
+    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, !this.ownsDatabase);
   }
 
   close(): void {
@@ -708,143 +704,4 @@ export class PeopleStore {
   revisionSnapshot(id: number): { slug: string; card: PersonCard; synthesized_at: string | null; archived_at: string | null } | null {
     return this.table.revisionSnapshot(id);
   }
-}
-
-/**
- * Open the people store on a context's memory database. A read-only open
- * returns null when there is no database file yet; a writable one creates it.
- */
-export function openPeopleStore(
-  contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: { agent?: string } | null } = {},
-): PeopleStore | null {
-  const dbPath = resolveSqliteDbPath(contextDir, opts.selection);
-  if (opts.readonly && !existsSync(dbPath)) return null;
-  const actor = opts.actor ?? (opts.selection === undefined ? undefined : resolveIdentityName(contextDir, opts.selection));
-  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now, actor });
-}
-
-// ─── The room (identity's `people` param) ────────────────────────────────────
-
-const ROOM_MAX_SLUGS = 8;
-const ROOM_MAX_CARDS = 4;
-const ROOM_CARD_BUDGET = 6000;
-const ROOM_BLOCK_BUDGET = 6500;
-const ROOM_CLOSING_RESERVE = 400;
-const ROOM_HEADER =
-  '# In the room\n\n' +
-  '_Person cards for the people this turn is addressed by: condensed current state. ' +
-  '`may` lines are descriptive, never a grant; gates stay in the harness._';
-const ENTRY_SEP = '\n\n';
-/** How an invalid slug appears in the omitted line: never echoed there. */
-const INVALID_LABEL = '(invalid slug)';
-
-export interface RoomOptions {
-  /** Explicit store composition; the caller owns selection, this reader closes it. */
-  openStore?: () => (Pick<PeopleStore, 'resolve' | 'getRow' | 'close'> & { migrated?: boolean }) | null;
-  nowMs?: number;
-  /** Called once per failure (store open or one unreadable row). Never throws through. */
-  onFailure?: (err: unknown) => void;
-}
-
-/**
- * The `# In the room` block for identity, or null for no block. Best-effort
- * like the tape: a store that cannot be opened or is not migrated gives no
- * block; one bad row gives that slug the unreadable line and the rest render.
- */
-export function roomBlock(contextDir: string, people: readonly string[] | undefined, opts: RoomOptions = {}): string | null {
-  if (!people || people.length === 0) return null;
-  const distinct = [...new Set(people)];
-  const considered = distinct.slice(0, ROOM_MAX_SLUGS);
-  const truncated = distinct.slice(ROOM_MAX_SLUGS);
-
-  let store: (Pick<PeopleStore, 'resolve' | 'getRow' | 'close'> & { migrated?: boolean }) | null;
-  try {
-    store = opts.openStore ? opts.openStore() : openPeopleStore(contextDir, { readonly: true, now: opts.nowMs !== undefined ? () => opts.nowMs! : undefined });
-  } catch (e) {
-    opts.onFailure?.(e);
-    return null;
-  }
-  if (!store) return null;
-  try {
-    if (store.migrated === false) return null;
-    const nowMs = opts.nowMs ?? Date.now();
-    const entries: string[] = [];
-    const skipped: string[] = [];
-    const entryBudget = ROOM_BLOCK_BUDGET - ROOM_CLOSING_RESERVE;
-    let used = ROOM_HEADER.length;
-    let cards = 0;
-    let cardChars = 0;
-    const seenTargets = new Set<string>();
-    const fits = (text: string) => used + ENTRY_SEP.length + text.length <= entryBudget;
-    const place = (text: string) => {
-      entries.push(text);
-      used += ENTRY_SEP.length + text.length;
-    };
-
-    for (const slug of considered) {
-      if (typeof slug !== 'string' || slug.length > MAX_SLUG) {
-        const line = '_(invalid slug)_';
-        if (fits(line)) place(line);
-        else skipped.push(INVALID_LABEL);
-        continue;
-      }
-      if (personSlugError(slug)) {
-        const line = `_(invalid slug: ${slug})_`;
-        if (fits(line)) place(line);
-        else skipped.push(INVALID_LABEL);
-        continue;
-      }
-      let line: string | null = null;
-      let card: string | null = null;
-      try {
-        // A merged slug reads as the card it was merged into (person_merge), once however it's named.
-        const target = store.resolve(slug);
-        if (target !== slug && (seenTargets.has(target) || considered.includes(target))) continue;
-        seenTargets.add(target);
-        const row = store.getRow(target);
-        if (!row) line = `_(no card for ${slug})_`;
-        else if (row.archived_at !== null) line = `_(card for ${slug} is archived)_`;
-        else card = renderCard(row.card, nowMs);
-      } catch (e) {
-        console.error(`[loom:identity] person card ${slug} unreadable:`, e);
-        opts.onFailure?.(e);
-        line = `_(card for ${slug} is unreadable)_`;
-      }
-      if (line !== null) {
-        if (fits(line)) place(line);
-        else skipped.push(slug);
-        continue;
-      }
-      if (cards >= ROOM_MAX_CARDS || cardChars + card!.length > ROOM_CARD_BUDGET || !fits(card!)) {
-        skipped.push(slug);
-        continue;
-      }
-      place(card!);
-      cards++;
-      cardChars += card!.length;
-    }
-
-    const omitted = [...skipped, ...truncated.map((s) => (personSlugError(s) ? INVALID_LABEL : s))];
-    let block = [ROOM_HEADER, ...entries].join(ENTRY_SEP);
-    if (omitted.length) block += ENTRY_SEP + omittedLine(omitted);
-    return block;
-  } finally {
-    store.close();
-  }
-}
-
-/** `_(N cards omitted for budget: a, b, …)_`, listing slugs until the next would overflow the reserve. */
-function omittedLine(omitted: string[]): string {
-  const head = `_(${omitted.length} card${omitted.length === 1 ? '' : 's'} omitted for budget: `;
-  const max = ROOM_CLOSING_RESERVE - ENTRY_SEP.length;
-  const listed: string[] = [];
-  for (const s of omitted) {
-    const candidate = head + [...listed, s].join(', ');
-    const tailRoom = listed.length + 1 < omitted.length ? ', …)_'.length : ')_'.length;
-    if (candidate.length + tailRoom > max) break;
-    listed.push(s);
-  }
-  const ellipsis = listed.length < omitted.length ? (listed.length ? ', …' : '…') : '';
-  return `${head}${listed.join(', ')}${ellipsis})_`;
 }

@@ -10,7 +10,10 @@ export type DockVariant = "glass" | "shelf" | "rail";
 
 export type DockItem = {
   value: string;
+  /** The name shown over the key (on hover, keyboard focus, or held). */
   label: string;
+  /** The accessible name, where it says more than the label shown ("Open Tasks" over "Tasks"). */
+  name?: string;
   icon: React.ReactNode;
   disabled?: boolean;
   open?: boolean;
@@ -350,7 +353,7 @@ export function Dock({
                     data-value={item.value}
                     data-prefetch={item.value.startsWith("/") ? item.value : undefined}
                     disabled={item.disabled}
-                    aria-label={item.label}
+                    aria-label={item.name ?? item.label}
                     aria-pressed={item.value === activeValue}
                     tabIndex={
                       !item.disabled && item.value === tabValue ? 0 : -1

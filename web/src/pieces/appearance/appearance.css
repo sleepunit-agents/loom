@@ -1,0 +1,13 @@
+/* Appearance: one column of a person's own settings, in labelled sections. */
+.next-appearance { display:grid; gap:24px; max-width:640px; padding:4px 20px 24px; }
+.next-appearance-section { display:grid; gap:4px; min-width:0; }
+.next-appearance-section > h2 { font:700 11px var(--font-display); text-transform:uppercase; letter-spacing:.14em; color:var(--v-text-3); padding-bottom:6px; border-bottom:1px solid var(--v-border); }
+.next-appearance-choice { display:grid; gap:6px; padding:12px 0; border-bottom:1px solid var(--v-border); min-width:0; }
+.next-appearance-choice > b { font-weight:var(--fw-medium,500); }
+.next-appearance-choice > small { color:var(--v-text-2); }
+.next-appearance-section > :last-child { border-bottom:0; }
+.next-appearance-status { display:flex; align-items:center; gap:12px; min-height:20px; font-size:13px; color:var(--v-text-2); }
+.next-appearance-status p:empty { display:none; }
+.next-appearance-status:has(p:empty):not(:has(button)) { display:none; }
+@media (prefers-contrast:more) { .next-appearance-section > h2, .next-appearance-choice > small { color:var(--v-text); } }
+[data-contrast=more] .next-appearance-section > h2, [data-contrast=more] .next-appearance-choice > small { color:var(--v-text); }

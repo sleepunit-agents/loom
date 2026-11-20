@@ -26,6 +26,8 @@ export const APP_TINTS: Readonly<Record<string, Tint>> = {
   Account: 'pink', Profile: 'pink', Passkeys: 'olive',
   // loom's own places
   Activity: 'pink', Knowledge: 'blue', People: 'yellow', Mind: 'blue', Projects: 'olive',
+  // The how-it-works site's colours for these (its violet is olive here)
+  Tempo: 'olive', Sharing: 'olive',
   // Setup's own
   Members: 'olive', Pieces: 'yellow', Appearance: 'pink', Accessibility: 'blue',
   // The catalog's pieces (assets/pieces.json), by their tabs' labels

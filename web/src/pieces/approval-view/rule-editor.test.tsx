@@ -2,7 +2,8 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {createElement as h,type ReactNode} from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import {act,create} from 'react-test-renderer';
-vi.mock('../../kit',()=>({Input:(props:object)=>h('input',props),Button:(props:{children?:ReactNode})=>h('button',props,props.children),Error:({text}:{text:string})=>h('p',{},text)}));
+vi.mock('../../kit',()=>({Input:(props:object)=>h('input',props),Button:(props:{children?:ReactNode})=>h('button',props,props.children),Error:({text}:{text:string})=>h('p',{},text),
+ ...Object.fromEntries(['Actions','Body','Field'].map(name=>[name,(props:{children?:ReactNode})=>h(name,props,props.children)])),Fields:(props:{children?:ReactNode})=>h('fieldset',props,props.children)}));
 import {RuleEditor,type SaveRule} from './rule-editor';
 import type {Rule} from './model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -22,25 +23,29 @@ it('keeps an unconfirmed rule intent ID for explicit retry, and creates a new in
 it('holds fields during pending save, prevents duplicate submit and waits for canonical rule publication',async()=>{
  let done!:()=>void;const save=vi.fn(()=>new Promise<void>(resolve=>{done=resolve;}));
  await act(async()=>{tree=create(h(RuleEditor,{rules:[],save}));});await fill('Scope','project:pond');await submit();await submit();
+ const remove=()=>tree.root.findAllByType('button').some((button:{props:{children:unknown}})=>button.props.children==='Remove rule');
  expect(save).toHaveBeenCalledTimes(1);expect(tree.root.findByType('fieldset').props.disabled).toBe(true);expect(words()).toContain('Saving rule…');
- expect(tree.root.findAllByType('option').some((option:{props:{children:unknown}})=>String(option.props.children).includes('project:pond'))).toBe(false);
- await act(async()=>done());expect(tree.root.findAllByType('option').some((option:{props:{children:unknown}})=>String(option.props.children).includes('project:pond'))).toBe(false);
+ // Nothing says the rule exists (Remove is offered for one that does) until the program publishes it.
+ expect(remove()).toBe(false);
+ await act(async()=>done());expect(remove()).toBe(false);
  const rule:Rule={kind:'merge',scope:'project:pond',person:'',tier:'ask',setBy:'pat',setAt:'2026-11-15T00:00:00Z'};
- await act(async()=>tree.update(h(RuleEditor,{rules:[rule],save})));expect(tree.root.findAllByType('option').some((option:{props:{children:unknown}})=>String(option.props.children).includes('project:pond'))).toBe(true);
+ await act(async()=>tree.update(h(RuleEditor,{rules:[rule],save})));expect(remove()).toBe(true);
 });
 it('edits and removes the exact selected kind/scope/person without changing canonical rows optimistically',async()=>{
  const rule:Rule={kind:'command',scope:'run *',person:'sam',tier:'tell',setBy:'pat',setAt:'2026-11-15T00:00:00Z'},save=vi.fn<SaveRule>(async()=>{});
- await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save}));});await fill('Rule',JSON.stringify([rule.kind,rule.scope,rule.person]));await fill('Answer','ask');await submit();
+ await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save,rule}));});await fill('Answer','ask');await submit();
  expect(save.mock.calls[0][0]).toEqual({kind:'command',scope:'run *',person:'sam',tier:'ask'});expect(rule.tier).toBe('tell');
  await act(async()=>tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Remove rule')!.props.onClick());
  expect(save.mock.calls[1][0]).toEqual({kind:'command',scope:'run *',person:'sam',tier:null});expect(rule.tier).toBe('tell');
 });
-it('defaults both initial creation and New rule after an existing grant to ask',async()=>{
+it('opens a rule with its own fields, and a new rule (first or after an existing grant) on Ask me',async()=>{
  const rule:Rule={kind:'command',scope:'run *',person:'sam',tier:'do',setBy:'pat',setAt:'2026-11-15T00:00:00Z'},save=vi.fn<SaveRule>(async()=>{});
  await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save}));});await fill('Scope','github:acme/*');await submit();
  expect(save.mock.calls[0][0]).toEqual({kind:'merge',scope:'github:acme/*',person:'',tier:'ask'});
- await fill('Rule',JSON.stringify([rule.kind,rule.scope,rule.person]));expect(field('Answer').props.value).toBe('do');
- await fill('Rule','');await fill('Scope','project:pond');await submit();
+ // The reader mounts one editor per opened rule (its key), so each starts from the rule it was opened on.
+ await act(async()=>tree.unmount());await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save,rule}));});
+ expect(field('Answer').props.value).toBe('do');expect(field('Scope').props.value).toBe('run *');expect(field('Kind').props.value).toBe('command');
+ await act(async()=>tree.unmount());await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save}));});await fill('Scope','project:pond');await submit();
  expect(save.mock.calls[1][0]).toEqual({kind:'merge',scope:'project:pond',person:'',tier:'ask'});
 });
 it('abandons an uncertain intent after fields change, even if changed back to the same body',async()=>{
@@ -52,17 +57,18 @@ it('abandons an uncertain intent after fields change, even if changed back to th
 
 it('keeps the exact removal intent after publication and an unknown response, and never recreates it through Save',async()=>{
  const rule:Rule={kind:'merge',scope:'project:pond',person:'',tier:'ask',setBy:'pat',setAt:'2026-11-15T00:00:00Z'},save=vi.fn<SaveRule>().mockRejectedValueOnce(new Error('lost')).mockResolvedValue(undefined);
- await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save}));});await fill('Rule',JSON.stringify([rule.kind,rule.scope,rule.person]));
+ await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save,rule}));});
  await act(async()=>tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Remove rule')!.props.onClick());
- await act(async()=>tree.update(h(RuleEditor,{rules:[],save})));
+ await act(async()=>tree.update(h(RuleEditor,{rules:[],save,rule})));
  expect(save.mock.calls[0][0].tier).toBe(null);expect(tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Save rule')!.props.disabled).toBe(true);
  await submit();expect(save).toHaveBeenCalledTimes(1);
  await act(async()=>tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Retry removal')!.props.onClick());
  expect(save.mock.calls[1]).toEqual(save.mock.calls[0]);expect(tree.root.findAllByType('button').some((button:{props:{children:unknown}})=>button.props.children==='Retry removal')).toBe(false);
 });
-it('offers and submits each kind through the native Kind selector',async()=>{
+it('offers each kind in plain words and submits it through the native Kind selector',async()=>{
  const save=vi.fn<SaveRule>(async()=>{});
  await act(async()=>{tree=create(h(RuleEditor,{rules:[],save}));});
  expect(field('Kind').findAllByType('option').map((option:{props:{value:string}})=>option.props.value)).toEqual(['merge','command','setting','dangerous']);
+ expect(field('Kind').findAllByType('option').map((option:{props:{children:string}})=>option.props.children)).toEqual(['Merging a pull request','Running a command on a machine','Changing a setting','Another dangerous action']);
  await fill('Scope','*');for(const kind of ['command','setting','dangerous','merge']){await fill('Kind',kind);await submit();expect(save.mock.calls.at(-1)![0]).toEqual({kind,scope:'*',person:'',tier:'ask'});}
 });

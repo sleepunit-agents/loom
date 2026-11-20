@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Empty, Error, List, Loading, Row, Split } from '../kit';
+import {fullTime} from '../kit/time';
+import { Button, Fact, Facts, Meta, Reader, Section, Title, Empty, Error, List, Loading, Row, Split } from '../kit';
 
 export interface SecretRow { name: string; description: string; changedAt: string; changedBy: string }
 export interface SecretGrantRow {
@@ -30,17 +31,18 @@ export type SecretsFolder = 'secrets' | 'requests' | 'grants' | 'pieces' | 'add'
 export interface SecretsSelection { folder: SecretsFolder; id: string }
 const labels = { secrets: 'Secrets', requests: 'Requests', grants: 'Grants', pieces: 'Piece settings' };
 const useLabels = { started: 'Delivery unconfirmed', released: 'Delivered', failed: 'Failed' };
-const grantDetails = (grant: SecretGrantRow) => <>
-  <p>{grant.agent} · {grant.job ? `Job: ${grant.job}` : 'Agent-wide'}</p>
-  <p>Granted: {grant.grantedAt} · Expires: {grant.expiresAt} · By: {grant.grantedBy}</p>
-  {grant.request && <p>Request: {grant.request}</p>}
-</>;
+const time = (at:string,zone?:string) => <time dateTime={at}>{fullTime(at,zone)}</time>;
+const grantDetails = (grant: SecretGrantRow,zone?:string) => <Facts>
+  <Fact label="Agent">{grant.agent}</Fact><Fact label="Scope">{grant.job || 'Agent-wide'}</Fact>
+  <Fact label="Granted">{time(grant.grantedAt,zone)}</Fact><Fact label="Expires">{time(grant.expiresAt,zone)}</Fact>
+  <Fact label="Granted by">{grant.grantedBy}</Fact><Fact label="Request">{grant.request}</Fact>
+</Facts>;
 
 /** Metadata presentation only: no value input, mutation, authorization decision,
  * subscription or legacy command. Root owns write-only forms and approval cards.
  * Non-live/principal-mismatched snapshots never mount retained rows or controls. */
-export function SecretsView({ snapshot, member, folder, selected, select, changeFolder, cards, pieces = [] }: {
-  snapshot: SecretsSnapshot; member: string; folder: SecretsFolder; selected?: SecretsSelection;
+export function SecretsView({ snapshot, member, zone, folder, selected, select, changeFolder, cards, pieces = [] }: {
+  snapshot: SecretsSnapshot; member: string; zone?:string; folder: SecretsFolder; selected?: SecretsSelection;
   select: (selection: SecretsSelection | undefined) => void;
   changeFolder: (folder: SecretsFolder) => void;
   cards?: { add?: () => ReactNode; secret?: (name: string) => ReactNode; request?: (id: string) => ReactNode; grant?: (id: string) => ReactNode; piece?: (id: string) => ReactNode };
@@ -58,28 +60,34 @@ export function SecretsView({ snapshot, member, folder, selected, select, change
   let reader: ReactNode = null;
   if (secret) {
     const rule = snapshot.rules.find(row => row.secret === secret.name);
-    reader = <article className="grid gap-4 p-5"><h1>{secret.name}</h1><p>{secret.description}</p>
-      <p>Changed: {secret.changedAt} · By: {secret.changedBy}</p>
-      <section><h2>Who may use it</h2>{snapshot.grants.filter(row => row.secret === secret.name).map(value => <div key={value.id}>{grantDetails(value)}</div>)}</section>
-      <section><h2>Rules</h2>{rule ? <p>Standing answer: {rule.answer} · Automatic grant: {rule.minutes} minutes</p>
+    const grants=snapshot.grants.filter(row=>row.secret===secret.name);
+    const uses=snapshot.uses.filter(row=>row.secret===secret.name);
+    const changes=snapshot.changes.filter(row=>row.secret===secret.name);
+    reader = <Reader className="p-5"><Title as="h1">{secret.name}</Title><p>{secret.description}</p>
+      <Meta>Changed {time(secret.changedAt,zone)} by {secret.changedBy}</Meta>
+      {grants.length>0 && <Section label="Who may use it">{grants.map(value => <div key={value.id}>{grantDetails(value,zone)}</div>)}</Section>}
+      <Section label="Rules">{rule ? <p>Standing answer: {rule.answer} · Automatic grant: {rule.minutes} minutes</p>
         : <p>{snapshot.defaultAnswer ? `Household default: ${snapshot.defaultAnswer}` : 'No secret rule. Household default not loaded.'}</p>}
         {snapshot.ruleAgents.filter(row => row.secret === secret.name).map(value => <p key={JSON.stringify([value.agent, value.when])}>{value.agent} · {value.when === 'at_start' ? 'At startup' : 'When asked'}</p>)}
-      </section>
-      <section><h2>Recorded use</h2>{snapshot.uses.filter(row => row.secret === secret.name).map(value => <p key={value.id}>{value.at} · {value.agent} · Job: {value.job} · {useLabels[value.state]}</p>)}</section>
-      <section><h2>Changes</h2>{snapshot.changes.filter(row => row.secret === secret.name).map(value => <p key={value.id}>{value.at} · {value.action} · {value.by}</p>)}</section>
+      </Section>
+      {uses.length>0 && <Section label="Recorded use">{uses.map(value => <p key={value.id}>{time(value.at,zone)} · {value.agent} · Job: {value.job} · {useLabels[value.state]}</p>)}</Section>}
+      {changes.length>0 && <Section label="Changes">{changes.map(value => <p key={value.id}>{time(value.at,zone)} · {value.action} · {value.by}</p>)}</Section>}
       <p>The value is write-only. It cannot be read back here.</p>{cards?.secret?.(secret.name)}
-    </article>;
-  } else if (request) reader = <article className="grid gap-4 p-5"><h1>{request.agent} asks for {request.secret}</h1><p>{request.why}</p>
-    <p>{request.state} · {request.minutes} minutes · Asked: {request.askedAt}</p>
-    {request.job && <p>Job: {request.job}</p>}{request.conversation && <p>Conversation: {request.conversation}</p>}
-    {request.answeredBy && <p>Answered by: {request.answeredBy} · {request.answeredAt}</p>}{request.always && <p>Answered always; a standing rule was made.</p>}
+    </Reader>;
+  } else if (request) reader = <Reader className="p-5"><Title as="h1">{request.agent} asks for {request.secret}</Title><p>{request.why}</p>
+    <Meta>{request.state} · {request.minutes} minutes</Meta>
+    <Facts><Fact label="Asked">{time(request.askedAt,zone)}</Fact>
+      <Fact label="Job">{request.job}</Fact><Fact label="Conversation">{request.conversation}</Fact>
+      <Fact label="Answered by">{request.answeredBy}</Fact><Fact label="Answered">{request.answeredAt && time(request.answeredAt,zone)}</Fact>
+    </Facts>
+    {request.always && <p>A standing rule was made with this answer.</p>}
     {request.state === 'pending' && cards?.request?.(request.id)}
-  </article>;
-  else if (grant) reader = <article className="grid gap-4 p-5"><h1>{grant.secret}</h1>{grantDetails(grant)}{cards?.grant?.(grant.id)}</article>;
-  else if (folder === 'pieces' && active && pieces.some(piece => piece.id === active)) reader = <article className="grid gap-4 p-5"><h1>{pieces.find(piece => piece.id === active)!.label}</h1>{cards?.piece?.(active)}</article>;
-  else if (folder === 'add') reader = <article className="grid gap-4 p-5"><h1>Add a secret</h1><p>The value is write-only. It cannot be read back here.</p>{cards?.add?.()}</article>;
+  </Reader>;
+  else if (grant) reader = <Reader className="p-5"><Title as="h1">{grant.secret}</Title>{grantDetails(grant,zone)}{cards?.grant?.(grant.id)}</Reader>;
+  else if (folder === 'pieces' && active && pieces.some(piece => piece.id === active)) reader = <Reader className="p-5"><Title as="h1">{pieces.find(piece => piece.id === active)!.label}</Title>{cards?.piece?.(active)}</Reader>;
+  else if (folder === 'add') reader = <Reader className="p-5"><Title as="h1">Add a secret</Title><p>The value is write-only. It cannot be read back here.</p>{cards?.add?.()}</Reader>;
   const rows = folder === 'requests' ? snapshot.requests.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.why, value.state))
-    : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires: ${value.expiresAt}`))
+    : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires ${fullTime(value.expiresAt,zone)}`))
     : folder === 'pieces' ? pieces.map(value => <Row key={value.id} title={value.label} meta={value.description} onClick={value.open} />)
     : snapshot.secrets.map(value => row(value.name, value.name, value.description));
   const view = folder === 'add' ? 'secrets' : folder;
@@ -88,7 +96,7 @@ export function SecretsView({ snapshot, member, folder, selected, select, change
     { id: 'requests', label: labels.requests, count: snapshot.requests.filter(value => value.state === 'pending').length },
     { id: 'grants', label: labels.grants, count: snapshot.grants.length }, { id: 'pieces', label: labels.pieces },
   ]} folder={view} onFolder={id => { select(undefined); changeFolder(id as SecretsFolder); }} listTitle={labels[view]}
-    listTop={view === 'secrets' && cards?.add ? <Row title="Add a secret" onClick={() => { select(undefined); changeFolder('add'); }} /> : undefined}
+    listAction={view === 'secrets' && cards?.add ? <Button onClick={() => { select(undefined); changeFolder('add'); }}>Add a secret</Button> : undefined}
     list={rows.length ? <List label={labels[view]}>{rows}</List> : <Empty title={`No ${labels[view].toLowerCase()}`} />}
     reader={reader} open={reader !== null} onBack={() => { select(undefined); if (folder === 'add') changeFolder('secrets'); }} backLabel="Back to Settings"
     blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />;

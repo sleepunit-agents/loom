@@ -34,8 +34,40 @@ words or absence from the current setup does **not** prove permanent retirement.
 An identity without an explicit committed retirement remains recoverable subject
 to current authentication/policy. Slack reconnects to the same identity recover
 pending work; a replacement identity cannot read it. Discord reset only removes
-the current checkpoint; it retains message tombstones. Existing one-hour raw-word
-expiry remains independent and does not retire either platform's identity.
+the current checkpoint; it retains message tombstones. The expiry of raw words
+(an hour for a message that has a row, a day for an event nothing could read
+yet; see "What is implemented today") remains independent and does not retire
+either platform's identity.
+
+## What is implemented today
+
+The Discord resume cursor is stored (`bridge_resume`) and resumed across a
+restart, a pause and a lost socket. Its row records the identity it was made
+under: the SHA-256 of `JSON.stringify([connection id, platform, workspace,
+agent, bot, token-secret name, the last change to the connection's secrets])`,
+computed in `src/pieces/bridges/shared-daemon.ts`. A lifetime is given the
+cursor only if its own identity is the stored one, so after a secret is replaced
+or the secret name changes the next lifetime identifies afresh, whether or not
+the program was running when the change was made. The credential epoch here is
+the newest `secret_changes` row for the connection's secrets; the permanent
+retirement described below is still open.
+
+Nothing received is given up on before a day has passed. The raw frame of an
+event that could not be read yet (its channel's metadata could not be fetched,
+the connection was paused, the program was stopped, or the frame is one this
+code cannot make sense of) is kept for a day and tried on every pass. A message
+that was read and held (its connection disabled, or its bot's agent ambiguous)
+gets a `bridge_incoming` row with what admission read; its raw frame then goes
+an hour after it arrived, and the message is tried again from the row until it
+is a day old. What is still undelivered at a day is removed or closed as
+dropped, without its words, and counted in the daemon's report. So the one-hour
+expiry above now holds for the raw words of a message that has a row; an event
+with no row is the only copy of what was received and outlives it.
+
+A Discord gateway session carries every guild the bot has been added to. A
+message from a guild other than the connection's is set aside as soon as it is
+drained, and so is one in a kind of channel loom carries no conversation in
+(the text chat of a voice or stage channel).
 
 ## Owning transition
 
