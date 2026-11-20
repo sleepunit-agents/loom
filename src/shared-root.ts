@@ -291,8 +291,8 @@ export function sharedRoot(options: {
 
   const requests = new SecretRequests(db, now);
   late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume; late.schedule = ask => tempo.placeSchedule(ask);
-  const secretCommit = <T>(write: () => T): T => {
-    const result = data.writes.run(write);
+  const secretCommit = <T>(write: () => T, stampOnly?:()=>boolean): T => {
+    const result = data.writes.run(write,stampOnly);
     for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
     return result.value;
   };

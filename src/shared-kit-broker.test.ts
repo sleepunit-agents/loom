@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { afterEach,expect,it,vi } from 'vitest';
@@ -152,7 +152,7 @@ it('reports the mounted house mismatch once and closes it when a later job is of
   const notices=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all();
 
   const report=async(pin:typeof different,offered:string[]=[],transport='ready')=>
-    (await (await post('availability',{pin,transport,offered:offered.map(kit=>({kit,tool:tool.name}))})).json()).unavailable;
+    (await (await post('availability',{id:randomUUID(),pin,transport,offered:offered.map(kit=>({kit,tool:tool.name}))})).json()).unavailable;
   expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
   expect(notices()).toMatchObject([{to:'owner',state:'waiting',words:expect.stringContaining('different house')}]);
   changed.mockClear();
@@ -180,7 +180,7 @@ it('reports a missing second tool and keeps a machine-specific notice open acros
   const changed={...tool,name:'other',commit:'a'.repeat(40)};
   db.update(agentKits).set({tools:[tool,changed]}).run();
   const body={pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]};
-  const report=async(runner=raw.runner)=>(await (await post('availability',body,runner)).json()).unavailable;
+  const report=async(runner=raw.runner)=>(await (await post('availability',{...body,id:randomUUID()},runner)).json()).unavailable;
   expect(await report()).toEqual([{kit:'weather',reason:'house',partial:true}]);
   db.update(jobs).set({box:'elsewhere'}).run();
   db.update(agentKits).set({tools:[tool]}).run();
@@ -196,6 +196,20 @@ it('reports a partially denied kit without disclosing the denied tool name',asyn
   db.update(agentKits).set({tools:[tool,{...tool,name:'other'}]}).run();
   db.insert(agentDeniedTools).values({agent:'art',pattern:'mcp__loom__kit_other',guestsOnly:false}).run();
   const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
-  const result=await post('availability',{pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]});
+  const result=await post('availability',{id:randomUUID(),pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]});
   expect(await result.json()).toEqual({unavailable:[{kit:'weather',reason:'policy',partial:true}]});
+});
+
+it('cannot replay a notice or its recovery after a newer observation',async()=>{
+  const {db,post}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const failure={id:randomUUID(),pin,transport:'socket',offered:[]};
+  const recovery={id:randomUUID(),pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]};
+  const states=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all().map(row=>row.state);
+  for(const report of [failure,recovery,failure])expect((await post('availability',report)).status).toBe(200);
+  expect(states()).toEqual(['resolved']);
+  expect((await post('availability',{...failure,id:randomUUID()})).status).toBe(200);
+  expect((await post('availability',recovery)).status).toBe(200);
+  expect(states()).toEqual(['resolved','waiting']);
+  expect((await post('availability',{...recovery,id:failure.id})).status).toBe(409);
 });

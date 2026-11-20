@@ -40,7 +40,7 @@ export async function kitSocket(directory:string,broker:()=>Pick<ReturnType<type
             try {
               result={tools,unavailable:await availability(transport,signal)};
             } catch {
-              result={tools,unavailable:[],reportFailed:true};
+              result={tools,unavailable:[],reportFailed:true,...(transport!=='ready' && {loadFailure:transport})};
             }
           }
         }

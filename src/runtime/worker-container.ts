@@ -510,7 +510,7 @@ export function containerWorkerExecutor(config: {
             const pin=houseId ? {repository:assignment.house.repository,commit:houseCommit(image),image:houseId} : undefined;
             reportKits=async(transport,signal)=>{
               // The report is idempotent. A lost reply may follow a committed notice.
-              const report={pin,transport,offered:transport==='ready'?broker?.offeredTools()??[]:[]};
+              const report={id:randomUUID(),pin,transport,offered:transport==='ready'?broker?.offeredTools()??[]:[]};
               for(let attempt=0;attempt<2 && !signal.aborted;attempt++){
                 try{
                   const result=await post('availability',report,signal);

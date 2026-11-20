@@ -21,12 +21,14 @@ function post(socketPath:string,path:'/list'|'/call',input:object,signal:AbortSi
     req.on('error',reject);req.end(JSON.stringify(input));
   });
 }
-const catalog=z.union([descriptors,z.strictObject({tools:descriptors,unavailable:kitUnavailableList,reportFailed:z.literal(true).optional()})]);
+const catalog=z.union([descriptors,z.strictObject({tools:descriptors,unavailable:kitUnavailableList,reportFailed:z.literal(true).optional(),loadFailure:z.enum(['capacity','catalog']).optional()})]);
 export async function bodyKitTools(path:string,signal:AbortSignal,onUnavailable?:(items:KitUnavailable[])=>void,onReportFailed?:()=>void):Promise<BodyModelTool[]>{
   const result=catalog.parse(await post(path,'/list',{},signal));
   if(!Array.isArray(result)){
     onUnavailable?.(result.unavailable);
     if(result.reportFailed)onReportFailed?.();
+    if(result.loadFailure==='capacity')throw new KitCapacity();
+    if(result.loadFailure==='catalog')throw Error('Kit catalog unavailable');
   }
   const list=Array.isArray(result)?result:result.tools;
   return list.map(({name,description,parameters})=>({name,description,inputSchema:kitInputSchema(parameters),

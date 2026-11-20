@@ -5,6 +5,7 @@ import {kitTool} from './kit-manifest.js';
 export const kitPin=z.strictObject({repository:kitTool.shape.repository,commit:kitTool.shape.commit,image:kitTool.shape.image});
 export const kitTransport=z.enum(['ready','socket','catalog','capacity','image']);
 export const kitAvailabilityReport=z.strictObject({
+  id:z.uuid(),
   pin:kitPin.optional(),
   transport:kitTransport,
   offered:z.array(z.strictObject({kit:householdId,tool:kitTool.shape.name})).max(62),

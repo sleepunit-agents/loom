@@ -2,7 +2,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {expect,it,vi} from 'vitest';
-import {KitRefused} from './kit-refused.js';
+import {KitCapacity,KitRefused} from './kit-refused.js';
 import {bodyKitTools} from './body-kit-tools.js';
 import {kitSocket} from './kit-socket.js';
 
@@ -53,6 +53,21 @@ it('keeps a listed tool usable when reporting its availability fails',async()=>{
     const [lookup]=await bodyKitTools(socket.path,signal,undefined,failed);
     expect(failed).toHaveBeenCalledOnce();
     expect(await lookup.execute({},signal)).toEqual({content:[{type:'text',text:'found'}]});
+  }finally{
+    await socket.close();
+    await rm(directory,{recursive:true,force:true});
+  }
+});
+
+it('reports both a local capacity failure and an unconfirmed owner report',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'loom-kit-'));
+  const signal=new AbortController().signal;
+  const socket=await kitSocket(directory,()=>({list:async()=>{throw new KitCapacity();},call:vi.fn()}),
+    signal,async()=>{throw Error('report unavailable');});
+  try{
+    const failed=vi.fn();
+    await expect(bodyKitTools(socket.path,signal,undefined,failed)).rejects.toBeInstanceOf(KitCapacity);
+    expect(failed).toHaveBeenCalledOnce();
   }finally{
     await socket.close();
     await rm(directory,{recursive:true,force:true});
