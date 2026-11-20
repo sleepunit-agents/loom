@@ -8,10 +8,6 @@ import { TRIGGER_JOURNAL_BYTES, appendLesson, hasAgentJournal, readJournal, repl
 import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 
-export function isJournalRead(name: string) {
-  return name === 'tempo.readJournal' || name === 'tempo.wakeLessons';
-}
-
 type Scope = NonNullable<ReturnType<ReturnType<typeof conversationBodyScope>>>;
 
 function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
