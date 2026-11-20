@@ -1,3 +1,4 @@
+import { saveJobUsage } from './shared-job-usage.js';
 import { parseProgramResult, type ProgramResult } from './runtime/house-program.js';
 import type { Job } from './runtime/jobs.js';
 import {keepJobText} from './runtime/job-text.js';
@@ -6,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { jobs, conversations, changeReviewRounds, jobUsage } from './core/data/schema.js';
+import { jobs, conversations, changeReviewRounds } from './core/data/schema.js';
 import { canonical as canonicalJson, OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import type { WorkRole } from './runtime/work-roles.js';
@@ -156,8 +157,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         const result = reviewOutcome(exitCode, input.coldReview, input.exitBy);
         if (result.verdict === 'NONE' && exitCode === 0) exitCode = 1;
         const usage = input.coldReview?.usage;
-        if (usage) db.insert(jobUsage).values({ ...usage, job: job.id, harness: usage.harness ?? job.harness,
-          model: usage.model ?? job.model }).run();
+        if (usage && !saveJobUsage(db, job, usage)) throw new OperationError('conflict', 'Review usage already filed');
         reviewStore.finish({ job: input.job, change: round.change, headCommit: round.headCommit, ...result });
         ctx.changed('change', round.change);
       } else if (job.startedByKind === 'program') {
