@@ -558,6 +558,8 @@ it('lets a body on anybody else\'s word add a memory and a new note, each stampe
  for(const [verb,args] of [['notePin',{path:'plans/pond',pinned:true}],['noteDelete',{path:'plans/pond'}],['noteAttach',{path:'plans/pond',name:'x',contents:'AA=='}]] as const){
   expect((await api('memory',verb,args,'held-'+verb,token)).status).toBe(403);
  }
+ const heldUpload=await fetch(f.url+'/api/memory/noteAttach',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'multipart/form-data; boundary=fixture'},body:'malformed'});
+ expect(heldUpload.status).toBe(403);
  const line=`[From loom: written while working for the member bob in conversation ${conversation}, who is not one of art's owners.]`;
  // It adds a memory. loom writes whose word it was: first in its words, where every reader meets it, and in its
  // record, where the body's own claim of the same name is thrown away.

@@ -454,8 +454,8 @@ export function sharedRoot(options: {
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
-  const uploads=new Set<string>();
-  const bodyRequest = (request: Request, abort: AbortController, limited = false, limit=DOOR_REQUEST_BYTES) => {
+  const uploads=new Set<string>(), releaseUpload=new WeakMap<AbortController,()=>void>();
+  const bodyRequest = (request: Request, abort: Pick<AbortController,'signal'>, limited = false, limit=DOOR_REQUEST_BYTES) => {
     let size = 0;
     return request.body ? new Request(request, {
       body: request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -487,7 +487,7 @@ export function sharedRoot(options: {
         if(path!=='/graphql'&&path!=='/mcp'&&(!command||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
       }
       await next();
-    } finally { active.delete(entry); finished(); }
+    } finally { releaseUpload.get(abort)?.(); active.delete(entry); finished(); }
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
@@ -510,6 +510,8 @@ export function sharedRoot(options: {
     if(!multipart&&!/^application\/json(?:\s*;|$)/i.test(type))return c.json(failure('invalid','Use application/json'),415);
     const auth = authenticate(request);
     if (!auth?.valid()) return c.json(failure('denied', 'Authentication required'), 401);
+    const shutdown=c.get('shutdown');
+    const signal=AbortSignal.any([shutdown.signal,request.signal]);
     let body: unknown;
     try{
       if(multipart){
@@ -517,19 +519,17 @@ export function sharedRoot(options: {
         if(!agent||!mayAttachFile(auth.viewer))return c.json(failure('denied','Attachment refused'),403);
         if(uploads.size>=4||uploads.has(agent.agent))return c.json(failure('unavailable','Attachment transfer busy'),429);
         uploads.add(agent.agent);
-        const shutdown=c.get('shutdown');
         const stop=clock.at(clock.now()+60_000,()=>shutdown.abort());
-        try{
-          const data=await bodyRequest(request,shutdown,true,NOTE_UPLOAD_REQUEST_BYTES).formData();
-          body=await noteUploadEnvelope(data);
-        }finally{stop();uploads.delete(agent.agent);}
+        releaseUpload.set(shutdown,()=>{stop();uploads.delete(agent.agent);});
+        const data=await bodyRequest(request,{signal},true,NOTE_UPLOAD_REQUEST_BYTES).formData();
+        body=await noteUploadEnvelope(data);
       }else body=await bodyRequest(request,c.get('shutdown'),true).json();
-    }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid','Invalid request body'),400);}
+    }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const epoch = isGuardedCommandRead(name) ? data.readVersion() : undefined;
-    const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,request.signal);
+    const answer=await executeCommand(auth,name,parsed.data.input,parsed.data.id,signal);
     if (epoch !== undefined && answer.ok) {
       return guardedResponse(JSON.stringify(answer), {status:200, headers:{'content-type':'application/json', 'cache-control':'no-store'}},
         () => !closing && auth.valid() && data.readVersion() === epoch);
