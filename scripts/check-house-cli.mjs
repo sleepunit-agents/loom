@@ -43,7 +43,12 @@ const probe = `
   const tools=await bodySecretTools({agent:'fixture',job:'job',conversation:'room',url:'https://fixture.invalid',
     token:'fixture',signal:new AbortController().signal,houseNotes:{denied:[],async call(name,args){
       let value;
-      if(name==='loom_command'){
+      if(name==='loom_command'&&args.operation==='memory.noteDelete'){
+        value={ok:true,value:{deleted:notes.delete(args.input.path)}};
+      }else if(name==='loom_command'&&args.operation==='memory.notePin'){
+        notes.get(args.input.path).pinned=args.input.pinned;
+        value={ok:true,value:{...args.input,expires:null}};
+      }else if(name==='loom_command'){
         assert.equal(args.operation,'memory.noteWrite');
         notes.set(args.input.path,{...args.input,updated:'2026-01-01',pinned:false,files:0});
         value={ok:true,value:{saved:true}};
@@ -59,7 +64,12 @@ const probe = `
       assert.match(await run('loom note write '+path+' --body words --lifespan short'),/Saved/);
       assert.equal((await run('loom note read '+path)).trim(),'words');
       assert.ok(JSON.parse(await run('loom note list --json')).some(n=>n.path===path));
-      console.log(shell,flags,'note write/read/list passed');
+      for(const command of ['pin','unpin']){
+        const changed=JSON.parse(await run('loom note '+command+' '+path+' --json'));
+        assert.equal(changed.pinned,command==='pin');
+      }
+      assert.ok(JSON.parse(await run('loom note delete '+path+' --json')).deleted);
+      console.log(shell,flags,'note write/read/list/pin/unpin/delete passed');
     }
   }finally{await tools.close();}
 

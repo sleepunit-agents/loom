@@ -37,3 +37,11 @@ it('enforces named denials, generic denials, the secret filter and the request s
   await expect(houseNoteRequest({...port,allowsCall:()=>false},{operation:'read',path:'plans/alpha'},signal)).rejects.toThrow();
   expect(port.call).not.toHaveBeenCalled();
 });
+
+it.each(['pin','unpin','delete'])('applies write and specific room denials to %s',async operation=>{
+ for(const rule of ['mcp__loom__note_write','mcp__loom_secrets__loom_query','mcp__loom__loom_command','mcp__loom_secrets__note_'+operation]){
+  const port=fixture([rule]);
+  await expect(houseNoteRequest(port,{operation,path:'plans/alpha',id:'intent'},signal)).rejects.toThrow();
+  expect(port.call).not.toHaveBeenCalled();
+ }
+});
