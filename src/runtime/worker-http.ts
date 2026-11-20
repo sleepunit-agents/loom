@@ -227,11 +227,14 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     },
     next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
-      try {return (await call('next',{...poll,reviewResults:true,coldReviews},workerAssignment.nullable())) ?? undefined;}
-      catch(error){
-        if(!(error instanceof WorkerOperationFailure && error.schemaRefusal))throw error;
-        return (await call('next',poll,workerAssignment.nullable())) ?? undefined;
+      const versions = coldReviews ? [{ reviewResults: true, coldReviews: true }, { reviewResults: true }] : [{ reviewResults: true }];
+      for (const capabilities of versions) {
+        try { return (await call('next', { ...poll, ...capabilities }, workerAssignment.nullable())) ?? undefined; }
+        catch (error) {
+          if (!(error instanceof WorkerOperationFailure && error.schemaRefusal)) throw error;
+        }
       }
+      return (await call('next', poll, workerAssignment.nullable())) ?? undefined;
     },
     started: async (job, build, signal) => {
       const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;

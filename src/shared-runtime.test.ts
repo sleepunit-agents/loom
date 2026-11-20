@@ -712,6 +712,21 @@ it('files a worker review only on its assigned job, change and commit, atomicall
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null });
 });
 
+it.each(['mismatch', 'missing verdict'])('checks the discarded reply on a %s receipt retry', async mode => {
+  const f = fixture(), job = f.send(), row = fixtureChange(), tree = 'a'.repeat(64);
+  f.root.services.changes.put(row);
+  const store = changeReviewStore(f.db, f.now);
+  store.assign({ change: row.id, headCommit: row.head.id, job: job.id, round: 1, tier: 'high' });
+  await f.control.next(true);
+  await f.control.started(job.id, 'image');
+  const report = { change: row.id, headCommit: row.head.id, before: tree, after: mode === 'mismatch' ? 'b'.repeat(64) : tree, reply: 'private failed reply' };
+  const input = { job: job.id, exitCode: 0, exitBy: 'runner', logTail: '', coldReview: report };
+  expect((await f.call('finish', input, 'retry')).status).toBe(200);
+  expect((await f.call('finish', input, 'retry')).status).toBe(200);
+  expect((await f.call('finish', { ...input, coldReview: { ...report, reply: 'other reply' } }, 'retry')).status).toBe(409);
+  expect(store.history(row.id)[0].findings).not.toContain(report.reply);
+});
+
 it.each(['unchanged', 'changed', 'missing'] as const)('delivers the %s review from the worker client and closes the assigned round', async evidence => {
   const f = fixture(), job = f.send(), row = fixtureChange();
   f.root.services.changes.put(row);

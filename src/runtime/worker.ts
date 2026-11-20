@@ -310,7 +310,7 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string; signalled?: boolean; programResult?: ProgramResult; coldReview?: ColdReviewReport }, failed: 'release' | 'reap' | undefined = 'release';
+    let result: Awaited<WorkerBody['exited']>, failed: 'release' | 'reap' | undefined = 'release';
     try {
       try {
         if (assignment.program) {
