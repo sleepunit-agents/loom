@@ -32,7 +32,7 @@ export const freshProof = (session: Pick<typeof sessions.$inferSelect, 'isAgent'
 };
 /** An automated browser, by its own name for itself. This catches only automation that does not hide; the
  * limit that holds is the one a link's maker sets (startBrowser's `agent`; docs/accepted-tradeoffs.md). */
-export const isAgentBrowser = (userAgent: string) => /HeadlessChrome\//.test(userAgent);
+export {isAgentBrowser} from '../signin/browser-device.js';
 /** The moment a session stops being accepted, whatever its token allows. */
 export const sessionEnds = (session: Pick<typeof sessions.$inferSelect, 'issuedAt' | 'isAgent'>) =>
   Date.parse(session.issuedAt) + (session.isAgent ? AGENT_SESSION_MS : PERSON_SESSION_MS);
