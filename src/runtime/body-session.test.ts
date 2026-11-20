@@ -203,3 +203,26 @@ it('keeps no session unless the worker said the place is the body\'s own, the ha
   expect(houseSessions('claude')).toBe('/home/agent/.claude'); expect(houseSessions('codex')).toBeUndefined(); expect(houseSessions('constructor')).toBeUndefined();
   expect(bodySessions(nothing as never, 'claude', at.env)).toBeUndefined();
 });
+
+it('lets a replacement worker recover a committed session after the save acknowledgement is lost', async () => {
+  const first = home(), replacement = fresh(), replacementRoot = join(replacement, '.claude');
+  mkdirSync(replacementRoot);
+  let stored: {session: string; files: string} | null = null;
+  let loseRead = true;
+  const client = { async command(operation: string, input: {session: string | null; files?: string}) {
+    if (operation === 'conversation.session') {
+      if (loseRead) { loseRead = false; throw Error('lost read response'); }
+      return {ok: true, value: {session: stored}};
+    }
+    stored = input.session && input.files ? {session: input.session, files: input.files} : null;
+    if (stored) throw Error('lost save response after commit');
+    return {ok: true, value: {saved: false}};
+  }};
+  await keep(client, first)!.save(session);
+  expect(existsSync(join(first.project, session + '.jsonl'))).toBe(false);
+  expect(stored).not.toBeNull();
+  const next = keep(client, {base: replacement, root: replacementRoot})!;
+  expect(await next.take()).toBeUndefined();
+  expect(await next.take()).toBe(session);
+  expect(readFileSync(join(replacementRoot, 'projects','-house',session+'.jsonl'),'utf8')).toContain('assistant');
+});
