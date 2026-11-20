@@ -38,6 +38,7 @@ import {registerSemanticMemory} from './pieces/mind/semantic-commands.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
  checkingAgent:string;
+ alternateCheckingAgent?:string;
  sections?:{tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole};
 }
 /** Memory's files for a household. Where the commons are is declared; which agents have files is the
@@ -124,6 +125,10 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
  for(const agent of agents)prepareAgentMemory(agent);
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
+ if(options?.alternateCheckingAgent!==undefined){
+  const alternate=db.select().from(agentRows).where(eq(agentRows.id,options.alternateCheckingAgent)).get();
+  if(!alternate||alternate.removedAt||alternate.id===options.checkingAgent)throw new Error('Memory needs a different active alternate checking agent');
+ }
  if(options&&(typeof options.checkingAgent!=='string'||!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
 }
 export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,embedding?:()=>EmbeddingProvider,report?:(error:unknown)=>void){
@@ -155,7 +160,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
-  return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
+  return {people,projects,activity,checkingAgent:options?.checkingAgent,alternateCheckingAgent:options?.alternateCheckingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
    /** `held` says what the body of a job on anybody else's word is refused and what loom stamps on what it adds
     * (shared-root.ts, from shared-place-mail.ts): such a body adds a memory or a new note, and nothing else here. */
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>,held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){

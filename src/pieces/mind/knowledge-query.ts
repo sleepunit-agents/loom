@@ -41,7 +41,7 @@ const match = new GraphQLObjectType({ name:'MemoryKnowledgeMatch', fields:{ slug
 export function knowledgeQueryFields(options: { path?:string; timezone?():string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
  nextDeadline():number|undefined;
- sweep(checkingAgent:string):SweepPart;
+ sweep(checkingAgent:string,alternate?:string):SweepPart;
  close():void;
 } {
  let db:Database.Database|undefined,failed=false;
@@ -77,7 +77,7 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   }},
  } });
  return {
-  sweep(checkingAgent){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent);},
+  sweep(checkingAgent,alternate){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent,alternate);},
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone}:null},

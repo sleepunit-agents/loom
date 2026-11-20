@@ -1,6 +1,8 @@
 import type { Clock } from '../clock.js';
 import type { Recipient } from './volume.js';
 
+export const INDEPENDENT_KNOWLEDGE_CHECKS = 'Independent knowledge checks';
+
 export interface OpenItem { id: string; words: string; openedAt: string }
 export interface OpenItems { items: readonly OpenItem[]; count: number }
 export interface SweepPart {
@@ -26,10 +28,11 @@ export class Sweep {
     this.parts.set(part.name, part);
     return () => { if (this.parts.get(part.name) === part) this.parts.delete(part.name); };
   }
-  run(who: Recipient, occurrence: string): readonly SweepSummary[] {
+  run(who: Recipient, occurrence: string, onlyPart?: string): readonly SweepSummary[] {
     if (!occurrence) throw new Error('Sweep needs an occurrence identifier');
     const summaries: SweepSummary[] = [];
     for (const part of this.parts.values()) {
+      if (onlyPart && part.name !== onlyPart) continue;
       const unique = new Map<string, OpenItem>();
       const result = part.open(who);
       const listed = 'items' in result ? result.items : result;

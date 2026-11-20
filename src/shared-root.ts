@@ -411,7 +411,7 @@ export function sharedRoot(options: {
     // A repeating schedule asked for on anybody else's word is an owner's to allow: filed as a household card.
     askOwners: (agent, ask, why, where) => householdProposals.file(services.approvals, agent, { change: 'placeSchedule', input: ask, why }, where).id,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
-    beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
+    beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent,memory.alternateCheckingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
   catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); void privateInputs.close(); operations.close(); void data.close(); throw error; }
   startupCleanups.push(()=>tempo.close());

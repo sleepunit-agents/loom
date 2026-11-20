@@ -3,7 +3,7 @@ import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
 import { SettledInbox, type AdmitInbox } from './settle.js';
 import { TriggerEngine, type Trigger } from './triggers.js';
-import { Sweep } from './sweep.js';
+import { INDEPENDENT_KNOWLEDGE_CHECKS, Sweep } from './sweep.js';
 import { TempoSources } from './sources.js';
 
 /** Structural slice of Conversations: built-ins share one service/connection.
@@ -86,13 +86,13 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     operation(name, t, occurrence) {
       // An operation gathers by the agent's whole reach; it is not a member's to fire (policy.ts, "Scheduled work").
       if (options.worksFor?.(t) !== undefined) throw new Error('A member who is not a household owner schedules words for an agent, not an operation');
-      if (name === 'tempo.sweep') {
+      if (name === 'tempo.sweep' || name === 'tempo.knowledgeSweep') {
         if (!t.toKind || !t.to) throw new Error('A sweep needs a recipient');
-        sweep.run({ kind: t.toKind, id: t.to }, occurrence);
+        sweep.run({ kind: t.toKind, id: t.to }, occurrence, name === 'tempo.knowledgeSweep' ? INDEPENDENT_KNOWLEDGE_CHECKS : undefined);
       } else options.operation(name, t, occurrence);
     },
     // Without a list from the composition, any name it handles is taken on trust, as before.
-    knows: name => name === 'tempo.sweep' || (options.knows ? options.knows(name) : true),
+    knows: name => name === 'tempo.sweep' || name === 'tempo.knowledgeSweep' || (options.knows ? options.knows(name) : true),
     instructions: options.instructions,
     changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
   });
