@@ -319,6 +319,11 @@ export interface DuplicatePair {
 }
 
 export interface AuditOptions {
+  /** Limit the report and nearest-neighbour search to the selected categories. */
+  category?: string;
+  excludeCategories?: readonly string[];
+  /** When supplied, omit expired rows at this instant. */
+  currentAt?: number;
   /** Stale threshold in days (last_accessed/updated/created). Default 30. */
   staleDays?: number;
   /** Cosine-similarity floor for duplicate pairs (0..1). Default 0.85. */
