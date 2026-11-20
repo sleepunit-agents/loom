@@ -169,6 +169,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Revoking a token, revoking a machine and signing out a browser cannot be put back.'):row['probe']={'kind':'action','action':'approvalPreparedChanges'}
  if f.stem=='memory':
   for row in rows:
+   if row['promise'].startswith('A change saves the earlier version first.'):row['probe']={'kind':'action','action':'memoryRevisions'}
    if row['promise'].startswith('Keeps notes: longer working documents'):row['probe']={'kind':'action','action':'noteLifetimes'}
  if f.stem=='data':
   for row in rows:

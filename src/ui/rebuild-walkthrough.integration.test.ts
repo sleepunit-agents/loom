@@ -98,6 +98,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
   expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});
  });
+ it('restores every retained version of memories, person cards and Knowledge pages',{retry:0,timeout:120_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-revisions');
+  expect(step.value.actions.memoryRevisions,JSON.stringify(step.value.actions.memoryRevisions)).toMatchObject({ok:true,originalVersionsRestoredPerType:10,restoreCallsPerType:11});
+ });
  it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:180_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});
