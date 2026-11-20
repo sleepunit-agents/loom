@@ -11,8 +11,8 @@ vi.mock('../data', () => ({
 }));
 
 // Dynamic renderer props, confined to the test boundary.
-vi.mock('../kit', () => ({
-  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.list, p.reader ?? p.blank,
+vi.mock('../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Button:'button',
+  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.listAction, p.list, p.reader ?? p.blank,
     h('button', { onClick: p.onBack }, p.backLabel)),
   List: (p: any) => h('div', {}, p.children),
   Row: (p: any) => h('button', { onClick: p.onClick, 'aria-current': p.selected }, p.title, p.meta, p.status),

@@ -11,8 +11,8 @@ vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { feed.h
   ? { status: 'live', data: { agents: [{ id: 'art', removedAt: null }, { id: 'mark', removedAt: '2026-11-19' }] } }
   : feed.query; } }));
 vi.mock('../../data', () => ({ useRecords() { throw Error('Legacy records used'); }, call() { throw Error('Legacy command used'); } }));
-vi.mock('../../kit', () => ({
-  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.listTop,p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
+vi.mock('../../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',
+  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.listAction,p.listTop,p.list, p.reader ?? p.blank, h('button', { onClick: p.onBack }, p.backLabel)),
   Button:(p:any)=>h('button',p,p.children), Input:(p:any)=>h('input',p),
   List: (p: any) => h('div', {}, p.children), Row: (p: any) => h('button', { onClick: p.onClick }, p.title, p.meta, p.status),
   Empty: (p: any) => h('p', {}, p.title), Error: (p: any) => h('p', { role: 'alert' }, p.text), Loading: (p: any) => h('p', {}, p.label),
@@ -86,7 +86,11 @@ it.each(['connections','channels','people'] as const)('creates %s through its re
  const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
  const request=vi.fn(async(_url:RequestInfo|URL,_options?:RequestInit)=>new Response(JSON.stringify({ok:true,value:{saved:true}})));vi.stubGlobal('fetch',request);vi.stubGlobal('FormData',class{constructor(private form:{fields:Record<string,string>}){}get(name:string){return this.form.fields[name]??null;}has(name:string){return name in this.form.fields;}});
  try{
-  await draw('/p/bridges-preview/'+folder);await act(async()=>tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){},currentTarget:{fields:{platform:'discord',workspace:'w',agent:'forged-agent',botUser:'bot',tokenSecret:'BOT_NAME',enabled:'on',channel:'room',answers:'art',user:'outside',member:'jonathan'}}}));
+  const go=await draw('/p/bridges-preview/'+folder);
+  await act(async()=>tree.root.findAllByType('button').find((b:any)=>String(b.props.children).startsWith('New ')).props.onClick());
+  expect(go).toHaveBeenCalledWith('/p/bridges-preview/new/'+folder);
+  await draw(go.mock.calls[0][0]);
+  await act(async()=>tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){},currentTarget:{fields:{platform:'discord',workspace:'w',agent:'forged-agent',botUser:'bot',tokenSecret:'BOT_NAME',enabled:'on',channel:'room',answers:'art',user:'outside',member:'jonathan'}}}));
   const envelope=JSON.parse(String(request.mock.calls[0][1]?.body));expect(envelope.id).toMatch(/^[0-9a-f-]{36}$/);expect(envelope.input.action).toBe(folder==='connections'?'connection':folder==='channels'?'channel':'person');expect(envelope.input.workspace).toBe('w');if(folder==='connections')expect(envelope.input.id).not.toBe('connection');expect(text()).toContain('Saved.');
  }finally{vi.unstubAllGlobals();}
 });
@@ -102,9 +106,13 @@ it.each(['Disconnect','Remove channel rule','Remove person link','Release send',
 });
 
 it('locks existing connection identity while leaving new connection identity fields editable',async()=>{
- const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};await draw('/p/bridges-preview/item/connections/connection');const forms=tree.root.findAllByType('form');expect(forms).toHaveLength(2);
- for(const [form,fixed] of [[forms[0],false],[forms[1],true]] as const){expect(form.findAllByType('select')[0].props.disabled).toBe(fixed);for(const name of ['workspace','botUser'])expect(form.findAllByType('input').find((input:any)=>input.props.name===name).props.readOnly).toBe(fixed);}
- const choice=forms[0].findByProps({name:'agent'});
- expect(choice.findAllByType('option').map((option:any)=>option.props.children)).toEqual(['Choose an agent','art']);
- expect(forms[1].findAllByType('input').find((input:any)=>input.props.name==='agent').props.readOnly).toBe(true);
+ const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};for(const [path,fixed] of [['item/connections/connection',true],['new/connections',false]] as const){
+  await draw('/p/bridges-preview/'+path);
+  const forms=tree.root.findAllByType('form');expect(forms).toHaveLength(1);
+  const form=forms[0];
+  expect(form.findAllByType('select')[0].props.disabled).toBe(fixed);
+  for(const name of ['workspace','botUser'])expect(form.findAllByType('input').find((input:any)=>input.props.name===name).props.readOnly).toBe(fixed);
+  if(fixed)expect(form.findAllByType('input').find((input:any)=>input.props.name==='agent').props.readOnly).toBe(true);
+  else expect(form.findByProps({name:'agent'}).findAllByType('option').map((option:any)=>option.props.children)).toEqual(['Choose an agent','art']);
+ }
 });
