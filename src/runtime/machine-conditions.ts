@@ -40,13 +40,11 @@ const FLOOR_APPLIES = 2;
 /** How long a thing may be unknown before loom closes what it said about it. */
 export const STALE_MS = DAY_MS;
 const WATCHED_THINGS_MAX = 24;
-export class WatchedThingLimit extends Error {}
 
 const MAX_OBSERVED_INTERVAL_MS = 60 * 60_000;
 const clockEpoch = randomUUID();
 const MIB = 1024 * 1024;
 
-type Level = Reading['level'];
 type Values = Pick<Reading, 'usedPercent' | 'sizeMib' | 'freeMib' | 'engineStatus'>;
 const none: Values = { usedPercent: null, sizeMib: null, freeMib: null, engineStatus: null };
 /** A reading as loom keeps it: whole mebibytes, and a disk's fullness as `df` works it out, used over used
@@ -62,36 +60,41 @@ function values(reading: MachineReading): Values {
 }
 const floorOf = (floor: number, size: number) => size >= floor * FLOOR_APPLIES ? floor : 0;
 
-/** What a reading is, given what the one before it was. A condition is raised at its line and cleared only
- * under it by a margin (CLEAR_POINTS, clearRoom), so a reading that hovers at the line raises once and
- * stays raised. A disk is raised by the first reading over the line, since a disk does not fill and empty
- * between two readings. Memory and the container runtime do dip for a moment (a build, an engine being
- * restarted), so those are raised only by two readings in a row. */
-export function evaluate(kind: Reading['kind'], now: Values, before: Pick<Reading, 'level' | 'sizeMib' | 'freeMib' | 'engineStatus' | 'lastLines'> | undefined, lines: AlertLines, consecutive = true): Level {
-  const was = before?.level ?? 'ok';
-  if (kind === 'containers') return now.engineStatus === 200 ? 'ok' : was !== 'ok' || (consecutive && before?.engineStatus != null && before.engineStatus !== 200) ? 'raised' : 'ok';
-  const size = now.sizeMib ?? 0, free = now.freeMib ?? 0;
-  if (kind === 'memory') {
-    const floor = floorOf(lines.memoryFreeMib, size);
-    if (was !== 'ok') return free < clearRoom(floor) ? 'raised' : 'ok';
-    return free < floor && consecutive && before?.freeMib != null && before.freeMib < floorOf(before.lastLines?.memoryFreeMib ?? lines.memoryFreeMib, before.sizeMib ?? 0) ? 'raised' : 'ok';
+type OrdinaryLine = NonNullable<Reading['ordinaryLine']>;
+const floorSetting = (kind: Reading['kind'], lines: AlertLines) => kind === 'memory' ? lines.memoryFreeMib : lines.diskFreeMib;
+const holdsFloor = (read: Values, floor: number) => read.freeMib! < clearRoom(floorOf(floor, read.sizeMib ?? 0));
+const holdsPercent = (read: Values, percent: number) => read.usedPercent! > percent - CLEAR_POINTS;
+
+function ordinaryLine(row: Reading, read: Values, lines: AlertLines, consecutive: boolean): OrdinaryLine | null {
+  if (row.kind === 'containers') {
+    return read.engineStatus !== 200 && (row.ordinaryLine === 'engine' ||
+      (consecutive && row.engineStatus !== null && row.engineStatus !== 200)) ? 'engine' : null;
   }
-  const percent = now.usedPercent ?? 0, floor = floorOf(lines.diskFreeMib, size);
-  if (percent >= lines.diskUrgentPercent || (was === 'urgent' && percent > lines.diskUrgentPercent - CLEAR_POINTS)) return 'urgent';
-  if (percent >= lines.diskPercent || free < floor) return 'raised';
-  return was !== 'ok' && (percent > lines.diskPercent - CLEAR_POINTS || free < clearRoom(floor)) ? 'raised' : 'ok';
+  const floor = floorSetting(row.kind, lines);
+  if (row.ordinaryLine === 'floor' && holdsFloor(read, floor)) return 'floor';
+  if (row.ordinaryLine === 'percent' && holdsPercent(read, lines.diskPercent)) return 'percent';
+  if (row.kind === 'disk' && read.usedPercent! >= lines.diskPercent) return 'percent';
+  if (read.freeMib! >= floorOf(floor, read.sizeMib!)) return null;
+  if (row.kind === 'disk') return 'floor';
+  return consecutive && row.freeMib !== null &&
+    row.freeMib < floorOf(row.lastLines?.memoryFreeMib ?? floor, row.sizeMib ?? 0) ? 'floor' : null;
 }
 
-/** An amount of room as a person reads it, in binary units, rounded down: never more room than there is. */
+const megabytes = (mib: number) => `${mib.toLocaleString('en-US')} MB`;
+const shownGb = (mib: number) => mib < 102_400 ? Math.floor(mib * 10 / 1024) / 10 : Math.floor(mib / 1024);
+/** An amount of room as a person reads it, in binary units, rounded down. */
 export function roomWords(mib: number): string {
-  if (mib < 1024) return `${mib} MB`;
-  const gb = mib / 1024;
-  return `${gb < 100 ? Math.floor(gb * 10) / 10 : Math.floor(gb)} GB`;
+  return mib < 1024 ? megabytes(mib) : `${shownGb(mib)} GB`;
 }
-// Increase precision when ordinary rounding would hide a difference between the reading and the line.
+
 function roomAgainst(mib: number, line: number): [string, string] {
   const reading = roomWords(mib), floor = roomWords(line);
-  return mib !== line && reading === floor ? [`${mib} MB`, `${line} MB`] : [reading, floor];
+  // Keep both figures in MB across the one-GB boundary if rounding hides part of the floor.
+  // Elsewhere, a rounded floor must still be above the actual reading when it triggers.
+  const lineShownMib = line < 1024 ? line : shownGb(line) * 1024;
+  const crossesUnitBoundary = mib < 1024 && lineShownMib === 1024 && line !== 1024;
+  return (mib !== line && reading === floor) || (mib < line && lineShownMib <= mib) || crossesUnitBoundary
+    ? [megabytes(mib), megabytes(line)] : [reading, floor];
 }
 // One notice per time a thing is found over a line, and one per time it is found over the urgent line: a
 // notice already closed under an id is never sent again (Conversations.send), so each id names the occasion.
@@ -99,83 +102,42 @@ const raisedId = (row: Reading) => `machine-condition:${JSON.stringify([row.box,
 const urgentId = (row: Reading) => `machine-condition-urgent:${JSON.stringify([row.box, row.kind, row.thing, row.generation, row.urgentOccasion])}`;
 const where = (key: Pick<Reading, 'box' | 'kind' | 'thing'>) => and(eq(boxReadings.box, key.box), eq(boxReadings.kind, key.kind), eq(boxReadings.thing, key.thing));
 
-type Numbers = Pick<Reading, 'kind' | 'thing' | 'level' | 'usedPercent' | 'sizeMib' | 'freeMib' | 'engineStatus'>;
-/** The sentence a machine's owner reads when a condition is raised. `row` is the record as just written:
- * the sentence names the line the reading is on the wrong side of, as the lines now are. Each is true of
- * its reading whichever way the condition came to be raised:
- * - urgent: sent only on reaching the urgent line, so the reading is at or over it.
- * - raised at or over the percent line, from fine or from urgent.
- * - raised under the free-room floor, which is only ever asked of a disk it applies to (floorOf).
- * - raised and under both, which only a disk coming down from urgent can be: it is inside the margin a
- *   line clears by, and the sentence says that and no more.
- * - memory: raised only under a floor that applies, which is then the household's own number. */
-function raisedWords(machine: string, row: Numbers, lines: AlertLines, before?: Reading): string {
+function raisedWords(machine: string, row: Reading, lines: AlertLines): string {
   if (row.kind === 'containers') return `${machine}: the container runtime answered with an error (${row.engineStatus}).`;
-  const free = roomWords(row.freeMib ?? 0);
-  if (row.kind === 'memory') {
-    const [room, floor] = roomAgainst(row.freeMib ?? 0, lines.memoryFreeMib);
-    return `${machine}: ${room} of memory is available. Alerts under ${floor}.`;
+  const free = roomWords(row.freeMib!);
+  if (row.level === 'urgent') return `${machine}: ${row.thing} is ${row.usedPercent}% full (${free} free). Urgent at ${lines.diskUrgentPercent}%.`;
+  if (row.ordinaryLine === 'percent') {
+    const line = row.usedPercent! >= lines.diskPercent ? `Alerts at ${lines.diskPercent}%.` : `Not yet clear of the ${lines.diskPercent}% alert line.`;
+    return `${machine}: ${row.thing} is ${row.usedPercent}% full (${free} free). ${line}`;
   }
-  const percent = row.usedPercent ?? 0, floor = floorOf(lines.diskFreeMib, row.sizeMib ?? 0);
-  if (row.level === 'urgent') return `${machine}: ${row.thing} is ${percent}% full (${free} free). Urgent at ${lines.diskUrgentPercent}%.`;
-  const overPercent = percent >= lines.diskPercent, underFloor = row.freeMib! < floor;
-  const priorLines = before?.lastLines ?? lines;
-  const crossedPercent = !before || before.usedPercent! < priorLines.diskPercent;
-  const crossedFloor = !before || before.freeMib! >= floorOf(priorLines.diskFreeMib, before.sizeMib ?? 0);
-  if (overPercent && underFloor && crossedPercent === crossedFloor) {
-    const [room, line] = roomAgainst(row.freeMib!, floor);
-    return `${machine}: ${row.thing} is ${percent}% full (${room} free). Alerts at ${lines.diskPercent}% or under ${line} free.`;
-  }
-  if (overPercent && (!underFloor || crossedPercent)) return `${machine}: ${row.thing} is ${percent}% full (${free} free). Alerts at ${lines.diskPercent}%.`;
-  if (underFloor) {
-    const [room, line] = roomAgainst(row.freeMib ?? 0, floor);
-    return `${machine}: ${row.thing} has ${room} free (${percent}% full). Alerts under ${line} free.`;
-  }
-  return `${machine}: ${row.thing} is ${percent}% full (${free} free). Not yet clear of the alert lines (${lines.diskPercent}%${floor ? `, ${roomWords(floor)} free` : ''}).`;
+  const floor = floorSetting(row.kind, lines);
+  const [room, line] = roomAgainst(row.freeMib!, floor);
+  if (row.kind === 'memory') return `${machine}: ${room} of memory is available. Alerts under ${line}.`;
+  const threshold = row.freeMib! < floor ? `Alerts under ${line} free.` : `Not yet clear of the ${line} floor.`;
+  return `${machine}: ${row.thing} has ${room} free (${row.usedPercent}% full). ${threshold}`;
 }
-/** Attribute a closure to a line edit only when the prior numbers clear under the new lines. */
-export function clearedWords(before: Reading, row: Reading, lines: AlertLines, urgent = false): string {
+
+function clearedWords(before: Reading, row: Reading, lines: AlertLines, urgent: boolean): string {
   if (row.kind === 'containers') return 'The container runtime answered successfully.';
-  const previous = before.lastLines ?? lines;
-  const free = row.freeMib ?? 0, percent = row.usedPercent ?? 0;
-  const said = `${row.thing} is at ${percent}% (${roomWords(free)} free)`;
-  if (urgent) {
-    if (previous.diskUrgentPercent !== lines.diskUrgentPercent &&
-        before.usedPercent! <= lines.diskUrgentPercent - CLEAR_POINTS) {
-      return `The urgent line is now ${lines.diskUrgentPercent}%; ${said}.`;
-    }
-    return `${said}, under the ${lines.diskUrgentPercent}% line.`;
+  const free = row.freeMib!;
+  const said = `${row.thing} is at ${row.usedPercent}% (${roomWords(free)} free)`;
+  if (urgent || before.ordinaryLine === 'percent') {
+    const current = urgent ? lines.diskUrgentPercent : lines.diskPercent;
+    const original = urgent ? before.urgentLineValue! : before.ordinaryLineValue!;
+    const changed = original !== current && holdsPercent(row, original) ? 'The lines changed. ' : '';
+    return `${changed}${said}, under the ${current}% ${urgent ? 'urgent ' : ''}line.`;
   }
+  const floor = floorSetting(row.kind, lines), original = before.ordinaryLineValue!;
+  const changed = original !== floor && holdsFloor(row, original) ? 'The lines changed. ' : '';
+  const [room, line] = roomAgainst(free, floor);
   const memory = row.kind === 'memory';
-  const floorLine = memory ? lines.memoryFreeMib : lines.diskFreeMib;
-  const oldLine = memory ? previous.memoryFreeMib : previous.diskFreeMib;
-  const priorFloor = floorOf(oldLine, before.sizeMib ?? 0);
-  const newPriorFloor = floorOf(floorLine, before.sizeMib ?? 0);
-  const floor = floorOf(floorLine, row.sizeMib ?? 0);
-  const wasBelowFloor = before.freeMib! < clearRoom(priorFloor);
-  const wasOverPercent = !memory && before.usedPercent! > previous.diskPercent - CLEAR_POINTS;
-  const percentEdit = wasOverPercent && previous.diskPercent !== lines.diskPercent &&
-    before.usedPercent! <= lines.diskPercent - CLEAR_POINTS;
-  const floorEdit = wasBelowFloor && oldLine !== floorLine && before.freeMib! >= clearRoom(newPriorFloor);
-  const [room, line] = roomAgainst(free, floor || floorLine);
-  if (memory) {
-    if (floorEdit && !floorLine) return 'The memory floor was switched off.';
-    if (floorEdit && !floor) return `The memory floor is now ${line}, which is not asked of a machine with ${roomWords(row.sizeMib ?? 0)} of memory; ${room} is available.`;
-    if (floorEdit) return `The memory floor is now ${line}; ${room} of memory is available.`;
-    if (!floor) return `The ${line} memory floor is no longer asked of a machine with ${roomWords(row.sizeMib ?? 0)} of memory; ${room} is available.`;
-    return `${room} of memory is available, over the ${line} floor.`;
+  if (!floor) return memory ? `${changed}The memory floor was switched off.` : `${changed}The disk floor was switched off; ${said}.`;
+  if (!floorOf(floor, row.sizeMib!)) {
+    return memory ? `${changed}The ${line} memory floor no longer applies to a machine with ${roomWords(row.sizeMib!)} of memory; ${room} is available.`
+      : `${changed}The ${line} floor no longer applies to ${row.thing}; ${room} is free.`;
   }
-  if (wasOverPercent && wasBelowFloor) {
-    return `${said}, clear of the alert lines (${lines.diskPercent}%${floor ? `, ${line} free` : ''}).`;
-  }
-  if (wasBelowFloor) {
-    if (floorEdit && !floorLine) return `The disk floor was switched off; ${said}.`;
-    if (!floor) return `The ${line} floor is no longer asked of ${row.thing}; ${room} is free.`;
-    if (floorEdit) return `The disk floor is now ${line}; ${row.thing} has ${room} free (${percent}% full).`;
-    return `${row.thing} has ${room} free (${percent}% full), over the ${line} floor.`;
-  }
-  if (percentEdit) return `The alert line is now ${lines.diskPercent}%; ${said}.`;
-  return `${said}, under the ${lines.diskPercent}% line.`;
+  return memory ? `${changed}${room} of memory is available, over the ${line} floor.`
+    : `${changed}${row.thing} has ${room} free (${row.usedPercent}% full), over the ${line} floor.`;
 }
 
 /** Describe the last reading without attributing its absence to a cause. */
@@ -202,14 +164,15 @@ export class MachineConditions {
     // `after` is absent when the thing is no longer watched, and stale when it has been unknown too long:
     // neither is a fresh reading that cleared an alert line.
     const why = (urgent: boolean) => after && !after.stale ? clearedWords(before!, after, lines, urgent) : gone;
-    if (before && before.level !== 'ok' && (!after || after.level === 'ok')) notices.resolveSource('notice', raisedId(before), why(false));
+    if (before?.ordinaryLine && (!after?.ordinaryLine || after.occasion !== before.occasion)) {
+      notices.resolveSource('notice', raisedId(before), why(false));
+    }
     if (before?.level === 'urgent' && after?.level !== 'urgent') notices.resolveSource('notice', urgentId(before), why(true));
-    if (!machine || !after || after.level === 'ok' || after.level === before?.level) return;
-    // Over the urgent line there is one urgent notice, beside the one already open if the thing was raised
-    // before. Back under it and still raised, the ordinary notice of this occasion is the one that stands:
-    // sent now if the thing went straight to urgent, and otherwise still open (or closed by its reader).
+    if (!machine || !after || after.level === 'ok') return;
+    if (after.level === before?.level && (after.level === 'urgent' || after.occasion === before.occasion)) return;
+    // If a disk was urgent from the start, it can first get an ordinary notice on the way down.
     notices.send({ toKind: 'person', to: machine.owner, member: machine.owner, source: 'notice', sourceId: after.level === 'urgent' ? urgentId(after) : raisedId(after),
-      fromKind: 'unknown', words: raisedWords(machine.name, after, lines, before), refs: [machine.id] });
+      fromKind: 'unknown', words: raisedWords(machine.name, after, lines), refs: [machine.id] });
   }
 
   /** A time in the household's zone as loom's screens say one ("Nov 19, 8:05 AM"; web/src/kit/time.ts), for the words of a notice. */
@@ -224,17 +187,25 @@ export class MachineConditions {
 
   private blank(key: Pick<Reading, 'box' | 'kind' | 'thing'>): Reading {
     return { ...key, ...none, generation: randomUUID(),
-      level: 'ok', occasion: 0, urgentOccasion: 0, lastLines: null, since: null, urgentSince: null,
+      level: 'ok', occasion: 0, urgentOccasion: 0, ordinaryLine: null, ordinaryLineValue: null, urgentLineValue: null, lastLines: null, since: null, urgentSince: null,
       readAt: null, unknownSince: null, observedAt: null, unknownMs: 0, absentMs: null, reportSequence: 0, stale: false };
   }
 
   private next(row: Reading, read: Values, lines: AlertLines, at: string, consecutive: boolean): Reading {
-    const level = evaluate(row.kind, read, row, lines, consecutive && row.unknownSince === null);
-    return { ...row, ...read, level, lastLines: lines, readAt: at, unknownSince: null, unknownMs: 0, absentMs: null, stale: false,
-      occasion: row.occasion + Number(level !== 'ok' && row.level === 'ok'),
-      urgentOccasion: row.urgentOccasion + Number(level === 'urgent' && row.level !== 'urgent'),
-      since: level === 'ok' ? null : row.since ?? at,
-      urgentSince: level === 'urgent' ? row.urgentSince ?? at : null };
+    const ordinary = ordinaryLine(row, read, lines, consecutive && row.unknownSince === null);
+    const urgent = row.kind === 'disk' && (read.usedPercent! >= lines.diskUrgentPercent ||
+      (row.level === 'urgent' && holdsPercent(read, lines.diskUrgentPercent)));
+    const newOrdinary = ordinary !== null && ordinary !== row.ordinaryLine;
+    return { ...row, ...read, level: urgent ? 'urgent' : ordinary ? 'raised' : 'ok',
+      lastLines: lines, readAt: at, unknownSince: null, unknownMs: 0, absentMs: null, stale: false,
+      ordinaryLine: ordinary,
+      ordinaryLineValue: !ordinary ? null : !newOrdinary ? row.ordinaryLineValue :
+        ordinary === 'percent' ? lines.diskPercent : ordinary === 'floor' ? floorSetting(row.kind, lines) : null,
+      urgentLineValue: urgent ? row.urgentLineValue ?? lines.diskUrgentPercent : null,
+      occasion: row.occasion + Number(newOrdinary),
+      urgentOccasion: row.urgentOccasion + Number(urgent && row.level !== 'urgent'),
+      since: urgent || ordinary ? row.since ?? at : null,
+      urgentSince: urgent ? row.urgentSince ?? at : null };
   }
 
   /** Only an interval bracketed by reports on this process clock contributes elapsed time. */
@@ -262,7 +233,7 @@ export class MachineConditions {
   private expire(row: Reading): Reading | undefined {
     if (row.absentMs !== null && row.absentMs >= STALE_MS) return undefined;
     if (row.unknownMs >= STALE_MS && !row.stale) {
-      return { ...row, stale: true, level: 'ok', since: null, urgentSince: null };
+      return { ...row, stale: true, level: 'ok', ordinaryLine: null, ordinaryLineValue: null, urgentLineValue: null, since: null, urgentSince: null };
     }
     return row;
   }
@@ -273,26 +244,35 @@ export class MachineConditions {
     return this.db.transaction(() => {
       const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();
       if (!machine || machine.revokedAt) throw new Error('Machine not available');
-      const sequence = machine.readingSequence + 1;
+      const sequence = Math.min(machine.readingSequence + 1, 2 ** 31 - 1);
       const seenAt = Date.parse(at);
       const lines = alertLines(this.db);
       const keyOf = (reading: { kind: Reading['kind']; thing?: string }) => JSON.stringify([reading.kind, reading.thing ?? '']);
       const report = new Map(readings.map(reading => [keyOf(reading), reading]));
       const previous = new Map(this.db.select().from(boxReadings).where(eq(boxReadings.box, box)).all().map(row => [keyOf(row), row]));
-      const updates = [...new Set([...previous.keys(), ...report.keys()])].map(key => {
-        const before = previous.get(key), reading = report.get(key);
-        const row = before ?? this.blank({ box, kind: reading!.kind, thing: reading!.thing ?? '' });
-        const consecutive = row.reportSequence === sequence - 1 && row.reportSequence > machine.readingSilenceSequence;
-        const after = reading && !reading.unknown
+      const update = (row: Reading, reading?: MachineReading) => {
+        const consecutive = row.reportSequence === machine.readingSequence && row.reportSequence > machine.readingSilenceSequence;
+        return reading && !reading.unknown
           ? this.next(row, values(reading), lines, at, consecutive)
           : this.unknown(row, at, consecutive ? this.interval(row, now) : 0, !reading);
-        return { before, after: this.expire(after) };
-      });
-      // Count the retained rows after expiry, before committing any part of the report.
-      if (updates.filter(({ after }) => after !== undefined).length > WATCHED_THINGS_MAX) throw new WatchedThingLimit();
-      this.db.update(boxes).set({ readingSequence: sequence }).where(eq(boxes.id, box)).run();
+      };
+      const updates: { before?: Reading; after?: Reading }[] = [...previous].map(([key, before]) => ({
+        before, after: this.expire(update(before, report.get(key))),
+      }));
+      let retained = updates.filter(({ after }) => after !== undefined).length;
+      let readingsLeftOut = 0;
+      for (const [key, reading] of report) {
+        if (previous.has(key)) continue;
+        if (retained >= WATCHED_THINGS_MAX) {
+          readingsLeftOut++;
+          continue;
+        }
+        updates.push({ after: update(this.blank({ box, kind: reading.kind, thing: reading.thing ?? '' }), reading) });
+        retained++;
+      }
+      this.db.update(boxes).set({ readingSequence: sequence, readingsLeftOut }).where(eq(boxes.id, box)).run();
 
-      let changed = false;
+      let changed = machine.readingsLeftOut !== readingsLeftOut;
       for (const { before, after } of updates) {
         if (!after) {
           this.drop(before!, lines, at, this.expiryReason(before!));
@@ -302,7 +282,7 @@ export class MachineConditions {
         this.save(before, { ...after, observedAt: `${clockEpoch}:${now}`, reportSequence: sequence });
         this.settle(machine, before, after, lines, at, after.stale && !before?.stale ? this.expiryReason(after) : undefined);
         const priorAge = before?.readAt ? seenAt - Date.parse(before.readAt) : NaN;
-        changed ||= !before || before.level !== after.level || before.engineStatus !== after.engineStatus ||
+        changed ||= !before || before.level !== after.level || before.occasion !== after.occasion || before.engineStatus !== after.engineStatus ||
           before.unknownSince !== after.unknownSince || before.stale !== after.stale ||
           (after.unknownSince === null && (priorAge > READING_OLD_MS || priorAge < 0));
       }

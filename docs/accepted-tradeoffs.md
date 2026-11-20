@@ -606,11 +606,13 @@ Keep watched paths outside trees bodies can write.
 ### A worker can misstate its own machine readings
 
 A worker credential identifies one machine. The worker can supply false
-numbers, device IDs, or any path within the watch-path bound. For example,
-it can say a fabricated path shares the root filesystem. This affects the
-reading and notices for that machine in its owner's view. Loom decides the
-conditions, report timing and recipients. Revisit this if machine readings
-are used to make decisions about other machines or their owners.
+numbers, an HTTP status, or a printable path within the watch-path bound.
+It can also report that its state directory is outside the watched path
+bounds, using the fixed `state-path` reason. Loom tracks each reported path
+independently and decides the conditions, report timing and recipients.
+These claims affect the readings and notices for that worker's own machine.
+Revisit this if machine readings are used to make decisions about other
+machines or their owners.
 
 ### Multiple watched paths on one filesystem can raise separate notices
 
@@ -619,7 +621,11 @@ on the same filesystem each have their own condition and can each notify the
 owner. List one path per filesystem when configuring the worker. A worker can
 report printable path names of its choosing for its own machine. Notices use
 plain text, the web renders paths as text, and MCP encodes replies as JSON.
-Loom retains at most 24 things per machine.
+Loom retains at most 24 things per machine. Already retained things are
+updated or marked absent. New ones take free places in report order. An
+omitted thing frees its place after a day of observed absence. The machine
+list tells the owner how many the last report left out, and the worker gets
+the usual acknowledgement.
 
 ### A hung mount can leave a sleeping disk helper
 
@@ -648,8 +654,8 @@ replacement worker can leave another asleep if the mount is still hung.
   is shown changed (`runtime.machineReadings` in `src/shared-machine-readings.ts`). These are told at
   once: a condition raised, made urgent or cleared; the container runtime going from answering to not
   answering or back; a thing becoming unknown, readable again or stale; a thing watched for the first
-  time or no more; and a fresh reading when the stored read time is more than fifteen minutes old
-  or lies in the future on the server’s wall clock.
+  time or no more; a change in how many things were left out; and a fresh reading when the stored read
+  time is more than fifteen minutes old or lies in the future on the server’s wall clock.
   `src/shared-live-idle.test.ts` holds the stamp and ordinary-change paths.
 - **The clock.** The minute is counted on the server's wall clock. If that clock is set back, the wake that
   was waiting is set again by the next such time written, a minute from then; with nothing more written it
@@ -1470,8 +1476,10 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
   - `boxes` has a writer for each fact about a machine. `src/shared-machine-registry.ts` makes the row
     when a machine is enrolled. `src/shared-box-settings.ts` writes what its owner chose (`boxes.name`,
-    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
-    machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
+    `hosts_any`, `report_only`, `always_on`, `readers`). `src/runtime/machines.ts` records `boxes.last_seen_at`,
+    capacity, and the reading sequence at a silence notice. `src/runtime/machine-conditions.ts` writes
+    `boxes.reading_sequence` and `readings_left_out` in the same transaction as the readings.
+    `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
   - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
     reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
   - `jobs` and `job_usage`: `src/core/conversations/terminal-sessions.ts` records observed runs and their cumulative measurements in the same transaction as the terminal event.

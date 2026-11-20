@@ -210,19 +210,18 @@ it('takes printable state paths verbatim and accepts an unnamed unknown state di
   expect(f.db.select().from(inbox).get()?.words).toContain(path);
 });
 
-it('refuses a report as a whole if a machine would retain more than 24 things', async () => {
+it('accepts an overflowing report with the bare acknowledgement and exposes the count to the owner', async () => {
   const f = fixture();
   const paths = Array.from({ length: 23 }, (_, i) => disk(50, `/d${i}`));
   await f.report([...paths.slice(0, 15), memory]);
   await f.report(paths.slice(15));
-  const rows = f.db.select().from(boxReadings).all();
-  const sequence = f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.readingSequence;
-  const refused = await f.report([disk(91, '/d0'), disk(99, '/overflow')]);
-  expect(refused.status).toBe(400);
-  expect(refused.body).toEqual({ ok: false, code: 'invalid', message: 'Machine watched thing limit exceeded' });
-  expect(f.db.select().from(boxReadings).all()).toEqual(rows);
-  expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()!.readingSequence).toBe(sequence);
-  expect(f.db.select().from(inbox).all()).toEqual([]);
-  expect((await f.report([disk(91, '/d0')])).status).toBe(200);
+  const accepted = await f.report([disk(91, '/d0'), disk(99, '/overflow')]);
+  expect(accepted.status).toBe(200);
+  expect(accepted.body).toEqual({ ok: true, value: { ok: true } });
+  expect(f.db.select().from(boxReadings).all()).toHaveLength(24);
   expect(f.db.select().from(boxReadings).where(eq(boxReadings.thing, '/d0')).get()?.usedPercent).toBe(91);
+  const query = '{ boxes(where: { id: { eq: "worker" } }) { readingsLeftOut } }';
+  expect(await f.query(query, keys.owner)).toEqual({ data: { boxes: [{ readingsLeftOut: 1 }] } });
+  await f.report([disk(91, '/d0')]);
+  expect(await f.query(query, keys.owner)).toEqual({ data: { boxes: [{ readingsLeftOut: 0 }] } });
 });

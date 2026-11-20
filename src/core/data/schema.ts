@@ -933,6 +933,7 @@ export const boxes = sqliteTable('boxes', {
   slots: integer('slots'),
   readers: text('readers', { mode: 'json' }).$type<string[]>(),
   readingSequence: integer('reading_sequence').notNull().default(0),
+  readingsLeftOut: integer('readings_left_out').notNull().default(0),
   readingSilenceSequence: integer('reading_silence_sequence').notNull().default(0),
 }, t => [
   check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
@@ -975,6 +976,9 @@ export const boxReadings = sqliteTable('box_readings', {
   generation: text('generation').notNull(),
   occasion: integer('occasion').notNull().default(0),
   urgentOccasion: integer('urgent_occasion').notNull().default(0),
+  ordinaryLine: text('ordinary_line', { enum: ['percent', 'floor', 'engine'] }),
+  ordinaryLineValue: integer('ordinary_line_value'),
+  urgentLineValue: integer('urgent_line_value'),
   lastLines: text('last_lines', { mode: 'json' }).$type<{ diskPercent: number; diskUrgentPercent: number; diskFreeMib: number; memoryFreeMib: number }>(),
   usedPercent: integer('used_percent'),
   sizeMib: integer('size_mib'),

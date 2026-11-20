@@ -77,7 +77,7 @@ it('adds one urgent notice when a raised disk crosses the urgent line, and not a
   // Back under the urgent line by the margin, still over the other: the urgent notice closes with what changed.
   expect(f.read(disk(90))).toEqual({ changed: true });
   expect(f.open()).toEqual(['loom: / is 91% full (18 GB free). Alerts at 85%.']);
-  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', '/ is at 90% (20 GB free), under the 95% line.']]);
+  expect(f.closed()).toEqual([['loom: / is 96% full (8 GB free). Urgent at 95%.', '/ is at 90% (20 GB free), under the 95% urgent line.']]);
   // And then under the line: the first closes too.
   f.read(disk(71));
   expect(f.open()).toEqual([]);
@@ -250,7 +250,7 @@ it('counts consecutive reports at the longest polling interval, including across
   expect(f.rows().map(row => [row.kind, row.reportSequence])).toEqual([['memory', 2], ['containers', 2]]);
 });
 
-it('restarts the count on an unknown reading, an omitted reading, or a silence notice', () => {
+it('starts a new pair after an unknown or omitted reading or an always-on machine silence notice', () => {
   const f = fixture(), down = { kind: 'containers' as const, engineStatus: 503 };
   const machines = new Machines(f.db, f.now);
   machines.heartbeat('box-1');
@@ -363,7 +363,7 @@ it('tells each machine\'s own owner, and keeps one machine\'s things apart from 
 });
 
 it('writes room in binary units, rounded down', () => {
-  expect([0, 310, 1023, 1024, 4608, 10_239, 10_240, 61_440].map(roomWords)).toEqual(['0 MB', '310 MB', '1023 MB', '1 GB', '4.5 GB', '9.9 GB', '10 GB', '60 GB']);
+  expect([0, 310, 1023, 1024, 4608, 10_239, 10_240, 61_440].map(roomWords)).toEqual(['0 MB', '310 MB', '1,023 MB', '1 GB', '4.5 GB', '9.9 GB', '10 GB', '60 GB']);
 });
 
 it('works a disk\'s fullness out as df does, used over used and available and rounded up, and holds the line to that number', () => {
@@ -438,30 +438,33 @@ const lined = (lines: Partial<typeof ALERT_LINE_DEFAULTS>) => ({ ...ALERT_LINE_D
 const sized = (sizeGib: number, freeMib: number) => ({ kind: 'disk' as const, thing: '/', sizeBytes: sizeGib * GIB, freeBytes: freeMib * MIB });
 it.each<[cause: string, open: Parameters<MachineConditions['read']>[1], opened: string, then: { firstLines?: Partial<typeof ALERT_LINE_DEFAULTS>; lines?: Partial<typeof ALERT_LINE_DEFAULTS>; reading: Parameters<MachineConditions['read']>[1][number] }, closed: string | null, said?: string]>([
   // Opened by a reading, closed by a reading that recovered.
-  ['over the percent line, then under it by the margin', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { reading: disk(71) }, '/ is at 71% (58 GB free), under the 85% line.'],
-  ['under the free-room floor and inside the percent margin, then clear of both', [sized(30, 5000)], 'loom: / has 4.8 GB free (84% full). Alerts under 5 GB free.', { reading: sized(30, 6144) }, '/ is at 80% (6 GB free), clear of the alert lines (85%, 5 GB free).'],
-  ['a percent condition held open by the floor, then clear of that floor',
-    [sized(20, 1844), sized(20, 4096)], 'loom: / is 91% full (1.8 GB free). Alerts at 85% or under 5 GB free.',
-    { reading: sized(20, 6144) }, '/ has 6 GB free (70% full), over the 5 GB floor.'],
+  ['the disk recovers under both the original and the edited percent lines', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 96, diskUrgentPercent: 99 }, reading: disk(71) }, '/ is at 71% (58 GB free), under the 96% line.'],
+  ['under the free-room floor and inside the percent margin, then clear of the floor', [sized(30, 5000)], 'loom: / has 4.8 GB free (84% full). Alerts under 5 GB free.', { reading: sized(30, 6144) }, '/ has 6 GB free (80% full), over the 5 GB floor.'],
+  ['the reading clears the percent line but crosses the floor', [sized(20, 1844)],
+    'loom: / is 91% full (1.8 GB free). Alerts at 85%.', { reading: sized(20, 4096) },
+    '/ is at 80% (4 GB free), under the 85% line.', 'loom: / has 4 GB free (80% full). Alerts under 5 GB free.'],
   ['a floor clears at exactly 110 MiB',
     [sized(1, 99)], 'loom: / has 99 MB free (91% full). Alerts under 100 MB free.',
     { firstLines: { diskPercent: 98, diskUrgentPercent: 99, diskFreeMib: 100 }, reading: sized(1, 110) },
     '/ has 110 MB free (90% full), over the 100 MB floor.'],
-  ['over the urgent line, then under the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(60) }, '/ is at 60% (80 GB free), under the 95% line.'],
-  ['over the urgent line, then under it and still raised', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(90) }, '/ is at 90% (20 GB free), under the 95% line.', 'loom: / is 90% full (20 GB free). Alerts at 85%.'],
-  ['over the urgent line, then inside the margin of the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(83) }, '/ is at 83% (34 GB free), under the 95% line.', 'loom: / is 83% full (34 GB free). Not yet clear of the alert lines (85%, 5 GB free).'],
+  ['over the urgent line, then under both percent lines', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(60) }, '/ is at 60% (80 GB free), under the 95% urgent line.'],
+  ['over the urgent line, then under it and still raised', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(90) }, '/ is at 90% (20 GB free), under the 95% urgent line.', 'loom: / is 90% full (20 GB free). Alerts at 85%.'],
+  ['over the urgent line, then inside the margin of the ordinary one', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { reading: disk(83) }, '/ is at 83% (34 GB free), under the 95% urgent line.', 'loom: / is 83% full (34 GB free). Not yet clear of the 85% alert line.'],
   ['low memory twice, then a tenth over the floor', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { reading: memory(2048) }, '2 GB of memory is available, over the 512 MB floor.'],
   ['the container runtime answering with two errors, then succeeding', [{ kind: 'containers', engineStatus: 503 }, { kind: 'containers', engineStatus: 503 }], 'loom: the container runtime answered with an error (503).', { reading: { kind: 'containers', engineStatus: 200 } }, 'The container runtime answered successfully.'],
   // Closed because the lines changed while it was open: the reading is the same and nothing recovered.
-  ['the percent line raised over a disk that is as full as it was', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 96, diskUrgentPercent: 99 }, reading: disk(91) }, 'The alert line is now 96%; / is at 91% (18 GB free).'],
-  ['the free-room floor lowered under a disk with as little room as it had', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 2048 }, reading: sized(25, 4608) }, 'The disk floor is now 2 GB; / has 4.5 GB free (82% full).'],
-  ['the free-room floor raised until it is no longer asked of a disk that small', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 20_480 }, reading: sized(25, 4608) }, 'The 20 GB floor is no longer asked of /; 4.5 GB is free.'],
-  ['the urgent line raised over a disk that is as full as it was', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { lines: { diskUrgentPercent: 100 }, reading: disk(96) }, 'The urgent line is now 100%; / is at 96% (8 GB free).', 'loom: / is 96% full (8 GB free). Alerts at 85%.'],
-  ['the memory floor lowered under a machine with as little memory free', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 200 }, reading: memory(310) }, 'The memory floor is now 200 MB; 310 MB of memory is available.'],
-  ['the memory floor raised past half the machine\'s memory, where it is not asked', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 9000 }, reading: memory(310) }, 'The memory floor is now 8.7 GB, which is not asked of a machine with 16 GB of memory; 310 MB is available.'],
-  ['the memory floor switched off', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 0 }, reading: memory(310) }, 'The memory floor was switched off.'],
-  ['the disk floor switched off', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 0 }, reading: sized(25, 4608) }, 'The disk floor was switched off; / is at 82% (4.5 GB free).'],
-  ['a reading and floor that round to the same amount', [sized(100, 40_000)], '', { lines: { diskFreeMib: 40_001 }, reading: sized(100, 40_000) }, null, 'loom: / has 40000 MB free (61% full). Alerts under 40001 MB free.'],
+  ['the percent line raised over a disk that is as full as it was', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 96, diskUrgentPercent: 99 }, reading: disk(91) }, 'The lines changed. / is at 91% (18 GB free), under the 96% line.'],
+  ['the free-room floor lowered under a disk with as little room as it had', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 2048 }, reading: sized(25, 4608) }, 'The lines changed. / has 4.5 GB free (82% full), over the 2 GB floor.'],
+  ['the free-room floor raised until it is no longer asked of a disk that small', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 20_480 }, reading: sized(25, 4608) }, 'The lines changed. The 20 GB floor no longer applies to /; 4.5 GB is free.'],
+  ['the urgent line raised over a disk that is as full as it was', [disk(96)], 'loom: / is 96% full (8 GB free). Urgent at 95%.', { lines: { diskUrgentPercent: 100 }, reading: disk(96) }, 'The lines changed. / is at 96% (8 GB free), under the 100% urgent line.', 'loom: / is 96% full (8 GB free). Alerts at 85%.'],
+  ['the memory floor lowered under a machine with as little memory free', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 200 }, reading: memory(310) }, 'The lines changed. 310 MB of memory is available, over the 200 MB floor.'],
+  ['the memory floor raised past half the machine\'s memory, where it is not asked', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 9000 }, reading: memory(310) }, 'The lines changed. The 8.7 GB memory floor no longer applies to a machine with 16 GB of memory; 310 MB is available.'],
+  ['the memory floor switched off', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 0 }, reading: memory(310) }, 'The lines changed. The memory floor was switched off.'],
+  ['the disk floor switched off', [sized(25, 4608)], 'loom: / has 4.5 GB free (82% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 0 }, reading: sized(25, 4608) }, 'The lines changed. The disk floor was switched off; / is at 82% (4.5 GB free).'],
+  ['a reading and floor that round to the same amount', [sized(100, 40_000)], '', { lines: { diskFreeMib: 40_001 }, reading: sized(100, 40_000) }, null, 'loom: / has 40,000 MB free (61% full). Alerts under 40,001 MB free.'],
+  ['the floor switches off while a disk is inside the percent margin', [sized(25, 4352)], 'loom: / has 4.2 GB free (83% full). Alerts under 5 GB free.', { lines: { diskFreeMib: 0 }, reading: sized(25, 4352) }, 'The lines changed. The disk floor was switched off; / is at 83% (4.2 GB free).'],
+  ['memory partly recovers after the floor was lowered', [memory(300), memory(300)], 'loom: 300 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 400 }, reading: memory(450) }, 'The lines changed. 450 MB of memory is available, over the 400 MB floor.'],
+  ['1023 MiB triggers a floor of 1025 MiB', [sized(20, 1023)], 'loom: / has 1,023 MB free (96% full). Alerts under 1,025 MB free.', { firstLines: { diskPercent: 98, diskUrgentPercent: 99, diskFreeMib: 1025 }, reading: sized(20, 1023) }, null],
   // The lines changed and the condition stands: nothing is closed and nothing new is said.
   ['the memory floor raised, still asked, and still not met', [memory(300), memory(310)], 'loom: 310 MB of memory is available. Alerts under 512 MB.', { lines: { memoryFreeMib: 600 }, reading: memory(310) }, null],
   ['the percent line lowered under a raised disk', [disk(91)], 'loom: / is 91% full (18 GB free). Alerts at 85%.', { lines: { diskPercent: 70 }, reading: disk(91) }, null],
@@ -511,18 +514,38 @@ it('applies already accumulated expiry in the sweep without inventing observatio
   expect(f.service.sweep()).toBe(false);
 });
 
-it('frees a place on the report that drops an omitted path and publishes the new path once', () => {
+it('keeps readings and notices moving when fourteen paths are replaced at once', () => {
   const f = fixture();
-  const paths = Array.from({ length: 24 }, (_, i) => disk(50, `/d${i}`));
-  f.read(...paths.slice(0, 16));
-  f.read(...paths.slice(8));
-  expect(() => f.read(disk(50, '/new'))).toThrow();
-  observeHours(f, 23, ...paths.slice(8));
-  f.advance(HOUR - 5 * MINUTES);
-  expect(f.read(...paths.slice(9), disk(50, '/new'))).toEqual({ changed: true });
-  expect(f.rows()).toHaveLength(17);
-  expect(f.rows().some(row => row.thing === '/new')).toBe(true);
-  expect(f.read(...paths.slice(9), disk(50, '/new'))).toEqual({ changed: false });
+  const paths = (prefix: string) => Array.from({ length: 14 }, (_, i) => disk(50, `/${prefix}${i}`));
+  const old = paths('old'), replacement = paths('new');
+  f.read(disk(91), memory(300), ...old);
+  f.read(disk(91), memory(300), ...old);
+  expect(f.open()).toHaveLength(2);
+
+  expect(f.read(disk(60), memory(900), ...replacement)).toEqual({ changed: true });
+  expect(f.open()).toEqual([]);
+  expect(f.closed()).toHaveLength(2);
+  expect(f.rows()).toHaveLength(24);
+  expect(f.rows().filter(row => row.thing.startsWith('/new')).map(row => row.thing)).toEqual(replacement.slice(0, 8).map(row => row.thing));
+  expect(f.rows().filter(row => row.thing.startsWith('/old')).every(row => row.absentMs === 0)).toBe(true);
+  f.read(disk(61), memory(901), ...replacement);
+  expect(f.rows().find(row => row.thing === '/')).toMatchObject({ usedPercent: 61, readAt: f.now() });
+  expect(f.rows().find(row => row.kind === 'memory')).toMatchObject({ freeMib: 901, readAt: f.now() });
+
+  observeHours(f, 23, disk(62), memory(902), ...replacement);
+  expect(f.rows()).toHaveLength(24);
+  observeHours(f, 1, disk(63), memory(903), ...replacement);
+  expect(f.rows()).toHaveLength(16);
+  expect(f.rows().filter(row => row.thing.startsWith('/new')).map(row => row.thing)).toEqual(replacement.map(row => row.thing));
+});
+
+it('stops the report sequence at the GraphQL Int maximum', () => {
+  const f = fixture();
+  const max = 2 ** 31 - 1;
+  f.db.update(boxes).set({ readingSequence: max }).run();
+  f.read(disk(71));
+  expect(f.db.select().from(boxes).get()?.readingSequence).toBe(max);
+  expect(f.rows()[0]).toMatchObject({ reportSequence: max, usedPercent: 71 });
 });
 
 it('publishes the first fresh reading after restart even though it cannot count a prior process interval', () => {

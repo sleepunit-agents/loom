@@ -6,8 +6,8 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { liveWorker } from './shared-worker.js';
 import { householdOwner } from './shared-sharing.js';
 import { boxReadings } from './core/data/schema.js';
-import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, WATCHED_THING_LIMIT_ERROR, watchedPath } from './runtime/machine-check.js';
-import { MachineConditions, WatchedThingLimit, alertLines, setAlertLines } from './runtime/machine-conditions.js';
+import { SIZE_BYTES_MAX, WATCHED_PATHS_MAX, watchedPath } from './runtime/machine-check.js';
+import { MachineConditions, alertLines, setAlertLines } from './runtime/machine-conditions.js';
 
 // loom keeps a size in whole mebibytes and the read API serves an integer column as a GraphQL `Int`, which
 // ends at 2^31 - 1 (drizzle-graphql maps SQLiteInteger to GraphQLInt). A larger size is refused here and
@@ -49,12 +49,7 @@ export function registerSharedMachineReadings(operations: Operations, db: DataDa
     run(ctx, input) {
       const box = liveWorker(db, ctx.viewer, runner(ctx.viewer));
       if (!box) throw new OperationError('denied', 'Worker required');
-      let changed: boolean;
-      try { ({ changed } = conditions.read(box, input.readings)); }
-      catch (error) {
-        if (error instanceof WatchedThingLimit) throw new OperationError('invalid', WATCHED_THING_LIMIT_ERROR);
-        throw error;
-      }
+      const { changed } = conditions.read(box, input.readings);
       // The numbers move with every reading. A state a person is shown (a condition raised or cleared, the
       // container runtime answering or not, a thing unknown, readable again, stale, added or dropped) is an
       // ordinary change, told at once. Numbers alone are a stamp and reach an open window as a last-seen

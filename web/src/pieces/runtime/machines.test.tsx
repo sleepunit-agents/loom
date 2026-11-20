@@ -8,6 +8,7 @@ vi.mock('../../data/operation',()=>({memberOperation:f.call}));
 vi.mock('../../kit',()=>({Button:(props:object)=>h('button',props),Error:()=>null,Loading:()=>null}));
 import {OwnerMachines} from './machines';
 import {briefTime} from '../../kit/time';
+import {readingAge,type Reading} from './machine-readings';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.clearAllMocks();});
@@ -123,5 +124,22 @@ it('renders a printable path as text and gives an invalid state directory its fi
   expect(tree.root.findAllByType('img')).toHaveLength(0);
   expect(JSON.stringify(tree.toJSON())).toContain(path);
   expect(JSON.stringify(tree.toJSON())).toContain('Worker state directory not read (path outside watched path bounds)');
+ } finally { f.feed=before; }
+});
+
+it('shows when a reading was taken if the clock steps back',()=>{
+ const now=Date.parse('2026-11-19T14:00:00Z');
+ const readAt=new Date(now+60_000).toISOString();
+ const reading:Reading={box:'box',kind:'memory',thing:'',usedPercent:null,sizeMib:16384,freeMib:512,engineStatus:null,level:'ok',readAt,unknownSince:null,stale:false};
+ expect(readingAge(reading,now,'America/Chicago')).toBe(` (as of ${briefTime(readAt,'America/Chicago',now)})`);
+});
+
+it('shows how many readings the machine reported beyond retention',async()=>{
+ const before=f.feed;
+ try {
+  f.feed={...before,data:{...before.data,boxes:before.data.boxes.map(box=>({...box,readingsLeftOut:6}))}} as never;
+  await act(async()=>{tree=create(h(OwnerMachines,{member:'lee'}));});
+  const statuses=tree.root.findAllByProps({role:'status'}).map((status:{children:string[]})=>status.children.join(''));
+  expect(statuses).toContain('More than 24 things reported; 6 were left out.');
  } finally { f.feed=before; }
 });

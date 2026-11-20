@@ -6,7 +6,7 @@ export type Reading = {box:string; kind:'disk'|'memory'|'containers'; thing:stri
 
 /** An amount of room, in the binary units `df -h` writes. The same rounding as the notice loom sends. */
 export function room(mib:number):string {
- if(mib<1024)return `${mib} MB`;
+ if(mib<1024)return `${mib.toLocaleString('en-US')} MB`;
  const gb=mib/1024;
  return `${gb<100?Math.floor(gb*10)/10:Math.floor(gb)} GB`;
 }
@@ -16,7 +16,7 @@ export function readingAge(reading:Reading,now:number,zone?:string):string {
  if(!reading.readAt)return '';
  if(reading.stale)return ` (not read since ${briefTime(reading.readAt,zone,now)})`;
  const age=now-Date.parse(reading.readAt);
- return reading.unknownSince||!(age<=READING_OLD_MS)?` (as of ${briefTime(reading.readAt,zone,now)})`:'';
+ return reading.unknownSince||!(age>=0&&age<=READING_OLD_MS)?` (as of ${briefTime(reading.readAt,zone,now)})`:'';
 }
 /** One reading, quietly. A disk is named by its path only when the machine has more than one watched. */
 export function readingLine(reading:Reading,disks:number,now:number,zone?:string):string {

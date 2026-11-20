@@ -1131,7 +1131,8 @@ a point it clears at. A disk is raised by the first reading over its line.
 Memory and the container runtime dip for a moment (a build, an engine being
 restarted), so they are raised only when two consecutive reports are both over
 the line. Loom numbers a machine’s reports in receipt order. An unknown or
-missing reading, or a silence notice between reports, restarts the count.
+missing reading restarts the count. After a silence notice for an always-on
+machine, its first report starts a new pair.
 A floor applies only if the total size is at least twice the floor. A smaller
 disk uses the percent line alone. A machine is held to changed lines by its
 next reading. Zero switches off either free-room floor. The percentage lines
@@ -1145,9 +1146,11 @@ report is taken. An unknown reading carries only its kind and, for a disk, its
 path. A container runtime that answers with an error reports its status, for
 example `503`. A transport failure or timeout reports unknown and raises no notice.
 A report can carry up to 16 disk readings and one of each other kind. Loom
-keeps at most 24 things per machine. A report that would exceed that limit
-is refused whole with a fixed error that the worker logs once. Dropping a
-path frees its place.
+keeps at most 24 things per machine. Loom accepts every valid report, updating
+already retained things and observing omissions first. It then admits new
+things in report order until the cap is reached. "Your machines" says
+"More than 24 things reported; N were left out." The worker gets the usual
+acknowledgement. A thing absent for a full day frees its place for a new one.
 
 ### What the owner is told
 
@@ -1160,9 +1163,13 @@ free), under the 85% line.` A notice its reader closed by hand is not sent
 again for the same occasion; a condition that cleared and came back is a new
 occasion with a notice of its own.
 
-A recovery names the line the latest reading cleared. When a settings edit clears a condition, the closure names the relevant edit. If the
-owner switched off the memory floor, its notice closes with
-`The memory floor was switched off.`
+Each condition remembers which line raised it and that line’s value at the
+time. A condition clears by the current value of that line. If a floor is
+switched off or stops applying, the floor condition clears. If the same
+reading crosses another line, that line can raise its own condition.
+A recovery names its line. It says "The lines changed" if the line value
+changed and this reading would still hold the condition open under the
+original value. A switched-off floor is named in the closure.
 
 Each watched path has its own reading, condition, and notice occasions.
 Omitting a thing from a report treats its reading as unknown. Loom adds time
@@ -1189,11 +1196,12 @@ next sweep.
 `box_readings` keeps the latest reading of each thing and no history. It is
 read with the machine (`boxReadings`, by the machines rule): the machine's own
 member and household owners. "Your machines" shows a number as current only
-while it is: a reading the worker can no longer take, or one older than
-fifteen minutes, is shown with the time it was read (`as of 14:05`), and a
-stale one as `not read since`. The open screen updates ages every minute.
-A fresh reading after the old reading has aged out is told at once. A change in a state a person is shown is told
-to open windows at once; a drift in the numbers alone reaches them as a
+while it is: a reading the worker can no longer take, one older than
+fifteen minutes, or one dated in the future is shown with the time it was
+read (`as of 14:05`). A stale reading says `not read since`. The open screen
+updates ages every minute. A fresh reading after the previous reading aged
+out or appeared future-dated reaches open windows at once, as does a change
+in the condition shown. A drift in the numbers alone reaches them as a
 last-seen time does ([accepted trade-offs](../accepted-tradeoffs.md)).
 
 ### The machine loom itself is on

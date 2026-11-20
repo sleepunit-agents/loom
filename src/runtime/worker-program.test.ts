@@ -595,7 +595,7 @@ it.each([['machineCheckMs', 5_000], ['machineCheckMs', 4_000_000], ['watchPaths'
   expect(f.run).not.toHaveBeenCalled();
 });
 
-it('logs a fixed watched-thing refusal once and keeps sending subsequent reports', async () => {
+it('logs the old server’s fixed watched-thing refusal once and keeps sending reports', async () => {
   const f = fixture();
   const send = vi.fn(async () => Response.json({ ok: false, code: 'invalid', message: 'Machine watched thing limit exceeded' }, { status: 400 }));
   const reportReadings = (remote: WorkerHttpOptions, readings: Parameters<typeof reportWorkerMachineReadings>[1]) =>
