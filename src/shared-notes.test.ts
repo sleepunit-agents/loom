@@ -1,4 +1,6 @@
 import {expect,it} from 'vitest';
+import {writeFileSync} from 'node:fs';
+import {Notes} from './notes.js';
 import Database from 'better-sqlite3';
 import {join} from 'node:path';
 import {sharedUiProgram} from '../test/fixtures/shared-ui-program.js';
@@ -37,5 +39,36 @@ it('atomically chooses one claimant and fences the former holder after takeover'
   expect(await write('stale-completion',holder,'stale checkpoint')).toBe(409);
   expect(await write('finish','c','next checkpoint')).toBe(200);
   expect(await write('finish','c','next checkpoint')).toBe(200);
+ }finally{await p.close();}
+});
+
+it('serves the stored note and attachment metadata through the household read door',async()=>{
+ const p=await sharedUiProgram({clock:new FakeClock(Date.now()),seed(db,now){
+  db.insert(s.members).values({id:'alice',role:'owner',joinedAt:now()}).run();
+  for(const id of ['art','mark'])db.insert(s.agents).values({id,about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ }});
+ try{
+  const issue=(agent:string)=>p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'agent',agent,label:'Fictional reader '+agent})).value.token;
+  const art=issue('art'),mark=issue('mark'),path='fictional/frame';
+  const notes=new Notes(join(p.home,'agents/art'));
+  const bytes=join(p.home,'fixture.bin');
+  writeFileSync(bytes,Buffer.from([0,128,255]));
+  try{
+   notes.write(path,'Résumé',{lifespan:'short',by:'art'});
+   notes.attach(path,'frame.bin',bytes);
+   notes.attach(path,'cover.bin',bytes,{type:'application/octet-stream'});
+   notes.pin(path,true);
+  }finally{notes.close();}
+  const fields='path lifespan created updated by pinned bytes files expires';
+  const query=`{memoryNote(agent:"art",path:"fictional/frame"){${fields} body fileList{name sha256 bytes type added}} memoryNotes(agent:"art"){${fields}}}`;
+  const read=async(token:string)=>(await fetch(p.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query})})).json();
+  const own=await read(art);
+  expect(own.errors).toBeUndefined();
+  const summary={path,lifespan:'short',created:expect.any(String),updated:expect.any(String),by:'art',pinned:true,bytes:8,files:2,expires:null};
+  const attachment={bytes:3,sha256:'5240672d7b51756b829ad0ef8d9468b7a078afa2f410484fd3892dab47becb72',added:expect.any(String)};
+  expect(own.data).toEqual({memoryNotes:[summary],memoryNote:{...summary,body:'Résumé',fileList:[
+   {...attachment,name:'cover.bin',type:'application/octet-stream'},{...attachment,name:'frame.bin',type:null},
+  ]}});
+  expect(await read(mark)).toEqual({data:{memoryNote:null,memoryNotes:null}});
  }finally{await p.close();}
 });
