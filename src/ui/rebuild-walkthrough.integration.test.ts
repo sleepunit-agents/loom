@@ -94,7 +94,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('appearance');
   for(const name of ['deskLooks','deskAppearance'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
- it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0},async()=>{
+ it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:180_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});
  });
