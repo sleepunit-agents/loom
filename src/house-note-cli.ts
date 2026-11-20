@@ -55,6 +55,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
   }catch{io.stderr('Invalid note arguments or input.\n'+usage);return 2;}
   const cap=/^([1-9][0-9]{0,4})\.([a-f0-9]{64})$/.exec(env.LOOM_BODY_HOUSE_NOTE??'');
   if(!cap||Number(cap[1])>65535){io.stderr('Loom note needs an active worker job with shell access.\n');return 1;}
+  if(generatedReceipt)io.stderr('Write receipt --id '+generatedReceipt+'\n');
   try{
     const reply=await fetch('http://127.0.0.1:'+cap[1]+'/house/note',{method:'POST',redirect:'error',
       headers:{authorization:'Bearer '+cap[2],'content-type':'application/json'},body:JSON.stringify(input)});
@@ -62,7 +63,7 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     const value=await reply.json();
     if(operation==='write'){
       z.object({ok:z.literal(true),value:z.object({saved:z.literal(true)})}).parse(value);
-      io.stdout(json?JSON.stringify(value.value)+'\n':'Saved '+input.path+'\n');
+      io.stdout(json?JSON.stringify({...value.value,...(generatedReceipt?{id:generatedReceipt}:{})})+'\n':'Saved '+input.path+'\n');
     }else if(operation==='read'){
       if(value.errors||!value.data||!Object.hasOwn(value.data,'memoryNote'))throw Error();
       if(value.data.memoryNote===null){io.stderr('No note '+input.path+'\n');return 3;}

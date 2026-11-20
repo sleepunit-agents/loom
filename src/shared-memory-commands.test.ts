@@ -621,13 +621,17 @@ it('runs the house note CLI against a running job and refuses the same shell han
  };
  const write=['write','field/log','--lifespan','short','--body','first reading','--id','one-reading'];
  expect(await run(...write)).toMatchObject({code:0});
+ const edit=await run('write','field/log','--body','later reading','--json');
+ expect(edit.code).toBe(0);
+ const receipt=JSON.parse(edit.out).id;expect(receipt).toMatch(/^[a-f0-9-]{36}$/);
+ expect(edit.err).toContain('--id '+receipt);
  expect(await run(...write)).toMatchObject({code:0});
  const refused=await run(...write.slice(0,-1),sentinel);
  expect(refused.code).toBe(1);
  expect(refused.err).toContain('Reuse the supplied --id');
  expect(refused.out+refused.err).not.toContain(sentinel);
  const executable=await promisify(execFile)(process.execPath,['--import','tsx','src/index.ts','note','read','field/log'],{env:{...process.env,...env}});
- expect(executable.stdout).toBe('first reading\n');
+ expect(executable.stdout).toBe('later reading\n');
  const list=await run('list','field/','--json');expect(list.code).toBe(0);
  expect(JSON.parse(list.out)).toMatchObject([{path:'field/log',bytes:13,pinned:false}]);
  for(const text of ['--help','-h']){

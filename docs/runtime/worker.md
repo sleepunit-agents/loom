@@ -612,6 +612,7 @@ A model job with full shell reach can use `loom note read <path>`,
 `loom note list [prefix]`, and `loom note write <path> --lifespan short`.
 A write reads text from standard input or `--body`. All three commands accept
 `--json`. For a retried write, pass the same `--id` and the same arguments.
+When the CLI generates the ID it prints it on stderr before sending the write.
 The body binds these commands to its agent and enforces the room's tool denials.
 The shell's local credential expires with the job.
 
