@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import type { Span, Tracer } from '@opentelemetry/api';
 import { clock as realClock, type Clock } from '../clock.js';
 
@@ -30,6 +31,11 @@ export interface Measuring {
   flush(): Promise<void>;
   close(): Promise<void>;
 }
+/** The most days of local history that can be asked for. Zero means none is kept here, which is allowed
+ * only when measurements are sent outside. The column's check in schema.ts states the same range. */
+export const KEEP_DAYS_MAX = 3650;
+/** Whole days from 0 to the most allowed. */
+export const validKeepDays = (days: number): boolean => Number.isInteger(days) && days >= 0 && days <= KEEP_DAYS_MAX;
 export const DEFAULT_MEASURING: Readonly<MeasuringSettings> = Object.freeze({
   on: false, send_outside: false, outside_address: '', keep_days: 90,
 });
@@ -50,7 +56,7 @@ export async function createMeasuring(
 ): Promise<Measuring> {
   if (!settings.on) return off;
   const keepDays = settings.keep_days;
-  if (!Number.isInteger(keepDays) || keepDays < 0 || keepDays > 3650 || (keepDays === 0 && (!settings.send_outside || store))) throw new Error('keep_days must be 0–3650, with at least one day for local history');
+  if (!validKeepDays(keepDays) || (keepDays === 0 && (!settings.send_outside || store))) throw new Error(`keep_days must be 0–${KEEP_DAYS_MAX}, with at least one day for local history`);
   if (targets.length > 2048 || targets.some(t =>
     !['request', 'operation', 'job'].includes(t.kind) || !/^[a-zA-Z][a-zA-Z0-9_.:-]{0,119}$/.test(t.name)))
     throw new Error('Measuring needs a bounded inventory of code-defined names');
@@ -71,7 +77,7 @@ export async function createMeasuring(
   const report = () => { try { reportError(); } catch { /* diagnostics cannot break application work */ } };
   const prune = (day: string) => {
     if (!store || day <= prunedDay) return;
-    store.prune(new Date(Date.parse(day) - (keepDays - 1) * 86400_000).toISOString().slice(0, 10));
+    store.prune(new Date(Date.parse(day) - (keepDays - 1) * DAY_MS).toISOString().slice(0, 10));
     prunedDay = day;
   };
   if (store) processors.push({
@@ -114,7 +120,7 @@ export async function createMeasuring(
     catch { report(); }
     finally { writing = false; }
     // Expire idle stores too, without a polling interval or a process keepalive.
-    if (active) cancelRetention = clock.at((Math.floor(now / 86400_000) + 1) * 86400_000, retain);
+    if (active) cancelRetention = clock.at((Math.floor(now / DAY_MS) + 1) * DAY_MS, retain);
   };
   retain();
   const tracer: Tracer = provider.getTracer('loom.measuring');

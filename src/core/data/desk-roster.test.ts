@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database';
 import { dataQueries } from './queries';
@@ -26,9 +26,16 @@ it('executes actual shared ownership and directory selection without promoting v
     expect(result.errors).toBeUndefined();return result.data as unknown as DeskRosterData;
   };
   const first=await read();
-  expect(first).toEqual({homeComms:{member:'member',agents:['z']},agents:[{id:'z',position:1},{id:'a',position:3}]});
+  expect(first).toEqual({homeComms:{member:'member',agents:['z']},agents:[{id:'z',position:1,removedAt:null},{id:'a',position:3,removedAt:null}]});
   expect(deskRoster({status:'live',data:first}).records).toEqual([{id:'z',name:'Z',position:1}]);
   expect(deskRoster({status:'live',data:await read('other')}).records).toEqual([]);
+  db.insert(memberAgents).values({member:'member',agent:'a'}).run();
+  db.update(agents).set({removedAt:at}).where(eq(agents.id,'a')).run();
+  const retired = await read();
+  expect(retired.agents).toContainEqual({id:'a',position:3,removedAt:at});
+  expect(retired.homeComms?.agents).toEqual(['z']);
+  expect(deskRoster({status:'live',data:retired}).records.map(row=>row.id)).toEqual(['z']);
+  expect(db.select().from(memberAgents).all()).toHaveLength(2);
   db.delete(memberAgents).run();
   const revoked=await read();expect(revoked.agents).toHaveLength(2);
   expect(deskRoster({status:'live',data:revoked}).records).toEqual([]);

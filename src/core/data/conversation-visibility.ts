@@ -1,21 +1,14 @@
-/** Wordless conversation history uses the same ordered scope as Comms.
- * Every child checks its current parent, including nested/generated reads. */
-import { getTableColumns, sql, type AnyColumn } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+/** Wordless conversation history uses the same labelled-record rule as Comms.
+ * Every child is seen with its current parent. The rules are stated in policy.ts. */
 import type { Viewer } from '../../policy.js';
+import { sqlVisibility } from '../../policy-sql.js';
 import type { QueryVisibility } from './queries.js';
-import { conversations, digests } from './schema.js';
-import { workVisibility } from './work-visibility.js';
 export const conversationTables = ['conversations','conversationPeople','turns','digests','digestItems','conversationDays','findings'] as const;
 export function conversationVisibility(viewer: Viewer): QueryVisibility {
- const parent=alias(conversations,'visible_conversation'),digest=alias(digests,'visible_digest');
- const allowed=workVisibility(viewer).approvals!;
- const scope=allowed(getTableColumns(parent));
- const hasVisibleConversation=(id:AnyColumn)=>sql`exists (select 1 from ${conversations} as ${sql.identifier('visible_conversation')} where ${parent.id} = ${id} and ${scope})`;
- return {
-  conversations:allowed,
-  conversationPeople:f=>hasVisibleConversation(f.conversation),turns:f=>hasVisibleConversation(f.conversation),digests:f=>hasVisibleConversation(f.conversation),
-  conversationDays:f=>hasVisibleConversation(f.conversation),findings:f=>hasVisibleConversation(f.conversation),
-  digestItems:f=>sql`exists (select 1 from ${digests} as ${sql.identifier('visible_digest')} where ${digest.id} = ${f.digest} and ${hasVisibleConversation(digest.conversation)})`,
- };
+ return sqlVisibility(viewer, conversationTables);
+}
+/** What hangs off a conversation and carries its words: its jobs (title, brief, log tail) and its Inbox
+ * items. These have their own readers, so they are not in the table list above. */
+export function talkVisibility(viewer: Viewer) {
+ return sqlVisibility(viewer, ['jobs', 'inbox']);
 }

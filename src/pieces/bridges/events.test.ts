@@ -7,7 +7,7 @@ import { BridgeEvents } from './events.js';
 
 const stores: Database.Database[] = [];
 afterEach(() => { for (const db of stores.splice(0)) db.close(); });
-const HOUR = 3_600_000;
+const HOUR = 3_600_000, DAY = 24 * HOUR;
 function fixture() {
   const client = new Database(':memory:'); stores.push(client);
   const clock = new FakeClock();
@@ -25,7 +25,7 @@ function fixture() {
   return { db, clock, now, input, rows };
 }
 
-const checkpoint = { session: 'session', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/' };
+const checkpoint = { session: 'session', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/', identity: 'identity' };
 
 it('preserves arrival order for receipts retained in the same millisecond', () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
@@ -59,32 +59,44 @@ it('commits held writes while retaining original bytes, bounds examined rows and
 it('commits Discord raw bytes with the resume cursor, and rolls both back on failure', () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   spool.retain('discord', 'one', f.input, checkpoint);
-  expect(spool.checkpoint('discord')).toEqual(checkpoint);
+  expect(spool.checkpoint('discord', 'identity')).toEqual(checkpoint);
   expect(f.rows()[0].event).toEqual(f.input);
   expect(() => spool.retain('missing', 'two', f.input, { ...checkpoint, sequence: 2 })).toThrow();
   // Force receipt insertion to fail after the cursor update.
   f.db.$client.exec("CREATE TRIGGER reject_raw BEFORE INSERT ON bridge_raw_events WHEN NEW.id='bad' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");
   expect(() => spool.retain('discord', 'bad', f.input, { ...checkpoint, sequence: 2 })).toThrow('synthetic failure');
-  expect(spool.checkpoint('discord')).toEqual(checkpoint);
+  expect(spool.checkpoint('discord', 'identity')).toEqual(checkpoint);
   expect(f.rows()).toHaveLength(1);
   spool.close();
 });
 
-it('expires raw bytes at one hour, without extending duplicate deadlines or erasing cursors/history', () => {
-  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+it('keeps an unread event a day and a recorded one an hour, without extending duplicate deadlines or erasing cursors/history', () => {
+  const lost: number[] = [];
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock, count => lost.push(count));
   spool.retain('discord', 'one', f.input, checkpoint);
   f.clock.advance(HOUR / 2);
   spool.retain('discord', 'one', Buffer.from('replacement'), { ...checkpoint, sequence: 2 });
   spool.retain('slack', 'one', f.input);
+  spool.retain('slack', 'two', f.input);
   expect(f.rows().find(r => r.connection === 'discord')?.event).toEqual(f.input);
-  f.clock.advance(HOUR / 2 - 1);
-  expect(f.rows()).toHaveLength(2);
+  // One Slack event is read and its message recorded: its frame is wanted only until an hour after it came.
+  expect(spool.drain('slack', id => id === 'one' ? 'recorded' : false)).toBe(0);
+  f.clock.advance(HOUR - 1);
+  expect(f.rows()).toHaveLength(3);
   f.clock.advance(1);
-  expect(f.rows().map(r => r.connection)).toEqual(['slack']);
-  expect(spool.checkpoint('discord')?.sequence).toBe(2);
-  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(2);
-  f.clock.advance(HOUR / 2);
+  expect(f.rows().map(r => [r.connection, r.id])).toEqual([['discord', 'one'], ['slack', 'two']]);
+  // Nothing was lost by that, and saying 'recorded' again later cannot lengthen a deadline.
+  expect(lost).toEqual([]);
+  expect(spool.drain('slack', () => 'recorded')).toBe(0);
+  expect(f.rows().map(r => [r.connection, r.id])).toEqual([['discord', 'one']]);
+  // An event nobody could read waits a day from its first receipt, then is gone and counted.
+  f.clock.advance(DAY - 3 * HOUR / 2 - 1);
+  expect(f.rows()).toHaveLength(1);
+  f.clock.advance(1);
   expect(f.rows()).toEqual([]);
+  expect(lost).toEqual([1]);
+  expect(spool.checkpoint('discord', 'identity')?.sequence).toBe(2);
+  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(2);
   spool.close();
 });
 
@@ -118,7 +130,7 @@ it('requires explicit cursor reset for session changes and rejects Slack checkpo
   expect(f.rows()).toHaveLength(1);
   spool.reset('discord');
   spool.retain('discord', 'two', f.input, { ...checkpoint, session: 'new', sequence: 0 });
-  expect(spool.checkpoint('discord')?.session).toBe('new');
+  expect(spool.checkpoint('discord', 'identity')?.session).toBe('new');
   spool.close();
 });
 
@@ -133,7 +145,7 @@ it('sweeps expired rows on startup, cancels timers on close, and never drains ex
   spool.retain('slack', 'one', f.input);
   spool.close();
   expect(cancel).toHaveBeenCalledTimes(1);
-  f.clock.advance(HOUR);
+  f.clock.advance(DAY);
   expect(f.rows()).toHaveLength(1);
   expect(() => spool.retain('slack', 'two', f.input)).toThrow('closed');
   const reopened = new BridgeEvents(f.db, f.clock);
@@ -162,7 +174,7 @@ it('allows an updated resume URL without changing session or rewinding', () => {
   spool.retain('discord', 'one', f.input, checkpoint);
   const next = { ...checkpoint, sequence: 2, resumeUrl: 'wss://gateway-us-east1-b.discord.gg/' };
   spool.retain('discord', 'two', f.input, next);
-  expect(spool.checkpoint('discord')).toEqual(next);
+  expect(spool.checkpoint('discord', 'identity')).toEqual(next);
   spool.close();
 });
 
@@ -180,7 +192,7 @@ it('cleans at the same clock time after a synchronous transaction rolls back', a
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   spool.retain('slack', 'one', f.input);
   f.db.$client.exec('BEGIN');
-  f.clock.advance(HOUR);
+  f.clock.advance(DAY);
   f.db.$client.exec('ROLLBACK');
   await Promise.resolve();
   expect(f.rows()).toEqual([]);

@@ -25,7 +25,7 @@ export function ValueControl({ name, description = '' }: { name?: string; descri
     <label>Description<Input name="description" defaultValue={description} maxLength={4000} /></label>
     <label>Value<Input ref={value} type="password" required autoComplete="new-password" spellCheck={false} /></label>
     <Button type="submit" disabled={command.busy}>{command.busy ? 'Saving…' : name ? 'Save replacement' : 'Add secret'}</Button>
-    {name && <Button type="button" disabled={command.busy} onClick={() => { if (value.current) value.current.value = ''; void command.run(() => settingsCommand('remove', { id: newId(), name })); }}>Remove value and revoke access</Button>}
+    {name && <Button type="button" variant="danger-quiet" disabled={command.busy} onClick={() => { if (value.current) value.current.value = ''; void command.run(() => settingsCommand('remove', { id: newId(), name })); }}>Remove value and revoke access</Button>}
     <p role="status">{command.message}</p>
   </form>;
 }
@@ -39,7 +39,7 @@ export function RequestControl({ id }: { id: string }) {
 }
 export function RevokeControl({ id }: { id: string }) {
   const command = useCommand();
-  return <section><Button disabled={command.busy} onClick={() => { void command.run(() => settingsCommand('command', { action: 'revoke', id })); }}>Revoke grant</Button><p role="status">{command.message}</p></section>;
+  return <section><Button variant="danger-quiet" disabled={command.busy} onClick={() => { void command.run(() => settingsCommand('command', { action: 'revoke', id })); }}>Revoke grant</Button><p role="status">{command.message}</p></section>;
 }
 const choices = <><option value="ask">Ask each time</option><option value="auto">Allow automatically</option><option value="never">Never allow</option></>;
 export function DefaultControl({ answer }: { answer: 'ask' | 'auto' | 'never' }) {

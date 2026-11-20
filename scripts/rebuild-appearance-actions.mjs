@@ -1,21 +1,23 @@
-/** Actual Appearance controls, application saves and a browser reload. */
+/** The Appearance app's actual controls, application saves and a browser reload. */
 import {join} from 'node:path';
-export async function appearanceActions({page,app,out}){
+export async function appearanceActions({page,app,out,open:openApp}){
  const evidence={};
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await page.screenshot({path:join(out,screenshot),fullPage:true});};
  const check=(yes,message)=>{if(!yes)throw Error(message);};
- const panel=page.getByLabel('Appearance settings',{exact:true});
- const open=async()=>{if(!await panel.isVisible())await page.locator('.next-preferences > summary').click();await panel.waitFor();};
+ const panel=page.getByRole('region',{name:'Appearance tile',exact:true});
+ const open=async()=>{if(!await panel.isVisible())await openApp('Appearance');await panel.waitFor();};
+ // A choice is a group of radio buttons named for the setting; a switch is named for its own.
+ const choose=(setting,choice)=>panel.getByRole('group',{name:setting,exact:true}).getByRole('radio',{name:choice,exact:true}).click();
  const save=async change=>{
   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/household/setPreferences'&&r.request().method()==='POST',{timeout:4000});void response.catch(()=>{});
   await change();const result=await response,body=await result.json();check(result.ok()&&body.ok===true,'Appearance save was refused');
-  await panel.getByRole('combobox',{name:'Look',exact:true}).waitFor({state:'visible'});
-  await page.waitForFunction(()=>!document.querySelector('[aria-label="Appearance settings"] select')?.disabled);
+  await panel.getByRole('group',{name:'Look',exact:true}).waitFor({state:'visible'});
+  await page.waitForFunction(()=>{const control=document.querySelector('[data-tile=appearance] [role=switch]');return !!control&&!control.disabled;});
  };
  await attempt('deskLooks',async()=>{
   await open();const looks=[];
   for(const [value,label] of [['lowlight','Low Light'],['daylight','Daylight'],['neon','Neon Noir']]){
-   await save(()=>panel.getByRole('combobox',{name:'Look',exact:true}).selectOption(value));
+   await save(()=>choose('Look',label));
    await page.waitForFunction(value=>document.documentElement.dataset.look===value,value);
    const shown=await page.evaluate(()=>({look:document.documentElement.dataset.look,canvas:getComputedStyle(document.documentElement).getPropertyValue('--v-canvas').trim(),shells:document.querySelectorAll('.next-shell').length,grounds:document.querySelectorAll('.next-ground').length,docks:document.querySelectorAll('.next-dock-bar').length}));
    check(shown.shells===1&&shown.grounds===1&&shown.docks===1,`${label} replaced the desk structure`);looks.push({label,...shown});
@@ -26,13 +28,13 @@ export async function appearanceActions({page,app,out}){
  });
  await attempt('deskAppearance',async()=>{
   await open();
-  for(const ground of ['contours','depth','wash']){
-   await save(()=>panel.getByRole('combobox',{name:'Ground',exact:true}).selectOption(ground));
+  for(const [ground,label] of [['contours','Contours'],['depth','Depth'],['wash','Wash']]){
+   await save(()=>choose('Desk background',label));
    await page.waitForFunction(ground=>document.documentElement.dataset.ground===ground,ground);
   }
-  await save(()=>panel.getByRole('combobox',{name:'Reduce motion',exact:true}).selectOption('on'));
-  await save(()=>panel.getByRole('combobox',{name:'Higher contrast',exact:true}).selectOption('on'));
-  await save(()=>panel.getByRole('checkbox',{name:'One window at a time',exact:true}).click());
+  await save(()=>choose('Reduce motion','On'));
+  await save(()=>choose('Higher contrast','On'));
+  await save(()=>panel.getByRole('switch',{name:'One window at a time',exact:true}).click());
   await page.reload();await page.locator('.next-shell').waitFor();
   await page.waitForFunction(()=>{const d=document.documentElement.dataset;return d.ground==='wash'&&d.motion==='reduce'&&d.contrast==='more'&&d.oneWindow==='on';});
   const row=app.services.comms.db.$client.prepare('SELECT * FROM member_preferences WHERE member=?').get('alex');

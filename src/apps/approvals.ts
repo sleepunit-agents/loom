@@ -1,13 +1,17 @@
+import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { approvals, approvalRecord, approvalNotices, members } from '../core/data/schema.js';
-import { Conversations } from '../core/conversations/index.js';
+import { approvals, approvalRecord, approvalNotices } from '../core/data/schema.js';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
+import { householdOwners } from '../shared-sharing.js';
 
 export type Approval = typeof approvals.$inferSelect;
+/** What a card's `asked_from` says when it was filed from no conversation, by an agent's terminal credential. */
+export const ASKED_FROM_TERMINAL = 'terminal';
 const request = z.object({
-  kind: z.enum(['merge', 'command', 'setting', 'dangerous']), target: z.string().trim().min(1),
+  kind: z.enum(approvals.kind.enumValues), target: z.string().trim().min(1),
   what: z.string().trim().min(1), why: z.string().trim().min(1), agent: z.string().min(1),
   askedFrom: z.string().min(1), actingFor: z.string().min(1), project: z.string().min(1).nullable().default(null),
   member: z.string().min(1).nullable().default(null), conversation: z.string().min(1).nullable().default(null),
@@ -27,7 +31,7 @@ export type ApprovedOperations = ReadonlyMap<string, (approval: Approval) => voi
  * the external door; this service still binds a spend to agent, kind and target.
  */
 export function approvalService(db: DataDatabase, operations: ApprovedOperations = new Map(), now: () => string = () => new Date().toISOString()) {
-  const mail = new Conversations(db, now);
+  const mail = new Conversations(db, now, lateMailWaits);
   const answer = (row: Approval, member: string, allowed: boolean) => {
     const scope=mail.answerScope(row.conversation,row.agent,{project:row.project,member:row.member})??{project:row.project,member:row.member};
     const questions = mail.resolve('approval', row.id, allowed ? 'Allowed' : 'Denied');
@@ -55,16 +59,16 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     return row;
   };
   return {
-    request(input: ApprovalRequest) {
+    request(input: ApprovalRequest, machineOwner?: string) {
       const value = request.parse(input);
-      if (value.kind === 'merge' && !/^github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*@[0-9a-f]{40}$/.test(value.target)) throw new Error('A merge approval must name one exact commit');
+      if (value.kind === 'merge' && !parseMergeTarget(value.target)) throw new Error('A merge approval must name one exact commit');
       if ((value.kind === 'setting' || value.kind === 'dangerous') && (!value.operation || !value.changeSummary)) throw new Error('A proposed change needs an operation and before/after summary');
       if (value.operation && !operations.has(value.operation)) throw new Error('Unknown approved operation');
       return db.transaction(() => {
         const row = db.insert(approvals).values({ ...value, id: `a-${randomUUID()}`, state: 'pending', askedAt: now() }).returning().get();
-        const owners = db.select().from(members).where(eq(members.role, 'owner')).orderBy(asc(members.id)).all();
+        const owners = machineOwner ? [machineOwner] : householdOwners(db);
         if (!owners.length) throw new Error('No household owner can answer this approval');
-        for (const owner of owners) mail.send({ toKind: 'person', to: owner.id, source: 'approval', sourceId: row.id,
+        for (const owner of owners) mail.send({ toKind: 'person', to: owner, source: 'approval', sourceId: row.id,
           fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,
           words: row.ask, why: row.why, answers: 'yes-no', ifYes: row.ifYes, ifNo: row.ifNo,
           waitsOnKind: 'approval', waitsOnId: row.id, refs: [row.id] });
@@ -93,12 +97,12 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         return get(id);
       });
     },
-    deny(id: string, member: string) {
+    deny(id: string, member: string, basis?: string) {
       return db.transaction(() => {
         const row = expire(get(id));
         if (row.state !== 'pending' && row.state !== 'allowed') throw new Error('Approval cannot be denied now');
         db.update(approvals).set({ state: 'denied', decidedBy: member, decidedAt: now(), expiresAt: null }).where(eq(approvals.id, id)).run();
-        record(row, 'deny', member);
+        record(row, 'deny', basis ?? member);
         const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), eq(approvals.state, 'allowed'))).all();
         for (const previous of older) {
           db.update(approvals).set({ state: 'denied', overriddenBy: id, expiresAt: null }).where(eq(approvals.id, previous.id)).run();
@@ -108,6 +112,8 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         return get(id);
       });
     },
+    /** Note on a card's record that a standing rule was granted from it. The record has one writer: this service. */
+    recordGrant(id: string, note: string) { record(get(id), 'grant', note); },
     withdraw(id: string, agent: string) {
       return db.transaction(() => {
         const row = expire(get(id));
@@ -157,6 +163,19 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         if (!row.member) db.insert(approvalNotices).values({id:`an-${randomUUID()}`,agent:row.agent,kind:row.kind,target:row.target,what:text,at:now()}).run();
       });
     },
+    tellAnswer(row: Approval, member: string, through: string, decision: 'allow' | 'deny', basis: string, full: boolean) {
+      // The quote belongs in the signer's labelled inbox, including when the card is public.
+      mail.send({
+        toKind: 'person', to: member, member, agent: through,
+        fromKind: 'agent', fromId: through, source: 'approval', sourceId: row.id + ':tell:' + decision,
+        words: row.what + ' — ' + basis, refs: [row.id], volume: full ? 'full' : 'dim',
+      });
+    },
     notices() { return db.select().from(approvalNotices).orderBy(asc(approvalNotices.at), asc(approvalNotices.id)).all(); },
   };
+}
+
+/** Every approval card filed under one project is filed under another: for a merge of the two (shared-projects.ts). */
+export function refileApprovals(db: DataDatabase, from: string, into: string): void {
+  db.update(approvals).set({ project: into }).where(eq(approvals.project, from)).run();
 }

@@ -1,5 +1,6 @@
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
+import { DAY_MS } from './core/day.js';
 import Database from 'better-sqlite3';
 import {pathToFileURL} from 'node:url';
 import {z} from 'zod';
@@ -12,7 +13,9 @@ import {tempoWatch} from './core/tempo/sources.js';
 import {FakeClock} from './core/clock.js';
 import {exampleRuntime,exampleModelRoles,exampleBackdateMs} from './example-runtime.js';
 import {CommsMessages} from './core/conversations/messages.js';
+import {lateMailWaits} from './core/conversations/index.js';
 import {loadKey} from './pieces/comms/crypto.js';
+import { commsKeepDays } from './core/data/comms-days.js';
 
 export const exampleRetentionWords='The fictional shed door was checked last fortnight.';
 export async function exampleHome(directory:string, webRoot=resolve('dist/web')) {
@@ -66,14 +69,14 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   // to the actual final clock so startup never rewinds ahead-of-time jobs.
   // One old, still-retained reply lets the walkthrough cross a real deadline
   // on its fake clock without advancing every runtime timer for a fortnight.
-  const keepDays=(client.prepare('SELECT comms_days FROM household').get() as {comms_days:number}|undefined)?.comms_days??14;
-  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*86400000+1000).toISOString());
+  const keepDays=commsKeepDays(db);
+  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*DAY_MS+1000).toISOString(),lateMailWaits);
   const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
   const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');
   const adapterModule=pathToFileURL(join(import.meta.dirname,import.meta.filename.endsWith('.ts')?'example-home-adapters.ts':'example-home-adapters.js')).href;
   writeFileSync(adapters,'export {default} from '+JSON.stringify(adapterModule)+';\n',{mode:0o600});
-  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
+  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')}}}};
   const manifest={fictional:true,createdAt:new Date(clock.now()).toISOString(),retention:{thread:olderThread.id,seq:olderReply.seq,at:olderReply.at,until:olderReply.keepUntil},members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,runtime,gaps:[
    {page:'machines',promise:'A worker claims and executes its queued job',reason:'The example uses real setup, reporting and inbox admission, but does not claim a job or execute a worker/body/provider.'},
 

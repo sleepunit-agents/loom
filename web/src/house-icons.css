@@ -1,0 +1,6 @@
+/* A house icon (app-icon.tsx): one greyscale image, smooth, at the size its slot asks for (its own style), always whole
+   pixels. Its colours are house-tint.ts's: a filter per tint, chosen there. */
+.loom-house{display:block;flex:none;max-width:none;max-height:none;-webkit-user-drag:none;user-select:none;pointer-events:none}
+/* the dock's icon slot is 58% of its key (25.5 px of 44), and stretches an image to it: a house icon keeps its own 32 px */
+.v-dock [data-part="icon"]:has(>.loom-house){inline-size:32px;block-size:32px}
+.v-dock [data-part="icon"] .loom-house{max-inline-size:none;max-block-size:none}

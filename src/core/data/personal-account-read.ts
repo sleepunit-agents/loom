@@ -2,9 +2,6 @@
  * at the sign-in door. Restrict records before they leave SQLite. */
 import { and, eq, inArray } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
-export function personalMemberExists(db: DataDatabase, member: string) {
-  return !!db.query.members.findFirst({columns:{id:true},where:f=>eq(f.id,member)}).sync();
-}
 export function readPersonalAccount(db: DataDatabase, member: string) {
   const own = db.query.tokens.findMany({columns:{fingerprint:true,revokedAt:true,expiresAt:true},where:f=>and(eq(f.kind,'owner'),eq(f.member,member))}).sync();
   const ids = own.map(row=>row.fingerprint);

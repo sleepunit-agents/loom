@@ -18,9 +18,9 @@ const dir=()=>{const home=mkdtempSync(join(tmpdir(),'activity-query-'));homes.pu
 const owner:Viewer={kind:'member',id:'owner'},member:Viewer={kind:'member',id:'member'},guest:Viewer={kind:'member',id:'guest'};
 const now=Date.parse('2026-11-14T18:00:00Z');
 function fixture(path:string,conversations?:ActivityConversations){
- let sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},guest:{owner:false,agents:[]}},projects:{pond:{members:['guest'],agents:[]}},services:{}};
+ let sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},guest:{owner:false,agents:[]}},projects:{pond:{members:['guest'],agents:[]}}};
  const clock=new FakeClock(now);
- const reader=createActivityReader(clock,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations});closes.push(()=>reader.close());
+ const reader=createActivityReader(clock,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations,timezone:'America/Chicago'});closes.push(()=>reader.close());
  const client=new Database(':memory:');closes.push(()=>client.close());createDataSchema(client);
  const generated=dataQueries(client,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...activityQueryFields(reader)}})});
@@ -45,7 +45,7 @@ it('uses each authenticated viewer and replacement sharing snapshots without exp
  const s=episodes(),f=fixture(s.path),query='{ memoryActivity { entries { id } } memoryActivityEntry(id:"e~fiction~m-story") { story } }';
  expect(await f.query(query,member)).toMatchObject({data:{memoryActivity:{entries:[{id:'e~fiction~m-story'}]},memoryActivityEntry:{story:s.body}}});
  for(const viewer of [guest,{kind:'runner',id:'box'},{kind:'agent',id:'other'}] as Viewer[])expect(await f.query(query,viewer)).toEqual({data:{memoryActivity:null,memoryActivityEntry:null}});
- f.sharing({members:{owner:{owner:false,agents:[]},member:{owner:false,agents:[]}},projects:{},services:{}});
+ f.sharing({members:{owner:{owner:false,agents:[]},member:{owner:false,agents:[]}},projects:{}});
  expect(await f.query(query)).toEqual({data:{memoryActivity:null,memoryActivityEntry:null}});
  expect(await f.query(query,member)).toEqual({data:{memoryActivity:null,memoryActivityEntry:null}});
  expect((await f.query('{ memoryActivity(viewer:"owner") { id } }')).errors).toBeDefined();
@@ -67,4 +67,11 @@ it('keeps absent files absent and reports source failure without disclosing path
  const broken=join(dir(),'broken.db');writeFileSync(broken,'not a database');const bad=fixture(broken),query='{ memoryActivityEntry(id:"e~fiction~m-story") { story } }';
  const answer=await bad.query(query);expect(answer.data).toEqual({memoryActivityEntry:null});expect(answer.errors?.[0].message).toBe('Activity entry is unavailable');expect(JSON.stringify(answer)).not.toContain(broken);
  expect(await bad.query(query,guest)).toEqual({data:{memoryActivityEntry:null}});
+});
+
+it('offers only live agents in the Activity filter',async()=>{
+ const f=fixture(episodes().path),query='{ memoryActivityAccess { allowed agents } }';
+ expect((await f.query(query)).data).toEqual({memoryActivityAccess:{allowed:true,agents:['fiction']}});
+ f.sharing({members:{owner:{owner:true,agents:['fiction']}},projects:{},agents:[]});
+ expect((await f.query(query)).data).toEqual({memoryActivityAccess:{allowed:true,agents:[]}});
 });

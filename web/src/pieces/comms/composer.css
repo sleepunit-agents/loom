@@ -1,0 +1,41 @@
+/* The message bar (composer.tsx), as the "how it works" site draws it (site.css .cm__compose): one bordered line with
+   the words on the left and Send on the right. It is used inside a tile (Comms) and outside one (Home), and the kit's
+   quiet controls only reach a tile's page, so everything it needs to look the same in both is said here. These rules
+   are unlayered for the same reason the kit's are: the library paints with utilities and layered rules. */
+
+.loom-composer { --composer-tint: var(--kit-tint, var(--t, var(--v-pink))); --composer-ctl: var(--kit-ctl, 28px); display: grid; gap: 4px; min-width: 0; margin: 0; }
+[data-shell="phone"] .loom-composer { --composer-ctl: 40px; }
+@media (pointer: coarse) { .loom-composer { --composer-ctl: 40px; } }
+
+.loom-composer .loom-composer__bar { display: flex; align-items: flex-end; gap: 8px; min-width: 0; padding: 5px 5px 5px 12px; border: 1px solid var(--v-edge); border-radius: 10px; background: var(--input, transparent); }
+.loom-composer .loom-composer__bar:focus-within { border-color: var(--composer-tint); }
+.loom-composer .loom-composer__bar:has(textarea:focus-visible) { outline: 2px solid var(--composer-tint); outline-offset: 1px; }
+
+/* One line that grows to about five, then scrolls. The bar carries the edge, so the field has none of its own. */
+.loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input {
+  flex: 1; min-width: 0; min-height: 0; height: auto; max-height: calc(1.45em * 5 + 8px); padding: 4px 0; margin: 0;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; resize: none; field-sizing: content;
+  font-size: var(--fs-control); line-height: 1.45; color: var(--v-text); overflow-y: auto; overflow-wrap: anywhere;
+  align-self: center; transition: none;
+}
+.loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input::placeholder { color: var(--v-text-3); opacity: 1; }
+.loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input:read-only { color: var(--v-text-2); cursor: progress; }
+/* (Under 16px a phone's or a tablet's browser zooms the page when a field takes focus.) */
+[data-shell="phone"] .loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input { font-size: 16px; }
+@media (pointer: coarse) { .loom-composer .loom-composer__bar textarea.v-textarea.loom-composer__input { font-size: 16px; } }
+
+/* Send: the one filled button, the size of a kit button wherever the bar is. */
+.loom-composer .loom-composer__bar .v-btn[data-slot="button"].loom-composer__send {
+  flex: none; height: auto; min-height: var(--composer-ctl); padding: 3px 12px; gap: 6px; border: 1px solid var(--composer-tint); border-radius: var(--r-sm);
+  background: var(--composer-tint); color: var(--v-on-accent); box-shadow: none; font-size: var(--fs-small); line-height: 1.25; white-space: nowrap;
+}
+.loom-composer .loom-composer__bar .v-btn[data-slot="button"].loom-composer__send:hover:not(:disabled) { background: color-mix(in oklab, var(--composer-tint) 86%, var(--v-canvas)); border-color: color-mix(in oklab, var(--composer-tint) 86%, var(--v-canvas)); }
+.loom-composer .loom-composer__bar .v-btn[data-slot="button"].loom-composer__send:disabled { background: transparent; color: var(--v-disabled-ink); border-color: var(--v-disabled-edge); }
+.loom-composer .loom-composer__bar .v-btn[data-slot="button"].loom-composer__send:focus-visible { outline: 2px solid var(--v-text); outline-offset: 2px; }
+
+/* The line under the bar takes no room until it says something. */
+.loom-composer__status { margin: 0; padding: 0 12px; font-size: var(--fs-small); line-height: 1.4; color: var(--v-text-2); overflow-wrap: anywhere; }
+.loom-composer__status:empty { display: none; }
+/* No bar here: one quiet line where it would be. */
+.loom-composer__off { margin: 0; padding: 8px 12px; border: 1px dashed var(--v-border); border-radius: 10px; font-size: var(--fs-small); line-height: 1.4; color: var(--v-text-2); overflow-wrap: anywhere; }
+@media (prefers-contrast: more) { .loom-composer .loom-composer__bar, .loom-composer__off { border-color: var(--v-text); } }

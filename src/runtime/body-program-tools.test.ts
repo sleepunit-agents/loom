@@ -7,6 +7,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {ListToolsRequestSchema,CallToolRequestSchema} from '@modelcontextprotocol/sdk/types.js';
 import {bodyProgramTools} from './body-program-tools.js';
+import {BodyFileRefused} from './body-files.js';
 import {bodyFixture,bodyCredentials as raw} from '../../test/fixtures/conversation-body.js';
 import * as s from '../core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -34,8 +35,8 @@ it('preserves current Root permissions and stable write receipts',async()=>{
  f.db.update(s.jobs).set({state:'done'}).run();expect(await f.call('loom_commands',{})).toMatchObject({isError:true});expect(await f.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});
 });
 it.each([
- ['conversation.take',{}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
- ['conversation.status',{state:'idle',work:'',seenStop:true}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
+ ['conversation.usage',{source:'report',tokensIn:999}],['conversation.take',{}],['conversation.session',{}],['conversation.sessionSave',{session:null}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
+ ['conversation.status',{state:'idle',work:''}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
 ]as const)('keeps runtime-owned %s facts and private routes out of model calls',async(operation,input)=>{
  const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'forged'})).toMatchObject({isError:true});expect(f.db.select().from(s.turns).all()).toHaveLength(0);expect(f.fetcher.mock.calls.some(([url])=>String(url).includes('/api/'+operation.replace('.','/')))).toBe(false);
 });
@@ -46,12 +47,6 @@ it('notifies runtime status and stops without allowing a model to acknowledge St
 });
 it('closes current and future model calls without reflecting credentials',async()=>{
  const f=await fixture();f.tools.close();const before=f.fetcher.mock.calls.length;const answer=await f.call('loom_commands',{});expect(answer).toMatchObject({isError:true});expect(JSON.stringify(answer)).not.toContain(raw.body);expect(f.fetcher).toHaveBeenCalledTimes(before);
-});
-it('proposes private Tempo consent through actual MCP and Root without changing settings',async()=>{
- const f=await fixture();f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();const who={kind:'person' as const,id:'alice'},before=f.root.services.tempo.volume.timings(who);
- expect(decoded(await f.call('loom_command',{operation:'tempo.proposeSettings',input:{who,patch:{settleSeconds:60}},id:'proposal'}))).toMatchObject({ok:true,value:{id:expect.any(String)}});
- expect(f.root.services.tempo.volume.timings(who)).toEqual(before);const card=f.db.select().from(s.approvals).get()!;expect(card.conversation).toBe(f.thread.conversation);expect(JSON.parse(card.details!)).toMatchObject({who,after:{settleSeconds:60}});
- expect(await f.call('loom_command',{operation:'tempo.proposeSettings',input:{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},id:'foreign'})).toMatchObject({isError:true});expect(f.db.select().from(s.approvals).all()).toHaveLength(1);
 });
 it('cancels one tool request without closing the shared body lifetime',async()=>{
  let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),fetcher=vi.fn<typeof fetch>(()=>{entered();return new Promise(()=>{});}),abort=new AbortController(),tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,fetch:fetcher,onStop:vi.fn(),onStatus:vi.fn()});clean.push(tools.close);
@@ -88,10 +83,41 @@ it('cancels one request while another already pending request completes normally
  const first=tools.call('loom_query',{query:'{one}'},a.signal),second=tools.call('loom_query',{query:'{two}'});await started;a.abort();expect(await first).toMatchObject({isError:true});releases[1](Response.json({data:{two:'still current'}}));expect(decoded(await second)).toEqual({data:{two:'still current'}});const cancelled=vi.fn();releases[0](new Response(new ReadableStream({cancel:cancelled})));await Promise.resolve();await Promise.resolve();expect(cancelled).toHaveBeenCalledOnce();
 });
 it.each(['idle','offline'])('does not let the model clear a live turn by reporting %s',async state=>{const f=await fixture();expect(await f.call('loom_command',{operation:'conversation.status',input:{state,work:''},id:'fake-end'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();expect(f.onStatus).not.toHaveBeenCalled();});
-it.each(['working','waiting'])('does not let a %s model status acknowledge Stop',async state=>{const f=await fixture();expect(await f.call('loom_command',{operation:'conversation.status',input:{state,work:'Checking',seenStop:true},id:'ack'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();});
 it.each([['conversation.message',{kind:'reply',words:'hello',clientId:'one',latencyMs:2}],['bridges.reply',{incoming:'fake',text:'hello',model:'MADE_UP_MODEL'}]])('rejects the remaining runtime-owned telemetry fields on %s',async(operation,input)=>{const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'telemetry'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();});
 it('publishes only generic code-interface metadata through actual MCP discovery',async()=>{
  const f=await fixture();f.db.update(s.agents).set({about:'PRIVATE_DESCRIPTOR_RECORD_CANARY'}).where(eq(s.agents.id,'art')).run();f.db.insert(s.secrets).values({name:'PRIVATE_DESCRIPTOR_SECRET_CANARY',description:'PRIVATE_SECRET_DESCRIPTION',changedAt:new Date(f.clock.now()).toISOString(),changedBy:'alice'}).run();
  const offered=(await f.client.listTools()).tools,encoded=JSON.stringify(offered);for(const value of[raw.body,raw.member,raw.runner,raw.agent,'PRIVATE_DESCRIPTOR_RECORD_CANARY','PRIVATE_DESCRIPTOR_SECRET_CANARY','PRIVATE_SECRET_DESCRIPTION','https://loom.example'])expect(encoded).not.toContain(value);
  expect(offered.map(tool=>({name:tool.name,properties:Object.keys(tool.inputSchema.properties??{}).sort()}))).toEqual([{name:'loom_commands',properties:['name']},{name:'loom_command',properties:['id','input','operation']},{name:'loom_query',properties:['operationName','query','variables']}]);expect(f.fetcher).not.toHaveBeenCalled();
+});
+it('reads a post\'s files from the body\'s own area by the path the model gives, and hands loom a name and bytes',async()=>{
+ const f=await bodyFixture(clean),seen:unknown[]=[];
+ f.root.operations.register({name:'bridges.say',write:true,input:z.object({id:z.string(),text:z.string(),files:z.array(z.object({name:z.string(),contents:z.string()}).strict()).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:()=>true,run(_ctx,input){seen.push(input);return{saved:true as const};}});
+ const asked:string[][]=[];
+ const readFiles=(paths:readonly string[])=>{asked.push([...paths]);if(paths.some(path=>path.startsWith('/etc')))throw new BodyFileRefused("Not inside this body's working area: "+paths[0]);return paths.map(path=>({name:path.split('/').pop()!,contents:Buffer.from('BYTES OF '+path)}));};
+ const make=(reader?:typeof readFiles)=>{const tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,fetch:async(input,init)=>f.root.http.fetch(new Request(input,init)),clock:f.clock,onStop(){},onStatus(){},...(reader?{readFiles:reader}:{})});clean.push(tools.close);return tools;};
+ const tools=make(readFiles),text=(value:{content:{text:string}[]})=>value.content[0].text;
+ expect(JSON.parse(text(await tools.call('loom_command',{operation:'bridges.say',input:{id:'one',text:'Here',files:[{path:'out/plot.png'}]},id:'one'})))).toEqual({ok:true,value:{saved:true}});
+ expect(asked).toEqual([['out/plot.png']]);
+ expect(seen).toEqual([{id:'one',text:'Here',files:[{name:'plot.png',contents:Buffer.from('BYTES OF out/plot.png').toString('base64')}]}]);
+ // A path outside the area never reaches loom; the model is told which path and why.
+ const refused=await tools.call('loom_command',{operation:'bridges.say',input:{id:'two',text:'Here',files:[{path:'/etc/passwd'}]},id:'two'});
+ expect(refused.isError).toBe(true);expect(text(refused)).toBe("Not inside this body's working area: /etc/passwd");
+ // Bytes of the model's own making under a file's name are not a file: only a path is.
+ for(const files of [[{name:'x',contents:'QUJD'}],[{path:'a',name:'b'}],[],'out/plot.png'])expect((await tools.call('loom_command',{operation:'bridges.say',input:{id:'three',text:'x',files},id:'three'})).isError).toBe(true);
+ expect(seen).toHaveLength(1);
+ // Without files a post is as before, and a body with no reader posts none.
+ expect(JSON.parse(text(await tools.call('loom_command',{operation:'bridges.say',input:{id:'four',text:'Plain'},id:'four'})))).toMatchObject({ok:true});
+ expect((await make().call('loom_command',{operation:'bridges.say',input:{id:'five',text:'x',files:[{path:'out/plot.png'}]},id:'five'})).isError).toBe(true);
+ expect(seen).toHaveLength(2);
+});
+
+it.each([401,403])('cancels only a credential refusal at the tool door (%i)',async status=>{
+ const ended=vi.fn(),denied={ok:false,code:'denied',message:'Permission denied'};
+ const tools=bodyProgramTools({url:'https://loom.example',token:'body-token',signal:new AbortController().signal,
+  fetch:async()=>Response.json(denied,{status}),onStop:vi.fn(),onStatus:vi.fn(),onJobEnded:ended});
+ try{
+  const reply=await tools.call('loom_commands',{});
+  expect(reply.isError).toBe(true);expect(ended).toHaveBeenCalledTimes(status===401?1:0);
+  if(status===403)expect(JSON.parse(reply.content[0].text)).toEqual(denied);
+ }finally{tools.close();}
 });

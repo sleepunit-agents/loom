@@ -139,10 +139,12 @@ jobs:
 
       - name: Test
         env:
+          LOOM_SLOW_REPORT: artifacts/slow.txt
           LOOM_CI_SHARD: ${{ matrix.shard }}/4
+          LOOM_BROWSER_TESTS: ${{ vars.LOOM_BROWSER_TESTS }}
           AFFECTED_ONLY: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' }}
         run: |
-          reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
+          reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --reporter=./scripts/slow-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
           if [ "$AFFECTED_ONLY" = true ]; then
             echo "Affected tests only, against $(git rev-parse --short HEAD^1):"
             git diff --name-only HEAD^1 HEAD | sed 's/^/  /' | head -60 || true
@@ -162,7 +164,7 @@ jobs:
             npm test -- --shard=${{ matrix.shard }}/4 "${reporters[@]}"
           fi
 
-      - name: Keep shard reports and retry ledger
+      - name: Keep shard reports, timings and retry ledger
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -223,7 +225,9 @@ jobs:
   walkthrough:
     name: built program walkthrough
     # The result gate independently rejects a skipped required job; both scopes are guarded.
-    if: github.base_ref == 'next' || github.ref == 'refs/heads/next'
+    # Browser tests are off while the web app waits its turn (Jonathan, 2026-11-16). Set the repository
+    # variable LOOM_BROWSER_TESTS to 'on' to bring them back.
+    if: vars.LOOM_BROWSER_TESTS == 'on' && (github.base_ref == 'next' || github.ref == 'refs/heads/next')
     uses: ./.github/workflows/rebuild-walkthrough.yml
 
   results:
@@ -269,6 +273,23 @@ jobs:
           else
             echo 'No retried tests recorded. Check shard completion before treating this as clean.' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Collect slow tests and files
+        if: always()
+        run: |
+          mkdir -p merged
+          for report in reports/ci-node-*/slow.txt; do
+            [ -f "$report" ] || continue
+            echo "${report%/slow.txt}"
+            cat "$report"
+          done > merged/slow.txt
+          if [ -s merged/slow.txt ]; then
+            {
+              echo '### Slow tests and files by shard'
+              echo '~~~~text'
+              cat merged/slow.txt
+              echo '~~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -281,5 +302,5 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
           WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}
-          REBUILD_REQUIRED: ${{ github.base_ref == 'next' || github.ref == 'refs/heads/next' }}
+          REBUILD_REQUIRED: ${{ vars.LOOM_BROWSER_TESTS == 'on' && (github.base_ref == 'next' || github.ref == 'refs/heads/next') }}
         run: node scripts/ci-results.ts

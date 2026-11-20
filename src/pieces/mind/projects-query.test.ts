@@ -21,7 +21,7 @@ function fixture(roles: { notes?: ProjectSectionRole; conversations?: ProjectSec
  const shared = new Database(':memory:'); closes.push(() => shared.close()); createDataSchema(shared);
  const store = new ProjectsStore({ dbPath: join(home, 'fiction.db'), now: () => clock.now() }); closes.push(() => store.close());
  const other = new ProjectsStore({ dbPath: join(home, 'other.db') }); closes.push(() => other.close());
- let sharing: Sharing = { members: { owner: { owner: true, agents: [] }, member: { owner: false, agents: ['fiction'] }, peer: { owner: false, agents: [] } }, projects: { team: { members: ['peer'], agents: ['fiction'] } }, services: {} };
+ let sharing: Sharing = { members: { owner: { owner: true, agents: [] }, member: { owner: false, agents: ['fiction'] }, peer: { owner: false, agents: [] } }, projects: { team: { members: ['peer'], agents: ['fiction'] } }};
  const database = new Database(join(home, 'fiction.db')); closes.push(() => database.close());
  const missing = join(home, 'absent.db');
  const installed = createProjectsReader(clock, { agents: [{ agent: 'fiction', memories: join(home, 'fiction.db') }, { agent: 'other', memories: join(home, 'other.db') }, { agent: 'missing', memories: missing }], sharing: () => sharing, ...roles });
@@ -95,4 +95,20 @@ it('forwards the exact viewer and sanitizes thrown reader errors', async () => {
  const result = await query(); expect(seen).toBe(viewer); expect(result.data).toEqual({ memoryProjects: null }); expect(result.errors?.[0].message).toBe('Projects are unavailable'); expect(JSON.stringify(result)).not.toContain('PRIVATE');
  const history=await graphql({schema,source:'{memoryHistory(id:"fiction:opaque"){content}}',contextValue:{viewer}});expect(history.errors?.[0].message).toBe('Memory history is unavailable');expect(JSON.stringify(history)).not.toContain('PRIVATE');
 
+});
+
+it('lists an older memory a project keeps coming back to, by its heat now and not by a stored number', async () => {
+ const f = fixture(); f.store.write({ slug: 'pond', name: 'Pond' });
+ f.database.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT,salience REAL,authored_at TEXT,recall_heat REAL,recall_heat_at TEXT)');
+ const add = f.database.prepare('INSERT INTO memories (ref,category,title,content,created,project,archived,salience,recall_heat,recall_heat_at) VALUES (?,?,?,?,?,?,0,1,?,?)');
+ // Written long ago and recalled first an hour ago. Every memory is stored as 1 when written, and nothing changes that after.
+ add.run('m-old', 'project', 'Old and used', 'words', '2025-01-01T00:00:00Z', 'pond', 0.5, new Date(f.clock.now() - 3_600_000).toISOString());
+ // Twenty-five newer ones nobody has recalled: the twenty newest fill the list by date.
+ for (let n = 0; n < 25; n++) add.run(`m-${n}`, 'project', `Newer ${n}`, 'words', new Date(Date.parse('2026-06-01T00:00:00Z') + n * 86_400_000).toISOString(), 'pond', null, null);
+ const result = await f.query('{ memoryProject(id:"fiction:pond") { sections { key total items { ref } } } }'); expect(result.errors).toBeUndefined();
+ const memories = (result.data!.memoryProject as { sections: Array<{ key: string; total: number; items: Array<{ ref: string }> }> }).sections.find(s => s.key === 'memories')!;
+ expect(memories.total).toBe(26);
+ expect(memories.items.map(item => item.ref)).toContain('m-old');
+ // The five oldest of the newer ones are neither among the newest twenty nor hotter than those.
+ expect(memories.items.map(item => item.ref)).not.toContain('m-0');
 });

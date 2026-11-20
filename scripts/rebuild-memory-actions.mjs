@@ -22,7 +22,7 @@ export async function knowledgeActions({page,tile,out,connections}){
   await form.getByRole('button',{name:'Open fact',exact:true}).click();
   const reader=tile.locator('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   await reader.getByText(words,{exact:true}).waitFor();
-  await reader.getByText('Sourcing: provisional.',{exact:false}).waitFor();
+  await reader.locator('dt').filter({hasText:/^Sourcing$/}).locator('+ dd').filter({hasText:/^provisional$/}).waitFor();
   phase='recheck';await submit('knowledgeRecheck',()=>reader.getByRole('button',{name:'Check again',exact:true}).click());
   await reader.locator('header p').filter({hasText:/^Due a check ·/}).waitFor();
   await page.screenshot({path:join(out,'action-knowledge-due.png'),fullPage:true});

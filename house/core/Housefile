@@ -1,0 +1,86 @@
+# The core house: what every agent's house starts from. loom ships this definition and no image: a
+# worker builds it itself, from this directory and public addresses, the first time a house needs it,
+# and again when this definition changes or a new week begins (docs/runtime/worker.md, "The core house").
+#
+# It is a house by itself: an agent with no Housefile runs in it with its repository copied in. An
+# agent's own Housefile begins `ARG LOOM_CORE` and `FROM ${LOOM_CORE}` and adds its furniture.
+#
+# What is not here: loom (the worker mounts its body program at /opt/loom), any agent's files, and
+# anything secret. A model sign-in is a directory the worker mounts when a body starts.
+FROM docker.io/library/debian:trixie-slim
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# The system as it is this week, and the basic tools. apt fetches as root: a rootless build may have too
+# few subordinate ids to map apt's own user.
+RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99loom-core \
+ && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq ripgrep python3 python3-venv \
+      openssh-client procps less file unzip xz-utils locales tzdata \
+ && sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen \
+ && rm -rf /var/lib/apt/lists/*
+
+# The layout of every house: the home, and where a harness finds its account's sign-in. There is no
+# USER line: a body runs as the container's root. Under a rootless engine that is the worker's own user
+# outside the container, the one that can write the mounted sign-in directory.
+#   IS_SANDBOX=1: Claude Code skips its permission prompts as root only when told it is in a sandbox.
+#   CLAUDE_SECURESTORAGE_CONFIG_DIR: Claude Code keeps its sign-in in the mounted directory, in place.
+#   DISABLE_AUTOUPDATER=1: the pinned Claude Code stays the one that runs.
+ENV LANG=en_US.UTF-8 \
+    HOME=/home/agent \
+    IS_SANDBOX=1 \
+    DISABLE_AUTOUPDATER=1 \
+    CLAUDE_SECURESTORAGE_CONFIG_DIR=/run/loom/login/claude \
+    PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /home/agent
+
+# A Codex body runs every command in a login shell, and Debian's /etc/profile resets PATH there.
+RUN printf 'export PATH=%s\n' "$PATH" > /etc/profile.d/loom-house.sh
+
+# Node at /usr/local/bin/node, where the worker starts it: the release archive, checked against the
+# SHA-256 in that release's SHASUMS256.txt.
+ARG NODE_VERSION=24.18.1
+ARG NODE_SHA256=d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0
+RUN curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
+ && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+ && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+      node-v${NODE_VERSION}-linux-x64/bin node-v${NODE_VERSION}-linux-x64/lib node-v${NODE_VERSION}-linux-x64/include node-v${NODE_VERSION}-linux-x64/share \
+ && rm /tmp/node.tar.xz \
+ && /usr/local/bin/node -v | grep -qx "v${NODE_VERSION}"
+
+# Claude Code: the release binary, checked against the linux-x64 SHA-256 in that version's
+# manifest.json; its own `install` puts the launcher at /home/agent/.local/bin/claude.
+ARG CLAUDE_VERSION=2.1.326
+ARG CLAUDE_SHA256=b6b3647d981130dc44fc670846ae97b6cde531ffb667cf9c4d17cfcafb38cb37
+RUN curl -fsSL -o /tmp/claude https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude \
+ && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c - \
+ && chmod +x /tmp/claude && /tmp/claude install ${CLAUDE_VERSION} && rm /tmp/claude
+
+# Codex, pinned, at /usr/local/bin/codex. npm's download cache is not kept.
+ARG CODEX_VERSION=0.167.0
+RUN npm_config_cache=/tmp/npm-cache npm install -g @openai/codex@${CODEX_VERSION} \
+ && rm -rf /tmp/npm-cache
+
+# Each harness reaches its account's sign-in in place, never as a copy: Claude Code through the
+# variable above; Codex through a link, so that what it rewrites when it renews lands in the mounted
+# directory. The repository's place exists, empty, until a house copies its own in. Claude Code's own
+# directory exists too: it is where a body keeps a conversation's session, and a body never makes it.
+RUN mkdir -p /home/agent/.codex /home/agent/repo /home/agent/.claude /run/loom/login/claude /run/loom/login/codex \
+ && ln -s /run/loom/login/codex/auth.json /home/agent/.codex/auth.json
+
+# One body file for each harness, where the worker looks for it.
+COPY body/claude.json body/codex.json /etc/loom/body/
+
+# Each tool answers, offline, from a plain shell and from a login shell: one that is missing fails the
+# build here and not a body later.
+RUN for sh in "sh -c" "bash -lc"; do \
+      $sh 'for c in node npm git python3 jq rg curl claude codex; do command -v "$c" >/dev/null || { echo "core house: $c not found" >&2; exit 1; }; done' \
+   && $sh 'claude --version' >/dev/null \
+   && $sh 'codex --version' >/dev/null \
+   || exit 1; \
+    done \
+ && test -s /etc/loom/body/claude.json && test -s /etc/loom/body/codex.json
+
+# That this image is a house of this layout, and the harnesses it serves.
+LABEL loom.house="2" \
+      loom.house.harnesses="claude codex"

@@ -1,3 +1,4 @@
+import {reviewParent,reviewThread} from './review-place.js';
 import { liveConversationJob } from './index.js';
 import { OperationError } from '../operations/index.js';
 /** Fresh assigned-body provenance. This confers no general registry read or
@@ -13,7 +14,8 @@ export function conversationBodyScope(db:DataDatabase,proof:BodyProof,privateAss
   const job=db.select().from(jobs).where(eq(jobs.id,body.job)).get();
   if(!job?.conversation||!liveConversationJob(job.state)||job.agent!==body.agent||job.box!==body.box)return;
   const cv=db.select().from(conversations).where(eq(conversations.id,job.conversation)).get();
-  if(!cv||cv.job!==job.id||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
+  if(!cv||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
+  if(reviewParent(cv) && !reviewThread(db,cv))return;
   if(cv.member&&!privateAssignment({member:cv.member,agent:cv.agent,project:cv.project??undefined}))return;
   return {job,cv};
  };

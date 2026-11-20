@@ -11,8 +11,8 @@ vi.mock('../data', () => ({
 }));
 
 // Dynamic renderer props, confined to the test boundary.
-vi.mock('../kit', () => ({
-  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.list, p.reader ?? p.blank,
+vi.mock('../kit', () => ({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Button:'button',
+  Split: (p: any) => h('main', {}, ...p.folders.map((f: any) => h('button', { key: f.id, onClick: () => p.onFolder(f.id) }, f.label)), p.listAction, p.list, p.reader ?? p.blank,
     h('button', { onClick: p.onBack }, p.backLabel)),
   List: (p: any) => h('div', {}, p.children),
   Row: (p: any) => h('button', { onClick: p.onClick, 'aria-current': p.selected }, p.title, p.meta, p.status),
@@ -32,7 +32,7 @@ function snapshot(): BridgesSnapshot {
     filters: [{ connection: 'c-1', channel: 'only-here', rule: 'only' }, { connection: 'c-1', channel: 'skip-here', rule: 'ignore' }, { connection: 'other', channel: 'OTHER-FILTER', rule: 'only' }],
     channels: [{ platform: 'slack', workspace: 'T-POND', channel: 'C-1', answers: 'art', botsMayTalk: false }],
     people: [{ platform: 'slack', workspace: 'T-POND', user: 'U-1', member: 'jonathan' }],
-    sends: (['pending', 'held', 'sending', 'uncertain', 'sent', 'dismissed'] as const).map(state => ({ id: state, incoming: 'in-1', connection: 'c-1', channel: 'C-1', thread: 'thread-1', text: `Reply ${state}`, state, postedId: null, createdAt: '2026-11-14T22:00:00.000Z' })),
+    sends: (['pending', 'held', 'sending', 'uncertain', 'sent', 'dismissed'] as const).map(state => ({ id: state, incoming: 'in-1', connection: 'c-1', channel: 'C-1', thread: 'thread-1', text: `Reply ${state}`, state, createdAt: '2026-11-14T22:00:00.000Z' })),
     activity: [{ connection: 'c-1', received: 12, delivered: 10, held: 2 }],
   };
 }

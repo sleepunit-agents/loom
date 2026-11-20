@@ -9,10 +9,10 @@ import {eq} from 'drizzle-orm';
 import {FakeClock} from '../core/clock.js';
 import type {Sharing} from '../policy.js';
 import {createDataSchema} from '../core/data/database.js';
-import {members,agents,tokens,memberAgents,tasks} from '../core/data/schema.js';
+import {members,agents,tokens,memberAgents,tasks,conversations as conversationRows,digests} from '../core/data/schema.js';
 import {Conversations} from '../core/conversations/index.js';
 import {nextData} from '../next-data.js';
-import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from '../backends/people.js';
 import {ProjectsStore} from '../backends/projects.js';
 import {peopleReader} from '../pieces/mind/people.js';
@@ -26,12 +26,12 @@ it('serves all four Memory projections without legacy tables and rereads current
  db.insert(tokens).values({fingerprint:createHash('sha256').update(raw).digest('hex'),label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
  db.insert(tasks).values({id:'work',title:'Fictional task',ownerKind:'household',createdByKind:'member',createdBy:'owner',createdAt:at,changedAt:at}).run();
  const commons=join(home,'commons'),directory=join(home,'agents/fiction'),memories=join(directory,'memories.db');mkdirSync(commons,{recursive:true});mkdirSync(directory,{recursive:true});
- const knowledge=new SqliteKnowledgeBackend({dbPath:join(commons,'knowledge.db')});await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional knowledge'});
+ const knowledge=new KnowledgePages({dbPath:join(commons,'knowledge.db')});await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional knowledge'});
  const peopleStore=new PeopleStore({dbPath:memories,actor:'fiction'});peopleStore.write({slug:'friend',name:'Private fictional friend',where:{pond:{value:'Fictional relationship'}}});peopleStore.close();
  const projectsStore=new ProjectsStore({dbPath:memories});projectsStore.write({slug:'pond',name:'Private fictional pond'});projectsStore.close();
  // This callback is the root's required current-facts seam, not a mirrored
  // legacy fixture. Demotion and revocation below mutate only shared columns.
- const sharing=():Sharing=>({members:Object.fromEntries(db.select().from(members).all().map(m=>[m.id,{owner:m.role==='owner',agents:db.select().from(memberAgents).where(eq(memberAgents.member,m.id)).all().map(a=>a.agent)}])),projects:{},services:{}});
+ const sharing=():Sharing=>({members:Object.fromEntries(db.select().from(members).all().map(m=>[m.id,{owner:m.role==='owner',agents:db.select().from(memberAgents).where(eq(memberAgents.member,m.id)).all().map(a=>a.agent)}])),projects:{}});
  const sources={commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory,memories}]};
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all(),before=tables();
  const people=peopleReader({...sources.commons,directory:sources.commons.people,agents:sources.agents,sharing,now:()=>clock.now()});
@@ -45,6 +45,10 @@ it('serves all four Memory projections without legacy tables and rereads current
   const read=async()=>{const response=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
   expect(await read()).toMatchObject({tasks:[{title:'Fictional task'}],memoryKnowledge:{pages:[{title:'Fictional pump'}]},memoryPerson:{name:'Private fictional friend'},memoryProject:{name:'Private fictional pond',sections:expect.arrayContaining([{key:'people',available:true,items:[{title:'Private fictional friend'}]}])},memoryActivity:{entries:[{title:'Private fictional session'}]}});
   expect(tables()).toEqual(before);
+  // The tape carries the conversation's digest from the shared database, beside any episodes.
+  db.insert(digests).values({id:'dg-1',conversation:db.select().from(conversationRows).get()!.id,run:'r-1',revision:1,at,summary:'Fictional digest words'}).run();data.changed();
+  const tape=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryIdentity(agent:"fiction") { recent } }'})});
+  expect((await tape.json()).data.memoryIdentity.recent).toContain('digest · wake Private fictional session: Fictional digest words');
   db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();data.changed();
   expect(await read()).toEqual({tasks:[],memoryKnowledge:null,memoryPerson:null,memoryProject:null,memoryActivity:null});
   db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();data.changed();

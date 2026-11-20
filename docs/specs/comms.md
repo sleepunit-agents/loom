@@ -60,7 +60,11 @@ _Avoid_: log, trace, transcript
    whose `agents` is `"*"` or lists the agent. Today that's the household owner, for Art and Mark. A member who owns
    their own agent, running on their own box with their own CLI login, gets Comms for that agent and no other.
 2. **A thread is its opener's.** With several owners on one agent (owners.md), each owner sees only the threads they
-   opened. A thread's words are never shown to another member, household owner included. The conversation record
+   opened. A thread's words are never shown to another member, household owner included. The agent the thread is
+   with reads it back in the two places where its opener is the only person it could show it to: a body doing that
+   member's own work, and a session at that member's own terminal (owner's ruling, 2026-11-19: the rule is that an
+   agent must not expose what a person said to it, not that it must not know it; `itsOwnPrivateTalk` in
+   `src/policy.ts`). Any other body of the agent, whoever woke it, reads none of it. The conversation record
    (its metadata and digests) is still visible to the agent's owners, as for any venue (conversations.md, "Reading").
    Its asks are its member's too (t-2084): a Needs you of its conversation, an approval asked from it, and either's
    history are in their Inbox, Home, badges, live attention records, Projects counts and devices' pushes alone, and
@@ -560,18 +564,19 @@ Messages (`comms_messages`):
 - **Unread.** A thread is unread when its newest `reply` has a `seq` past `read_seq`. The app sets `read_seq` while
   the thread is on screen and the app is in front.
 - **Archive and unarchive.**
-  - Archiving hides a thread from the default list (an "Archived" filter shows it). It ends its body, so the runtime
-    saves its slot: core calls the runtime's piece API as the household owner, `run {argv: ["deliver", "end",
-    "<conversation>"]}`, a runtime verb that ends that conversation's body if it has one (a no-op if not). A runtime
-    that doesn't answer leaves the body to its warm-idle timeout, and the archive still stands.
+  - Archiving hides the thread from the default list and leaves it in the Archived filter. Before archiving
+    or deleting, the piece API asks the runtime to interrupt the thread's conversation on the member's behalf.
+    Either action can proceed once the runtime accepts the interrupt or confirms with a 404 that there is
+    no such conversation. If the runtime is unavailable, the route returns 503 and keeps the thread and its
+    messages. Other runtime refusals also leave the thread in place.
   - Its conversation, digests and record stay, as for every conversation.
   - Unarchiving brings it back. Sending to an archived thread is a `409`: unarchive first.
 - **Pinning** puts a thread at the top of the list. A member has at most 8 pinned threads, and a ninth pin is a `409`.
 - **Stop.** The Stop button sets `stop` for the thread's next `status` call: the runtime's own stop path, as the
   bridges' stop word uses it.
-- **Delete** removes the thread's row and every message of it, words included, at once. `comms.db` runs with SQLite's
+- **Delete** asks for confirmation, waits for the same interrupt response as Archive, then removes the thread's row and messages, including their words. `comms.db` runs with SQLite's
   `secure_delete` on, so freed pages are zeroed. The
-  conversation record and its digests stay, as they do for every venue. It asks first.
+  conversation record and its digests stay, as they do for every venue.
 
 **What the conversation page shows.** A `loom` conversation has no venue render: `conversation({id})` and
 `loom:conversation/<id>` show core's generic render (conversations.md, "Rendering": metadata, digests, turn counts),

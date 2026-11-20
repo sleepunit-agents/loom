@@ -32,7 +32,7 @@ async function prepared(){
 }
 it('uses actual startup, owner signin and Root writes with exact encrypted-holder values and removal',async()=>{
  const home=await prepared();let link;
- const app=await startSharedHome({home,port:0,stdout:value=>{link=value.trim();},reportError:()=>{}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,port:0,stdout:()=>{},reportError:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  const headers={origin:app.url,'user-agent':'Fictional adapter proof'};
  const signin=await fetch(link,{method:'POST',redirect:'manual',headers});expect(signin.status).toBe(303);
  const cookie=signin.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ');

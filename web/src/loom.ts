@@ -71,8 +71,6 @@ export interface Shell {
     fit?: { min?: [number, number]; ideal?: number; max?: number | null; big?: boolean } }[];
   /** The nightly backup, a household owner's (src/backup.ts backupRow). */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
-  /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for. */
-  icons?: { v: string; apps: Record<string, { line?: true }> };
   /** The household's Permissions page (the grants authority's), for a household owner: the launcher's Permissions (t-1970). */
   permissions?: string;
   tab: string;

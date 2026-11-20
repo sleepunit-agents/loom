@@ -13,7 +13,7 @@ function fixture(){
  db.insert(agents).values({id:'fiction',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(members).values(['owner','alice','bob','peer'].map(id=>({id,role:id==='owner'?'owner' as const:'member' as const,joinedAt:'2026-11-14T18:00:00Z'}))).run();
  db.insert(projects).values({id:'team',name:'Team'}).run();
- let sharing:Sharing={members:{owner:{owner:true,agents:[]},alice:{owner:false,agents:['fiction']},bob:{owner:false,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:[]}},services:{}};
+ let sharing:Sharing={members:{owner:{owner:true,agents:[]},alice:{owner:false,agents:['fiction']},bob:{owner:false,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:[]}}};
  const service=new Conversations(db,()=> '2026-11-14T18:00:00Z');
  const add=(place:string,scope:{member?:string;project?:string}={},kind:'person'|'agent'='person')=>{
   const c=service.open({agent:'fiction',venue:'discord',place,label:place,...scope});
@@ -30,7 +30,8 @@ it('reads only conversations with this person, with metadata and the supplied ro
 });
 it('keeps private member precedence and project or agent visibility independent of the card',()=>{
  const {add,titles}=fixture();add('Agent');add('Team',{project:'team'});add('Private',{member:'bob',project:'team'});
- expect(titles({kind:'member',id:'owner'})).toEqual(['Agent','Private','Team']);
+ // The owner role reads the household's conversations, not another member's private one.
+ expect(titles({kind:'member',id:'owner'})).toEqual(['Agent','Team']);
  expect(titles({kind:'member',id:'alice'})).toEqual(['Agent','Team']);
  expect(titles({kind:'member',id:'peer'})).toEqual(['Team']);
  expect(titles({kind:'member',id:'bob'})).toEqual(['Private']);
