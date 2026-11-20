@@ -201,10 +201,12 @@
         "kind": "ui",
         "app": "Approvals",
         "contains": [
-          "Inspect the example pump?",
-          "Why",
-          "If you allow",
-          "If you deny",
+          "May Fern inspect the example pump before ordering?",
+          "Check the hose before ordering.",
+          "IF YOU ALLOW",
+          "Fern inspects it.",
+          "IF YOU DENY",
+          "Fern waits.",
           "command: example-worker:inspect-pump"
         ]
       }
@@ -230,8 +232,8 @@
         "kind": "ui",
         "app": "Approvals",
         "contains": [
-          "Permanent record",
-          "request"
+          "HISTORY",
+          "Asked "
         ]
       }
     }

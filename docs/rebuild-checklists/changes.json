@@ -156,9 +156,11 @@
         "kind": "ui",
         "app": "Changes",
         "contains": [
-          "Checks",
-          "Review",
-          "Commit:",
+          "Checks passing",
+          "REVIEW",
+          "Approved",
+          "COMMIT",
+          "aaaaaaaa",
           "Compare garden pumps"
         ]
       }

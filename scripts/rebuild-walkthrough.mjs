@@ -155,6 +155,10 @@ export async function* walkthroughSteps(output) {
       await tile.getByText(selections[title],{exact:true}).first().click();
       await page.waitForFunction(ready,`${title} tile`);
       for(const text of details[title]??[])await tile.getByText(text,{exact:true}).first().waitFor();
+      if(title==='Changes'){
+       await tile.getByRole('button',{name:'Details',exact:true}).click();
+       await tile.getByText('aaaaaaaa',{exact:true}).waitFor();
+      }
       if(title==='Comms')await tile.getByRole('region',{name:'Work in this conversation',exact:true}).getByText('Compare garden pumps',{exact:false}).waitFor();
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
@@ -169,7 +173,17 @@ export async function* walkthroughSteps(output) {
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
-    if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
+    if(title==='Knowledge'){
+     const search=tile.getByRole('searchbox',{name:'Search knowledge',exact:true});
+     const screenshot='action-knowledge-search-folders.png';
+     try{
+      await search.waitFor();
+      for(const label of ['Recently verified','Due a check'])await tile.getByText(label,{exact:true}).first().waitFor();
+      await tile.screenshot({path:join(out,screenshot)});
+      report.actions.knowledgeSearchFolders={ok:true,screenshot};
+     }catch(error){report.actions.knowledgeSearchFolders={ok:false,error:String(error)};}
+     row.action=await knowledgeActions({page,tile,out,connections});
+    }
     if(title==='Settings'){
      const savedDefault=await secretDefaultAction({page,tile,out,app,deferReload:true});
      row.valueAction=await secretValueAction({page,tile,out,home,app});
