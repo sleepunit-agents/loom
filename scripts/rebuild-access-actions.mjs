@@ -41,19 +41,17 @@ export async function approveRequestedChange({page,app,composer,change,input,exp
 export async function accessAction({page,tile,title,app,out}){
  const db=app.services.comms.db.$client;
  const screenshot=`action-${title==='Your account'?'account':title==='Household setup'?'household':'sharing'}.png`;
- const saved=async(path,click)=>{
-  const pending=page.waitForResponse(r=>new URL(r.url()).pathname===path&&r.request().method()==='POST');void pending.catch(()=>{});
-  await click();const response=await pending;check(response.ok(),'The visible control was refused');
- };
  try{
   if(title==='Your account'){
    const before=db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n;
    const ownBefore=db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n;
-   await saved('/api/signin/link',()=>tile.getByRole('button',{name:'Make sign-in link',exact:true}).click());
+   const response=await responseForAction(page,request=>new URL(request.url()).pathname==='/api/signin/link'&&request.method()==='POST',
+    ()=>activate(tile.getByRole('button',{name:'Make sign-in link',exact:true})));
+   check(response.ok(),'The sign-in link request was refused (HTTP '+response.status()+')');
    await tile.locator('[data-signin-link]').waitFor();check(db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n===before+1,'No one-time sign-in link persisted');
    check(db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n===ownBefore+1,'Link belongs to another member');
    // Never put the delivered credential into evidence or screenshots.
-   await tile.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await tile.locator('[data-signin-link]').waitFor({state:'hidden'});
+   await activate(tile.getByRole('button',{name:'Hide sign-in link',exact:true}));await tile.locator('[data-signin-link]').waitFor({state:'hidden'});
    check(await tile.locator('[data-signin-link]').isHidden(),'The delivered link stayed visible');
   }else if(title==='Household setup'){
    const originalUrl=page.url();
