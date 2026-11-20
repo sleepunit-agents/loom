@@ -31,6 +31,10 @@ const REASONS: Record<LoginReason, string> = { 'no-file': 'There is no sign-in f
 
 /** The last instant of the year 9999: the latest time the household database keeps. */
 const LAST_MS = 253_402_300_799_999;
+export function loginMachineReporting(lastSeenAt:string|null,now:number,silenceMs=SILENCE_MS){
+  const silence=now-Date.parse(lastSeenAt??'');
+  return Number.isFinite(silence)&&silence>=0&&silence<=silenceMs;
+}
 type Key = Pick<Login, 'account' | 'box' | 'harness' | 'place'>;
 // One notice per time a sign-in is found gone, and one per end date: a notice already closed under an id is
 // never sent again (Conversations.send), so each id names the occasion and not only the sign-in.
@@ -141,7 +145,7 @@ export class AccountLogins {
       const rows = this.db.select({ login: modelAccountLogins, box: boxes, account: modelAccounts }).from(modelAccountLogins)
         .innerJoin(boxes, eq(boxes.id, modelAccountLogins.box)).innerJoin(modelAccounts, eq(modelAccounts.id, modelAccountLogins.account))
         .where(isNull(boxes.revokedAt)).all()
-        .filter(({ box }) => { const silence = now - Date.parse(box.lastSeenAt ?? ''); return Number.isFinite(silence) && silence >= 0 && silence <= silenceMs; });
+        .filter(({ box }) => loginMachineReporting(box.lastSeenAt,now,silenceMs));
       const send = (row: typeof rows[number], sourceId: string, words: string) => notices.send({ toKind: 'person', to: row.account.owner, member: row.account.owner,
         source: 'notice', sourceId, fromKind: 'unknown', words, refs: [row.box.id] });
       return rows.flatMap(row => {

@@ -10,7 +10,7 @@ import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
 import { readModelAccounts } from '../core/data/model-account-read.js';
@@ -282,4 +282,16 @@ it('shows an account\'s name and level to whoever is in the household now, by a 
   // A removed member, and a body whose member has been removed, are nobody (rules.accountSummary).
   f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'guest')).run();
   for (const viewer of [{ kind: 'member', id: 'guest' }, { kind: 'agent', id: 'agent', workingFor: 'guest' }] as const) expect(labels(viewer)).toEqual([]);
+});
+
+it('offers sign-in only for a reporting machine the viewer may manage',async()=>{
+  const f=fixture();
+  f.db.update(boxes).set({lastSeenAt:f.now()}).run();
+  f.db.insert(modelAccountLogins).values({account:'private-a',box:'private-box-id',harness:'codex',place:'containers',state:'signed-out',since:f.now(),checkedAt:f.now(),learnedFrom:'check'}).run();
+  const query='{ modelAccounts { ... on RuntimeAccountDetail { logins { reporting needsSignIn canRequest } } } }';
+  const login=async(who:'alice'|'house')=>(await (await f.post(who,query)).json()).data.modelAccounts[0].logins[0];
+  expect(await login('house')).toEqual({reporting:true,needsSignIn:true,canRequest:true});
+  expect(await login('alice')).toEqual({reporting:true,needsSignIn:true,canRequest:false});
+  f.clock.advance(121_000);
+  expect(await login('house')).toEqual({reporting:false,needsSignIn:false,canRequest:false});
 });

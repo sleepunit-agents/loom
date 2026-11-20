@@ -5,6 +5,7 @@ import {act,create} from 'react-test-renderer';
 import type {DataQuerySnapshot} from '../../data/graphql';
 import type {RuntimeAccount,AgentModel} from './model-accounts';
 const f=vi.hoisted(()=>({snapshot:{} as DataQuerySnapshot<{modelAccounts:RuntimeAccount[];agentModels?:AgentModel[];agents?:{id:string;removedAt:string|null}[];deskTime?:{timezone:string}}>,query:vi.fn()}));
+vi.mock('../../kit',async importOriginal=>({...await importOriginal<typeof import('../../kit')>(),Button:'button'}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(query:string)=>{f.query(query);return f.snapshot;}}));
 import {RuntimeAccounts,runtimeAccountsQuery} from './model-accounts';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -63,7 +64,7 @@ it('keeps visible preferences while the agent roster is unavailable',async()=>{
 
 it('shows each provider window and sign-in only while detail remains visible',async()=>{
  const windows=[{window:'week',usage:.41,reserve:.05,usageReadAt:'2026-11-15T12:00:00Z',resetsAt:null}];
- const logins=[{box:{id:'box',name:'Workshop'},place:'containers' as const,harness:'Codex',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'}];
+ const logins=[{reporting:true,needsSignIn:true,canRequest:true,box:{id:'box',name:'Workshop'},place:'containers' as const,harness:'Codex',state:'signed-out' as const,expiresAt:null,checkedAt:'2026-11-15T12:00:00Z'}];
  f.snapshot={status:'live',data:{modelAccounts:[{...detail,windows,logins}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
  expect(tree.root.findByType('meter').props.value).toBe(.41);

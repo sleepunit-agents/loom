@@ -19,7 +19,7 @@ export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
   const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),
     columns: { id: true, owner: true, provider: true, usage: true, usageReadAt: true, resetsAt: true },
     with: { modelAccountBoxesByAccount: { columns: {}, with: { boxRow: { columns: { id: true, name: true } } } },
-      modelAccountLoginsByAccount: { columns: { harness: true, place: true, state: true, expiresAt: true, checkedAt: true, since: true, learnedFrom: true, why: true }, with: { boxRow: { columns: { id: true, name: true } } } } },
+      modelAccountLoginsByAccount: { columns: { harness: true, place: true, state: true, expiresAt: true, checkedAt: true, since: true, learnedFrom: true, why: true }, with: { boxRow: { columns: { id: true, name: true, owner: true, lastSeenAt: true, revokedAt: true } } } } },
   }).sync();
   const text = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
   return { rows, privateRows: new Map(privateRows.map(({ modelAccountBoxesByAccount, modelAccountLoginsByAccount, ...row }) => [row.id,
