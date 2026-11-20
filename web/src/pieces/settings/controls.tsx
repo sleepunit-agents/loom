@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import {useSettingRequest,type Navigation} from '../attention/setting-request';
 import { useRef, useState, type FormEvent } from 'react';
 import { Button, Input } from '../../kit';
@@ -46,7 +47,7 @@ const choices = <><option value="ask">Ask each time</option><option value="auto"
 export function DefaultControl({ answer,go }: Navigation & { answer: 'ask' | 'auto' | 'never' }) {
   const request=useSettingRequest({go},'household default for secret access','Secret default request');
   return <><form onChange={request.clear} className="grid gap-3" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); request.prepare({ answer: data.get('answer') }); }}>
-    <label>For a secret with no rule<select name="answer" defaultValue={answer}>{choices}</select></label><Button type="submit" disabled={request.disabled}>Review household default</Button>
+    <label>For a secret with no rule<NativeSelect name="answer" defaultValue={answer}>{choices}</NativeSelect></label><Button type="submit" disabled={request.disabled}>Review household default</Button>
   </form>{request.reader}</>;
 }
 export function RuleControl({ secret, snapshot,go }: Navigation & { secret: string; snapshot: SecretsSnapshot }) {
@@ -55,7 +56,7 @@ export function RuleControl({ secret, snapshot,go }: Navigation & { secret: stri
     event.preventDefault(); const data = new FormData(event.currentTarget);
     const agents = (when: 'on_request' | 'at_start') => String(data.get(when) ?? '').split(',').map(agent => agent.trim()).filter(Boolean).map(agent => ({ agent, when }));
     request.prepare({ secret, answer: data.get('answer'), minutes: Number(data.get('minutes')), agents: [...agents('on_request'), ...agents('at_start')] });
-  }}><h2>Standing rule</h2><label>Answer<select name="answer" defaultValue={rule?.answer ?? 'ask'}>{choices}</select></label>
+  }}><h2>Standing rule</h2><label>Answer<NativeSelect name="answer" defaultValue={rule?.answer ?? 'ask'}>{choices}</NativeSelect></label>
     <label>Automatic grant, minutes<Input name="minutes" type="number" min={1} max={525600} defaultValue={rule?.minutes ?? 30} required /></label>
     <label>When asked: agent names, separated by commas<Input name="on_request" defaultValue={assignments.filter(row => row.when === 'on_request').map(row => row.agent).join(', ')} /></label>
     <label>At startup: agent names, separated by commas<Input name="at_start" defaultValue={assignments.filter(row => row.when === 'at_start').map(row => row.agent).join(', ')} /></label>

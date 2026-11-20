@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Actions, Button, Field, Fields, Input, Textarea } from '../../kit';
 import type { SharedTask, SharedTaskLink, TaskAction } from './shared-view';
@@ -90,10 +91,10 @@ function Draft(p: TaskFormProps) {
   const summaryFields = p.action === 'create' || p.action === 'edit';
   // A parent is changed by taking the one it has away first, so a second is not offered beside it.
   const choosing = p.action === 'create' || p.action === 'link' || p.action === 'parent' && !has.length;
-  const projectField = <Field label="Project"><select value={project} onChange={e => setProject(e.target.value)}><option value="">No project</option>{p.projects.map(project => <option key={project.id} value={project.id}>{project.label}</option>)}</select></Field>;
-  const priorityField = <Field label="Priority"><select value={priority} onChange={e => setPriority(Number(e.target.value))}>{priorities.map((words, n) => <option key={n} value={n}>{words}</option>)}</select></Field>;
+  const projectField = <Field label="Project"><NativeSelect value={project} onChange={e => setProject(e.target.value)}><option value="">No project</option>{p.projects.map(project => <option key={project.id} value={project.id}>{project.label}</option>)}</NativeSelect></Field>;
+  const priorityField = <Field label="Priority"><NativeSelect value={priority} onChange={e => setPriority(Number(e.target.value))}>{priorities.map((words, n) => <option key={n} value={n}>{words}</option>)}</NativeSelect></Field>;
   const relationLabel = p.action === 'link' ? 'Blocking task' : 'Parent task';
-  const relationField = <Field label={relationLabel} hint={p.action === 'link' ? 'This task waits until the one you choose is closed.' : undefined}><select required={p.action !== 'create'} value={related} onChange={e => setRelated(e.target.value)}><option value="">{p.action === 'create' ? 'No parent' : 'Choose a task'}</option>{p.tasks.filter(task => task.id !== t?.id && !has.includes(task.id)).map(task => <option key={task.id} value={task.id}>{task.title} · {task.id}</option>)}</select></Field>;
+  const relationField = <Field label={relationLabel} hint={p.action === 'link' ? 'This task waits until the one you choose is closed.' : undefined}><NativeSelect required={p.action !== 'create'} value={related} onChange={e => setRelated(e.target.value)}><option value="">{p.action === 'create' ? 'No parent' : 'Choose a task'}</option>{p.tasks.filter(task => task.id !== t?.id && !has.includes(task.id)).map(task => <option key={task.id} value={task.id}>{task.title} · {task.id}</option>)}</NativeSelect></Field>;
   return <form ref={form} aria-label={taskFormTitles[p.action]} onSubmit={save} className="grid min-w-0 gap-3"
     onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); p.cancel(); } }}>
     <Fields disabled={busy}>
@@ -107,8 +108,8 @@ function Draft(p: TaskFormProps) {
       {(summaryFields || p.action === 'priority') && priorityField}
       {(summaryFields || p.action === 'project') && projectField}
       {p.action === 'create' && <>
-        <Field label="Type"><select value={type} onChange={e => setType(e.target.value as SharedTask['type'])}>{(Object.keys(types) as SharedTask['type'][]).map(type => <option key={type} value={type}>{types[type]}</option>)}</select></Field>
-        <Field label="Owner"><select value={owner} onChange={e => setOwner(e.target.value)}><option value="household">Household</option>{p.people.map(person => <option key={`${person.kind}:${person.id}`} value={`${person.kind}:${person.id}`}>{person.label}</option>)}</select></Field>
+        <Field label="Type"><NativeSelect value={type} onChange={e => setType(e.target.value as SharedTask['type'])}>{(Object.keys(types) as SharedTask['type'][]).map(type => <option key={type} value={type}>{types[type]}</option>)}</NativeSelect></Field>
+        <Field label="Owner"><NativeSelect value={owner} onChange={e => setOwner(e.target.value)}><option value="household">Household</option>{p.people.map(person => <option key={`${person.kind}:${person.id}`} value={`${person.kind}:${person.id}`}>{person.label}</option>)}</NativeSelect></Field>
       </>}
       {p.action === 'comment' && <Field label="Comment"><Textarea required value={text} onChange={e => setText(e.target.value)}/></Field>}
       {p.action === 'close' && <Field label="Reason" hint="The one word “cancelled” marks the task cancelled instead of done."><Textarea required value={text} onChange={e => setText(e.target.value)}/></Field>}
@@ -120,11 +121,11 @@ function Draft(p: TaskFormProps) {
       {choosing && relationField}
       {p.action === 'parent' && !choosing && <p className="loom-reader__body" data-quiet="">To change the parent, remove this one first.</p>}
       {p.action === 'ask' && <>
-        <Field label="Person"><select required value={to} onChange={e => setTo(e.target.value)}><option value="">Choose a person</option>{p.people.filter(person => person.kind === 'member').map(person => <option key={person.id} value={person.id}>{person.label}</option>)}</select></Field>
+        <Field label="Person"><NativeSelect required value={to} onChange={e => setTo(e.target.value)}><option value="">Choose a person</option>{p.people.filter(person => person.kind === 'member').map(person => <option key={person.id} value={person.id}>{person.label}</option>)}</NativeSelect></Field>
         <Field label="Question"><Textarea required value={ask} onChange={e => setAsk(e.target.value)}/></Field>
         <Field label="If yes"><Textarea required value={ifYes} onChange={e => setIfYes(e.target.value)}/></Field>
         <Field label="If no"><Textarea required value={ifNo} onChange={e => setIfNo(e.target.value)}/></Field>
-        <Field label="Answer"><select value={answers} onChange={e => setAnswers(e.target.value as typeof answers)}><option value="yes-no">Yes or no</option><option value="words">In words</option></select></Field>
+        <Field label="Answer"><NativeSelect value={answers} onChange={e => setAnswers(e.target.value as typeof answers)}><option value="yes-no">Yes or no</option><option value="words">In words</option></NativeSelect></Field>
       </>}
     </Fields>
     {error && <p role="alert" className="loom-reader__body">{error}</p>}

@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import { useRef,useState,type FormEvent } from 'react';
 import { Button,Input } from '../../kit';
 import { newId } from '../../data/id';
@@ -16,12 +17,12 @@ function useCommand(){
 }
 const field=(data:FormData,name:string)=>String(data.get(name)??'').trim();
 const lines=(data:FormData,name:string)=>field(data,name).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-function Address({row,fixed=false}:{row?:{platform:string;workspace:string};fixed?:boolean}){return <><label>Platform<select name="platform" disabled={fixed} defaultValue={row?.platform??'discord'}><option value="discord">Discord</option><option value="slack">Slack</option></select>{fixed&&<input type="hidden" name="platform" value={row?.platform}/>}</label><label>Server or workspace ID<Input name="workspace" readOnly={fixed} defaultValue={row?.workspace} required maxLength={200}/></label></>;}
+function Address({row,fixed=false}:{row?:{platform:string;workspace:string};fixed?:boolean}){return <><label>Platform<NativeSelect name="platform" disabled={fixed} defaultValue={row?.platform??'discord'}><option value="discord">Discord</option><option value="slack">Slack</option></NativeSelect>{fixed&&<input type="hidden" name="platform" value={row?.platform}/>}</label><label>Server or workspace ID<Input name="workspace" readOnly={fixed} defaultValue={row?.workspace} required maxLength={200}/></label></>;}
 function AgentChoice({name, agents, current}: {name:string;agents?:ReadonlySet<string>;current?:string}) {
- return <select key={current&&agents?.has(current)?current:''} name={name} required defaultValue={current&&agents?.has(current)?current:''}>
+ return <NativeSelect key={current&&agents?.has(current)?current:''} name={name} required defaultValue={current&&agents?.has(current)?current:''}>
   <option value="" disabled>Choose an agent</option>
   {Array.from(agents??[]).map(id=><option key={id}>{id}</option>)}
- </select>;
+ </NativeSelect>;
 }
 export function ConnectionControl({go,row,filters=[],agents}:Navigation&{row?:BridgeConnectionRow;filters?:BridgesSnapshot['filters'];agents?:ReadonlySet<string>}){
  const request=useSettingRequest({go},'bridge setting change','Bridge change request');

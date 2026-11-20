@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import { InboxNotice, currentNotices, type InboxResultsSnapshot } from './outcomes';
 import { AnswerSection } from './answer';
 export { InboxActionNotices } from './outcomes';
@@ -89,9 +90,9 @@ function QuestionReader({ item, actions, sourceCard, zone, words, whole }: { ite
     {item.resolution && <Section label="Settled"><Body>{item.resolution}</Body></Section>}
     {error && <Error text="Could not save. Try again." />}
     {item.canSetVolume && actions?.volume && <Foot>
-      <label>Notify <select aria-label="Notify" value={item.volume} disabled={busy} onChange={event => void volume(event.target.value as InboxItem['volume'])}>
+      <label>Notify <NativeSelect aria-label="Notify" value={item.volume} disabled={busy} onChange={event => void volume(event.target.value as InboxItem['volume'])}>
         {(['full', 'dim', 'mute'] as const).map(value => <option key={value} value={value}>{volumeWords[value]}</option>)}
-      </select></label>
+      </NativeSelect></label>
       {item.volume !== 'full' && <span>{volumeNote[item.volume]}{item.quietUntil && <> · back to normal <time dateTime={item.quietUntil}>{when(item.quietUntil, zone)}</time></>}</span>}
     </Foot>}
   </Reader>;

@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import {useEffect, useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {memberOperation} from '../../data/operation';
@@ -67,8 +68,8 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
    <ul>{readers.map(id => <li key={id}>{id} <Button disabled={busy} variant="danger-quiet" onClick={() => void change('machine.proposeReader',{box:box.id,agent:id,allow:false})}>Request revocation for {id}</Button></li>)}</ul>
    {!readers.length && <p>No explicit grants.</p>}
    <form onSubmit={event => {event.preventDefault(); if(agent && !readers.includes(agent)) void change('machine.proposeReader',{box:box.id,agent,allow:true});}}>
-    <label>Agent <select value={agent} onChange={event => select(event.target.value)}><option value="">Choose an agent</option>
-     {agents.filter(id=>!readers.includes(id)).map(id=><option key={id} value={id}>{id}</option>)}</select></label>
+    <label>Agent <NativeSelect value={agent} onChange={event => select(event.target.value)}><option value="">Choose an agent</option>
+     {agents.filter(id=>!readers.includes(id)).map(id=><option key={id} value={id}>{id}</option>)}</NativeSelect></label>
     <Button type="submit" disabled={busy || !agent || readers.includes(agent)}>Request read grant</Button>
    </form>
    {cards?.map(card=><div key={card.id}><p>{card.ask}</p>
