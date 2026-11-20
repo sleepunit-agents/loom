@@ -253,8 +253,9 @@ export async function bodyProgram(input: {
       // The last two are read by the tools server and by nothing else this is spread into: with the agent's name the
       // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
+      const houseShell=reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS);
       programTools=bodyProgramTools({...rootAccess,
-        ...(hasFileTools(reach,policy)&&mayReadNoteFile(deniedTools(policy))?{allowsFileBytes:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}:{}),
+        ...(houseShell&&mayReadNoteFile(deniedTools(policy))?{allowsFileBytes:(bytes:Buffer)=>tools?.allowsBytes(bytes)===true}:{}),
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
       const kitBrief=(items:KitUnavailable[])=>{
@@ -278,7 +279,7 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
-        ...(reach==='all'&&Object.hasOwn(input.env,BODY_OWN_HARNESS)?{houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
+        ...(houseShell?{houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();

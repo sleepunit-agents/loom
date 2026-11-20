@@ -44,7 +44,10 @@ export async function houseNoteCli(args:string[],io:ServeIo,env=process.env):Pro
     }});
     if(values.help){io.stdout(usage);return 0;}
     const [path]=positionals;
-    if(operation==='file'?(positionals.length!==2||values.json):positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
+    if(operation==='file'){
+      if(values.json){io.stderr('loom note file writes raw bytes. Omit --json.\n');return 2;}
+      if(positionals.length!==2){io.stderr('Usage: loom note file <path> <name>\n');return 2;}
+    }else if(positionals.length>1||(operation!=='list'&&!path))throw Error('Expected one note path');
     json=!!values.json;
     if(mutates&&values.id===undefined)generatedReceipt=randomUUID();
     if(operation==='file')input={operation,path,name:positionals[1]};
