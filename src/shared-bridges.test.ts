@@ -130,6 +130,33 @@ it('reports only provider-confirmed parts of this running job’s intermediate p
  expect((await status(token.other)).status).toBe(404);
  expect((await f.call('bridges','say',{id,text:'x'.repeat(3901)},token.other)).status).not.toBe(200);
 });
+it('reports the bridge provider confirmation through the running job’s shell send command',async()=>{
+ const {bodyProgramTools}=await import('./runtime/body-program-tools.js');
+ const {bodySecretTools}=await import('./runtime/body-secret-tools.js');
+ const {houseRuntimeCli}=await import('./house-runtime-cli.js');
+ let allowed=true;
+ const f=fixture(()=>allowed),message=await f.receive(),cv=message.conversation!;
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(cv,'body');
+ });
+ const access={url:'https://loom.invalid',token:token.body,job:'body',agent:'art',conversation:cv,
+   signal:new AbortController().signal,clock:f.clock,fetch:async(url:RequestInfo|URL,init?:RequestInit)=>f.root.http.request(new Request(url,init))};
+ const port=bodyProgramTools({...access,onStop(){},onStatus(){}});clean.push(port.close);
+ const local=await bodySecretTools({...access,houseSend:{venue:'slack',denied:[],call:port.call}});clean.push(local.close);
+ const run=async(id:string,text:string)=>{
+  let out='';
+  const code=await houseRuntimeCli(['send','--id',id,'--text',text,'--conversation',cv],
+   {stdout:s=>{out+=s;},stderr(){}},{LOOM_BODY_HOUSE_SEND:local.houseSend});
+  return {code,reply:JSON.parse(out)};
+ };
+ const id=randomUUID();
+ for(let attempt=0;attempt<2;attempt++)expect(await run(id,'Working')).toMatchObject({code:0,reply:{ok:true,posted:true,ref:id,postedIds:['1794432000.000009']}});
+ expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+ allowed=false;
+ expect(await run(randomUUID(),'Awaiting review')).toMatchObject({code:1,reply:{ok:false,state:'held',postedIds:[]}});
+ expect(f.db.select().from(inbox).where(eq(inbox.job,'body')).get()?.state).toBe('taken');
+});
 it('retires actual sockets after committed owner disconnect and drains on root close',async()=>{
  const f=fixture();await f.receive();expect((await f.call('bridges','command',{action:'disconnect',id:'connection'},token.owner)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.closed).toHaveBeenCalledOnce();await expect(f.transports[0].receive({},Buffer.from('{}'))).rejects.toThrow();await f.root.close();expect((await f.call('bridges','reply',{id:randomUUID(),incoming:'in',text:'Late'})).status).toBe(503);
 });

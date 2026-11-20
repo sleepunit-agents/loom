@@ -282,13 +282,15 @@ export async function bodyProgram(input: {
         return [];
       }):[];
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
-        ...(houseShell?{houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
+        ...(houseShell?{houseSend:{venue:job.venue??'loom',denied:deniedTools(policy),call:programTools.call},houseNotes:{denied:deniedTools(policy),call:programTools.call}}:{}),
         secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
     let failureReport:UsageReport|undefined;
     const shellEnv={...input.env};
+    delete shellEnv.LOOM_BODY_HOUSE_SEND;
+    if(tools?.houseSend)shellEnv.LOOM_BODY_HOUSE_SEND=tools.houseSend;
     delete shellEnv.LOOM_BODY_HOUSE_NOTE;
     if(tools?.houseNote)shellEnv.LOOM_BODY_HOUSE_NOTE=tools.houseNote;
     const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: shellEnv, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });

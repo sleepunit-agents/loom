@@ -33,13 +33,13 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
  const details={model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()};
  operations.register(operation({...common,name:'conversation.message',
   input:z.discriminatedUnion('kind',[
-   z.object({kind:z.literal('reply'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
+   z.object({kind:z.enum(['reply','progress']),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
    z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),...details}).strict(),
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   async prepare(input,ctx){
    const before=replyTarget(ctx.viewer,input.kind),{kind,clientId,words,model,outcome,latencyMs}=input;
-   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind,words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
+   const prepared=before.cv.venue==='handoff'?await prepareReviewResult(service,before.cv,before.job.id,words,model):await service.prepareSend({thread:before.thread.id,sender:before.cv.agent,kind:kind==='progress'?'reply':kind,progress:kind==='progress',words,clientId:before.job.id+':'+clientId,run:before.job.id,turn:{model,outcome,latencyMs},...(kind==='card'?{tool:input.tool,cardState:input.cardState}:{})});
    return ()=>{
     const live=replyTarget(ctx.viewer,input.kind);
     if(live.job.id!==before.job.id||live.thread.id!==before.thread.id||live.cv.id!==before.cv.id||live.cv.member!==before.cv.member||live.cv.project!==before.cv.project||live.cv.agent!==before.cv.agent||live.cv.place!==before.cv.place)throw new OperationError('denied','Conversation changed');

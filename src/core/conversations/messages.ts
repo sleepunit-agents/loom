@@ -25,6 +25,7 @@ export type MessageInput = {
   thread: string; sender: string; kind: 'message' | 'reply' | 'card' | 'notice'; words: string;
   clientId?: string; run?: string; tool?: string; cardState?: Message['cardState'];
   turn?: TurnDetails;
+  progress?: boolean;
 };
 
 export class CommsMessages {
@@ -45,7 +46,7 @@ export class CommsMessages {
       .where(and(eq(messages.thread, thread), eq(messages.sender, sender), eq(messages.clientId, clientId))).get();
   }
 
-  private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}): Message {
+  private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}, progress = false): Message {
     const { thread, cv } = this.context(input.thread), at = this.now();
     const days = commsKeepDays(this.db);
     if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
@@ -56,7 +57,7 @@ export class CommsMessages {
     this.db.update(threads).set({ lastAt: at }).where(eq(threads.id, thread.id)).run();
     const person = input.kind === 'message' || input.kind === 'answer';
     this.threads.conversations.turn({ conversation: cv.id,
-      kind: person ? 'message' : input.kind === 'reply' ? 'reply' : input.kind === 'card' ? 'action' : 'note',
+      kind: person ? 'message' : input.kind === 'reply' ? (progress ? 'note' : 'reply') : input.kind === 'card' ? 'action' : 'note',
       fromKind: person ? 'person' : 'agent', fromId: input.sender,
       run: person ? null : input.run, ...detail,
     }, at);
@@ -103,8 +104,8 @@ export class CommsMessages {
       if (input.sender !== (input.kind === 'message' ? cv.member : cv.agent)) throw new Error('Sender differs from thread');
       const retry = this.retry(input.thread, input.sender, input.clientId);
       if (retry) return retry;
-      const { turn, ...messageInput } = input;
-      let row = this.append({ ...messageInput, words, delivery: input.kind === 'message' ? 'sending' : null }, refs, turn);
+      const { turn, progress, ...messageInput } = input;
+      let row = this.append({ ...messageInput, words, delivery: input.kind === 'message' ? 'sending' : null }, refs, turn, progress);
       if (input.kind === 'message') row = this.attach(row, this.threads.conversations.send({
         toKind: 'agent', to: cv.agent, conversation: cv.id, source: 'thread', sourceId: `${row.thread}:${row.seq}`,
         fromKind: 'person', fromId: input.sender, thread: row.thread, messageSeq: row.seq, refs,
