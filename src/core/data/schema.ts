@@ -358,7 +358,9 @@ export const conversations = sqliteTable('conversations', {
   startedAt: text('started_at').notNull(),
   lastAt: text('last_at').notNull(),
   turnCount: integer('turn_count').notNull(),
+  handoffNotBefore: text('handoff_not_before'),
 }, t => [
+  check('conversations_handoff_not_before_utc', utc(t.handoffNotBefore)),
   check('conversations_direct_boolean', sql`${t.direct} in (0, 1)`),
   check('conversations_started_at_utc', utc(t.startedAt)),
   check('conversations_last_at_utc', utc(t.lastAt)),

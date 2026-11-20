@@ -241,7 +241,7 @@ export async function bodyProgram(input: {
       context.unshift(nativeBudget);continued.unshift(nativeBudget);
     }
     if(coordinating){
-      const delegation='Check conversation.handoffOptions for assigned peers, enabled work roles and current availability. To delegate through Loom, call conversation.handoff with one of role (a listed work role), agent (a listed peer), or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, put the repository and commit in words. For a role or Codex handoff, Loom returns the result to this thread. To check that worker’s progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
+      const delegation='Check conversation.handoffOptions for assigned peers, enabled work roles and current availability. To delegate through Loom, call conversation.handoff with one of role (a listed work role), agent (a listed peer), or harness "codex". Include a label, self-contained words and a clientId unique to the brief. Reuse the clientId if this job retries it. For repository work, put the repository and commit in words. For a role or Codex handoff, Loom returns the result to this thread. To start it later, include notBefore as a UTC timestamp within the private brief retention period. To check that worker’s progress, pass the returned child conversation to conversation.handoffStatus. For help inside this job, use native subagents when your harness provides them.';
       context.unshift(delegation);continued.unshift(delegation);
     }
     if(job.venue==='discord'&&job.venueDescription){

@@ -1,7 +1,8 @@
+import { Jobs } from '../../runtime/jobs.js';
 import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { applyUpgrades, createDataSchema, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
+import { applyUpgrades, createDataSchema, dataDatabase, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
 
 // The installation SQL exactly as each schema number shipped it, recovered from history and never edited.
 // Adding upgrade step N+1 means checking today's assets/data/schema.sql in here as N+1.sql.
@@ -39,6 +40,21 @@ describe('upgrading a household database', () => {
     expect(dataSchemaShape(old)).toEqual(dataSchemaShape(fresh()));
     expect(old.prepare('SELECT number FROM migrations ORDER BY number').all()).toEqual(numbers.map(n => ({ number: n })));
     expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
+  it('keeps an existing handoff immediately runnable when upgrading schema 27', () => {
+    const old = household(27);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO conversations (id, agent, venue, place, label, direct, started_at, last_at, turn_count)
+        VALUES ('child', 'art', 'handoff', 'prior-job', 'Report', 0, '${at}', '${at}', 0);
+      INSERT INTO inbox (id, to_kind, "to", conversation, source, from_kind, from_id, at, changed_at, state)
+        VALUES ('brief', 'agent', 'art', 'child', 'handoff', 'agent', 'art', '${at}', '${at}', 'waiting');
+      INSERT INTO agent_models (agent, model, position) VALUES ('art', 'model', 0);
+      INSERT INTO agent_run_settings (agent, house_repository, house_file, house_branch, nested_containers, gpu)
+        VALUES ('art', 'fixture', 'Housefile', 'main', 0, 0)`);
+    upgradeDataSchema(old, () => at);
+    expect(old.prepare("SELECT handoff_not_before FROM conversations WHERE id = 'child'").get()).toEqual({handoff_not_before:null});
+    expect(new Jobs(dataDatabase(old), () => at).admit('child')).toMatchObject({conversation:'child',state:'queued'});
   });
 
   it('adds empty review history to a populated schema 26 household', () => {
@@ -80,7 +96,7 @@ describe('upgrading a household database', () => {
       .map(table => old.prepare(`SELECT * FROM ${table}`).all());
     const before = privateHistory();
     upgradeDataSchema(old);
-    expect(privateHistory()).toEqual(before);
+    expect(privateHistory()).toEqual([before[0].map(row=>({...row as object,handoff_not_before:null})), ...before.slice(1)]);
     expect(old.pragma('foreign_key_check')).toEqual([]);
     expect(() => old.prepare("DELETE FROM conversations WHERE id = 'cv'").run()).toThrow('FOREIGN KEY');
   });
@@ -292,7 +308,7 @@ describe('upgrading a household database', () => {
       { channel: 'general', answers: 'art', bots_may_talk: 1, brief: null }, { channel: 'pond', answers: 'art', bots_may_talk: 0, brief: null }]);
     const after = rows();
     // Every row of every table says what it said, once the columns the step added, all empty, are set aside.
-    const added = ['brief', 'reports_to', 'conversation', 'asked_by_kind', 'asked_by', 'asked_at', 'on_word_kind', 'on_word', 'chain', 'chain_started_at'];
+    const added = ['handoff_not_before', 'brief', 'reports_to', 'conversation', 'asked_by_kind', 'asked_by', 'asked_at', 'on_word_kind', 'on_word', 'chain', 'chain_started_at'];
     const was = before.map(table => new Set(table.flatMap(row => Object.keys(row as object))));
     const without = after.map((table, index) => table.map(row => Object.fromEntries(Object.entries(row as Record<string, unknown>).filter(([name, value]) => was[index].has(name) || !(added.includes(name) && value === null)))));
     expect(without).toEqual(before);

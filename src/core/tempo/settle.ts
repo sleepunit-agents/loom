@@ -1,6 +1,6 @@
 import { and, asc, eq, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { inbox } from '../data/schema.js';
+import { conversations, inbox } from '../data/schema.js';
 import type { Clock } from '../clock.js';
 import { InboxVolume, type Recipient } from './volume.js';
 
@@ -42,7 +42,12 @@ export class SettledInbox {
     // Notifications can synchronously shut down Tempo and its shared database.
     if (this.closed) return;
     const groups = new Map<string, { who: Recipient; items: WaitingItem[] }>();
-    for (const item of this.db.select().from(inbox).where(and(eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.at), asc(inbox.seq), asc(inbox.id)).all()) {
+    for (const {item, notBefore} of this.db.select({item:inbox,notBefore:conversations.handoffNotBefore}).from(inbox)
+      .leftJoin(conversations,eq(inbox.conversation,conversations.id)).where(and(eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.at), asc(inbox.seq), asc(inbox.id)).all()) {
+      if (item.toKind === 'agent' && notBefore && Date.parse(notBefore) > this.clock.now()) {
+        next = Math.min(next ?? Infinity, Date.parse(notBefore));
+        continue;
+      }
       const key = JSON.stringify([item.toKind, item.to]);
       let group = groups.get(key);
       if (!group) { group = { who: { kind: item.toKind, id: item.to }, items: [] }; groups.set(key, group); }
