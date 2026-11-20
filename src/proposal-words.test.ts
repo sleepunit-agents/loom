@@ -128,7 +128,8 @@ it('shows machine needs and preferences on a repeating schedule', () => {
     asker: { kind: 'outside', id: JSON.stringify([gage.platform, gage.workspace, gage.user]) },
     trigger: { needs: ['gpu', 'local'], prefers: ['fast'] } };
   const card = proposalCard('placeSchedule', input, { names, before: { value: null } })!;
-  expect(card.title).toBe('Set a repeating schedule for Art in conversation cv-one');
+  expect(card.title).toBe('Set a repeating schedule for Art, requested by Gage Taylor (Slack)');
+  expect(card.facts).toContainEqual({label:'Conversation id',value:'cv-one',small:true});
   expect(card.facts).toContainEqual({ label: 'Asked by', value: 'Gage Taylor (Slack)' });
   expect(factLines(card.facts)).toContain('Machine needs: gpu, local\nMachine preferences: fast');
   expect(factLines(card.facts)).not.toContain('["');

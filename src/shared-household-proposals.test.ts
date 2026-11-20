@@ -930,6 +930,8 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
   const disconnectedTitle=(await preview(f,disconnect)).card!.title;
   expect(disconnectedTitle).toContain('Slack connection');
   expect(await titles('sam',[disconnect,unrelated])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
+  expect((await f.call('approvals/answer',{id:disconnect,answer:'allow'},'sam')).body.ok).toBe(true);
+  expect(await titles('sam',[disconnect])).toEqual([{approval:disconnect,title:disconnectedTitle}]);
 });
 
 it('names an outside account from its exact directory record only for the owner', async () => {

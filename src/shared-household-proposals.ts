@@ -474,7 +474,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
     case 'bridge':
      if(value.input.action==='disconnect') {
-      if(card.state!=='pending') return undefined;
+      // Disconnect keeps the connection row. Its platform and agent are immutable.
       was=before(value);
       platform=was && typeof was==='object' && 'platform' in was ? was.platform : undefined;
      } else platform=value.input.platform;
@@ -483,7 +483,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    }
    if(platform!=='slack') return undefined;
    // A historical title describes the original request, independent of later configuration.
-   return ownerCard(value,card.state==='pending' ? was ?? before(value) : undefined,names)?.title;
+   return ownerCard(value,was ?? (card.state==='pending' ? before(value) : undefined),names)?.title;
   },
   file,
   // Called after the outer Allow transaction commits, so readers see the change.

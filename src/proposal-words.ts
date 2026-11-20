@@ -173,7 +173,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       });
       return { title: (setting ? 'Set a repeating schedule for ' + name(input.agent)
         : 'Change the repeating schedule ' + str(input.id) + ' for ' + name(input.agent)) + (names && address?.platform === 'slack' && account ? ', requested by ' + askedBy : ' in conversation ' + str(input.conversation)),
-        facts: [{ label: 'Asked by', value: askedBy }, { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [...account.facts.filter(fact => fact.label !== 'Who'), account.id] : [])],
+        facts: [{ label: 'Asked by', value: askedBy }, ...(names && address?.platform === 'slack' && account ? [{label:'Conversation id',value:str(input.conversation),small:true}] : []), { label: 'Place', value: str(input.place) }, ...facts, ...(account ? [...account.facts.filter(fact => fact.label !== 'Who'), account.id] : [])],
         ifYes: setting ? 'Each firing starts a job in that conversation on the asker’s word, with loom’s tools only.'
           : 'The schedule changes as shown and continues on the asker’s word.',
         ifNo: setting ? 'No schedule is set.' : 'The schedule stays as it is.' };
