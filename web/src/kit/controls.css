@@ -101,6 +101,21 @@
 .loom-kit-search input:disabled { cursor: not-allowed; }
 .loom-kit-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 
+/* The invisible native control covers the wrapping caption, including its arrow. */
+.loom-wrapping-select {
+  position: relative; display: inline-grid; align-items: center; box-sizing: border-box;
+  min-width: 0; max-width: 100%; min-height: var(--kit-field, 32px); padding: 4px 28px 4px 10px;
+  white-space: normal; overflow-wrap: anywhere; border: 1px solid var(--v-edge, currentColor);
+  border-radius: var(--r-sm); background: var(--input, transparent); color: var(--v-text); font-size: var(--fs-control);
+}
+.loom-wrapping-select::after {
+  content: ''; position: absolute; right: 10px; top: 50%; width: 6px; height: 6px;
+  border: solid currentColor; border-width: 0 1px 1px 0; transform: translateY(-75%) rotate(45deg); pointer-events: none;
+}
+.loom-wrapping-select > select { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; opacity: 0; }
+.loom-wrapping-select:has(select:focus-visible) { outline: 2px solid currentColor; outline-offset: 2px; }
+.loom-wrapping-select:has(select:disabled) { color: var(--v-disabled-ink, GrayText); }
+
 /* ---- bare native controls in a page: the reset leaves them with no edge at all (styles/cojeev/base.css) ---- */
 @layer components {
   .next-page :where(select:not([class^="v-"]):not([class*=" v-"]):not([data-slot]):not([multiple]):not([size])) {
@@ -139,7 +154,7 @@
     flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--kit-tint); vertical-align: -3px;
   }
   /* A label's words and its control never touch; a checkbox sits beside its words, a field wraps under them. */
-  .next-page :where(label:has(> select, > input, > textarea)) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+  .next-page :where(label:has(> select, > .loom-wrapping-select, > input, > textarea)) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
   .next-page :where(fieldset:not([class^="v-"]):not([class*=" v-"])) { min-width: 0; margin: 0; padding: 10px 0 0; border-top: 1px solid var(--v-border); }
   .next-page :where(fieldset:not([class^="v-"]):not([class*=" v-"])) > legend {
     padding: 0 10px 0 0; font-family: var(--loom-font-data, ui-monospace, monospace); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text-3);

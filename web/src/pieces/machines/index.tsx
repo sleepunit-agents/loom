@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import {useState} from 'react';
 import {AppFrame,Empty,Error as ErrorView,Field,Loading,Section} from '../../kit';
 import {useDataQuery} from '../../data/graphql';
@@ -25,9 +26,9 @@ export default function Machines({go=()=>{},active=true}:{go?:(path:string)=>voi
     {active&&<OwnerMachines key={member} member={member}/>}
     {!!others.length&&<Section label="Other visible machines"><ul>{others.map(box=><li key={box.id}>{box.name}</li>)}</ul></Section>}
     {!inventory.boxes.length&&<Empty title="No machines" text="No machines are visible to this account."/>}
-    {agent&&<><Field label="Jobs for"><select value={agent.id} onChange={e=>select(e.target.value)}>
+    {agent&&<><Field label="Jobs for"><NativeSelect value={agent.id} onChange={e=>select(e.target.value)}>
      {agents.map(a=><option key={a.id} value={a.id}>{a.id}</option>)}
-    </select></Field><AgentJobs key={agent.id} agent={agent.id} name={agent.id}/></>}
+    </NativeSelect></Field><AgentJobs key={agent.id} agent={agent.id} name={agent.id}/></>}
    </>}
   </div>
  </AppFrame>;

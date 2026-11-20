@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import {useRef,useState,type FormEvent} from 'react';
 import {Button,Field,Fields,Input} from '../../kit';
 import {memberOperation} from '../../data/operation';
@@ -29,7 +30,7 @@ function CreateForm({setup}:{setup:Setup}){
   <form onSubmit={event=>void submit(event)} aria-label="Add a subscription">
    <Fields disabled={busy}>
     <p>Owner: {setup.member}</p>
-    <Field label="Service"><select name="provider" required>{setup.providers.map(p=><option key={p}>{p}</option>)}</select></Field>
+    <Field label="Service"><NativeSelect name="provider" required>{setup.providers.map(p=><option key={p}>{p}</option>)}</NativeSelect></Field>
     <Field label="Label"><Input required name="label" maxLength={200}/></Field>
     {!!setup.machines.length&&<fieldset><legend>Machines to sign in on</legend>{setup.machines.map(m=><label className="flex gap-2" key={m.id}>
      <input type="checkbox" name="machines" value={m.id}/>{m.name}

@@ -1,3 +1,4 @@
+import { NativeSelect } from '../../kit/native-select';
 import { useDataQuery } from '../../data/graphql';
 import type { TempoActions } from './actions';
 import { CreateTrigger } from './create';
@@ -110,7 +111,7 @@ export default function Tempo({ snapshot, actions, inUse }: { snapshot: TempoSna
   return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', selectedAgent).length : undefined }))}
     folder={folder} onFolder={id => { setFolder(id as Folder); setSelected(undefined); }}
     search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <label>Agent<select value={selectedAgent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</select></label></div>}
+      <label>Agent<NativeSelect value={selectedAgent} onChange={event => { setAgent(event.target.value); setSelected(undefined); }}><option value="">All agents</option>{agents.map(id => <option key={id}>{id}</option>)}</NativeSelect></label></div>}
     listTitle={folders.find(item => item.id === folder)?.label} listMeta={live ? shown.length : undefined}
     listTop={live ? <div className="grid gap-2 p-3">{actions?.create && <Button onClick={() => setCreating(true)}>Create trigger</Button>}{snapshot.pauses.length > 0 && <p>Paused: {snapshot.pauses.map(pause => pause.agent).join(', ')}</p>}</div> : undefined}
     list={!live ? snapshot.status === 'loading' ? <Loading label="Opening Tempo…" /> : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />

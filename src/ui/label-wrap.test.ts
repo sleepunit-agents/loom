@@ -25,3 +25,11 @@ it('keeps human-readable labels in the app and walkthrough site free of ellipses
   }
   expect(offending).toEqual([]);
 });
+
+it('routes native choices through the shared wrapping control', () => {
+  const root = fileURLToPath(new URL('../../web/src/', import.meta.url));
+  const bypasses = readdirSync(root, {recursive: true, encoding: 'utf8'})
+    .filter(file => file.endsWith('.tsx') && !file.includes('.test.') && file !== 'kit/native-select.tsx')
+    .filter(file => /<select\b/.test(readFileSync(join(root, file), 'utf8')));
+  expect(bypasses).toEqual([]);
+});
