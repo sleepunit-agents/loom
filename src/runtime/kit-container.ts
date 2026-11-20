@@ -82,9 +82,20 @@ type ContainerPlan = Pick<Invocation,'job'|'box'|'image'|'entrypoint'|'signal'|'
 };
 type PrivateInput = Pick<Invocation,'argv'|'secrets'|'onStarted'> & {input?:object;timeoutMs:number};
 
-const ranges = z.array(z.object({ container_id:z.number().int(), host_id:z.number().int(), size:z.number().int() }));
-const rootlessInfo = z.object({ host:z.object({ security:z.object({ rootless:z.literal(true) }),
-  idMappings:z.object({ uidmap:ranges, gidmap:ranges }) }) });
+export const podmanHelperSubid = z.number().int().min(1).max(65533);
+const ranges = z.array(z.object({ container_id:z.number().int().nonnegative(), host_id:z.number().int().positive(), size:z.number().int().positive() }));
+const rootlessInfo = z.object({ version:z.object({ APIVersion:z.string().regex(/^5\./) }),
+  host:z.object({ security:z.object({ rootless:z.literal(true) }), idMappings:z.object({ uidmap:ranges, gidmap:ranges }) }) });
+
+function coversSubid(entries:z.infer<typeof ranges>, subid:number):boolean {
+  let next = 0;
+  for (const entry of [...entries].sort((a,b) => a.container_id - b.container_id)) {
+    if (entry.container_id !== next) return false;
+    next += entry.size;
+    if (next > subid) return true;
+  }
+  return false;
+}
 
 /** Both callers prepare a pinned, mount-free container, release private input once and reap it. */
 export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
@@ -116,11 +127,10 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
       if (plan.podmanHelperSubid === undefined) {
         created = await engine.json('POST','/containers/create?name='+name,spec,setup);
       } else {
-        const subid = plan.podmanHelperSubid;
+        const subid = podmanHelperSubid.parse(plan.podmanHelperSubid);
         const info = rootlessInfo.parse(await engine.json('GET', '/v5.0.0/libpod/info', undefined, setup));
         const { uidmap, gidmap } = info.host.idMappings;
-        if (!Number.isSafeInteger(subid) || subid < 1 || subid >= 65534 ||
-            ![uidmap,gidmap].every(ranges => ranges.some(r => r.container_id === 1 && r.host_id > 0 && r.size >= subid)))
+        if (!coversSubid(uidmap,subid) || !coversSubid(gidmap,subid))
           throw new Error('Helper subordinate ID is unavailable');
         // Keep low image IDs in place. Only the helper's nobody ID uses the selected subordinate ID.
         const maps = [{ container_id: 0, host_id: 0, size: subid }, { container_id: 65534, host_id: subid, size: 1 }];
@@ -130,7 +140,7 @@ export function isolatedContainer(engine:DockerEngine,plan:ContainerPlan) {
           labels:spec.Labels, user:spec.User, stdin:spec.OpenStdin, terminal:spec.Tty, oci_runtime:h.Runtime,
           env_host:false, httpproxy:false, systemd:'false', healthconfig:spec.Healthcheck, log_configuration:{ driver:h.LogConfig.Type },
           privileged:h.Privileged, cap_drop:h.CapDrop, no_new_privileges:true, read_only_filesystem:h.ReadonlyRootfs,
-          read_write_tmpfs:false, netns:{ nsmode:h.NetworkMode }, publish_image_ports:h.PublishAllPorts,
+          read_write_tmpfs:false, image_volume_mode:'ignore', netns:{ nsmode:h.NetworkMode }, publish_image_ports:h.PublishAllPorts,
           userns:{ nsmode:'private' }, idmappings:{ HostUIDMapping:false, HostGIDMapping:false, UIDMap:maps, GIDMap:maps },
           resource_limits:{ memory:{ limit:h.Memory }, pids:{ limit:h.PidsLimit }, cpu:{ period:100000, quota:h.NanoCpus / 10000 } },
         },setup);

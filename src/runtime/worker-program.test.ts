@@ -175,7 +175,7 @@ for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured
 
 it('selects the actual container executor when configured, without invoking a host runner', async () => {
   const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
-  const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
+  const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', podmanHelperSubid:32767, setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(f.control.mock.calls[0][0]).toHaveProperty('programs', true);
@@ -183,7 +183,7 @@ it('selects the actual container executor when configured, without invoking a ho
   expect(f.containerExecutor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
 });
-for (const container of [{ socket: 7 }, { nestedSocket: '/docker.sock' }, { socket: '/docker.sock', privileged: true }, { socket: '/docker.sock', cleanupTimeoutMs: 0 }]) {
+for (const container of [{ socket: '/docker.sock',podmanHelperSubid:0 }, { socket: '/docker.sock',podmanHelperSubid:65534 }, { socket: 7 }, { nestedSocket: '/docker.sock' }, { socket: '/docker.sock', privileged: true }, { socket: '/docker.sock', cleanupTimeoutMs: 0 }]) {
   it('rejects malformed container configuration before reading worker credentials', async () => {
     const f = fixture(), containerExecutor = vi.fn();
     f.read.mockResolvedValue(JSON.stringify({ ...config, container }));

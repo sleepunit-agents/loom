@@ -1,3 +1,4 @@
+import * as brokerModule from './kit-broker.js';
 import {houseCliSource} from './worker-mounts.js';
 import {defaultWorkerState} from './worker-left.js';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
@@ -1230,10 +1231,14 @@ it('starts and ends a body without touching anything inside its account\'s sign-
 
 it('mounts a job-only kit socket and gives the body no worker credential, even with a shell',async()=>{
   const f=fixture(),state=mkdtempSync(join(houseRoot,'kit-state-'));
-  const executor=containerWorkerExecutor({...f.config,state},{...f.deps,kitAccess:{url:'https://root.invalid',runner:'machine-only'}});
+  const broker=vi.spyOn(brokerModule,'kitBroker');
+  const executor=containerWorkerExecutor({...f.config,state,container:{...f.config.container,podmanHelperSubid:32767}},{...f.deps,kitAccess:{url:'https://root.invalid',runner:'machine-only'}});
   const original=f.engine.json.getMockImplementation()!;
   let path='';
   f.engine.json.mockImplementation(async(method,url,body,signal)=>{
+    if(url.endsWith('/libpod/info')) return {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
+      idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
+    if(url.endsWith('/libpod/containers/create')) throw new Error('Fixture stops before helper launch');
     if(url.startsWith('/containers/create')){
       const mounts=(body as {HostConfig:{Mounts:{Source:string;Target:string;ReadOnly:boolean}[]}}).HostConfig.Mounts;
       const socket=mounts.find(m=>m.Target==='/run/loom/kit.sock');
@@ -1249,7 +1254,10 @@ it('mounts a job-only kit socket and gives the body no worker credential, even w
     expect(JSON.parse(f.writes[0])).toEqual({job,build:built,bootstrap:handed,kitSocket:true});
     expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain('machine-only');
     expect(f.writes[0]).not.toContain('machine-only');
-  }finally{await body.stop();await executor.close?.();}
+    await expect(broker.mock.calls[0][0].run({image:imageId,entrypoint:'/home/agent/repo/probe',argv:[],
+      secrets:{},signal:f.abort.signal,onStarted:()=>{}})).rejects.toThrow('Fixture stops before helper launch');
+    expect(f.engine.json.mock.calls.filter(call=>call[1].endsWith('/libpod/containers/create'))).toHaveLength(1);
+  }finally{broker.mockRestore();await body.stop();await executor.close?.();}
   expect(()=>statSync(path)).toThrow();
 });
 
@@ -1282,6 +1290,20 @@ it('runs a named program only after acknowledgement, with declared input and no 
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
   expect(await run).toBe('finished');
   expect(control.finish).toHaveBeenCalledWith(job.id, 0, '', 'runner', result);
+});
+it('prepares a scheduled helper using its worker namespace setting', async () => {
+  const f = programFixture();
+  const executor = containerWorkerExecutor({...f.config,container:{...f.config.container,podmanHelperSubid:32767}},f.deps);
+  f.engine.json.mockImplementation(async (_method,path) => {
+    if (path.endsWith('/libpod/info')) return {version:{APIVersion:'5.4.2'},host:{security:{rootless:true},
+      idMappings:{uidmap:[{container_id:0,host_id:20000,size:40000}],gidmap:[{container_id:0,host_id:20000,size:40000}]}}};
+    if (path.endsWith('/libpod/containers/create')) throw new Error('Fixture stops before helper launch');
+  });
+  const body = executor.start({...job,program:namedProgram},built,f.abort.signal);
+  try {
+    await expect(body.spawned).rejects.toThrow('Fixture stops before helper launch');
+    expect(f.engine.json.mock.calls.filter(call=>call[1].endsWith('/libpod/containers/create'))).toHaveLength(1);
+  } finally { await body.stop(); }
 });
 it('ends and removes a program at its deadline', async () => {
   vi.useFakeTimers();
