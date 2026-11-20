@@ -614,7 +614,7 @@ Use `loom note pin <path>` to keep a note through expiry, `loom note unpin <path
 to return to its lifespan, and `loom note delete <path>` to remove it and its attachments.
 A write reads text from standard input or `--body`. All six commands accept
 `--json`. For a retried change, pass the same `--id` and the same arguments.
-When the CLI generates the ID it prints it on stderr before sending the write.
+When the CLI generates an ID, it prints it on stderr before sending the request.
 The body binds these commands to its agent and enforces the room's tool denials.
 The shell's local credential expires with the job.
 
