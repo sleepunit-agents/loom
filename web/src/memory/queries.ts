@@ -76,6 +76,7 @@ export const memoryQueries = {
   peopleAccess:()=>selection<PeopleAccess|null>('memoryPeopleAccess','query MemoryPeopleAccess { memoryPeopleAccess { allowed directory canAdd agents } }',{},nullable(portable<PeopleAccess>)),
   projectsAccess:()=>selection<ProjectsAccess|null>('memoryProjectsAccess','query MemoryProjectsAccess { memoryProjectsAccess { allowed agents } }',{},nullable(portable<ProjectsAccess>)),
   activityAccess:()=>selection<ActivityAccess|null>('memoryActivityAccess','query MemoryActivityAccess { memoryActivityAccess { allowed agents owner timezone today windows expires } }',{},nullable(portable<ActivityAccess>)),
+  householdTimezone: () => selection<string|null>('tempoTimezone', 'query HouseholdTimezone { tempoTimezone }', {}, nullable(portable<string>)),
   knowledgeAccess:()=>selection<KnowledgeAccess|null>('memoryKnowledgeAccess','query MemoryKnowledgeAccess { memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } }',{},nullable(portable<KnowledgeAccess>)),
   knowledge: () => selection<KnowledgeIndex | null>('memoryKnowledge', `query MemoryKnowledge { memoryKnowledge { total checkDays recentDays pages { ${knowledgeRow} } } }`, {}, nullable(portable<KnowledgeIndex>)),
   page: (slug:string) => selection<KnowledgePage | null>('memoryKnowledgePage', `query MemoryKnowledgePage($slug:String!) { memoryKnowledgePage(slug:$slug) { ${knowledgePage} } }`, {slug}, nullable(portable<KnowledgePage>)),

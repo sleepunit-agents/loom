@@ -2,8 +2,6 @@ import type { KnowledgeOpen, KnowledgeRow } from '../../../../src/pieces/mind/kn
 export type PageRow=KnowledgeRow & {id:string};
 export type Page = KnowledgeOpen & { id: string; [key: string]: unknown };
 export const freshWord = { fresh: 'Fresh', aging: 'Getting old', due: 'Due a check' };
-/** "Nov 14": the day alone. In the household's zone where a caller passes it; Knowledge's own readings do not
- * carry one yet, so today it is the device's own (it was fixed to one zone before). */
 export const date = (s: string, zone?: string) => {
   try { return new Date(s).toLocaleDateString('en-US', { timeZone: zone, month: 'short', day: 'numeric' }); }
   catch { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }

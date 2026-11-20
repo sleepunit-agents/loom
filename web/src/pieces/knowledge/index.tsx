@@ -8,12 +8,12 @@ import {memoryQueries} from '../../memory/queries';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
-function Reader({ page, open, canVerify, canRecheck, request, act }: { page: Page; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
+function Reader({ page, zone, open, canVerify, canRecheck, request, act }: { page: Page; zone?: string; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
   const answer = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
   const body = useMemo(() => page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`), [page.body]);
   return <article className="grid gap-5 p-5">
-    <header><p>{page.domain}</p><h1 className="text-2xl font-semibold">{page.title}</h1><p>{freshWord[page.fresh]} · {page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}, not verified yet`}</p>
-      <p>{page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at)}` : 'Pages are re-checked every 30 days'}</p>
+    <header><p>{page.domain}</p><h1 className="text-2xl font-semibold">{page.title}</h1><p>{freshWord[page.fresh]} · {page.verified_at ? `verified ${date(page.verified_at, zone)}` : `written ${date(page.updated, zone)}, not verified yet`}</p>
+      <p>{page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at, zone)}` : 'Pages are re-checked every 30 days'}</p>
       {page.checked?.by && <p>Last check by {page.checked.by}</p>}</header>
     <Suspense fallback={<Loading label="Opening words…" />}><Markdown text={body} onLink={href => {
       const prefix = 'https://loom.invalid/knowledge/';
@@ -50,6 +50,7 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
   const addAnswer = useSyncExternalStore(addRequest?.subscribe ?? noop, addRequest?.getSnapshot ?? (() => idle));
   const access = useMemoryQuery(memoryQueries.knowledgeAccess());
   const permission = access.status === 'live' ? access.value : undefined;
+  const zone = useMemoryQuery(memoryQueries.householdTimezone()).value ?? undefined;
   const index = useMemoryQuery(memoryQueries.knowledge());
   const feed = {status:index.status,records:(index.value?.pages??[]).map(page=>({...page,id:page.slug}))};
   const selectedPage = useMemoryQuery(selected?memoryQueries.page(selected):undefined);
@@ -88,8 +89,8 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
     search={<label className="grid gap-1">Search knowledge<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTop={<div className="p-3"><Button disabled={!permission.canAdd} onClick={() => setAdding(true)}>Add a fact</Button></div>}
     listTitle={query.trim() ? `Matching “${query.trim()}”` : listTitle} listMeta={`${shown.length} pages`}
-    list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => { setAdding(false); navigate(page.slug); }} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
-    reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
+    list={feed.status === 'loading' ? <Loading label="Opening knowledge…" /> : feed.status !== 'live' ? unavailable(feed.status) : <><List label="Knowledge pages">{shown.map(page => <Row key={page.id} title={page.title} meta={`${page.verified_at ? `verified ${date(page.verified_at, zone)}` : `written ${date(page.updated, zone)}`} · ${page.domain}`} status={freshWord[page.fresh]} selected={page.id === selected} onClick={() => { setAdding(false); navigate(page.slug); }} />)}</List>{!shown.length && <Empty title={query.trim() ? `Nothing matches “${query.trim()}”` : feed.records.length ? 'No pages here' : 'No knowledge yet'} text={query.trim() ? 'Try another search.' : 'Facts your agents learn land here.'} />}</>}
+    reader={adding ? addForm : feed.status === 'loading' ? <Loading label="Opening page…" /> : feed.status !== 'live' ? unavailable(feed.status) : detail.status === 'loading' ? <Loading label="Opening page…" /> : detail.status !== 'live' ? unavailable(detail.status) : current ? <Reader key={current.slug} page={current} zone={zone} open={navigate} canVerify={permission.canVerify} canRecheck={permission.canRecheck} request={requests.get(current.slug)} act={verb => {
       const previous=requests.get(current.slug);if(previous&&frozen(previous.getSnapshot()))return;
       const request = call(`mind.${verb}`, { slug: current.slug });
       setRequests(previous => new Map(previous).set(current.slug, request));
