@@ -2022,6 +2022,27 @@ export const secretChangesRelations = relations(secretChanges, ({ one }) => ({
 }));
 
 /** Internal bookkeeping has named columns too. Opaque bytes are never queried as facts. */
+export const changeReviewRounds = sqliteTable('change_review_rounds', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id),
+  change: text('change').notNull().references(() => changes.id),
+  headCommit: text('head_commit').notNull(),
+  tier: text('tier', { enum: ['medium', 'high'] }).notNull(),
+  round: integer('round').notNull(),
+  requestedAt: text('requested_at').notNull(),
+  completedAt: text('completed_at'),
+  verdict: text('verdict', { enum: ['CLEAR', 'BLOCKING', 'NONE'] }),
+  findings: text('findings'),
+}, t => [
+  index('change_review_rounds_history').on(t.change, t.headCommit, t.requestedAt),
+  check('change_review_rounds_commit', sql`length(cast(${t.headCommit} as blob)) = 40 and length(${t.headCommit}) = 40 and ${t.headCommit} not glob '*[^0-9a-f]*'`),
+  check('change_review_rounds_tier', sql`${t.tier} in ('medium','high')`),
+  check('change_review_rounds_round', sql`typeof(${t.round}) = 'integer' and ${t.round} >= 1`),
+  check('change_review_rounds_requested_utc', utc(t.requestedAt)),
+  check('change_review_rounds_completed_utc', utc(t.completedAt)),
+  check('change_review_rounds_result', sql`(${t.completedAt} is null and ${t.verdict} is null and ${t.findings} is null) or
+    (${t.completedAt} is not null and ${t.verdict} is not null and ${t.verdict} in ('CLEAR','BLOCKING','NONE') and ${t.findings} is not null)`),
+]);
+
 // A v1 archive may have issued task numbers whose rows were subsequently deleted.
 export const importedTaskSequence = sqliteTable('imported_task_sequence', {
   singleton: integer('singleton').primaryKey().notNull(),
@@ -2265,6 +2286,7 @@ export const triggerAcceptances = sqliteTable('trigger_acceptances', {
 });
 
 export const plumbing = {
+  changeReviewRounds,
   importedTaskSequence,
   triggerAcceptances,
   triggerJournals,
