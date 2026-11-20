@@ -6,5 +6,5 @@ export type ProjectSectionRead = (query:ProjectQuery) => Omit<ProjectSection,'ke
 export interface ProjectSectionRole {
  read(viewer:Viewer,query:ProjectQuery):ReturnType<ProjectSectionRead>;
  /** A listing can reuse this viewer's selection until the synchronous call returns. */
- prepareForList?(viewer:Viewer):ProjectSectionRead;
+ prepareForList?(viewer:Viewer,active:ProjectQuery[]):ProjectSectionRead;
 }

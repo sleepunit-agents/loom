@@ -243,13 +243,13 @@ it.each((['activity','activity-window','project','project-preview','person','peo
  }
 });
 
-it('selects shared tasks and changes once for each active project listing',async()=>{
+it('selects shared tasks, changes and conversations once for each active project listing',async()=>{
  const f=await preparedFixture();
  const store=new ProjectsStore({dbPath:f.sources.agents[0].memories});
  cleanup.push(()=>store.close());
  const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'}});
  cleanup.push(()=>app.close());
- const selections=[f.db.query.tasks,f.db.query.taskComments,f.db.query.taskLinks,f.db.query.changes]
+ const selections=[f.db.query.tasks,f.db.query.taskComments,f.db.query.taskLinks,f.db.query.changes,f.db.query.conversations,f.db.query.conversationPeople]
    .map(table=>vi.spyOn(table,'findMany'));
  async function list(size:number,reads:number[]){
   for(const selection of selections)selection.mockClear();
@@ -263,12 +263,12 @@ it('selects shared tasks and changes once for each active project listing',async
   selections.forEach((selection,index)=>expect(selection).toHaveBeenCalledTimes(reads[index]!));
  }
  store.write({slug:'quiet',name:'Quiet',status:'paused'});
- await list(1,[0,0,0,0]);
+ await list(1,[0,0,0,0,0,0]);
  for(let i=0;i<10;i++){
   store.write({slug:'pond-'+i,name:'Pond '+i,status:'active'});
-  if(i===1||i===9)await list(i+2,[1,1,1,1]);
+  if(i===1||i===9)await list(i+2,[1,1,1,1,1,1]);
  }
  selections[1]!.mockImplementationOnce(()=>{throw new Error('comments unavailable');});
- await list(11,[1,1,0,1]);
- await list(11,[1,1,1,1]);
+ await list(11,[1,1,0,1,1,1]);
+ await list(11,[1,1,1,1,1,1]);
 });

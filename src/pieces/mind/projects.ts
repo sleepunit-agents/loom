@@ -22,6 +22,7 @@ const day=DAY_MS;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
+type ListingRoles = {active:ProjectQuery[]; prepared:Map<ProjectSectionRole,ProjectSectionRead>};
 type ProjectRow = {slug:string; card_json:string; updated:string; archived_at:string|null};
 export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:{list(viewer:Viewer,sharing?:Sharing):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
@@ -71,18 +72,18 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const card=JSON.parse(row.card_json) as ProjectCard;
   return {agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
  }
- function projectRecord(db:Database,row:ProjectRow,viewer:Viewer,readingHub:boolean,q:ProjectQuery,agents:string[],prepared?:Map<ProjectSectionRole,ProjectSectionRead>,memories?:ProjectSectionRead):ProjectRecord{
+ function projectRecord(db:Database,row:ProjectRow,viewer:Viewer,readingHub:boolean,q:ProjectQuery,agents:string[],listing?:ListingRoles,memories?:ProjectSectionRead):ProjectRecord{
   const {agent,card,now}=q;
   const sections:ProjectSection[]=[];
   const section=(key:string,label:string,fn:()=>Omit<ProjectSection,'key'|'label'>)=>{try{const raw=fn();const {key:_key,label:_label,...data}=raw as ProjectSection;sections.push({...sectionSchema.parse(data),key,label});}catch{sections.push({key,label,available:true,error:`${label} couldn't answer`});}};
   const role=(key:string,label:string,r:ProjectSectionRole|undefined)=>section(key,label,()=>{
    if (!r) return {available:false};
-   if (!prepared || !r.prepareForList) return r.read(viewer,q);
-   let reader = prepared.get(r);
+   if (!listing || !r.prepareForList) return r.read(viewer,q);
+   let reader = listing.prepared.get(r);
    if (!reader) {
-    try { reader = r.prepareForList(viewer); }
+    try { reader = r.prepareForList(viewer,listing.active); }
     catch (error) { reader = () => { throw error; }; }
-    prepared.set(r,reader);
+    listing.prepared.set(r,reader);
    }
    return reader(q);
   });
@@ -120,17 +121,25 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const list = (viewer:Viewer) => once(viewer, () => {
   const projects:ProjectRecord[] = [];
-  const prepared = new Map<ProjectSectionRole,ProjectSectionRead>();
+  const listing:ListingRoles={active:[],prepared:new Map()};
+  const batches:Array<{agent:string;db:Database;rows:ProjectRow[];queries:ProjectQuery[];active:ProjectQuery[]}>=[];
   const now=clock.now();
-  let agents:string[]|undefined;
+
   for (const [agent, db] of sources) {
    if (!allowed(viewer, agent) || !has(db, 'projects')) continue;
    const rows = db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as ProjectRow[];
    if (!rows.length) continue;
-   agents ??= visibleAgents(viewer);
+
    const queries=rows.map(row=>projectQuery(agent,row,now));
-   const memories=memoryReader(db,agent,viewer,queries.filter(q=>q.card.status==='active'));
-   for (const [i,row] of rows.entries()) projects.push(projectRecord(db,row,viewer,false,queries[i]!,agents,prepared,memories));
+   const active=queries.filter(q=>q.card.status==='active');
+   for(const q of active)listing.active.push(q);
+   batches.push({agent,db,rows,queries,active});
+  }
+  if(!batches.length)return projects;
+  const agents=visibleAgents(viewer);
+  for(const {agent,db,rows,queries,active} of batches){
+   const memories=memoryReader(db,agent,viewer,active);
+   for (const [i,row] of rows.entries()) projects.push(projectRecord(db,row,viewer,false,queries[i]!,agents,listing,memories));
   }
   return projects;
  });

@@ -7,7 +7,7 @@ import {taskGroups,type ProjectTask} from './pieces/mind/projects-tasks.js';
 import type {ProjectSectionRole} from './pieces/mind/projects-roles.js';
 import type {ProjectGroup} from './pieces/mind/projects-model.js';
 function byViewer(prepare:NonNullable<ProjectSectionRole['prepareForList']>):ProjectSectionRole {
- return {prepareForList:prepare,read:(viewer,query)=>prepare(viewer)(query)};
+ return {prepareForList:prepare,read:(viewer,query)=>prepare(viewer,[query])(query)};
 }
 export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole;changes:ProjectSectionRole;conversations:ProjectSectionRole}{
  return {
@@ -38,9 +38,13 @@ export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole
     return {available:true,groups};
    };
   }),
-  conversations:{read(viewer,q){
-   const result=readProjectConversations(db,viewer,q.names,q.card.links.venues??[]),rows=result.rows;
-   return {available:true,total:rows.length,conversationIds:rows.map(row=>row.id),items:rows.slice(0,50).map(row=>({title:row.label,ref:row.id,when:row.lastAt,href:'/p/comms-preview/conversation/'+encodeURIComponent(row.id),who:result.people(row.id)}))};
-  }},
+  conversations:byViewer((viewer,active)=>{
+   const result=readProjectConversations(db,viewer,active.map(q=>({names:q.names,venues:q.card.links.venues??[]})));
+   const byQuery=new Map(active.map((q,i)=>[q,result.groups[i]!]));
+   return q=>{
+    const rows=byQuery.get(q)!;
+    return {available:true,total:rows.length,conversationIds:rows.map(row=>row.id),items:rows.slice(0,50).map(row=>({title:row.label,ref:row.id,when:row.lastAt,href:'/p/comms-preview/conversation/'+encodeURIComponent(row.id),who:result.people(row.id)}))};
+   };
+  }),
  };
 }
