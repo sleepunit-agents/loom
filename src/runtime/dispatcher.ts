@@ -10,7 +10,7 @@ import { loomToolsOnly } from '../policy.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { decidePlacement, type ModelRole } from './placement.js';
@@ -24,6 +24,7 @@ export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
   // A protocol handshake belongs to the connected worker. Owner labels describe machines and cannot supply it.
+  private readonly coldReviewBoxes = new Set<string>();
   private readonly reviewBoxes = new Set<string>();
   private readonly programBoxes = new Set<string>();
   /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
@@ -55,8 +56,9 @@ export class Dispatcher {
    * `ended` is given the id of each job this poll ended as one no harness can hold. The caller tells of those
    * ends once the write is committed, as of any job's end: one job holds one asker's mail, so another asker's
    * mail may be waiting behind such a job for a job of its own. */
-  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false) {
+  next(box: string, facts?: readonly string[], ended?: string[], slots?: number, programs = false, poll?: { stampOnly?: boolean }, reviewResults = false, coldReviews = false) {
     const { stampOnly } = this.machines.report(box, facts, slots ?? null), written = rowsWritten(this.db);
+    if (coldReviews) this.coldReviewBoxes.add(box); else this.coldReviewBoxes.delete(box);
     if(reviewResults)this.reviewBoxes.add(box);else this.reviewBoxes.delete(box);
     const assignment = this.placeNext(box, ended, programs);
     // A poll that found no work and wrote no row but the machine's last-seen time: its caller may say so.
@@ -71,8 +73,10 @@ export class Dispatcher {
       else this.programBoxes.delete(box);
       if (machine.reportOnly) return;
       const at = this.now(), roles = this.roles();
-      const queued = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
-      for (const job of queued) {
+      const queued = this.db.select({ job: jobs, round: { change: changeReviewRounds.change, headCommit: changeReviewRounds.headCommit }, source: { repository: changes.repository, branch: changes.branch } }).from(jobs)
+        .leftJoin(changeReviewRounds, eq(jobs.id, changeReviewRounds.job)).leftJoin(changes, eq(changeReviewRounds.change, changes.id)).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
+      for (const { job, round, source } of queued) {
+        if (round && (!source || !this.coldReviewBoxes.has(box) || job.startedByKind === 'program')) continue;
         if (job.retryAt && job.retryAt > at) continue;
         const needs = this.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all().map(row => row.need);
         const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
@@ -105,7 +109,7 @@ export class Dispatcher {
           continue;
         }
         const policy = jobRoom(this.db, job);
-        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
+        const { placement, decision } = decidePlacement(this.db, { agent: job.agent, now: at, eligibleBoxes: round ? this.coldReviewBoxes : review ? this.reviewBoxes : undefined, roles: workRole ? eligibleModels(workRole,roles,this.nativeHarnesses) : review ? roles.filter(role=>role.harness==='codex') : roles, needs, prefers: job.prefers ?? [], wants: this.wants(job.conversation),
           cannotRun: harness => this.cannotRun(harness, policy) });
         // A job on anybody else's word runs with loom's tools only, and a harness that always has a shell does
         // not run it. When every model the agent has is on such a harness, no machine will ever take the job:
@@ -120,6 +124,9 @@ export class Dispatcher {
         // column needs before that (the agent's first model, also on a retry); this records the model,
         // account and harness the worker is actually asked for.
         this.db.update(jobs).set({ placementDecision: decision, model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
+        if (round && source) return { id: claimed.id, box, agent: claimed.agent, conversation: null, thread: null, coldReview: round,
+          model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
+          brief: '', house: { repository: `https://github.com/${source.repository}.git`, file: '', branch: source.branch } };
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();

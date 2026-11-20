@@ -62,7 +62,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ execution: z.enum(['container', 'host']).optional(), reviewResults:z.literal(true).optional(), coldReviews:z.literal(true).optional(), programs: z.literal(true).optional(), facts: machineFacts.optional(), slots: z.number().int().min(1).max(SLOTS_MAX).optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
@@ -72,7 +72,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       if (input.execution !== 'container') throw new OperationError('denied',
         'This server gives jobs only to container workers. Update the worker and configure container.socket.');
       const ended: string[] = [], poll: { stampOnly?: boolean } = {};
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults);
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts, ended, input.slots, input.programs, poll, input.reviewResults, input.coldReviews);
       // An idle worker asks about once a second. A poll that gave no work and moved only the machine's
       // last-seen time is not a change to tell every open window of.
       if (poll.stampOnly && !ended.length) ctx.stampOnly?.();
@@ -139,7 +139,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         if (input.programResult !== undefined && roundFor(input.job)) throw new OperationError('invalid', 'Incompatible job result');
         return;
       }
-      const round = roundFor(input.job), result = reviewOutcome(input.exitCode, input.coldReview);
+      const round = roundFor(input.job), result = reviewOutcome(input.exitCode, input.coldReview, input.exitBy);
       if (input.programResult !== undefined || !round || round.verdict !== result.verdict || round.findings !== result.findings)
         throw new OperationError('conflict', 'Review report differs from the filed result');
     },
@@ -152,7 +152,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
         throw new OperationError('invalid', 'Report does not match a running review assignment');
       if (round) {
         if (job.startedByKind === 'program' || input.programResult !== undefined) throw new OperationError('invalid', 'Incompatible job result');
-        const result = reviewOutcome(exitCode, input.coldReview);
+        const result = reviewOutcome(exitCode, input.coldReview, input.exitBy);
         if (result.verdict === 'NONE' && exitCode === 0) exitCode = 1;
         reviewStore.finish({ job: input.job, change: round.change, headCommit: round.headCommit, ...result });
         ctx.changed('change', round.change);

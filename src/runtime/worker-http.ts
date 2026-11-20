@@ -14,6 +14,7 @@ import type { SignInReason } from './account-signin-reasons.js';
 import { CONTACT_PROBE_MS, SILENCE_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
+import { coldReviewReport } from './cold-review-report.js';
 import { houseProgramSchema } from './house-program.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
@@ -28,6 +29,7 @@ export const workerAssignment = z.object({
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
   program: houseProgramSchema.optional(),
+  coldReview: coldReviewReport.pick({ change: true, headCommit: true }).optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
 });
 export interface WorkerHttpOptions {
@@ -223,9 +225,9 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try { return await client.repository(job); }
       finally { client.close(); }
     },
-    next: async () => {
+    next: async coldReviews => {
       const poll = {execution:'container',facts,slots:input.slots,programs:input.programs || undefined};
-      try {return (await call('next',{...poll,reviewResults:true},workerAssignment.nullable())) ?? undefined;}
+      try {return (await call('next',{...poll,reviewResults:true,coldReviews},workerAssignment.nullable())) ?? undefined;}
       catch(error){
         if(!(error instanceof WorkerOperationFailure && error.schemaRefusal))throw error;
         return (await call('next',poll,workerAssignment.nullable())) ?? undefined;

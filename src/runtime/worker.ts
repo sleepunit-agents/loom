@@ -37,6 +37,7 @@ export interface WorkerAssignment {
   venue?: string | null;
   venueDescription?: string;
   review?: true;
+  coldReview?: { change: string; headCommit: string };
   model: string;
   account: string;
   /** How many accounts of this job's provider are signed in on this machine, the placed one included.
@@ -84,7 +85,7 @@ export interface WorkerExecutor {
 }
 export interface WorkerControl {
   /** Claims once on the server. An uncertain response is never retried locally. */
-  next(): Promise<WorkerAssignment | undefined>;
+  next(coldReviews?: true): Promise<WorkerAssignment | undefined>;
   /** Private one-attempt input, never part of the assignment/receipt. */
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   /** Parent generates raw bytes locally; the server receives only a fingerprint. */
@@ -130,7 +131,7 @@ const STAGE_SAID: Partial<Record<keyof typeof WORKER_EXIT, string>> = {
  * A worker process can call again after this resolves, or run several independent
  * slots. Never call this from loom's server/composition root. */
 export async function workOnce(input: {
-  box: string; control: WorkerControl; executor: WorkerExecutor; signal: AbortSignal;
+  box: string; control: WorkerControl; executor: WorkerExecutor; coldReviewExecutor?: WorkerExecutor; signal: AbortSignal;
   schedule?: WorkerSchedule; heartbeatMs?: number;
   /** A clock that only goes forward, in milliseconds; a test names its own. */
   now?: () => number;
@@ -140,7 +141,7 @@ export async function workOnce(input: {
    * one worker. Left out, the job waits for nothing: right for a worker with one slot. */
   turns?: WorkerTurns;
 }): Promise<WorkerResult> {
-  const { control, executor } = input;
+  const { control } = input;
   const interval = input.heartbeatMs ?? REPORT_MS;
   if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
@@ -149,11 +150,16 @@ export async function workOnce(input: {
   let unreachableSince: number | undefined;
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
   let lastDispatch = now();
-  try { job = await control.next(); } catch { return 'abandoned'; }
+  try { job = input.coldReviewExecutor ? await control.next(true) : await control.next(); } catch { return 'abandoned'; }
   if (!job) return 'idle';
   if (job.box !== input.box) throw new Error('Assignment belongs to another worker');
   // Snapshot input before giving asynchronous adapters control of it.
   const assignment = structuredClone(job);
+  const executor = assignment.coldReview ? input.coldReviewExecutor : input.executor;
+  if (!executor || (assignment.coldReview && assignment.program)) {
+    try { await control.finish(assignment.id, WORKER_EXIT.runner, '', 'worker'); return 'finished'; }
+    catch { return 'abandoned'; }
+  }
   const abort = new AbortController();
   let bootstrap: BodyBootstrap | undefined;
   let programInputs: Map<string, Buffer> | undefined;
@@ -221,7 +227,7 @@ export async function workOnce(input: {
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
   const report = async (exitCode: number, logTail: string, by: WorkerExitBy, result?: ProgramResult, review?: ColdReviewReport): Promise<WorkerResult> => {
     try {
-      if (review) await control.finish(assignment.id, exitCode, '', by, undefined, review);
+      if (assignment.coldReview) await control.finish(assignment.id, exitCode, '', by, undefined, review);
       else if (result) await control.finish(assignment.id, exitCode, logTail, by, result);
       else await control.finish(assignment.id, exitCode, logTail, by);
       return 'finished';
@@ -233,7 +239,7 @@ export async function workOnce(input: {
     let stage: keyof typeof WORKER_EXIT = 'input';
     try {
       if (abort.signal.aborted) return 'abandoned';
-      const repositoryInput=await control.repositoryInput?.(assignment.id,abort.signal);
+      const repositoryInput=assignment.coldReview ? undefined : await control.repositoryInput?.(assignment.id,abort.signal);
       stage = 'build';
       try {
         if(abort.signal.aborted)return 'abandoned';
@@ -261,6 +267,7 @@ export async function workOnce(input: {
         if (!programInputs || programInputs.size !== aliases.length ||
             !aliases.every(name => programInputs!.has(name))) throw new Error('Program secrets unavailable');
       }
+      if (assignment.coldReview && body.acceptsBootstrap) throw new UnservedJobError('Cold review cannot use a body credential');
       if (!assignment.program && body.acceptsBootstrap) {
         stage = 'enroll';
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');

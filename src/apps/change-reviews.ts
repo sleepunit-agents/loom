@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { changes, jobs, changeReviewRounds as rounds } from '../core/data/schema.js';
 
@@ -8,6 +8,15 @@ type Receipt = Pick<Assignment, 'job' | 'change' | 'headCommit'> & {
   verdict: NonNullable<Review['verdict']>;
   findings: string;
 };
+
+export function hasChangeReview(db: DataDatabase, job: string): boolean {
+  return !!db.select({ job: rounds.job }).from(rounds).where(eq(rounds.job, job)).get();
+}
+
+export function closePendingReview(db: DataDatabase, job: string, at: string) {
+  db.update(rounds).set({ verdict: 'NONE', findings: 'The job ended without a reviewer report.', completedAt: at })
+    .where(and(eq(rounds.job, job), isNull(rounds.completedAt))).run();
+}
 
 /** Internal coordinator storage. Caller authenticates the reporting job before filing its receipt. */
 export function changeReviewStore(db: DataDatabase, now = () => new Date().toISOString()) {
@@ -19,6 +28,9 @@ export function changeReviewStore(db: DataDatabase, now = () => new Date().toISO
             existing.tier !== input.tier || existing.round !== input.round) throw new Error('Review job already assigned');
         return existing;
       }
+      const job = tx.select({ state: jobs.state, kind: jobs.startedByKind }).from(jobs).where(eq(jobs.id, input.job)).get();
+      if (!job || job.state !== 'queued' || job.kind === 'program' || job.kind === 'terminal')
+        throw new Error('Review needs an unclaimed model job');
       const change = tx.select({ head: changes.headCommit }).from(changes).where(eq(changes.id, input.change)).get();
       if (change?.head !== input.headCommit) throw new Error('Review commit is not the current change head');
       return tx.insert(rounds).values({ job: input.job, change: input.change, headCommit: input.headCommit,
