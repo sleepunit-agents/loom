@@ -3,6 +3,7 @@
  * No tool here reads a store directly: what works here works in the data layer. */
 import {clipProposalText,publicProposalTitle} from './proposal-words.js';
 import {DAY} from './core/day.js';
+import {dossier} from './pieces/mind/dossier.js';
 import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
 import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
@@ -77,7 +78,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   });
 
  const section=z.enum(['creed','preferences','top-of-mind','self-model','last-24h','harness','model','all']);
- server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; what you were handed when you started is not repeated unless you ask for it by name. Pass piece or pieces for creed, preferences, top-of-mind, self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
+ server.registerTool('identity',{description:'Read your creed, preferences, Top of Mind and piece index. Pieces handed to this body are not repeated unless requested. Use piece or pieces; harness uses client, model uses model. Hints never change caller or authority.',
   inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional()}).strict()},
   async(given):Promise<Result>=>{
    // The server checked `given` against the schema above before calling.
@@ -110,6 +111,15 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)'+(handed?'\n- creed, preferences, top-of-mind: already in your first words; ask for one by name to read it again':''));
     return say('Agent: '+agent+'\n\n'+(parts.join('\n\n---\n\n')||'No Identity has been written.'));
    }catch{return refuse('Identity unavailable');}
+  });
+
+ tool('dossier','Read a worker role brief and its declared inputs and outputs, optionally as JSON.',
+  z.object({role:z.string().regex(pageName),format:z.enum(['brief','json']).default('brief')}).strict(),
+  async ({role,format},agent)=>{
+   const data=await read<{memoryIdentity:{agent:string;page:string|null}|null}>(
+    'query($agent:String!,$role:String!){memoryIdentity(agent:$agent){agent page(kind:"role",name:$role)}}',{agent,role});
+   if(data.memoryIdentity?.agent!==agent||!data.memoryIdentity.page)throw new Refusal('Role brief unavailable');
+   try{return dossier(data.memoryIdentity.page,role,format);}catch{throw new Refusal('Invalid role contract in '+role);}
   });
 
  tool('remember','Save a memory in your own store.',
@@ -340,7 +350,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
- tool('task_move_to_project','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge. To be let onto a project yourself: propose projectJoin. A retired project takes no task; tasks may be moved out of one.',
+ tool('task_move_to_project','Move all listed tasks atomically and record each move in a comment. Requires access to each task and destination project. With project: null, only the task or household owner may remove its project. Retired projects permit moves out only. To split, propose a project then move tasks. Use projectMerge to merge or projectJoin to request access.',
   z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
   async input=>{
    const value=await run('tasks.command',{action:'moveToProject',ids:input.ids,project:input.project}) as {moved?:string[]};
