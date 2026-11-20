@@ -107,20 +107,20 @@ function AgentIdentity({ c }: { c: AgentCard }) {
         <div className="min-w-0 flex-1">
           <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
           <h3 className="loom-wrap-label font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
-          {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="line-clamp-2 break-words text-sm opacity-70">{c.reason}</Arrive>}
+          {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="loom-wrap-label text-sm opacity-70">{c.reason}</Arrive>}
         </div>
       </div>
       {(doing.length > 0 || problems.length > 0) && (
         <ul className="grid gap-0.5 px-3 pb-3">
           {problems.map((p) => (
             <Arrive as="li" key={`p:${p.text}`} k={`pb:${c.id}\0${p.text}`} className={`flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm ${p.tone === 'bad' ? 'bg-[color-mix(in_oklab,var(--loom-bad)_10%,transparent)]' : 'bg-[color-mix(in_oklab,var(--loom-warn)_10%,transparent)]'}`}>
-              <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="line-clamp-3 min-w-0 flex-1 break-words font-medium">{p.text}</span>
+              <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="loom-wrap-label min-w-0 flex-1 font-medium">{p.text}</span>
             </Arrive>))}
           {doing.map((d, n) => (
             <Arrive as="li" key={n} k={`do:${c.id}\0${d.text}\0${d.where ?? ''}`} className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${markColor(c.bg)} 22%, transparent)` }}>
                 <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
-              <span className="min-w-0 flex-1"><span className="line-clamp-3 break-words font-medium">{d.text}</span>
+              <span className="min-w-0 flex-1"><span className="loom-wrap-label font-medium">{d.text}</span>
                 {(d.where || d.since) && <span className="block loom-wrap-label text-xs opacity-60">{d.where}{d.where && d.since ? ' · ' : ''}{d.since && <span className="loom-data">{ago(d.since)}</span>}</span>}</span>
             </Arrive>))}
         </ul>
@@ -263,7 +263,7 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
           <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,var(--loom-unread))]" />}
             <span className={`loom-wrap-label ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
           {/* A quote (a memory's words, a reason) reads to three lines; the row opens it whole. */}
-          {(p.why ?? i.outcome) && <span className="line-clamp-3 break-words text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
+          {(p.why ?? i.outcome) && <span className="loom-wrap-label text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
         </span>
         <span className="grid shrink-0 justify-items-end gap-1">
           <Badge variant={i.attention ? 'pending' : 'default'}>{p.ended ?? KIND[i.kind]}</Badge>
@@ -327,7 +327,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="loom-data text-xl font-semibold">{t.value}</span>
           {/* A tile's lines (an agent's Clock: its next wake, then its last) each start their own; four at most. */}
-          {t.detail && <span className="line-clamp-4 whitespace-pre-line break-words text-xs opacity-60">{t.detail}</span>}
+          {t.detail && <span className="[overflow-wrap:anywhere] whitespace-pre-line text-xs opacity-60">{t.detail}</span>}
         </Link></Card></Arrive>
       </As>))}
     </div>

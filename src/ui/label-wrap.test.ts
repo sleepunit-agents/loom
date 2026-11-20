@@ -13,15 +13,19 @@ it('keeps human-readable labels in the app and walkthrough site free of ellipses
     ['web/src/looks/looks.css',':root[data-look] .loom-tick__line'],
     ['docs/how-it-works/site/site.css','.desk__tick'],
   ]);
+  // Home links a short excerpt of the last message to the full conversation.
+  const answerPreviews = new Set(['.desk-home-answer-words', '.desk-solo .desk-home-answer-words']);
   const offending:string[]=[];
   for(const file of files){
     const source=readFileSync(join(root,file),'utf8');
     if(file.endsWith('.css')){
       for(const rule of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)){
         const selector=rule[1].replace(/\/\*[\s\S]*?\*\//g,'').trim();
+        if (/(?:^|;)\s*(?:-webkit-)?line-clamp\s*:\s*(?!unset\b|none\b)\S/.test(rule[2]) &&
+          !(file === 'web/src/pieces/attention/home.css' && answerPreviews.has(selector))) offending.push(file+' '+selector);
         if(/text-overflow\s*:\s*ellipsis/.test(rule[2])&&selector!==exceptions.get(file))offending.push(file+' '+selector);
       }
-    }else if(/\btruncate\b/.test(source))offending.push(file);
+    }else if(/\btruncate\b|\bline-clamp-(?:\d+|\[)/.test(source))offending.push(file);
   }
   expect(offending).toEqual([]);
 });

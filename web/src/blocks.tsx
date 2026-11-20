@@ -90,8 +90,6 @@ export function ActButton({ b, size = 'sm', full = false, onDone, disabled = fal
 
 function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolean }) {
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
-  // Nothing is cut so it can't be read (Jonathan, 2026-11-03): a row's words run to two lines, and a row that goes
-  // nowhere opens to its whole text on a tap; one that goes somewhere shows it all there.
   const { ctx } = useEnv();
   const about = i.ref ? validAbout({ ref: i.ref, label: i.text, agent: i.agent }) : i.page ? aboutPage(pageHref(i.page, ctx.source), i.text) : null;
   const [open, setOpen] = useState(false);
@@ -106,7 +104,7 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
         <span className={whole ? 'font-medium leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]' : 'loom-wrap-label font-medium'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
-      {i.meta && <ItemDescription className={whole ? '[overflow-wrap:anywhere]' : 'line-clamp-2 [overflow-wrap:anywhere]'}>{tidy(i.meta)}</ItemDescription>}
+      {i.meta && <ItemDescription className="loom-wrap-label">{tidy(i.meta)}</ItemDescription>}
     </ItemContent>
   );
   return (
