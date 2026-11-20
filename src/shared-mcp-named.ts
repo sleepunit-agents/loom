@@ -283,11 +283,13 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('knowledge_read','Read one shared knowledge page by slug, with its sources and kept versions.',
   z.object({slug:pageSlug}).strict(),
   async input=>{
-   const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;sources:{claim:string;locator:string}[]|null;history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
-    'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body sources{claim locator} history{id op replacedAt actor}}}',{slug:input.slug});
+   const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;sources:{claim:string;locator:string}[]|null;annotations:{kind:string;actor:string;words:string;evidence:string;created:string}[];supersessions:{revision:number;actor:string;reason:string;evidence:string;created:string}[];history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
+    'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body sources{claim locator} annotations{kind actor words evidence created} supersessions{revision actor reason evidence created} history{id op replacedAt actor}}}',{slug:input.slug});
    const page=data.memoryKnowledgePage;if(!page)return 'No knowledge page '+input.slug;
    const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','',page.body];
    if(page.sources?.length)lines.push('','## Sources',...page.sources.map(row=>'- '+row.locator));
+   if(page.annotations?.length)lines.push('','## Annotations',...page.annotations.map(row=>'- '+row.kind+' by '+row.actor+' on '+row.created+' — '+row.words+' ('+row.evidence+')'));
+   if(page.supersessions?.length)lines.push('','## Supersessions',...page.supersessions.map(row=>'- '+row.actor+' replaced revision '+row.revision+' on '+row.created+' — '+row.reason+' ('+row.evidence+')'));
    if(page.history?.length)lines.push('','## Earlier versions',...page.history.map(row=>'- '+row.id+' ('+row.op+', replaced '+row.replacedAt+(row.actor?' by '+row.actor:'')+')'));
    return lines.join('\n');
   });
