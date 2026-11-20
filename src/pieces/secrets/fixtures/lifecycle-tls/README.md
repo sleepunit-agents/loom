@@ -1,1 +1,0 @@
-Synthetic TLS credentials only, without installed authority. Both peers have serverAuth and clientAuth because each serves one dedicated Unix socket and calls the other. Stranger is signed by the SAME test CA and must fail certificate pin checks. The CA private key was discarded. Never install these credentials.

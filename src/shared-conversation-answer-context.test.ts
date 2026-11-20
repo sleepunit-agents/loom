@@ -21,6 +21,8 @@ it('delivers the retained private question and outcomes to the actual receiving 
  let context='';await client.takeAndAccept(async item=>{expect(item.question).toEqual(question);expect(item.words).toBe('yes');expect(item.verdict).toBe('yes');context=bodyMailContext(item)!;expect(Object.isFrozen(item.question)).toBe(true);});
  expect(JSON.parse(context)).toEqual({question,answer:'yes',verdict:'yes'});
  expect(f.db.select().from(s.messages).all()).toEqual(beforeMessages);
+ // Received is not settled: the mail is done only when the body says it is dealt with.
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('taken');await client.settle();
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('done');
  for(const table of [s.inbox,s.jobs,s.operationResults])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain('PRIVATE');
 });
@@ -64,6 +66,8 @@ it('bounds asynchronous SDK acceptance by the included question deadline and ret
  try{await ready;f.clock.advance(1000);await expect(pending).rejects.toThrow();expect(signal?.aborted).toBe(true);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('taken');}
  finally{release();await pending.catch(()=>{});}
  await client.takeAndAccept(async item=>{expect(item.words).toBe('yes');expect(item.question).toBeNull();});
+ // Received is not settled: the mail is done only when the body says it is dealt with.
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('taken');await client.settle();
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('done');
 });
 async function secondQuestion(f:Awaited<ReturnType<typeof fixture>>){
@@ -134,7 +138,7 @@ it('drops only expired question context before a later SDK acceptance and delive
  });
  try{await ready;f.clock.advance(1000);release();expect(await pending).toMatchObject({accepted:2});}
  finally{release();await pending.catch(()=>{});}
- expect(answerSeen).toBe(true);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('done');
+ expect(answerSeen).toBe(true);await client.settle();expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.answer.id)).get()?.state).toBe('done');
 });
 
 it.each(['json','words','outcome'] as const)('omits an unavailable decoded question %s without losing its answer',async change=>{

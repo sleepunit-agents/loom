@@ -1,43 +1,68 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterAll,afterEach,beforeAll,expect,it,vi} from 'vitest';
 import {memoryCall} from '../web/src/memory/commands.js';
 import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {cpSync,mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
-import {createServer} from 'node:net';
 import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
-import {createDataSchema} from './core/data/database.js';
+import {dataDatabase} from './core/data/database.js';
+import {dataImage} from '../test/fixtures/data-image.js';
 import {members,tokens,agents,household,memberAgents,inbox,triggers,projects as projectRows,changes,taskLinks} from './core/data/schema.js';
-import {hasTouchedListener,touchSocketPath} from './core/touched/index.js';
 import {serveShared} from './shared-serve.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import {KnowledgePages} from '../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 const cleanup:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();vi.restoreAllMocks();});
 const raw='a'.repeat(64),fingerprint=createHash('sha256').update(raw).digest('hex');
+const initialTime=Date.parse('2026-11-14T12:00:00Z');
+let householdImage:Buffer;
+beforeAll(()=>{
+ householdImage=dataImage(db=>{
+  const at=new Date(initialTime).toISOString();
+  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
+  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  db.insert(household).values({singleton:1,defaultAgent:'fiction',timezone:'America/Chicago'}).run();
+  db.insert(tokens).values({fingerprint,label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
+ });
+});
+function sourcesFor(home:string){
+ const commons=join(home,'commons'),agent=join(home,'agents/fiction');
+ return {commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory:agent,memories:join(agent,'memories.db')}]};
+}
 function fixture(){
  const home=mkdtempSync(join(tmpdir(),'shared-memory-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
- const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(Date.parse('2026-11-14T12:00:00Z')),db=createDataSchema(client),at=new Date(clock.now()).toISOString();
- db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
- db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
- db.insert(household).values({singleton:1,defaultAgent:'fiction',timezone:'America/Chicago'}).run();
- db.insert(tokens).values({fingerprint,label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
- const commons=join(home,'commons'),agent=join(home,'agents/fiction'),sources={commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory:agent,memories:join(agent,'memories.db')}]};
+ const client=new Database(householdImage);cleanup.push(()=>client.close());
+ client.pragma('foreign_keys = ON');
+ const clock=new FakeClock(initialTime),db=dataDatabase(client),sources=sourcesFor(home);
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all(),before=tables();
  return {home,client,db,clock,sources,tables,before};
+}
+// The read/expiry cases start from the same closed, empty content stores. Each gets its own writable files.
+let preparedHome:string|undefined;
+let preparedSources:Promise<string>|undefined;
+afterAll(()=>{if(preparedHome)rmSync(preparedHome,{recursive:true,force:true});});
+async function preparedFixture(){
+ const f=fixture();
+ if(!preparedSources){
+  const directory=mkdtempSync(join(tmpdir(),'shared-memory-template-'));
+  preparedHome=directory;
+  preparedSources=prepareSharedMemorySources({checkingAgent:'fiction',sources:sourcesFor(directory)}).then(()=>directory);
+ }
+ cpSync(await preparedSources,f.home,{recursive:true});
+ return f;
 }
 async function waitMessage(ws:WebSocket,action:()=>unknown){
  const message=once(ws,'message');await action();return JSON.parse(String((await message)[0]));
 }
-it('signs in on the actual shared listener and converges Memory writes, source touches, grants and revocation',async()=>{
+it('signs in on the actual shared listener and converges Memory writes, changed source files, grants and revocation',async()=>{
  const f=fixture(),scheduled=vi.spyOn(f.clock,'at'),errors:unknown[]=[];
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);
  const webRoot=join(f.home,'web');mkdirSync(join(webRoot,'assets'),{recursive:true});writeFileSync(join(webRoot,'next.html'),'<html>Fictional Memory app</html>');writeFileSync(join(webRoot,'assets/app.js'),'/* fictional app */');
@@ -45,7 +70,6 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  const navigation=await fetch(app.url+'/p/knowledge-preview');expect(navigation.status).toBe(200);expect(await navigation.text()).toBe('<html>Fictional Memory app</html>');
  expect(await (await fetch(app.url+'/app/assets/app.js')).text()).toBe('/* fictional app */');
  const absent=await fetch(app.url+'/api/missing');expect(absent.status).toBe(404);expect(await absent.text()).not.toContain('Fictional Memory app');
- expect(hasTouchedListener(f.sources.commons.directory)).toBe(true);expect(hasTouchedListener(f.sources.agents[0].directory)).toBe(true);
  const request=(path:string,body?:unknown,headers:Record<string,string>={authorization:'Bearer '+raw})=>fetch(app.url+path,{method:'POST',redirect:'manual',headers:{'content-type':'application/json',origin:app.url,...headers},...(body?{body:JSON.stringify(body)}:{})});
  const minted=await request('/api/signin/link',{input:{}});expect(minted.status).toBe(200);
  const login=await request((await minted.json()).value.path,undefined,{authorization:'Bearer '+raw,'user-agent':'Mozilla/5.0 HeadlessChrome/140.0'});expect(login.status).toBe(303);
@@ -66,9 +90,9 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  const unsupported=new WebSocket(app.url.replace('http:','ws:')+'/live','graphql-transport-ws');unsupported.on('error',()=>{});cleanup.push(()=>unsupported.terminate());
  const [,rejected]=await once(unsupported,'unexpected-response');rejected.resume();expect(rejected.statusCode).toBe(404);
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>people.close());
- const person=await waitMessage(ws,()=>people.write({slug:'friend',name:'Private fictional friend'}));expect(JSON.stringify(person)).toContain('Private fictional friend');
+ const person=await waitMessage(ws,()=>{people.write({slug:'friend',name:'Private fictional friend'});app.changed();});expect(JSON.stringify(person)).toContain('Private fictional friend');
  const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>projects.close());
- const project=await waitMessage(ws,()=>projects.write({slug:'pond',name:'Private fictional pond'}));expect(JSON.stringify(project)).toContain('Private fictional pond');
+ const project=await waitMessage(ws,()=>{projects.write({slug:'pond',name:'Private fictional pond'});app.changed();});expect(JSON.stringify(project)).toContain('Private fictional pond');
  const activity=await waitMessage(ws,()=>app.writes.run(()=>app.services.conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'})));expect(JSON.stringify(activity)).toContain('Private fictional session');
  expect(await read()).toMatchObject({memoryKnowledge:{pages:[{title:'Fictional pump'}]},memoryPerson:{name:'Private fictional friend'},memoryProject:{name:'Private fictional pond'},memoryActivity:{entries:[{title:'Private fictional session'}]}});
  const disconnected=once(ws,'close');ws.close(1000,'Reload');await disconnected;ws=await open();
@@ -79,22 +103,12 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  expect(await read()).toMatchObject({memoryKnowledge:null,memoryPerson:{name:'Private fictional friend'},memoryProject:{name:'Private fictional pond'},memoryActivity:{entries:[{title:'Private fictional session'}]}});
  const revoked=once(ws,'close');app.writes.run(()=>f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).run());await revoked;
  expect((await request('/graphql',{query},headers)).status).toBe(401);
- expect(f.tables()).toEqual(f.before);await app.close();expect(app.memory.nextDeadline()).toBeUndefined();expect(hasTouchedListener(f.sources.commons.directory)).toBe(false);expect(hasTouchedListener(f.sources.agents[0].directory)).toBe(false);
+ expect(f.tables()).toEqual(f.before);await app.close();expect(app.memory.nextDeadline()).toBeUndefined();
  const calls=scheduled.mock.calls.length;f.clock.advance(86400000);expect(scheduled).toHaveBeenCalledTimes(calls);expect(errors).toEqual([]);
-});
-it('releases acquired source sockets and Memory clocks when a later source bind fails',async()=>{
- const f=fixture();await prepareSharedMemorySources({sources:f.sources,checkingAgent:'fiction'});
- mkdirSync(join(f.sources.agents[0].directory,'.loom-live'),{recursive:true});
- const occupied=createServer();await new Promise<void>(ok=>occupied.listen(touchSocketPath(f.sources.agents[0].directory),ok));
- cleanup.push(()=>new Promise<void>(ok=>occupied.close(()=>ok())));
- const scheduled=vi.spyOn(f.clock,'at');
- await expect(serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:()=>true,reportError:()=>{}})).rejects.toThrow();
- expect(hasTouchedListener(f.sources.commons.directory)).toBe(false);expect(occupied.listening).toBe(true);
- const calls=scheduled.mock.calls.length;f.clock.advance(86400000);expect(scheduled).toHaveBeenCalledTimes(calls);expect(f.tables()).toEqual(f.before);
 });
 it('leaves existing declared content files byte-for-byte unchanged during preparation',async()=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'Precious fictional words'});knowledge.close();
+ const knowledge=new KnowledgePages({dbPath:f.sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'Precious fictional words'});knowledge.close();
  const paths=[f.sources.commons.knowledge,f.sources.commons.people,f.sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
  await prepareSharedMemorySources(memory);expect(paths.map(path=>readFileSync(path))).toEqual(before);
 });
@@ -107,8 +121,8 @@ it('uses the current household timezone for Activity days and metadata after a c
  expect(await read()).toMatchObject({memoryActivityAccess:{timezone:'Pacific/Kiritimati',today:'2026-11-15'},memoryActivity:{entries:[{day:'2026-11-15',hour:2}]}});
 });
 it('registers Knowledge before the one shared Tempo starts and preserves a stopped daily sweep across restart',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const source=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
+ const source=new KnowledgePages({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
  f.clock.advance(Date.parse('2026-11-14T13:16:59Z')-f.clock.now());
  const options={db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}};
  const app=await serveShared(options);cleanup.push(()=>app.close());expect(f.db.select().from(inbox).all()).toEqual([]);
@@ -117,7 +131,8 @@ it('registers Knowledge before the one shared Tempo starts and preserves a stopp
  app.writes.run(()=>app.services.tempo.triggers.stop('knowledge-sweep:fiction'));await app.close();f.clock.advance(86400000);
  const again=await serveShared(options);cleanup.push(()=>again.close());
  expect(f.db.select().from(triggers).where(eq(triggers.id,'knowledge-sweep:fiction')).get()).toMatchObject({enabled:false,state:'stopped'});
- f.clock.advance(86400000);expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ // The agent in this fixture cannot run, so its owner is also told why its mail started no work: count the agent's mail.
+ f.clock.advance(86400000);expect(f.db.select().from(inbox).all().filter(row=>row.to==='fiction')).toHaveLength(1);
 });
 it('builds project sections from current visible Tasks, Changes and Conversations without legacy roles',async()=>{
  const f=fixture(),at=new Date(f.clock.now()).toISOString();f.db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();
@@ -134,7 +149,9 @@ it('builds project sections from current visible Tasks, Changes and Conversation
   app.services.conversations.open({agent:'fiction',venue:'wake',place:'private',project:'pond',member:'other',label:'PRIVATE CONVERSATION'});
  });
  const read=async()=>{const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryProject(id:"fiction:pond") { changes { open failing running } sections { key available total conversationIds groups { title items { title } } items { title } } } }'})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
- const owner=await read();expect(JSON.stringify(owner)).toContain('PRIVATE TASK');expect(JSON.stringify(owner)).toContain('PRIVATE CHANGE');expect(JSON.stringify(owner)).toContain('PRIVATE CONVERSATION');
+ const owner=await read();expect(JSON.stringify(owner)).toContain('PRIVATE TASK');expect(JSON.stringify(owner)).toContain('PRIVATE CHANGE');
+ // Another member's private conversation is not the household owner's to read; the project's shared one is.
+ expect(JSON.stringify(owner)).not.toContain('PRIVATE CONVERSATION');expect(JSON.stringify(owner)).toContain('Visible conversation');
  app.writes.run(()=>{f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();f.db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();});
  const member=await read(),words=JSON.stringify(member);expect(words).toContain('Pond visible task');expect(words).toContain('Visible change');expect(words).toContain('Visible conversation');expect(words).not.toContain('PRIVATE');
  expect(member.memoryProject.changes).toEqual({open:1,failing:1,running:0});
@@ -150,14 +167,15 @@ it('rejects an unconfigured checking recipient before creating source files',asy
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);expect(existsSync(f.sources.agents[0].memories)).toBe(false);expect(f.tables()).toEqual(f.before);
 });
 it('refreshes Knowledge and Activity together at the shared root deadline without a write',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();await prepareSharedMemorySources(memory);
- const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();
+ const knowledge=new KnowledgePages({dbPath:f.sources.commons.knowledge});
  try{for(const slug of ['recent','aging','due'])await knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});}finally{knowledge.close();}
  const facts=new Database(f.sources.commons.knowledge);
  try{for(const [slug,days] of [['recent',7],['aging',20],['due',30]] as const)facts.prepare('UPDATE pages SET verified_at=? WHERE slug=?').run(new Date(now-days*86400000+1000).toISOString(),slug);}finally{facts.close();}
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
+ // After the start: these few columns are all the Activity reader asks of the table, and not a store a start would accept.
  const episodes=new Database(f.sources.agents[0].memories);
  try{episodes.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');episodes.prepare("INSERT INTO memories VALUES('expiry','Expires soon','Fictional episode',?,NULL,'{}',?,'episode',0)").run(new Date(now).toISOString(),new Date(now+1000).toISOString());}finally{episodes.close();}
- const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
  const query='{ memoryKnowledge { pages { slug fresh recent } } memoryKnowledgePage(slug:"due") { fresh } memoryActivity { entries { id title } } memoryActivityEntry(id:"e~fiction~expiry") { title } }';
  const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
  await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
@@ -175,7 +193,7 @@ it('refreshes Knowledge and Activity together at the shared root deadline withou
  expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:expect.arrayContaining([{slug:'recent',fresh:'fresh',recent:null},{slug:'aging',fresh:'aging',recent:null},{slug:'due',fresh:'due',recent:null}])},memoryKnowledgePage:{fresh:'due'},memoryActivity:{entries:[]},memoryActivityEntry:null}});
 });
 it('withdraws a selected private Memory card when sharing changes during a sibling await',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'PRIVATE selected Memory card'});}finally{people.close();}
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
@@ -187,11 +205,11 @@ it('withdraws a selected private Memory card when sharing changes during a sibli
  }finally{release();}
 });
 it('withdraws a selected private episode when its deadline passes during a sibling await without a SQL write',async()=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const source=new Database(f.sources.agents[0].memories);
- try{source.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');source.prepare("INSERT INTO memories VALUES('expiry','PRIVATE expiring episode','Fictional private words',?,NULL,'{}',?,'episode',0)").run(new Date(f.clock.now()).toISOString(),new Date(f.clock.now()+1000).toISOString());}finally{source.close();}
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
+ const source=new Database(f.sources.agents[0].memories);
+ try{source.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');source.prepare("INSERT INTO memories VALUES('expiry','PRIVATE expiring episode','Fictional private words',?,NULL,'{}',?,'episode',0)").run(new Date(f.clock.now()).toISOString(),new Date(f.clock.now()+1000).toISOString());}finally{source.close();}
  const committed=vi.fn(),stop=app.writes.observe(committed);cleanup.push(stop);
  try{
   const pending=fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryActivityEntry(id:"e~fiction~expiry") { title } held }'})});
@@ -201,7 +219,7 @@ it('withdraws a selected private episode when its deadline passes during a sibli
  }finally{release();}
 });
 it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket','live'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during its read without timer delivery via $door',async({kind,door})=>{
- const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const f=await preparedFixture(),memory={sources:f.sources,checkingAgent:'fiction'};
  let current=f.clock.now();vi.spyOn(f.clock,'now').mockImplementation(()=>current);
  if(kind==='person'||kind==='people-list'){const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'Fictional friend'});}finally{people.close();}}
  if(kind==='project-preview'){const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});try{projects.write({slug:'pond',name:'Fictional pond'});}finally{projects.close();}}

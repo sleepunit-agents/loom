@@ -1,4 +1,6 @@
-/** Storage entry for the separate shared-program holder; never opens loom.db. */
+/** Storage entry for the separate shared-program holder; never opens loom.db.
+ * Its three keys are files in its own private directory, in clear (docs/accepted-tradeoffs.md, "Root keys
+ * are readable on disk by their own process"). */
 import {generateX25519Identity} from 'age-encryption';
 import {randomBytes} from 'node:crypto';
 import {constants,openSync,closeSync,writeFileSync,fsyncSync,lstatSync,mkdirSync,mkdtempSync,readdirSync,renameSync,realpathSync} from 'node:fs';

@@ -13,6 +13,39 @@ loom-taskstore command --file task-action.json
 loom-taskstore command --file - < task-action.json
 ```
 
+`move` places one task in the hand-kept order. `moveToProject` moves up to 500
+tasks to another project, or with `"project": null` out of every project:
+
+```sh
+loom-taskstore command '{"action":"moveToProject","ids":["t-12","t-15"],"project":"pond"}'
+```
+
+You must be able to act on each task where it is, and be on the project they go
+to (or be a household owner). Out of every project a task is its owner's alone,
+so only its owner or a household owner may do that. Every task named moves or
+none does, and a removed project is refused. The answer lists the tasks that
+moved (`moved`); one already there is left alone. Each moved task gets a comment
+by the mover saying from where to where. Its links and comments stay, and mail
+filed under the task's own labels goes with it. An `edit` that names another
+project is the same move for one task, by the same rule and with the same record.
+A move is refused (`conflict`) while a task named carries an unanswered question
+for a person who could not read it in the destination: `ask` only takes a person
+who can read the task, and a move may not undo that.
+
+A retired project takes no task: `create` with it, and a move into it, are
+refused. Its unfinished tasks are shelved: `ready` does not list them and `claim`
+is refused, until the project is revived (`household.propose` with
+`change: "projectRevive"`). A task is taken up again by moving it out.
+`list`, `show` and `search` print `isShelved` for each task; its `status` is the
+stored one, unchanged, so a shelved task reads `"status": "open", "isReady":
+false, "isShelved": true`.
+
+To split a project: make the new project (a household owner, or an agent through
+`household.propose` with `change: "project"`), then `moveToProject` the chosen
+tasks into it. To merge two projects, an agent proposes `change: "projectMerge"`
+with `{"from":"<id>","into":"<id>"}`, and a household owner allows and confirms
+the card by hand: a merge cannot be undone, and no standing rule answers it.
+
 The server validates the action and supplies the authenticated actor. Each
 invocation uses one operation ID across transport retries. Results are JSON;
 failed or refused requests exit nonzero. Issuing a credential remains a separate

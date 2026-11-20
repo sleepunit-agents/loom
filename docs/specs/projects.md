@@ -43,6 +43,71 @@ agent what happened. Nothing puts them together as *a project*.
 4. **A card has no edges.** Its `links` are *selectors* the hub reads with. loom validates their syntax at write and
    never resolves them as references: archiving a project touches nothing else.
 
+A project card is not where a task's sharing is decided. Who sees a task follows the household's project it is
+filed under. Moving a task to another of those, merging two of them, and splitting one (make the new project,
+then move the chosen tasks into it) are in [owners.md](owners.md), "Moving a task, and merging or splitting
+projects". None of them touches a card.
+
+### Retiring a project
+
+*Added 2026-11-18. The owner: "phasecraft for example is effectively retired for now. I don't want it gone,
+but retiring a project should retire all of its tasks and shit."*
+
+A household project is in use, retired or removed. Retired is the state between: set aside whole, and
+brought back whole.
+
+- **How.** Two household changes, `projectRetire` and `projectRevive`, each with `{ "project": "<id>" }`,
+  proposed like any other and answered by a household owner. Each is undone by the other, so each is a
+  setting, and a standing rule for settings may answer it.
+- **What stays.** Everything. The project's tasks, conversations, records, members, agents and repositories
+  are kept, and read by exactly who could read them before. Nothing is deleted, closed or rewritten.
+- **Its unfinished tasks are shelved.** A task is shelved when its project is retired and the task is not
+  closed. That is worked out from the project wherever work is picked; it is never written on the task, so
+  no task changes when a project is retired or revived. A shelved task:
+  - is not ready (`task_ready`, `loom-taskstore ready`, the app's Ready list and the desk's counts);
+  - is in no list or count of open work: the work sweep does not name it, and the app counts it under
+    Shelved and nowhere else;
+  - cannot be claimed;
+  - is still shown under its project, marked shelved with what it was, and can be read, commented on,
+    edited and closed;
+  - does not ask for attention: a question waiting on it is still its person's mail, and is out of
+    "needs you" and its counts until the project is revived.
+- **Reviving** brings back exactly what was there: each task's status, who holds it, its question and its
+  place in the order.
+- **Nothing new goes in.** No task is created in a retired project and none is moved into one. A task may be
+  moved out, which is how one piece of work is taken up again. A merge into a retired project is refused; a
+  merge from one is allowed, and its tasks are work in the project they join.
+- **Removed and retired.** A removed project cannot be retired or revived; restore it first. A retired
+  project can be removed, and stays marked retired.
+- The state is one column, `projects.retired_at` (schema step 10). What it means is stated once, in
+  `src/core/data/project-in-use.ts`.
+
+### Asking to work on a project
+
+*Added 2026-11-17. The owner: "I go hey mark work on pond and he goes, uh I don't do that, but ok can I work on
+pond? card shows up, I hit yes, he goes oh ok and grinds."*
+
+An agent that is told to work on a household project it is not on asks to be let onto it: `propose` with
+`change: "projectJoin"` and `{ "project": "<id>", "agent": "<its own id>" }`, and the reason.
+
+- **Who may ask.** The agent itself, for itself, from a terminal session or a body. A household owner may file
+  the same card for any agent. Nobody else: not another agent, not a member who is not a household owner. The
+  rule is `asksToJoin` in `src/policy.ts`.
+- **The card** says who wants onto which project ("Let mark work on project pond?") and the reason given. A
+  household owner answers it with one plain Allow or Deny. No standing approval rule answers it, however
+  wide: being on a project lets an agent read what is filed under it, and that is an owner's to say each time.
+- **Allowing it** adds that one agent to that one project. The project's name, people, other agents and
+  repositories are as they were.
+- **Refused.** An agent that asks to join a project it is already on is told so, and no card is filed. (A
+  body working for a member who is not on that project may not read it, so it is not told: its card is
+  filed, and refused to the owner as already so.) A
+  project or agent that is removed or not there is refused to the owner when they look at the card and when
+  they allow it; an agent is not told which, since it may not read a project it is not on. An owner who
+  files the card is told at once.
+- **The answer** goes to the agent as mail in the conversation it asked from, as every card's answer does, so
+  its next body there reads "Allow" or "Deny" and carries on.
+- Taking an agent off a project is the `project` change, as before.
+
 ## Vocabulary (to be added to CONTEXT.md)
 
 **Project**:

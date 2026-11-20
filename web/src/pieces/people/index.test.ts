@@ -9,7 +9,7 @@ vi.mock('../../memory/query',()=>({useMemoryList:()=>f.feed,useMemoryRecord:(s:a
  const person=f.feed.records.find(p=>p.id===s?.variables.id);
  return {status:f.conversations.status==='live'?f.feed.status:f.conversations.status,records:person?[{...person,conversations:f.conversations.records[0]}]:[]};
 }}));
-vi.mock('../../kit',()=>({Split:(p:{list:unknown;reader:unknown;listTop:unknown;search:unknown})=>h('div',null,p.search,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button'}));
+vi.mock('../../kit',()=>({Reader:'article',Title:'h1',Meta:'p',Facts:'dl',Fact:'dd',Section:'section',Disclosure:'section',Search:'input',Field:'label',Split:(p:{list:unknown;reader:unknown;listAction:unknown;search:unknown})=>h('div',null,p.search,p.listAction,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button'}));
 import People, {peopleSession} from './index';
 import { contacts,contactLink } from './model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;

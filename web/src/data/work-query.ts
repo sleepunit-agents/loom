@@ -1,3 +1,4 @@
+import { approvalTitle, quotedDecision } from '../pieces/approval-view/model';
 import type { ApprovalSnapshot } from '../pieces/approval-view/model';
 import type { ChangeSnapshot } from '../pieces/change-view/model';
 
@@ -37,14 +38,16 @@ export function approvalSnapshot(feed: Feed<ApprovalsResult>, timezone: string):
   const data = feed.status === 'live' ? feed.data : undefined;
   // Private reports inherit their approval's sharing labels through the
   // permanent record query. Never copy their words to unlabelled notices.
-  const privateReports = (data?.approvalRecord ?? []).flatMap(event => {
-    const card = data?.approvals.find(card => card.id === event.approval && card.member);
-    return card && event.event === 'use' && event.note.startsWith('Reported step: ')
+  const recordNotices = (data?.approvalRecord ?? []).flatMap(event => {
+    const card = data?.approvals.find(card => card.id === event.approval);
+    const decision = quotedDecision(event);
+    if (card && decision) return [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.operation==='household.change'?'':card.target,what:approvalTitle(card)+' — '+decision,at:event.at}];
+    return card?.member && event.event === 'use' && event.note.startsWith('Reported step: ')
       ? [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.target,what:event.note.slice('Reported step: '.length),at:event.at}] : [];
   });
   return { status: feed.status === 'live' && !data ? 'loading' : feed.status, timezone,
     approvals: data?.approvals ?? [], rules: data?.approvalRules ?? [],
-    notices: [...(data?.approvalNotices ?? []),...privateReports], record: data?.approvalRecord ?? [] };
+    notices: [...(data?.approvalNotices ?? []),...recordNotices], record: data?.approvalRecord ?? [] };
 }
 export function changeSnapshot(feed: Feed<ChangesResult>, timezone: string): ChangeSnapshot {
   const data = feed.status === 'live' ? feed.data : undefined;

@@ -12,7 +12,6 @@ import {requestLocalLink} from './core/signin/operator.js';
 import * as s from './core/data/schema.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {startSharedHome} from './shared-startup.js';
-import {propose} from './backends/proposals.js';
 vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
  readonly dimensions=4;
  async embed(){return [1,0,0,0];}
@@ -28,7 +27,7 @@ it('normal startup carries native Memory tools, private Identity and revisions a
    db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
    db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();
   }});
-  const signin=await fetch(p.printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
+  const signin=await fetch(p.composition.signinLink(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
   const cookie=signin.headers.get('set-cookie')!.split(';',1)[0];
   const opened=await fetch(p.url+'/api/comms/open',{method:'POST',headers:{cookie,origin:p.url,'content-type':'application/json'},body:JSON.stringify({input:{thread:'th:memory-startup',agent:'art'},id:'startup-thread'})});
   expect(opened.status).toBe(200);const {conversation}=z.object({value:z.object({conversation:z.string()})}).parse(await opened.json()).value;
@@ -36,7 +35,6 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   p.composition.writes.run(()=>{
    p!.db.insert(s.boxes).values({id:'box',name:'Fictional box',owner:'alice',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now}).run();
    p!.db.insert(s.jobs).values({id:'memory-job',agent:'art',box:'box',member:'alice',conversation,title:'Fictional Memory body',state:'running',brief:'',model:'fixture',startedByKind:'member',startedBy:'alice',houseRepository:'fixture',houseFile:'HOUSE.md',houseBranch:'next',queuedAt:now}).run();
-   p!.db.update(s.conversations).set({job:'memory-job'}).where(eq(s.conversations.id,conversation)).run();
    p!.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional Memory body',kind:'agent',agent:'art',job:'memory-job',createdAt:now}).run();
   });
   writeFileSync(join(p.home,'agents/art/IDENTITY.md'),creed);
@@ -54,9 +52,8 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   expect((await command('memory.personRestoreRevision',{slug:'fiction-private-friend',revision_id:personHistory[0].id},'startup-person-restore')).ids).toEqual([personId]);
   const cardsQuery=`{memoryPerson(id:"${personId}"){mergedFrom card{name summary where{key value{boolean}}}} memoryProject(id:"${projectId}"){card{name links{aliases}}}}`,cards=await read(cardsQuery);
   expect(cards).toEqual({memoryPerson:{mergedFrom:null,card:{name:'PRIVATE_STARTUP_PERSON',summary:'PRIVATE_STARTUP_PERSON_ORIGINAL',where:[{key:'ready',value:{boolean:false}}]}},memoryProject:{card:{name:'PRIVATE_STARTUP_PROJECT',links:{aliases:['fiction-private-alias']}}}});
-  // Seed a retained Proposal with the existing core helper, not an unreviewed native writer.
-  const proposal=propose(join(p.home,'agents/art'),{category:'rough capture',title:'Fictional Proposal',content:'PRIVATE_STARTUP_PROPOSAL'},null);
-  expect(await read('{memoryProposals(agent:"art"){entries{id content}}}')).toEqual({memoryProposals:{entries:[{id:'art:proposal:'+proposal.uuid,content:'PRIVATE_STARTUP_PROPOSAL'}]}});
+  const proposal=z.array(z.string()).parse((await command('memory.propose',{category:'rough capture',title:'Fictional Proposal',content:'PRIVATE_STARTUP_PROPOSAL'},'startup-propose')).ids)[0];
+  expect(await read('{memoryProposals(agent:"art"){entries{id content}}}')).toEqual({memoryProposals:{entries:[{id:proposal,content:'PRIVATE_STARTUP_PROPOSAL'}]}});
   expect(await read(`{memoryProjectMemory(id:"${id}"){content} memoryIdentity(agent:"art"){creed topOfMind}}`)).toMatchObject({memoryProjectMemory:{content:words},memoryIdentity:{creed,topOfMind:expect.stringContaining(words)}});
   await command('memory.update',{id,content:'PRIVATE_NORMAL_STARTUP_EDIT'},'startup-edit');
   const history=z.array(z.object({id:z.number(),content:z.string()})).parse((await read(`{memoryHistory(id:"${id}"){id content}}`)).memoryHistory);expect(history).toHaveLength(1);expect(history[0].content).toBe(words);

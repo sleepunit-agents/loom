@@ -8,7 +8,7 @@ import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { useDeskWaitingCounts } from './waiting';
-import { agentPath, latestStatus, namedAgents } from './home-model';
+import { agentPath, agentStateWord, latestStatus, namedAgents } from './home-model';
 import './comms-companion.css';
 
 function Portrait({agent,working,go}:{agent:string;working:boolean;go(path:string):void}) {
@@ -19,14 +19,21 @@ function Portrait({agent,working,go}:{agent:string;working:boolean;go(path:strin
   const status=statuses.status==='live'?latestStatus(statuses.records,agent):undefined;
   const needs=waiting.status==='live'&&(waiting.agents.get(agent)??0)>0;
   const state=faceState(working?'working':status?.state,needs);
-  const word=working||status||needs?({working:'Working',thinking:'Waiting',idle:'Quiet',error:'Needs a look','needs-input':'Waiting on you'} as Record<string,string>)[state]:'No status reported';
+  const word=working||status||needs?({working:'Working',thinking:'Waiting',idle:'Quiet',error:'Needs a look','needs-input':'Waiting on you'} as Record<string,string>)[state]:agentStateWord(undefined);
   const target=rail?.screen?.agent===agent?rail.screen.el:undefined;
-  const screen=<section className="desk-comms-screen" aria-label={`${name}'s comm screen`} data-location={target?'rail':'inline'}>
-    <div className="desk-comms-glass"><AgentFace display={displays.find(row=>row.id===agent)} name={name} state={state} size={192} scale={2}/></div>
+  const display=displays.find(row=>row.id===agent);
+  // Beside the rail the comm screen is the agent's rail card, large, with its name and how it is. Without the rail it
+  // is a small face beside the thread's title: the head says who the thread is with and whether it is working, so
+  // the face adds nothing but itself, and opens the agent's own page where this person owns the agent.
+  if(!target)return <span className="desk-comms-mini" data-location="inline">
+    {owned?<button type="button" className="desk-comms-mini__face" aria-label={`Open ${name}`} title={word} onClick={()=>go(agentPath(agent))}><AgentFace display={display} name={name} state={state} size={30}/></button>
+      :<span className="desk-comms-mini__face" title={word}><AgentFace display={display} name={name} state={state} size={30}/></span>}
+  </span>;
+  return createPortal(<section className="desk-comms-screen" aria-label={`${name}'s comm screen`} data-location="rail">
+    <div className="desk-comms-glass"><AgentFace display={display} name={name} state={state} size={192} scale={2}/></div>
     {owned?<Button variant="ghost" className="desk-comms-name" onClick={()=>go(agentPath(agent))}>{name}</Button>:<strong className="desk-comms-name">{name}</strong>}
     <p className="desk-comms-state">{word}</p>
-  </section>;
-  return target?createPortal(screen,target):screen;
+  </section>,target);
 }
 /** Selection belongs to the visible authorized reader; late cleanup cannot
  * clear another reader's selection. Portrait data uses the desk's same client. */

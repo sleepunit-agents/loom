@@ -1,3 +1,4 @@
+import { useLiveAgentIds } from '../../data/live-agents';
 import { useDataQuery } from '../../data/graphql';
 import Tempo, { TempoCard, type TempoActions, type TempoSnapshot } from './index';
 import { tempoQuery, type TempoData } from './query';
@@ -15,8 +16,8 @@ export function useTempoSnapshot(timezone: string): TempoSnapshot {
   };
 }
 export function TempoApp({ timezone, actions }: { timezone: string; actions?: TempoActions }) {
-  const snapshot = useTempoSnapshot(timezone);
-  return <Tempo snapshot={snapshot} actions={actions} />;
+  const snapshot = useTempoSnapshot(timezone), inUse = useLiveAgentIds();
+  return <Tempo snapshot={snapshot} actions={actions} inUse={inUse ?? new Set()} />;
 }
 export function LiveTempoCard({ triggerId, timezone, actions }: { triggerId: string; timezone: string; actions?: TempoActions }) {
   const snapshot = useTempoSnapshot(timezone);

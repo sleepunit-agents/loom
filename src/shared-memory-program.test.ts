@@ -13,7 +13,7 @@ import {members,agents,household,tokens,memberAgents,conversationPeople} from '.
 import {wordsKey} from './pieces/comms/crypto.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {serveShared} from './shared-serve.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {conversationActivityQuery} from '../web/src/pieces/comms/conversation-query.js';
@@ -32,7 +32,7 @@ it('follows Memory conversation links through current shared history while priva
  for(const member of ['owner','peer'] as const)db.insert(tokens).values({fingerprint:createHash('sha256').update(raw[member]).digest('hex'),label:'Fictional '+member,kind:'owner',member,createdAt:now()}).run();
  const common=join(home,'commons'),agent=join(home,'agents/art'),sources={commons:{directory:common,knowledge:join(common,'knowledge.db'),people:join(common,'people.db')},agents:[{agent:'art',directory:agent,memories:join(agent,'memories.db')}]};
  const memory={sources,checkingAgent:'art'};await prepareSharedMemorySources(memory);
- const knowledge=new SqliteKnowledgeBackend({dbPath:sources.commons.knowledge});closes.push(()=>knowledge.close());
+ const knowledge=new KnowledgePages({dbPath:sources.commons.knowledge});closes.push(()=>knowledge.close());
  await knowledge.writePage({slug:'program-fact',title:'Program fact',domain:'fiction',body:'Fictional knowledge.',verified_at:now()});
  const directory=new PeopleStore({dbPath:sources.commons.people});closes.push(()=>directory.close());directory.write({slug:'friend',name:'Fictional friend'});
  const people=new PeopleStore({dbPath:sources.agents[0].memories,actor:'art'});closes.push(()=>people.close());people.write({slug:'friend',name:'Fictional friend',summary:'Fictional relationship.'});

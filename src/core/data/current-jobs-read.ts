@@ -1,10 +1,14 @@
-/** Home job metadata using the outside composition's current SQL policy. */
-import {and,asc,eq,inArray,is,SQL,sql,getTableColumns} from 'drizzle-orm';
+/** The current job summaries visible to this caller, in stable queue order. */
+import {and,asc,eq,inArray,isNotNull,ne,or,sql,type SQL} from 'drizzle-orm';
 import type {DataDatabase} from './database.js';
-import type {QueryVisibility} from './queries.js';
-import {jobs} from './schema.js';
-export function readCurrentJobs(db:DataDatabase,visibility:QueryVisibility,agent:string){
- const allowed=visibility.jobs?.(getTableColumns(jobs));
- if(!is(allowed,SQL))throw new Error('SQL visibility required for jobs');
- return db.query.jobs.findMany({columns:{id:true,agent:true,title:true,state:true,box:true,queuedAt:true},where:f=>and(sql`${{getSQL:()=>allowed}}`,eq(f.agent,agent),inArray(f.state,['queued','starting','running','waiting'])),orderBy:f=>[asc(f.queuedAt),asc(f.id)]}).sync();
+import {unendedJobStates} from './job-states.js';
+
+export function readCurrentJobs(db:DataDatabase,allowed:SQL,agent:string,cutoff:string){
+ return db.query.jobs.findMany({
+  columns:{id:true,agent:true,title:true,state:true,box:true,queuedAt:true},
+  extras:fields=>({kind:sql<string>`case when ${fields.startedByKind} = 'terminal' then 'terminal' else 'job' end`.as('current_job_kind')}),
+  where:fields=>and(sql`${{getSQL:()=>allowed}}`,eq(fields.agent,agent),inArray(fields.state,unendedJobStates),
+   or(ne(fields.startedByKind,'terminal'),and(isNotNull(fields.conversation),sql`julianday(${fields.heardAt}) > julianday(${cutoff})`))),
+  orderBy:fields=>[asc(fields.queuedAt),asc(fields.id)],
+ }).sync();
 }

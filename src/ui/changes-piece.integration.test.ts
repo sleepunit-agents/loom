@@ -98,8 +98,9 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(() => row(page).count()).toBe(1);
       expect(await page.getByText(hiddenTitle, { exact: true }).count()).toBe(0);
       await row(page).click();
-      await expect.poll(() => page.getByText('Typecheck · running', { exact: true }).count()).toBe(1);
-      await expect.poll(() => page.getByText('Track the shared change', { exact: true }).count()).toBe(1);
+      // A check still running is named under Checks, beside the plain word for its state.
+      await expect.poll(() => page.getByRole('region', { name: 'Checks', exact: true }).textContent()).toContain('RunningTypecheck');
+      await expect.poll(() => page.getByText('Track the shared change', { exact: false }).count()).toBe(1);
       expect(await page.getByText('Private linked task', { exact: true }).count()).toBe(0);
     }
     await b.reload();
@@ -111,15 +112,15 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       app.db.update(s.tasks).set({ title: 'Updated linked task' }).where(eq(s.tasks.id, 'visible')).run();
     });
     for (const page of [a, b]) {
-      await expect.poll(() => page.getByText('Typecheck · failing', { exact: true }).count()).toBe(1);
-      await expect.poll(() => page.getByText('changes requested', { exact: true }).count()).toBe(1);
-      await expect.poll(() => page.getByText('Updated linked task', { exact: true }).count()).toBe(1);
+      await expect.poll(() => page.getByRole('region', { name: 'Checks', exact: true }).textContent()).toContain('FailingTypecheck');
+      await expect.poll(() => page.getByRole('region', { name: 'Review', exact: true }).textContent()).toContain('Changes requested');
+      await expect.poll(() => page.getByText('Updated linked task', { exact: false }).count()).toBe(1);
     }
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
     for (const page of [a, b]) {
       await expect.poll(() => row(page).count()).toBe(0);
       expect(await page.getByRole('heading', { name: title, exact: true }).count()).toBe(0);
-      expect(await page.getByText('Updated linked task', { exact: true }).count()).toBe(0);
+      expect(await page.getByText('Updated linked task', { exact: false }).count()).toBe(0);
     }
     // Ending a session also clears retained content and denies reconnection.
     app.data.writes.run(() => app.db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run());
@@ -146,7 +147,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [c,d]) await expect.poll(()=>page.getByText(/^Last read /).count()).toBe(1);
     for (const page of [c,d]) {
       await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
-      expect(await page.getByText('Typecheck · failing',{exact:true}).count()).toBe(0);
+      expect(await page.getByText('Typecheck',{exact:true}).count()).toBe(0);
     }
     await c.getByRole('button',{name:'Yes, merge it',exact:true}).click();
     await expect.poll(()=>app.data.services.approvals.get(first.id).state).toBe('allowed');
@@ -171,7 +172,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await d.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await c.getByRole('button',{name:'Always for pond',exact:true}).click();
-    for(const page of [c,d])await expect.poll(()=>page.getByText('Waiting on agent',{exact:true}).count()).toBe(1);
+    // It now waits on the agent, said by name and never by the stored word.
+    for(const page of [c,d]){await expect.poll(async()=>/Waiting on (?!you)\S+/.test(await page.getByRole('region',{name:'Merge answer',exact:true}).textContent()??'')).toBe(true);expect(await page.getByText('Waiting on agent',{exact:false}).count()).toBe(0);}
     expect(app.data.services.approvals.get(third.id)).toMatchObject({state:'allowed',decidedBy:'pat'});
     expect(app.db.select().from(s.approvalRules).all()).toEqual([expect.objectContaining({kind:'merge',scope:'project:pond',person:'',tier:'do',setBy:'pat'})]);
     expect(app.db.select().from(s.approvalRecord).all().filter(row=>row.approval===third.id&&row.event==='grant')).toHaveLength(1);
@@ -180,4 +182,4 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(errors).toEqual([]);
     await context.close();
   } finally { await browser.close(); await app.close(); }
-}, 60_000);
+});

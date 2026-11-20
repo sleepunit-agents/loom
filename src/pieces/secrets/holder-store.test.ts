@@ -333,3 +333,20 @@ it('adds the recovery table without rewriting an existing holder value, receipt 
   try { expect(db.prepare('SELECT * FROM holder_values').all()).toEqual(before); expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts); }
   finally { db.close(); }
 });
+
+it('marks the store with its version, and refuses one a newer program has changed without altering it', async () => {
+  const f = await setup(), path = join(f.home, 'holder.db');
+  await f.s.set(who(), 'api-key', value(), 'add'); f.s.close();
+  const raw = <T>(work: (db: Database.Database) => T) => { const db = new Database(path); try { return work(db); } finally { db.close(); } };
+  const everything = () => raw(db => db.prepare('SELECT type, name, sql FROM sqlite_schema ORDER BY name').all());
+  expect(raw(db => db.pragma('user_version', {simple:true}))).toBe(1);
+  // A store made before the number was kept has this same shape: it is marked, and its value is still read.
+  raw(db => { db.pragma('user_version = 0'); });
+  const reopened = await f.open(); expect(await text(reopened)).toBe(value().toString()); reopened.close();
+  expect(raw(db => db.pragma('user_version', {simple:true}))).toBe(1);
+  // As a later program leaves it: one more step, and a table this program has never heard of.
+  raw(db => { db.exec('CREATE TABLE from_the_future (words TEXT)'); db.pragma('user_version = 2'); });
+  const before = everything();
+  await expect(f.open()).rejects.toThrow('newer program');
+  expect(everything()).toEqual(before); expect(raw(db => db.pragma('user_version', {simple:true}))).toBe(2);
+});

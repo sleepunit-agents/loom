@@ -1,129 +1,328 @@
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
- * running ACK. Native execution and mail acceptance happen in this program. */
+ * running ACK. Native execution and mail acceptance happen in this program.
+ *
+ * Mail order. The body takes its mail and reports it received (the sender sees it delivered), but settles it
+ * only after the answer is recorded. A body that dies before answering therefore leaves the mail with its job,
+ * and loom tries the work again on the bounded retry chain (Jobs.retry). A body that dies after answering
+ * cannot cause a second answer: loom settles the mail in the same write as a thread reply or a bridge reply. */
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
-import { claudeBody } from './claude-body.js';
+import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
+import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
+import {kitReasons,kitUnavailableList,type KitUnavailable} from './kit-availability.js';
+import {bodyKitTools,KIT_SOCKET} from './body-kit-tools.js';
+import {KitCapacity} from './kit-refused.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
+import {BodyJobEnded} from './body-job-ended.js';
+import {BodyContactExpired,BODY_CONTACT_MESSAGE} from './body-contact.js';
 import {bodyCommandClient} from './body-command-client.js';
-import {bodyMemoryIdentity} from './body-memory-identity.js';
+import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
+import {discordAttachmentLabels} from '../pieces/bridges/discord-link.js';
+import {saveBodyAttachments,showBodyAttachments} from './body-attachments.js';
+import {bodyFileReader} from './body-files.js';
+import {bodySessions,type BodySessions} from './body-session.js';
+import { usageReport, type UsageReport } from './usage-report.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
-const config = z.object({ command: z.string().min(1), cwd: z.string().min(1) }).strict();
-const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
-  bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(/^body_[a-f0-9]{64}$/) }).strict(),
+import { BODY_EXIT } from './job-exit.js';
+import { bodyReach, hasFileTools, hasGuest, withUnknownSender, workingFor } from './harness-traits.js';
+import { REPORT_MS } from './silence.js';
+import { BODY_TOKEN } from './body-token.js';
+import { BODY_START_BYTES } from './body-input-limit.js';
+// `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
+// own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
+// way the household's list of tools an agent's body is not given still applies. And whatever is written here,
+// a job on anybody else's word runs with loom's tools only (harness-traits.ts, bodyReach).
+const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
+/** What a body file is, for whoever writes one: the core house's own are held to it. */
+export const bodyFileSchema = config;
+const envelope = z.object({ kitSocket:z.literal(true).optional(), kitUnavailable:kitUnavailableList.optional(), kitReportFailed:z.literal(true).optional(), job: workerAssignment, build: z.string().min(1),
+  bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();
+/** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
+ * loom takes it when the worker reports that exit (Jobs.finish) and records the job as stopped. */
+const left={state:'idle',work:''} as const;
 export async function bodyProgram(input: {
   args: readonly string[]; read: (path: string) => Promise<string>;
   stdin: () => Promise<Uint8Array>; env: NodeJS.ProcessEnv; signal: AbortSignal;
-  fetch?: typeof fetch; clock?: Clock; schedule?: WorkerSchedule; native?: ReturnType<typeof claudeBody>;
+  fetch?: typeof fetch; clock?: Clock; schedule?: WorkerSchedule; native?: HarnessRun;
   /** Runs inside the receiving child, before any model sees startup aliases. */
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
   loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
+  /** The same seam for a bridge conversation's kept harness session. */
+  sessions?: BodySessions;
+  /** The same seam for the files sent with bridge messages. */
+  saveAttachments?: typeof saveBodyAttachments;
+  showAttachments?: typeof showBodyAttachments;
+  /** The same seam for a bridge channel's brief. */
+  loadBrief?: typeof bodyChannelBrief;
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
+  // The stage the body is in, as the exit code a failure there reports (see job-exit.ts).
+  let exit:number=BODY_EXIT.input;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
-  let memoryClient:ReturnType<typeof bodyCommandClient>|undefined;
-  const context: string[] = [], incoming:string[]=[];
-  const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
+  let memoryClient:ReturnType<typeof bodyCommandClient>|undefined,sessionClient:ReturnType<typeof bodyCommandClient>|undefined;
+  let keeper:BodySessions|undefined,saved=false;
+  const context: string[] = [], incoming:string[]=[],discordAttachments=new Map<string,string>();
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
+  // Every report to loom goes through here. One that fails after the first exchange is the stage that failed
+  // (BODY_EXIT.contact), whatever the body was doing when it reported; the first is BODY_EXIT.report.
+  let first=true,contactExpired=false;
+  const jobEnded=new AbortController(),jobSignal=AbortSignal.any([input.signal,jobEnded.signal]);
+  const onJobEnded=()=>{unavailable=true;jobEnded.abort();erase();};
+  const tell=(value:Parameters<NonNullable<typeof client>['status']>[0])=>client!.status(value).catch((error:unknown)=>{if(error instanceof BodyContactExpired)contactExpired=true;if(!first)unavailable=true;throw error;});
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
-  const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
+  const nativeAbort = new AbortController(), signal = AbortSignal.any([jobSignal,nativeAbort.signal]);
+  const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock,onJobEnded});
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   let retirement:Promise<void>|undefined;
+  let measuredDelivery: Promise<unknown> | undefined;
   const retire=()=>retirement??=(async()=>{nativeAbort.abort();memoryClient?.close();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
+    exit=BODY_EXIT.config;
     const plan = config.parse(JSON.parse(await input.read(input.args[0])));
+    exit=BODY_EXIT.envelope;
     bytes = await input.stdin();
-    if (input.signal.aborted || bytes.byteLength > 1_048_576) throw new Error();
+    if (input.signal.aborted || bytes.byteLength > BODY_START_BYTES) throw new Error();
     const parsed = envelope.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     bytes.fill(0); bytes = undefined;
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
+    exit=BODY_EXIT.assignment;
     const bridge=job.venue==='discord'||job.venue==='slack';
     const background=job.venue==='wake'||job.venue==='handoff';
-    if (job.harness !== 'claude' || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    if (!Object.hasOwn(harnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    // What the harness would refuse is known from the assignment and this machine's reach. Refuse now, while
+    // the mail is unaccepted and stays with the job, rather than after the message has been consumed.
+    if (!input.native && harnessCannotRun(job.harness, job.run?.policy, plan.reach)) throw new Error();
+    exit=BODY_EXIT.report;
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
-      job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
+      job: job.id, conversation: job.conversation, signal: jobSignal, onJobEnded, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
-    let reporting:ReturnType<NonNullable<typeof client>['status']>|undefined;
-    const report=()=>reporting??(reporting=client!.status(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
+    let reporting:ReturnType<typeof tell>|undefined;
+    const report=()=>reporting??(reporting=tell(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
     const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
     observe(await report());
-    if(stopped){await client.status({state:'idle',work:'',seenStop:true});return 0;}
+    if(stopped){await tell(left);return BODY_EXIT.stopped;}
+    first=false;
     const beat=()=>{
       if(pending||signal.aborted)return;
-      pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
+      pending=report().then(observe,()=>{erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
     };
-    cancel=input.schedule?input.schedule.every(15_000,beat):(()=>{const timer=setInterval(beat,15_000);return()=>clearInterval(timer);})();
-    await (input.startup ?? secrets.startup)(job, bootstrap, signal);
+    cancel=input.schedule?input.schedule.every(REPORT_MS,beat):(()=>{const timer=setInterval(beat,REPORT_MS);return()=>clearInterval(timer);})();
+    exit=BODY_EXIT.startup;
+    // A job on anybody else's word runs with loom's tools only (policy.ts, loomToolsOnly): no secret is asked
+    // for and none enters its environment. The word is the one loom read at claim; loom's door refuses such a
+    // job the same secrets, so a body program that asked anyway would get nothing.
+    if(!hasGuest(job.run?.policy)) await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
+    exit=BODY_EXIT.mail;
+    // A bridge conversation's body continues the session the last one left, when loom hands one over
+    // (body-session.ts). It is then told the new mail alone: the session already holds what came before.
+    // With none, it starts fresh and is told the conversation's kept history with its mail.
+    // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
+    // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
+    // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
+    if(bridge&&!hasGuest(job.run?.policy)){
+      sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
+      keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
+    }
+    let resume=await keeper?.take();
+    if(signal.aborted)throw new Error();
+    const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
+    // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
+    // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
+    const claimed=job.run?.policy?.mail;let lateStranger=false,placed=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
+      // Mail in a bridge conversation that is no message from the bridge: a trigger's firing there, or a note
+      // from another body of this agent. Its answer is a post in the conversation, answering no message.
+      if(bridge&&(item.source==='trigger'||item.source==='handoff')&&item.words!==null)placed=true;
       if(bridge&&(item.source==='discord'||item.source==='slack')){
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();
         incoming.push(refs[0]);
+        // A hint to check Discord's own message record. No link or file id is read from the words.
+        if(item.source==='discord'&&item.words&&discordAttachmentLabels(item.words).length)discordAttachments.set(refs[0],item.words);
       }
-      const words=bodyMailContext(item);if(words!==null)context.push(words);
+      if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
+      // The oldest word handed in that will be erased: a session started from them is counted from then.
+      for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
+        context.push('Your Codex subagent returned the following result. Continue the originating request using the findings.');
+      }
+      const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
     });
-    if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
+    if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     if(signal.aborted)throw new Error();
-    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
-    memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
-    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent));
-    if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
+    // Mail with no words left to answer (they expired, or the item is muted) needs no answer: settle it now.
+    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.settle();await tell({state:'idle',work:''});return 0;}
+    // A bridge answer is a reply to a message from the bridge. Mail with words and no such message is mail
+    // this body cannot answer, so it fails here, as mail, before anything else is loaded for it.
+    if(bridge&&!incoming.length&&!placed)throw new Error();
+    exit=BODY_EXIT.identity;
+    memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,fetch:input.fetch,clock:input.clock});
+    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
+    if(signal.aborted)throw new Error();
+    // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.
+    // A brief that cannot be found is never a reason to fail: the work goes on and loom tells the owners.
+    const brief=bridge?await (input.loadBrief??bodyChannelBrief)(memoryClient,job.agent):null;
+    if(signal.aborted)throw new Error();
+    // What was sent with the messages, written where a body with file tools can open it (body-attachments.ts).
+    // The room as it is now: a sender nobody looked up, who wrote after loom read the room, counts as a guest.
+    const policy=lateStranger&&job.run?.policy?withUnknownSender(job.run.policy):job.run?.policy;
+    // What this body may use, decided once here for everything below: loom's tools only on anybody else's word.
+    const guest=hasGuest(policy),reach=bodyReach(plan.reach,policy);
+    // The word turned after the startup secrets were fetched: they leave the environment before any harness starts.
+    if(guest)secrets.close();
+    // And the session it was handed before the word turned is not continued, and none is left: its files go
+    // from this machine, and the body starts fresh with the kept history.
+    if(guest&&keeper){keeper.discard();keeper=undefined;resume=undefined;fresh=true;}
+    // A harness that cannot be held to loom's tools does not run such a job: the refusal made before the mail
+    // was taken, made again now that the mail says more. loom leaves a late stranger's mail for the next job
+    // (shared-place-mail.ts, lateMailJoins), so this is reached only if that failed. By now the mail is taken
+    // and not settled: the body leaves with the exit code of an assignment its harness refuses, loom returns
+    // the mail to the job (Jobs.finish), and the retry chain tries the work again.
+    if(!input.native&&harnessCannotRun(job.harness,policy,plan.reach)){exit=BODY_EXIT.assignment;throw new Error();}
+    // Files are for a body that has file tools of its own (harness-traits.ts, hasFileTools): what was sent with
+    // the messages is written where it can open it, and it may name a file of its own for a post.
+    const files=bridge&&hasFileTools(reach,policy);
+    const sent=files?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH],undefined,job.venue==='discord'?discordAttachments:undefined)
+      // A body without file tools is still told what it was sent, and shown the files that are plain words
+      // (body-attachments.ts, showBodyAttachments). Discord's are fetched only for a job that is not held,
+      // so there it is told only that it cannot open them.
+      :discordAttachments.size?'You cannot open these attachments because this body has no file tools.'
+      :bridge?await (input.showAttachments??showBodyAttachments)(memoryClient,incoming):null;
+    if(signal.aborted)throw new Error();
+    if(sent){context.push(sent);continued.push(sent);}
+    // In a bridge's room others speak beside the one who asked. The body is told who this job works for, by loom's
+    // reading of the room, before its mail: a body that continues a kept session is told too, since the asker of
+    // this job need not be the asker of the last (harness-traits.ts, workingFor).
+    if(bridge || policy?.word === 'others' || (job.thread && policy?.word === 'owners')){const asked=workingFor(policy);context.unshift(asked);continued.unshift(asked);}
+    if(job.venue==='loom' && policy?.word==='owners'){
+      const delegation='For a Codex subagent, call conversation.handoff with harness "codex", a unique clientId, label and self-contained words including the repository and commit. Loom returns the result to this thread.';
+      context.unshift(delegation);continued.unshift(delegation);
+    }
+    if(job.venue==='discord'&&job.venueDescription){
+      const where='Current conversation: '+job.venueDescription+'. This is your location for this turn, including when your Discord role page describes the server in general.';
+      context.unshift(where);continued.unshift(where);
+    }
+    if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { await retire(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
-    if(bridge&&!incoming.length)throw new Error();
+    if (started.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     const replyTo=incoming.at(-1);
     if(!input.native){
-      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      exit=BODY_EXIT.tools;
+      // The last two are read by the tools server and by nothing else this is spread into: with the agent's name the
+      // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,onJobEnded,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       programTools=bodyProgramTools({...rootAccess,
-        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
-      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
+        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
+        ...(files?{readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])}:{})});
+      const kitBrief=(items:KitUnavailable[])=>{
+        for(const {kit,reason,partial} of items){
+          const subject=partial?`Some tools in kit ${kit} are unavailable`:`Kit ${kit} is unavailable`;
+          const line=`${subject} because ${kitReasons[reason].why}.`;
+          context.push(line);continued.push(line);
+        }
+      };
+      if(!lateStranger)kitBrief(parsed.kitUnavailable??[]);
+      if(!lateStranger && parsed.kitReportFailed){
+        const line='The worker could not load kit tools or report their availability for this job.';
+        context.push(line);continued.push(line);
+      }
+      const available=parsed.kitSocket&&!lateStranger?await bodyKitTools(KIT_SOCKET,signal,kitBrief,()=>{
+        const line='The worker could not confirm that kit availability was reported for this job.';
+        context.push(line);continued.push(line);
+      }).catch(error=>{
+        const line=error instanceof KitCapacity?error.message:'The worker could not load kit tools for this job.';
+        context.push(line);continued.push(line);
+        return [];
+      }):[];
+      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:[...programTools.extensions,...available],waiting:value=>{secretWaiting=value;},
+        secrets:!guest,alsoSecret:secrets.values});
     }
     if(signal.aborted)throw new Error();
-    const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    exit=BODY_EXIT.harness;
+    let failureReport:UsageReport|undefined;
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, reach, env: input.env, failedUsage:usage=>{failureReport=usage;}, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
+    const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
-    try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
+    const room=policy&&job.run&&policy!==job.run.policy?{...job,run:{...job.run,policy}}:job;
+    const harnessStarted=performance.now();
+    try {
+      if(!keeper)answer = await native(room, context.join('\n\n'), signal);
+      else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
+      catch (error) {
+        // The harness could not continue the session and did nothing: the same work, afresh, with the history.
+        if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
+        answer = await afresh(room, context.join('\n\n'), signal, {});fresh=true;
+      }
+      // No secret this body was handed is said in its answer: one it used, or one it was started with.
+      // One check (body-secrets.ts, saysNoSecret): the tools know the startup values too, and with no tools there are only those.
+      if(!(tools??secrets).allowsReply(answer.text))throw new Error();
+    }
     catch { if(!stopped) throw new Error(); }
-    finally { await retire(); }
-    if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    finally {
+      const report = {...(answer?.usage ?? failureReport ?? {source:'none' as const}), harness:job.harness,
+        model:answer?.model ?? job.model, wallMs:Math.round(performance.now()-harnessStarted)};
+      // Keep a valid measurement in flight during retirement and reply settlement.
+      // Unmeasured or malformed reports must never hold the body open.
+      const measured = !input.signal.aborted && report.source !== 'none' && usageReport.safeParse(report).success;
+      const delivery = client.usage(report, 1000).catch(()=>{});
+      if (measured) measuredDelivery = delivery;
+      await retire();
+    }
+    if(stopped && !jobSignal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
+    exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
+    if(bridge)await client.bridgeReply({...(replyTo?{incoming:replyTo}:{}),text:answer.text,model:answer.model,outcome:'progressed'});
+    else if(job.review)await client.reply({clientId:'review-result',words:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
+    // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
+    // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
+    await client.settle();
+    // The answer is on record. Hand loom the session this run left, for the next body of this conversation,
+    // and take its files off this machine. Never a reason to fail work that is done.
+    // A run that continued a session was told no history, and its start stands. One that started fresh held it.
+    try{await keeper?.save(answer.session,fresh?oldestErased:undefined);saved=true;}catch{/* loom sees the kept session is behind the answer */}
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
+    if(jobSignal.aborted)throw new Error();
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
-    await client.status({ state: 'idle', work: '' });
+    await tell({ state: 'idle', work: '' });
     return 0;
-  } catch {
+  } catch (error) {
+    if(error instanceof BodyContactExpired){unavailable=true;contactExpired=true;}
+    if(error instanceof BodyJobEnded)unavailable=true;
     await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
-      try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
+      try{await tell(left);return BODY_EXIT.stopped;}catch{}
     }
-    input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
+    // A report that failed is why the work was dropped, whichever stage was dropped.
+    input.error(contactExpired?BODY_CONTACT_MESSAGE+'\n':'Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
-  finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { await retire(); await measuredDelivery; if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

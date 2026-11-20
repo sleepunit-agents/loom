@@ -21,7 +21,7 @@ function fixture(install=true){
  db.insert(s.sessions).values({id:hash(cookie),token:hash('a'.repeat(64)),device:'Fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  db.insert(s.changes).values({id:change,repository:'acme/app',number:1,title:'Fixture',body:'',url:'https://github.com/acme/app/pull/1',state:'open',draft:false,authorLogin:'art',project:'pond',agent:'art',branch:'work',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:at,updatedAt:at}).run();
  const restrictions={approval:true,change:true},execute=vi.fn();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},approvedOperations:new Map([['fixture.change',execute]]),workAnswerAuthority:install?{approval:()=>restrictions.approval,change:()=>restrictions.change}:undefined});
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},approvedOperations:new Map([['fixture.change',execute]])});
  cleanup.push(async()=>{await root.close();});
  const ask=(actingFor='pat',operation:string|null=null)=>root.writes.run(()=>root.services.approvals.request({kind:'merge',target:`${change}@${head}`,agent:'art',project:'pond',what:'Merge fixture',why:'Ready',askedFrom:'fixture',actingFor,ask:'Merge this exact head?',ifYes:'Agent merges',ifNo:'Wait',operation})).value;
  const input=(approval:string,person='')=>({approval,change,head,project:'pond',person});
@@ -55,10 +55,6 @@ it('denies visible ordinary members and agents despite permissive callbacks/gran
  for(const token of ['b'.repeat(64),'e'.repeat(64)])expect((await f.post(f.input(card.id),'outside',token)).status).toBe(403);expect(f.snapshot()).toEqual(before);
  expect((await f.post(f.input(card.id))).status).toBe(200);f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run();const committed=f.snapshot();
  expect((await f.post(f.input(card.id))).status).toBe(403);expect((await f.post(f.input(card.id),'fresh')).status).toBe(403);expect(f.snapshot()).toEqual(committed);
-});
-it('retains both authority callback restrictions before fresh writes and cached replay',async()=>{
- for(const gate of ['approval','change'] as const){const f=fixture(),card=f.ask();f.restrictions[gate]=false;const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.post(f.input(card.id))).status).toBe(200);f.restrictions[gate]=false;const committed=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(403);expect((await f.post(f.input(card.id),'fresh')).status).toBe(403);expect(f.snapshot()).toEqual(committed);}
 });
 it('rejects moved heads on replay and preserves a newer rule when a fresh ID repeats an already answered request',async()=>{
  const f=fixture(),card=f.ask();expect((await f.post(f.input(card.id))).status).toBe(200);
@@ -115,11 +111,3 @@ it('refuses a fresh Always grant for closed and merged copies, rolling back the 
  for(const state of ['closed','merged'] as const){const f=fixture(),card=f.ask();f.db.update(s.changes).set({state}).where(eq(s.changes.id,change)).run();const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(409);expect(f.snapshot()).toEqual(before);}
 });
 
-it('requires explicit true from each configured Always gate, including receipt replay',async()=>{
- for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
-  const f=fixture(),card=f.ask(),before=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;
-  expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.post(f.input(card.id))).status).toBe(200);
-  const committed=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(committed);
- }
-});

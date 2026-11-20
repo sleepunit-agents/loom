@@ -2,7 +2,7 @@
   "page": "index",
   "title": "Everything is a conversation .",
   "ownerTask": "t-2190",
-  "sourceSha256": "c58a343a489ee2e6002ec97219c592b3cdc6435bbb3fafff0be4d86b6d9e0932",
+  "sourceSha256": "2dfaa8bcb5a0e61e8698f652e67354b8c5bb80ddd24aeec66bfeef5823373507",
   "promises": [
     {
       "id": "index-001",
@@ -49,7 +49,7 @@
     },
     {
       "id": "index-009",
-      "promise": "6 Only memories are precious Agents' memories are the one kind of data loom treats as irreplaceable.",
+      "promise": "6 Only memories are precious Agents' memories are the one kind of data loom treats as irreplaceable. Notes come second: looked after, but not irreplaceable.",
       "source": "docs/how-it-works/site/index.html"
     },
     {

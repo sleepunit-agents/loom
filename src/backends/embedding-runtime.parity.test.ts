@@ -63,14 +63,14 @@ describe.skipIf(!enabled)('embedding runtime parity with fastembed@2.1.0', () =>
     vectors.forEach((vector, i) => {
       expect(Array.from(vector)).toEqual(Array.from(decode(golden.embed[i]!)));
     });
-  }, 120_000);
+  });
 
   it('reproduces the golden query vectors bit for bit', async () => {
     for (const [i, text] of golden.texts.entries()) {
       const vector = await embedder.queryEmbed(text);
       expect(Array.from(vector)).toEqual(Array.from(decode(golden.query[i]!)));
     }
-  }, 120_000);
+  });
 
   it('produces the same vector regardless of batch size', async () => {
     const batched = await collect(embedder.embed(golden.texts, 32));
@@ -83,7 +83,7 @@ describe.skipIf(!enabled)('embedding runtime parity with fastembed@2.1.0', () =>
     // ever fails, embed() and embedBatch() are writing incompatible vectors
     // into the same table.
     expect(singly.map((v) => Array.from(v))).toEqual(batched.map((v) => Array.from(v)));
-  }, 120_000);
+  });
 
   it('returns unit vectors of the model dimension', async () => {
     const [vector] = await collect(embedder.embed(['normalisation check'], 1));
@@ -91,5 +91,5 @@ describe.skipIf(!enabled)('embedding runtime parity with fastembed@2.1.0', () =>
     expect(vector).toHaveLength(384);
     const norm = Math.sqrt(Array.from(vector!).reduce((sum, v) => sum + v * v, 0));
     expect(norm).toBeCloseTo(1, 5);
-  }, 120_000);
+  });
 });

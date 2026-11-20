@@ -3,6 +3,8 @@
 Data-model sections are generated from model.py so tables are never hand-copied.
 Run: python3 site_build.py   (static output, no script needed to read it)."""
 import html, os, sys
+from pathlib import Path
+from base64 import b64encode
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from model import AREAS
@@ -22,12 +24,13 @@ PATH = [
     ("inbox.html", "Inbox", "One inbox for everything sent to anyone, person or agent.", "cyan"),
     ("memory.html", "Memory", "What an agent remembers and knows. The one thing loom treats as precious.", "cyan"),
     ("machines.html", "Machines and jobs", "Where agents run and what they are running.", "cyan"),
-    ("models.html", "Models and accounts", "Which model a body runs on, and the accounts it draws from.", "cyan"),
+    ("models.html", "Subscriptions", "Every subscription to a model service: its usage, its sign-ins and its settings. Models live here too.", "cyan"),
     ("bridges.html", "Discord and Slack", "How agents talk to people in other apps.", "amber"),
     ("secrets.html", "Secrets", "Credentials agents need, and who may use each one.", "amber"),
     ("people.html", "People and projects", "Who is in the household, which agents they own, which projects they share.", "amber"),
     ("signing-in.html", "Signing in", "How a person, an agent or a machine proves who it is.", "violet"),
     ("outside.html", "Outside programs", "The one door: the API with a token.", "amber"),
+    ("tools.html", "Tools for agents", "What an agent can do through the door, part by part.", "cyan"),
     ("data.html", "How a tile gets its data", "One live connection. A tile says what it wants and then gets only changes.", "cyan"),
     ("measuring.html", "Measuring", "How long things take, counted when you turn it on, and readable by agents.", "violet"),
     ("decided.html", "What we decided", "Every decision in plain words, with the page where it shows up.", "pink"),
@@ -56,8 +59,16 @@ ICONS = {
     "inbox": '<path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/>',
 }
 
+DESK_ICONS = {"tasks":"violet", "inbox":"cyan", "comms":"pink", "approvals":"pink", "tempo":"violet", "changes":"pink"}
+
+def desk_icon(name):
+    art = Path(HERE).parents[1] / "web/src/assets/house-icons" / f"{name}.small.png"
+    encoded = b64encode(art.read_bytes()).decode("ascii")
+    return f'<i class="desk__glyph t-{DESK_ICONS[name]}" style="--glyph:url(data:image/png;base64,{encoded})"></i>'
+
 def tile(tint, icon, title, body, cls=""):
-    return (f'<div class="tile t-{tint} {cls}"><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24">{ICONS[icon]}</svg></span>'
+    glyph = desk_icon(icon) if cls in ("a", "b", "c") and icon in DESK_ICONS else f'<svg viewBox="0 0 24 24">{ICONS[icon]}</svg>'
+    return (f'<div class="tile t-{tint} {cls}"><div class="tile__bar"><span class="tile__key">{glyph}</span>'
             f'<b>{title}</b><span class="tile__acts"><i></i><i></i><i></i></span></div>{body}</div>')
 
 def chat(title, body, foot=None, sub="with Art"):
@@ -99,8 +110,9 @@ FACE_A = '<svg class="face a" viewBox="0 0 40 40"><path class="body" d="M20 3c9 
 FACE_B = '<svg class="face b" viewBox="0 0 40 40"><path class="body" d="M20 3c5 6 14 12 14 21a14 14 0 0 1-28 0C6 15 15 9 20 3z"/><ellipse class="eye" cx="15" cy="22" rx="2.2" ry="2.8"/><ellipse class="eye" cx="25" cy="22" rx="2.2" ry="2.8"/><path class="mouth" d="M17 30h6"/></svg>'
 
 # ───────────────────────── shared frame
-def page(idx, title, body):
-    """idx 0 is the front door; 1..N are the path."""
+def page(idx, title, body, beside=None):
+    """idx 0 is the front door; 1..N are the path. A page that is not on the path names the path page it
+    sits beside: it is shown as beside that page, and leads back to it."""
     dots = ['<li><a href="index.html" title="Start here"%s><span class="sr">Start here</span></a></li>' % (' aria-current="page"' if idx == 0 else "")]
     for i, (f, t, _, _) in enumerate(PATH, 1):
         if f:
@@ -110,12 +122,16 @@ def page(idx, title, body):
             dots.append(f'<li><span title="{i}. {e(t)} (coming)"><span class="sr">{i}. {e(t)}, coming</span></span></li>')
     where = "<b>Start here</b>" if idx == 0 else f"<b>{idx}</b> of {N} · {e(PATH[idx-1][1])}"
     go = []
-    if idx == 1:
+    if beside:
+        dots = [d.replace(' aria-current="page"', "") for d in dots]
+        where = f"beside <b>{idx}</b> · {e(beside)}"
+        go.append(f'<a href="{PATH[idx-1][0]}" rel="prev">‹ <span class="pl">{e(PATH[idx-1][1])}</span></a>')
+    elif idx == 1:
         go.append('<a href="index.html" rel="prev">‹ <span class="pl">Start</span></a>')
     elif idx > 1:
         f, t, _, _ = PATH[idx - 2]
         go.append(f'<a href="{f}" rel="prev">‹ <span class="pl">{e(t)}</span></a>')
-    if idx < N:
+    if idx < N and not beside:
         f, t, _, _ = PATH[idx]
         go.append(f'<a class="next" href="{f}" rel="next"><span class="pl">{e(t)}</span> ›</a>' if f
                   else f'<span><span class="pl">Next: {e(t)}, coming</span><span aria-hidden="true"> ›</span></span>')
@@ -224,7 +240,7 @@ def desk_html():
           <div class="agent">{FACE_B}<div><b>Mark</b><i class="idle">idle</i><span>Nothing right now</span></div></div>
         </div>
       </div>
-      <div class="desk__dock"><span class="t-violet">Tasks</span><span class="t-cyan">Inbox</span><span class="t-pink">Comms</span><span class="t-pink">Approvals</span><span class="t-violet">Tempo</span><span class="t-pink">Changes</span></div>
+      <div class="desk__dock">{"".join(desk_icon(name) for name in DESK_ICONS)}</div>
     </div>'''
 
 # ───────────────────────── index
@@ -282,7 +298,7 @@ def index():
         <li class="node t-pink"><i class="wire"></i>{key("Approvals")}<div class="node__body"><b><a href="{FILE["Approvals"]}">Approvals</a></b><span>An agent asks permission to do one specific thing.</span></div></li>
         <li class="node t-pink"><i class="wire"></i>{key("Changes")}<div class="node__body"><b><a href="{FILE["Changes"]}">Changes</a></b><span>Pull requests a thread mentions show up as cards.</span></div></li>
         <li class="node t-cyan"><i class="wire"></i>{key("Memory")}<div class="node__body"><b>{plink("Memory")}</b><span>What the agent remembers afterwards. The one thing loom treats as precious.</span></div></li>
-        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>One job at a time does the work, on a machine with a worker.</span></div></li>
+        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>Jobs do the work, on a machine with a worker. A worker runs several side by side.</span></div></li>
       </ul>
     </div>
     <div class="map__base">
@@ -292,8 +308,9 @@ def index():
         <li class="node">{key("People and projects")}<div class="node__body"><b>{plink("People and projects")}</b><span>Project, agent and member labels on each record decide who sees it.</span></div></li>
         <li class="node">{key("Signing in")}<div class="node__body"><b>{plink("Signing in")}</b><span>A person, an agent or a machine proves who it is at the door.</span></div></li>
         <li class="node">{key("Outside programs")}<div class="node__body"><b>{plink("Outside programs")}</b><span>One API with a token, for anything outside loom.</span></div></li>
+        <li class="node">{key("Tools for agents")}<div class="node__body"><b>{plink("Tools for agents")}</b><span>What an agent can do through the door, part by part.</span></div></li>
         <li class="node">{key("Secrets")}<div class="node__body"><b>{plink("Secrets")}</b><span>Credentials an agent may be handed, and a record of each use.</span></div></li>
-        <li class="node">{key("Models and accounts")}<div class="node__body"><b>{plink("Models and accounts")}</b><span>Which model a body runs on, and the account it draws from.</span></div></li>
+        <li class="node">{key("Subscriptions")}<div class="node__body"><b>{plink("Subscriptions")}</b><span>Each subscription to a model service: how full, where signed in, which model a body runs on.</span></div></li>
         <li class="node">{key("How a tile gets its data")}<div class="node__body"><b>{plink("How a tile gets its data")}</b><span>One live connection feeds every tile on the desk.</span></div></li>
         <li class="node">{key("Measuring")}<div class="node__body"><b>{plink("Measuring")}</b><span>How long things take, counted when you turn it on.</span></div></li>
         <li class="node">{key("What we decided")}<div class="node__body"><b>{plink("What we decided")}</b><span>Every decision, with the page where it shows up.</span></div></li>
@@ -311,7 +328,7 @@ def index():
       <li class="t-violet"><span class="key" aria-hidden="true">3</span><b>A small team that trusts each other</b><span>The project is the unit of sharing. No fine-grained permissions. Household owners see everything.</span></li>
       <li class="t-amber"><span class="key" aria-hidden="true">4</span><b>Real columns</b><span>Every fact is a named column, defined once with Drizzle. The database does the work. SQLite by default; the database is a configuration choice.</span></li>
       <li class="t-pink"><span class="key" aria-hidden="true">5</span><b>One query endpoint</b><span>A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.</span></li>
-      <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable.</span></li>
+      <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable. Notes come second: looked after, but not irreplaceable.</span></li>
       <li class="t-violet"><span class="key" aria-hidden="true">7</span><b>One program, one data folder</b><span>Quick for someone else to install. One API for the command line, the web app and agents. A restart is an acceptable deploy.</span></li>
       <li class="t-amber"><span class="key" aria-hidden="true">8</span><b>Parts can be replaced</b><span>Each part is a module with a typed interface, so the task store or a bridge can be swapped for another.</span></li>
     </ol>
@@ -578,7 +595,7 @@ def tasks():
     tchat = chat("Pond pump", c_me("Can you find a pump that fits the old hose?") + c_art('Three fit. I filed <span class="chip">t-2188</span> to pick one.')
                  + c_ref("Task", "Pick a replacement pond pump", "open") + c_work(("Pick a replacement pond pump", "open · t-2188 · Made here")))
     hero = hero_two(NUM["Tasks"], "violet", "an app", "Tasks", "<b>The household's work queue.</b> A task is one piece of work with a plain title, a goal and a reason.",
-        ["Shows what is ready to pick up, most urgent first.", "Lets a person or an agent claim work, comment on it and close it.",
+        ["Shows what is ready to pick up, most urgent first.", "Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.",
          "Groups work under a parent and holds back what is blocked.", "Carries a question to a person when the work needs a decision."],
         tile("violet", "tasks", "Tasks", mock), tchat,
         "One task shown two ways, with example content. In a chat a task is a reference: its card shows the title and state and opens the tile, where it is claimed and closed. The thread also lists the work made in it.", "Tasks")
@@ -602,7 +619,7 @@ def tasks():
         <span class="stamp">READY</span>
         <div class="flow"><span>open</span><i class="wire"><em>claim</em></i><span>in progress</span><i class="wire"><em>close</em></i><span>closed</span></div>
       </div>
-      <p>A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.</p>
+      <p>A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress, and unclaiming puts it back. Closing it takes a reason, and the reason cancelled marks it cancelled. A closed task can be reopened.</p>
     </div>
     <div class="how__p t-amber">
       <h3>Parents and blockers</h3>

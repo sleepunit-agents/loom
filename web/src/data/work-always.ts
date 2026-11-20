@@ -1,3 +1,4 @@
+import {displayName} from '../kit/words';
 import {sha256} from '@noble/hashes/sha2.js';
 import type {Change} from '../pieces/change-view/model';
 export interface WorkAlwaysInput {approval:string;change:string;head:string;project:string;person:string}
@@ -12,7 +13,8 @@ export function alwaysInput(card:MergeRequest|undefined,changes:readonly Current
  if(!row||row.state!=='open'||!row.agent||row.agent!==card.agent||row.project!==card.project||!/^[a-f0-9]{40}$/.test(row.headCommit)||!principal||!['owner','member'].includes(principal.role))return;
  return {approval:card.id,change:row.id,head:row.headCommit,project:card.project,person:principal.role==='owner'?'':principal.id};
 }
-export const alwaysLabel=(input:WorkAlwaysInput)=>`Always for ${input.project}${input.person?` for ${input.person}`:''}`;
+/** One "for": the project. A grant that covers only one person's work says whose after it. */
+export const alwaysLabel=(input:WorkAlwaysInput)=>`Always for ${input.project}${input.person?`, ${displayName(input.person)}’s work only`:''}`;
 /** One immutable card/head/project/person intent across windows and reloads. */
 export async function sendWorkAlways(command:WorkAlwaysInput,request:typeof fetch=fetch):Promise<void>{
  const input={approval:command.approval,change:command.change,head:command.head,project:command.project,person:command.person};

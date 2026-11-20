@@ -1,127 +1,173 @@
-/** Internal venue presence controller. Not registered or installed: Runtime must
- * supply authenticated, exact-place lifecycle facts before production wiring.
- * No admission, stop, budget, credential or message-text handling lives here. */
-import type { Clock } from '../../core/index.js';
+/** What a person sees while an agent works on their Discord message: a reaction on the message once a job
+ * has taken it, and the typing indicator in its channel while that job runs. Both are read from what the
+ * database says (mail a running job has taken and not yet answered) and shown by the daemon, never by a
+ * body. The reaction comes off when the mail is settled: by the reply, or by the job ending.
+ *
+ * Best effort throughout. Nothing here writes the database, and nothing that fails here is retried beyond
+ * the next pass or reported as a failure of the job, the mail or the connection. Which messages carry the
+ * reaction is remembered only in memory, so a restart can leave one behind (docs/accepted-tradeoffs.md,
+ * "Taken and working are shown on Discord, best effort"). Slack is not shown: its app has no reactions
+ * scope and Slack gives bots no typing call.
+ */
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import type { Clock } from '../../core/clock.js';
+import type { DataDatabase } from '../../core/data/database.js';
+import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs, jobs } from '../../core/data/schema.js';
+import type { SecretUse } from '../secrets/role.js';
+import { placeAddress, placeClosed } from '../../shared-place-mail.js';
+import { isDiscordId } from './discord-id.js';
+import { parseIncomingId } from './keys.js';
 
-export interface PresenceSnapshot {
-  working: boolean;
-  heartbeat: number;
-  /** Original take times, preserved across heartbeats; already normalized IDs. */
-  taken: Array<{ id: string; at: number }>;
-  postedAt?: number;
-}
-export interface PresenceSource {
-  /** Trusted owning role for ONE bound agent/venue/place. Undefined means done;
-   * wait means unavailable, and must never be interpreted as permission to IO. */
-  snapshot(): PresenceSnapshot | 'wait' | undefined;
-}
-export interface PresenceEffects {
-  /** Idempotent set/unset of this bot's eyes reaction. A lost acknowledgement
-   * may be retried. Transport must recheck current immediately before each IO,
-   * including after credential acquisition, and sanitize upstream failures. */
-  reaction(id: string, add: boolean, current: () => boolean): Promise<void>;
-  /** Discord only; Slack supplies no typing effect. */
-  typing?(current: () => boolean): Promise<void>;
-}
-export interface PresenceOptions {
-  clock: Clock;
-  source: PresenceSource;
-  effects: PresenceEffects;
-  /** Permanent authenticated setup/credential-generation lifetime. */
-  current(): boolean;
-  /** Dynamic composition staging/outside-effects gate. */
-  beforeEffect(): boolean;
-}
-const FRESH = 90_000, PULSE = 5000, MAX_ACKS = 20;
+/** The reaction that says a job has taken a message: 👀, as the earlier bridge showed. */
+export const TAKEN_REACTION = '\u{1F440}';
+/** Discord shows typing for ten seconds after it is asked for; asking this often keeps it showing. */
+export const TYPING_EVERY_MS = 5000;
+const CALL_MS = 10_000;
+/** Presence is optional. Leave the bot's shared request capacity for replies and file operations. */
+const BURST_PER_SECOND = 8;
 
-/** One controller per bound place. No timers start until flush. State is bounded
- * and in memory: durable crash cleanup and the real Runtime source remain pending. */
-export function presence(options: PresenceOptions) {
-  const { clock, source, effects } = options;
-  // false means an add may have reached the platform but was not acknowledged.
-  const reacted = new Map<string, boolean>();
-  let closed = false, running: Promise<void> | undefined, again = false;
-  let cancel: (() => void) | undefined, typedAt = -Infinity;
-  function current() {
-    if (closed) return false;
-    if (!options.current()) { closed = true; cancel?.(); return false; }
-    return options.beforeEffect();
+interface Channel { connection: string; channel: string }
+interface Working extends Channel { message?: string }
+type Taken = Channel & { message: string };
+/** Only bridges.reply settles the mail. Its queued send and running job identify the channel
+ * still owed the final post after settlement. Like the shown reactions, this link is best effort. */
+const queuedReplies = new WeakMap<DataDatabase, Map<string, string>>();
+export function followBridgeReply(db: DataDatabase, send: string, job: string): void {
+  let replies = queuedReplies.get(db);
+  if (!replies) queuedReplies.set(db, replies = new Map());
+  replies.set(send, job);
+}
+/** Every channel owed a reply. Only an identifiable human message gets a reaction. */
+export function workingOn(db: DataDatabase): Working[] {
+  const running = and(eq(inbox.state, 'taken'), eq(jobs.state, 'running'), eq(inbox.toKind, 'agent'),
+    eq(inbox.to, jobs.agent), eq(inbox.conversation, jobs.conversation));
+  const messages = db.selectDistinct({ id: bridgeIncoming.id, connection: bridgeIncoming.connection, channel: bridgeIncoming.channel,
+    bot: bridgeIncoming.bot, webhook: bridgeIncoming.webhook, member: bridgeIncoming.member }).from(inbox)
+    .innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id)).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
+    .innerJoin(jobs, eq(jobs.id, inbox.job)).innerJoin(bridgeConnections, eq(bridgeConnections.id, bridgeIncoming.connection))
+    .where(and(running, eq(inbox.source, 'discord'), eq(bridgeIncoming.state, 'delivered'),
+      eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.enabled, true))).all();
+  const result: Working[] = messages.map(row => {
+    const human = !row.webhook && (row.bot === false || (row.bot === null && row.member !== null));
+    const message = human && parseIncomingId(row.id, row.connection);
+    return { connection: row.connection, channel: row.channel, ...(message ? {message} : {}) };
+  });
+  const placed = db.selectDistinct({ id: conversations.id, venue: conversations.venue, place: conversations.place, agent: conversations.agent })
+    .from(inbox).innerJoin(jobs, eq(jobs.id, inbox.job)).innerJoin(conversations, eq(conversations.id, jobs.conversation))
+    .where(and(running, eq(conversations.venue, 'discord'), inArray(inbox.source, ['trigger', 'handoff']), isNotNull(inbox.words))).all();
+  for (const cv of placed) {
+    const at = placeAddress(db, cv);
+    if (at && !placeClosed(db, cv)) result.push({connection: at.connection, channel: at.channel});
   }
-  function wanted(): Set<string> | undefined {
-    if (!current()) return;
-    const snapshot = source.snapshot();
-    if (snapshot === 'wait') return;
-    if (!snapshot) return new Set();
-    const now = clock.now(), validTime = (at: number) => Number.isFinite(at) && at <= now;
-    if (typeof snapshot.working !== 'boolean' || !validTime(snapshot.heartbeat)
-      || snapshot.postedAt !== undefined && !validTime(snapshot.postedAt)
-      || !Array.isArray(snapshot.taken) || snapshot.taken.some(a => !a || typeof a.id !== 'string'
-        || !a.id.length || a.id.length > 200 || !validTime(a.at))) return;
-    if (!snapshot.working || now - snapshot.heartbeat >= FRESH) return new Set();
-    // First take wins, like the old Presence.status. A heartbeat cannot turn a
-    // previously answered message into a new acknowledgement.
-    const takes = new Map<string, number>();
-    for (const a of snapshot.taken) if (!takes.has(a.id)) takes.set(a.id, a.at);
-    return new Set([...takes].slice(-MAX_ACKS).filter(([, at]) => snapshot.postedAt === undefined || at > snapshot.postedAt).map(([id]) => id));
+  const replies = queuedReplies.get(db);
+  if (replies) for (const [send, job] of replies) {
+    const row = db.select({connection: bridgeSends.connection, channel: bridgeSends.channel}).from(bridgeSends)
+      .innerJoin(bridgeConnections, eq(bridgeConnections.id, bridgeSends.connection)).innerJoin(jobs, eq(jobs.id, job))
+      .where(and(eq(bridgeSends.id, send), inArray(bridgeSends.state, ['pending', 'sending']), eq(jobs.state, 'running'),
+        eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.enabled, true))).get();
+    if (row) result.push(row);
+    else replies.delete(send);
   }
-  const eligible = (id: string, add: boolean) => {
-    const ids = wanted();
-    return ids !== undefined && ids.has(id) === add;
-  };
-  async function cleanup() {
-    for (const id of reacted.keys()) {
-      const ids = wanted();
-      if (!ids) return;
-      if (ids.has(id)) continue;
-      try {
-        await effects.reaction(id, false, () => eligible(id, false));
-        // Transport success acknowledges the removal even if facts changed
-        // during the request; a new add can then restore it.
-        reacted.delete(id);
-      } catch { /* Keep uncertain removals for an idempotent retry. */ }
-    }
-  }
-  async function show() {
-    await cleanup();
-    const ids = wanted();
-    if (!ids) return;
-    for (const id of ids) {
-      if (!eligible(id, true)) continue;
-      if (reacted.get(id) === true) continue;
-      // Cleanup failures consume slots; repeated new takes cannot grow state.
-      if (!reacted.has(id) && reacted.size >= MAX_ACKS) continue;
-      reacted.set(id, false);
-      try { await effects.reaction(id, true, () => eligible(id, true)); reacted.set(id, true); }
-      catch { /* An add may already have happened: retry or clean it up. */ }
-    }
-    // A post/done/stale transition during the add must remove its late reaction
-    // in this same flush, before any typing pulse.
-    await cleanup();
-    if (effects.typing && wanted()?.size && clock.now() - typedAt >= PULSE) {
-      try {
-        await effects.typing(() => !!wanted()?.size);
-        typedAt = clock.now();
-      } catch { /* Retry on the next pulse, without leaking upstream errors. */ }
-    }
-  }
-  function flush(): Promise<void> {
-    if (closed) return Promise.resolve();
-    cancel?.(); cancel = undefined;
-    if (running) { again = true; return running; }
-    running = (async () => {
-      do { again = false; try { await show(); } catch { /* Unavailable owning source holds all effects. */ } }
-      while (again && !closed);
-    })().finally(() => {
-      running = undefined;
-      if (!closed) cancel = clock.at(clock.now() + PULSE, () => { cancel = undefined; void flush(); });
+  return result;
+}
+
+/** Calls through one connection. Local throttling and Discord's rate limits defer the request.
+ * A missing resource or permission suppresses that effect for the rest of this work. */
+type CallResult = boolean | 'deferred' | 'denied';
+export interface PresenceCalls { react(channel: string, message: string, on: boolean): Promise<CallResult>; typing(channel: string): Promise<CallResult> }
+export function bridgePresenceApi(input: { tokenSecret: string; secrets: SecretUse; clock: Clock; current(): boolean; resume?(): void; request?: typeof fetch }): PresenceCalls & { close(): void } {
+  let nextCallAt = 0, windowEnds = 0, remaining = 0;
+  let cancel: (() => void) | undefined;
+  // Re-read the live work when capacity returns. Remember no deferred HTTP request: a job
+  // may have ended, a channel may be empty, or the connection may have been retired.
+  const defer = (until: number) => {
+    if (!cancel && input.resume) cancel = input.clock.at(until, () => {
+      cancel = undefined;
+      if (input.current()) input.resume?.();
     });
-    return running;
-  }
-  return {
-    /** Owning lifecycle updates and staging release request a serialized pass. */
-    flush,
-    /** IO cannot outlive shutdown; terminal cleanup must be flushed beforehand.
-     * This is not durable crash recovery and does not bypass a revoked lifetime. */
-    async close() { closed = true; cancel?.(); cancel = undefined; await running; },
+    return 'deferred' as const;
   };
+  const call = async (method: 'PUT' | 'DELETE' | 'POST', path: string): Promise<CallResult> => {
+    try {
+      const now = input.clock.now();
+      if (now < nextCallAt) return defer(nextCallAt);
+      if (!input.current()) return false;
+      if (now >= windowEnds) { windowEnds = now + 1000; remaining = BURST_PER_SECOND; }
+      if (remaining === 0) return defer(windowEnds);
+      remaining--;
+      return await input.secrets.withValue<CallResult>(input.tokenSecret, async token => {
+        if (!input.current()) return false;
+        // Caught here, inside the use of the credential: an error that left this callback would retire the
+        // connection's whole lifetime (shared-secret-use.ts), and a reaction is not worth a reconnect.
+        try {
+          const response = await (input.request ?? fetch)(`https://discord.com/api/v10/${path}`, { method, redirect: 'error', signal: AbortSignal.timeout(CALL_MS), headers: { Authorization: `Bot ${token}` } });
+          try {
+            const limited = response.status === 429;
+            if (limited || response.headers.get('X-RateLimit-Remaining') === '0') {
+              let seconds = Number(response.headers.get(limited ? 'Retry-After' : 'X-RateLimit-Reset-After'));
+              if (limited && !(seconds > 0)) seconds = Number((await response.json().catch(() => null))?.retry_after);
+              nextCallAt = input.clock.now() + (Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds * 1000) : TYPING_EVERY_MS);
+              if (limited) return defer(nextCallAt);
+            }
+            if (response.status === 403 || response.status === 404) return 'denied';
+            return response.ok;
+          } finally { void response.body?.cancel().catch(() => {}); }
+        } catch { return false; }
+      });
+    } catch { return false; }
+  };
+  const ids = (...values: string[]) => values.every(isDiscordId);
+  return {
+    close: () => { cancel?.(); cancel = undefined; },
+    react: async (channel, message, on) => ids(channel, message) && call(on ? 'PUT' : 'DELETE', `channels/${channel}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`),
+    typing: async channel => ids(channel) && call('POST', `channels/${channel}/typing`),
+  };
+}
+
+/** Shows what `workingOn` says. One pass at a time; a pass asked for while one runs is run after it. */
+export class BridgePresence {
+  private readonly shown = new Map<string, Taken>();
+  private readonly attempted = new Map<string, number>();
+  private readonly typed = new Map<string, number>();
+  private running?: Promise<void>;
+  private again = false;
+  /** `calls` answers the calls for a connection that can be used now, or nothing. */
+  constructor(private db: DataDatabase, private clock: Clock, private calls: (connection: string) => PresenceCalls | undefined) {}
+
+  show(): Promise<void> {
+    if (this.running) { this.again = true; return this.running; }
+    this.running = Promise.resolve().then(async () => { do { this.again = false; await this.pass(); } while (this.again); })
+      .catch(() => { /* best effort: nothing here is anybody's failure */ }).finally(() => { this.running = undefined; });
+    return this.running;
+  }
+
+  private async pass(): Promise<void> {
+    const key = (row: Working) => JSON.stringify([row.connection, row.channel, row.message]);
+    const working = workingOn(this.db);
+    const wanted = new Map(working.filter((row): row is Taken => !!row.message).map(row => [key(row), row]));
+    const now = this.clock.now();
+    const channels = new Map(working.map(row => [JSON.stringify([row.connection, row.channel]), row]));
+    for (const id of this.typed.keys()) if (!channels.has(id)) this.typed.delete(id);
+    for (const [id, row] of channels) {
+      if (this.again) return;
+      if (now - (this.typed.get(id) ?? -Infinity) < TYPING_EVERY_MS) continue;
+      const result = await this.calls(row.connection)?.typing(row.channel);
+      if (result !== 'deferred') this.typed.set(id, result === 'denied' ? Infinity : now);
+    }
+    for (const id of this.attempted.keys()) if (!wanted.has(id)) this.attempted.delete(id);
+    for (const [id, row] of wanted) {
+      if (this.again) return;
+      const now = this.clock.now();
+      if (this.shown.has(id) || now < (this.attempted.get(id) ?? 0)) continue;
+      const result = await this.calls(row.connection)?.react(row.channel, row.message, true);
+      if (result === true) this.shown.set(id, row);
+      else if (result !== 'deferred') this.attempted.set(id, result === 'denied' ? Infinity : now + TYPING_EVERY_MS);
+    }
+    for (const [id, row] of [...this.shown]) {
+      if (wanted.has(id)) continue;
+      if (this.again) return;
+      const result = await this.calls(row.connection)?.react(row.channel, row.message, false);
+      if (result !== 'deferred') this.shown.delete(id);
+    }
+  }
 }

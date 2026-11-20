@@ -21,8 +21,7 @@ it('persists outside-only settings and exports without local writes or retention
  const runtime=measuringRuntime(settings.read,[{kind:'request',name:'graphql'}],timingStore(db),undefined,clock);
  try {
   const after={...DEFAULT_MEASURING,on:true,keep_days:0,send_outside:true,outside_address:'https://monitor.example/v1/traces'};
-  const proposal=settings.prepare(after);
-  settings.apply(proposal);
+  settings.write(after);
   expect(settings.read()).toEqual(after);
   await runtime.reload();
   runtime.run('request','graphql',()=>42);
@@ -30,6 +29,6 @@ it('persists outside-only settings and exports without local writes or retention
   expect(exported).toHaveLength(1);
   expect(db.select().from(timingDays).all()).toEqual([]);
   expect(schedule).not.toHaveBeenCalled();
-  expect(()=>settings.prepare({...after,send_outside:false,outside_address:''})).toThrow();
+  expect(()=>settings.write({...after,send_outside:false,outside_address:''})).toThrow();
  } finally {await runtime.close();client.close();}
 });

@@ -1,29 +1,39 @@
+import {SHA256_HEX} from '../sha256-hex.js';
+import {readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
+import { sessionEnds, tokenLive as live } from '../data/authentication.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
+import { currentMember } from '../../shared-sharing.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
-import { members, tokens, sessions, passkeys } from '../data/schema.js';
+import { tokens, sessions, passkeys } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+id).digest('hex');
-const live = (token: typeof tokens.$inferSelect, now: number) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>now);
 export function sharedAccount(db: DataDatabase, clock: Clock) {
   const ownTokens = (member: string) => db.select().from(tokens).where(and(eq(tokens.kind,'owner'),eq(tokens.member,member))).all();
   return {
+    /** A person's own passkeys and browsers. The caller is that person, signed in, so they are in the household:
+     * for their own tokens, live is what the door means by current (core/data/authentication.ts, currentToken). */
     read(member: string) {
-      const own = ownTokens(member), ids = new Set(own.map(t=>t.fingerprint));
-      return { member,
-        passkeys: db.select().from(passkeys).all().filter(k=>ids.has(k.token)).map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(own.find(t=>t.fingerprint===k.token)!,clock.now())})),
-        sessions: db.select().from(sessions).all().filter(s=>ids.has(s.token)).map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(own.find(t=>t.fingerprint===s.token)!,clock.now())||Date.parse(s.issuedAt)+(s.isAgent?6*3600000:30*86400000)<=clock.now()})),
+      const rows = readPersonalAccount(db,member);
+      return {member,
+        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(rows.tokens.get(k.token)!,clock.now())})),
+        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(rows.tokens.get(s.token)!,clock.now())||sessionEnds(s)<=clock.now()})),
       };
     },
     removePasskey(member: string, reference: string) {
       const own = new Set(ownTokens(member).map(t=>t.fingerprint)), key = db.select().from(passkeys).all().find(k=>ref('passkey',k.id)===reference&&own.has(k.token));
       if(!key)throw new OperationError('not-found','Passkey not found');
+      // Removing a passkey takes back what it let in: the browsers it signed in end with it, including the
+      // one asking if the passkey made that one. A browser signed in before sessions recorded their
+      // passkey (schema step 6) names none and has to be revoked by hand.
+      for(const session of db.select({id:sessions.id}).from(sessions).where(eq(sessions.passkey,key.id)).all())endBrowser(db,session.id);
       db.delete(passkeys).where(eq(passkeys.id,key.id)).run();
       return {removed:true as const};
     },
@@ -36,10 +46,10 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
   };
 }
 export function registerSharedAccount(operations: Operations, db: DataDatabase, service: ReturnType<typeof sharedAccount>) {
-  const member = (viewer: Viewer) => viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
-  const reference=z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict();
+  const member = (viewer: Viewer) => currentMember(db, viewer);
+  const reference=z.object({ref:z.string().regex(SHA256_HEX)}).strict();
   operations.register({name:'account.removePasskey',write:true,recheckPolicy:true,input:reference,output:z.object({removed:z.literal(true)}),may:member,
-    run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);return result;}});
+    run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);ctx.changed('core.access',ctx.viewer.id);return result;}});
   operations.register({name:'account.revokeSession',write:true,recheckPolicy:true,input:reference,output:z.object({revoked:z.literal(true)}),may:member,
     run(ctx,input){const result=service.revokeSession(ctx.viewer.id,input.ref);ctx.changed('core.access',ctx.viewer.id);return result;}});
 }
@@ -50,5 +60,5 @@ export function sharedAccountFields(db: DataDatabase, clock: Clock, notification
   const push=new GraphQLObjectType({name:'PersonalNotifications',fields:{publicKey:{type:GraphQLString},devices:{type:new GraphQLList(device)}}});
   const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},notifications:{type:push},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
   const service=sharedAccount(db,clock);
-  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
+  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&sqlHolds(db,rules.currentMember,viewer)?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
 }

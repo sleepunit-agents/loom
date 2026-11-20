@@ -11,7 +11,7 @@ import {bodyProgram} from './runtime/body-program.js';
 import {claudeBody} from './runtime/claude-body.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
 import {getRequestListener} from '@hono/node-server';
-import {eq} from 'drizzle-orm';
+import {and,eq,inArray} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-process.js';
@@ -22,7 +22,7 @@ const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of
 function nativeReply(child:ChildProcessWithoutNullStreams,args:readonly string[],actions:readonly {name:string;input:Record<string,unknown>}[]=[]){
  const session=args[args.indexOf('--session-id')+1];
  const assistant=(content:unknown[])=>({type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content}});
- const rows=[...actions.map(action=>assistant([{type:'tool_use',id:randomUUID(),name:'mcp__loom_secrets__'+action.name,input:action.input}])),assistant([{type:'text',text:'PRIVATE WORKER REPLY'}]),{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
+ const rows=[...actions.map(action=>assistant([{type:'tool_use',id:randomUUID(),name:'mcp__loom__'+action.name,input:action.input}])),assistant([{type:'text',text:'PRIVATE WORKER REPLY'}]),{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
  child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
 }
 it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async variant=>{
@@ -30,7 +30,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness,series:'series'}]});
  f.root.writes.run(()=>{
   if(variant==='tempo'){f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();f.db.insert(s.tempoSettings).values({whoKind:'person',who:'alice',settleSeconds:5,dimDays:3,muteDays:9}).run();}
-  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
+  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.delete(s.jobs).run();
   f.db.insert(s.boxAgents).values({box:'box',agent:'art',lent:false}).run();f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'requested-model',position:0}).run();
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
   f.db.insert(s.modelAccounts).values({id:'account',owner:'alice',provider:'provider',label:'Fixture account',hasRoom:true}).run();
@@ -50,7 +50,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const ended=new WeakSet<ChildProcessWithoutNullStreams>(),aborts=new WeakMap<ChildProcessWithoutNullStreams,AbortController>();
  const native=claudeBody({command:'/fake/claude',cwd:'/work',env:{},spawn:(_command,args)=>{
   const events=new EventEmitter();let words='';const child=Object.assign(events,{stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn(()=>true),stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();},final(done){done();queueMicrotask(()=>{
-   expect(words).toBe('PRIVATE WORKER INPUT');expect(args[args.indexOf('--model')+1]).toBe('requested-model');child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));nativeReply(child,args);
+   expect(words).toMatch(/approvals\.answer[\s\S]*\n\nPRIVATE WORKER INPUT$/);expect(args[args.indexOf('--model')+1]).toBe('requested-model');child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));nativeReply(child,args);
   });}})})as unknown as ChildProcessWithoutNullStreams;return child;
  }});
  // Keep the scenario assertions separate from provider stream plumbing.
@@ -64,12 +64,13 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   const readCard=async(id:string)=>{const response=await fetch(url+'/graphql',{method:'POST',redirect:'error',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:cardSelection,variables:{id}})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data.approvals;};
   expect(timing()).toEqual({settleSeconds:5,dimDays:3,muteDays:9});
   for(const [seconds,allow]of [[60,true],[120,false]]as const){
-   const before=timing(),after={...before,settleSeconds:seconds},result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
-   expect(result).toEqual({ok:true,value:{id:expect.any(String)}});
+   const before=timing(),after={...before,settleSeconds:seconds},result=await command('household.propose',{change:'tempoTimings',input:{who,settleSeconds:seconds},why:'Requested in this conversation'},randomUUID());
+   expect(result).toEqual({ok:true,value:{id:expect.any(String),state:'pending'}});
    const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
-   expect(card).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
-   expect(JSON.parse(card.details!)).toEqual({who,before,after});
-   expect(card.changeSummary).toBe(`Tempo for person alice: settle ${before.settleSeconds} → ${seconds} seconds; dim 3 → 3 days; mute 9 → 9 days`);
+   expect(card).toMatchObject({kind:'setting',operation:'household.change',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
+   // The card keeps what was asked for, and a digest of what it would replace in place of the value.
+   expect(JSON.parse(card.details!)).toEqual({change:'tempoTimings',after:{settleSeconds:after.settleSeconds,who},seal:{nonce:expect.any(String),digest:expect.stringMatching(/^[0-9a-f]{64}$/)}});
+   expect(card.changeSummary).toContain('Tempo timings for person alice');
    expect(timing()).toEqual(before);
    expect(await readCard(id)).toEqual([{id,state:'pending',details:card.details,changeSummary:card.changeSummary}]);
    // Filing a private card gives the body no generic read of a person's records.
@@ -81,7 +82,6 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    const returned=f.db.select().from(s.inbox).all().filter(item=>item.source==='answer'&&item.sourceId===question.id);
    expect(returned).toEqual([expect.objectContaining({toKind:'agent',to:'art',conversation:f.thread.conversation,fromKind:'person',fromId:'alice',words:expect.stringContaining(allow?'Allow':'Deny')})]);
   }
-  expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
   const id='native-'+randomUUID();
   expect(await command('tempo.set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Ordinary native Tempo work',note:'Native read variant'},randomUUID())).toMatchObject({ok:true,value:{id}});
@@ -98,29 +98,29 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   try{
    expect(command).toBe('/bin/bash');expect(args[args.indexOf('--model')+1]).toBe('requested-model');expect(args).toContain('--strict-mcp-config');expect(args[args.indexOf('--setting-sources')+1]).toBe('');expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args[args.indexOf('--permission-mode')+1]).toBe('dontAsk');expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);
    const start=args.indexOf('--allowedTools');expect(start).toBeGreaterThan(-1);const end=args.findIndex((value,index)=>index>start&&value.startsWith('--'));allowed=args.slice(start+1,end<0?undefined:end);
-   expect(allowed).toEqual(expect.arrayContaining(['mcp__loom_secrets__loom_commands','mcp__loom_secrets__loom_command','mcp__loom_secrets__loom_query']));
+   expect(allowed).toEqual(expect.arrayContaining(['mcp__loom__loom_commands','mcp__loom__loom_command','mcp__loom__loom_query']));
   }catch(error){nativeFailure=error;throw error;}
   const actions:{name:string;input:Record<string,unknown>}[]=[];
   let words='',connection:{url:string;headers:Record<string,string>}|undefined,started=false,inputEnded=false;
   const execute=()=>{if(started||!inputEnded||!connection)return;started=true;void(async()=>{
    const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
    try{
-    expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
-    expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
+    expect(words).toMatch(/approvals\.answer[\s\S]*\n\nPRIVATE WORKER INPUT$/);expect(acknowledged).toBe(true);
+    expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
     const tools=(await protocol.listTools()).tools;
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
     const decoded=(value:unknown)=>JSON.parse((value as {content:{text:string}[]}).content[0].text);
-    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
+    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
     const catalogue=await call('loom_commands',{});
     expect(catalogue.ok).toBe(true);
-    expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','tempo.proposeSettings','inbox.volume']));
+    expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','household.propose','inbox.volume']));
     await exerciseTempo((operation,input,id)=>call('loom_command',{operation,input,id}),input=>call('loom_query',input));
    }finally{await protocol.close();}
   })().then(()=>{nativeActions=actions.length;nativeReply(child,args,actions);
   },error=>{nativeFailure=error;child.emit('close',1,null);});};
-  const controlPipe=new Writable({write(bytes,_encoding,done){const servers=JSON.parse(bytes.toString()).mcpServers;expect(Object.keys(servers)).toEqual(['loom_secrets']);connection=servers.loom_secrets as NonNullable<typeof connection>;nativeEndpoint=connection.url;done();},final(done){done();execute();}});
+  const controlPipe=new Writable({write(bytes,_encoding,done){const servers=JSON.parse(bytes.toString()).mcpServers;expect(Object.keys(servers)).toEqual(['loom']);connection=servers.loom as NonNullable<typeof connection>;nativeEndpoint=connection.url;done();},final(done){done();execute();}});
   const stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();},final(done){done();inputEnded=true;execute();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,controlPipe],kill:vi.fn(()=>{child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   return child;
@@ -154,10 +154,10 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   expect(nativeEndpoint).toBeDefined();await expect(fetch(nativeEndpoint!)).rejects.toThrow();
  }
  const job=f.db.select().from(s.jobs).get()!;
- expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
+ expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'','body');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
-expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2+nativeActions});
+expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({turnCount:2+nativeActions});expect(f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),inArray(s.jobs.state,['queued','starting','running']))).all()).toEqual([]);
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
  else expect(f.db.select().from(s.digests).all()).toMatchObject([{conversation:f.thread.conversation,run:job.id,revision:1,summary:'Completed this stretch of work.',inboxItem:null}]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
@@ -166,4 +166,4 @@ expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKin
  expect(tokenCopy).toBeDefined();const token=tokenCopy!.toString();expect(f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,hash(token))).get()).toMatchObject({job:job.id,madeFrom:hash(raw.runner)});
  const denied=await fetch(url+'/api/conversation/status',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{state:'working',work:''},id:'ended'})});expect(denied.status).toBe(401);
  const durable=f.db.$client.serialize();for(const value of [token,'PRIVATE WORKER INPUT','PRIVATE WORKER REPLY','PRIVATE NATIVE DIAGNOSTIC'])expect(durable.includes(Buffer.from(value))).toBe(false);
-},20000);
+});

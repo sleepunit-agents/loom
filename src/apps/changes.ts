@@ -1,8 +1,9 @@
+import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
 import { lastApprovalAnswer } from './approval-answer.js';
-import { changeSchema, repoId, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
+import { changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
 export type ChangeRow = typeof changes.$inferSelect;
 export type ChangeDetail = ChangeRow & {
@@ -12,7 +13,7 @@ export type ChangeDetail = ChangeRow & {
 };
 export type MergeRuleReader = (target: string, agent: string) => Rule | undefined;
 export type PullRequestReader = (repository: string, now: number) => Promise<Change[]>;
-const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
+const order: readonly string[] = changes.waitingOn.enumValues;
 
 export class AttributionConflict extends Error {}
 function agentFor(db:DataDatabase,login:string){
@@ -47,7 +48,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     if (c.id !== id) throw new Error('Pull request identity differs from repository and number');
     if (!c.created || !c.updated) throw new Error('Pull request timestamps are required');
     const held = { ...c, ...(agent ? { agent } : {}) };
-    const target = `${id}@${c.head.id}`;
+    const target = mergeTargetFor(id, c.head.id);
     let answer = agent ? rule(target, agent) : undefined;
     const decision = agent ? lastApprovalAnswer(db, agent, 'merge', target) : undefined;
     if (decision) {
@@ -74,7 +75,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     for (const name of c.checks.failing) checks.set(name, 'failing');
     for (const [name, state] of checks) db.insert(changeChecks).values({ change: id, name, state }).run();
     db.delete(changePeople).where(eq(changePeople.change, id)).run();
-    const roles = ['author', 'reviewer', 'requested', 'assignee', 'commenter'] as const;
+    const roles = changePeople.role.enumValues;
     for (const p of [...c.people, { login: c.author.login, role: 'author' }]) {
       if (!(roles as readonly string[]).includes(p.role)) continue;
       db.insert(changePeople).values({ change: id, login: p.login, role: p.role as typeof roles[number] }).onConflictDoNothing().run();
@@ -119,6 +120,16 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
   };
 }
 
+/** Does loom read this repository: is it one of a project's, or is a change of it held here? For a
+ * repository loom reads, a merge card is held to the change loom holds. For one it does not, loom has no
+ * facts about the pull request, and the card's own words (one exact commit) are all there is. */
+export function readsRepository(db: DataDatabase, repository: string): boolean {
+  // Compared by the repository's one identity, so a stored `Acme/App.git` is the repository `acme/app`.
+  const wanted = repositoryKey(repository);
+  return db.select({ repository: projectRepositories.repository }).from(projectRepositories).all().some(row => repositoryKey(row.repository) === wanted)
+    || db.select({ repository: changes.repository }).from(changes).all().some(row => repositoryKey(row.repository) === wanted);
+}
+
 /** Trusted repository-label refresh. The caller owns the enclosing DataWrites
  * transaction and current write authority. No GitHub facts or timestamps change.
  * Returning IDs lets that caller report affected Changes without another feed. */
@@ -137,7 +148,7 @@ export function reprojectChanges(db: DataDatabase): string[] {
 export function reattributeChanges(db:DataDatabase,rule:MergeRuleReader=()=>undefined){
  return db.transaction(()=>{
   const updates=db.select().from(changes).all().map(row=>{
-   const agent=agentFor(db,row.authorLogin),waitingOn=waitsOn({state:row.state,draft:row.draft,mergeable:row.mergeable,conflicts:row.mergeable==='no',checks:{state:row.checks},review:{state:row.review},...(agent?{agent}:{})},agent?rule(`${row.id}@${row.headCommit}`,agent):undefined).group;
+   const agent=agentFor(db,row.authorLogin),waitingOn=waitsOn({state:row.state,draft:row.draft,mergeable:row.mergeable,conflicts:row.mergeable==='no',checks:{state:row.checks},review:{state:row.review},...(agent?{agent}:{})},agent?rule(mergeTargetFor(row.id,row.headCommit),agent):undefined).group;
    return{row,agent,waitingOn};
   });
   for(const {row,agent,waitingOn}of updates)if(row.agent!==agent||row.waitingOn!==waitingOn)db.update(changes).set({agent,waitingOn}).where(eq(changes.id,row.id)).run();

@@ -1,248 +1,378 @@
+/** The Discord side of the bridge daemon, from a gateway frame to what is delivered, with Discord's API
+ * played by a table of answers. What each rule decides is tested where the rule lives (incoming.test.ts,
+ * normalize.test.ts); this checks that the daemon reads what those rules need and hands it over. */
+import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
-import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
-import { fixture, fixtureSharing } from '../../fixture.js';
-import { FakeClock } from '../../core/index.js';
-import { installSecrets } from '../secrets/index.js';
-import { installBridges } from './index.js';
-import { venueSchema } from './model.js';
-import { put } from './store.js';
-import { discordInbox } from './discord-inbox.js';
+import { createDataSchema } from '../../core/data/database.js';
+import { DataWrites } from '../../core/data/writes.js';
+import { FakeClock } from '../../core/clock.js';
+import { eq } from 'drizzle-orm';
+import { conversations, members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
+import { Jobs } from '../../runtime/jobs.js';
+import { STOP_WORD } from './incoming.js';
+import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
+import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { DiscordGatewayOptions } from './discord-gateway.js';
-const cleanups: (()=>Promise<void>)[]=[];
-afterEach(async()=>{for(const close of cleanups.splice(0)) await close();vi.restoreAllMocks();});
-class FakeSocket extends EventEmitter {
-  readyState=1;
-  send=vi.fn((_s:string,done:(error?:Error)=>void)=>done());
-  ping=vi.fn();
-  terminate=vi.fn(()=>{this.readyState=3;this.emit('close');});
-  frame(value:unknown){this.emit('message',Buffer.from(JSON.stringify(value)),false);}
-  hello(){this.frame({op:10,d:{heartbeat_interval:100000}});}
-  ready(){this.frame({op:0,t:'READY',s:1,d:{user:{id:'200'},session_id:'SESSION',resume_gateway_url:'wss://gateway.discord.gg/'}});}
-  message(){this.frame({op:0,t:'MESSAGE_CREATE',s:2,d:payload});}
-}
-const venue=venueSchema.parse({id:'discord',platform:'discord',agent:'art',workspace:'100',bot:'200',tokenSecret:'bot'});
-const payload={id:'300',channel_id:'400',guild_id:'100',type:0,content:'hello <@200>',author:{id:'500'},mentions:[{id:'200'}],mention_roles:[]};
-const checkpoint=(seq:number)=>({session:'SESSION',url:'wss://gateway.discord.gg/?v=10&encoding=json',seq});
-async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
-async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
-function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,describe=true,pending=false,secondAuth,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;describe?:boolean;pending?:boolean;secondAuth?:Promise<Response>;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
-  const home=mkdtempSync(join(tmpdir(),'discord-root-'));fixture(home);
-  const clock=new FakeClock();let epoch='00000000-0000-4000-8000-000000000000';
-  const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
-  const sockets:FakeSocket[]=[];const buffers:Uint8Array[]=[];
-  const source={generation:vi.fn(generation ?? (async()=>epoch)),read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
-  let authReads=0;
-  const request=vi.fn<typeof fetch>(async url=>{
-    const path=String(url);
-    if(path.endsWith('users/@me') && ++authReads===2 && secondAuth)return secondAuth;
-    if(path.endsWith('users/@me'))return Response.json({id:'200',bot:true});
-    if(path.endsWith('guilds/100'))return Response.json({id:'100'});
-    return Response.json({id:'400',guild_id:'100',type:0,name:'general'});
+
+const clean: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
+const guild = '100000000000000001', bot = '200000000000000002', mark = '200000000000000003', room = '300000000000000004', person = '400000000000000005';
+const artRole = '500000000000000006', markRole = '500000000000000007';
+
+function discordFixture(overrides: Partial<SharedBridgeOptions> = {}) {
+  const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
+  const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client);
+  db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: at }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '', markFg: '', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(secrets).values({ name: 'TOKEN', description: '', changedAt: at, changedBy: 'owner' }).run();
+  db.insert(bridgeConnections).values({ id: 'connection', platform: 'discord', workspace: guild, botUser: bot, agent: 'art', tokenSecret: 'TOKEN', enabled: true, state: 'disconnected', stateAt: at }).run();
+  db.insert(bridgePeople).values({ platform: 'discord', workspace: guild, user: person, member: 'owner' }).run();
+  /** What Discord answers, by method and path. A path with no answer is a 404. */
+  const answers = new Map<string, unknown>([
+    ['GET users/@me', { id: bot, bot: true }],
+    [`GET guilds/${guild}`, { id: guild }],
+    [`GET guilds/${guild}/roles`, [{ id: guild, managed: false }, { id: artRole, managed: true, tags: { bot_id: bot } }, { id: markRole, managed: true, tags: { bot_id: mark } }]],
+    [`GET channels/${room}`, { id: room, guild_id: guild, type: 0 }],
+  ]);
+  const calls: { method: string; path: string; body?: unknown }[] = [];
+  const request = vi.fn<typeof fetch>(async (url, options) => {
+    const path = String(url).replace('https://discord.com/api/v10/', ''), method = options?.method ?? 'GET';
+    calls.push({ method, path, ...(options?.body ? { body: JSON.parse(String(options.body)) } : {}) });
+    const answer = answers.get(`${method} ${path}`);
+    if (answer === undefined) return Response.json({ message: 'Not found' }, { status: 404 });
+    if (Buffer.isBuffer(answer)) return new Response(answer, { headers: { 'content-type': 'image/png' } });
+    return answer === null ? new Response(null, { status: 204 }) : Response.json(answer);
   });
-  const startOptions: Parameters<typeof startLoom>[0]={home,next:true,staging,clock,sharing,stdout:()=>{},
-    bridges:{source,name:()=> 'Jonathan',receive,request,discordSocket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<DiscordGatewayOptions['socket']>>;}},
-    install(a){
-      installSecrets(a.db,a.operations,a.live,sharing);installBridges(a,sharing);
-      let n=0;for(const name of ['bot']){
-        if(describe)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`d${n++}`).ok).toBe(true);
-      }
-      put(a.db,'venues',venue);if(secondAuth)put(a.db,'venues',{...venue,id:'discord-second'});
-      if(pending){const inbox=discordInbox(a.db,clock,{venue,credentialEpoch:epoch},()=>epoch);void inbox.commit({type:'READY',seq:1,data:{user:{id:'200'},session_id:'SESSION'}},checkpoint(1));void inbox.commit({type:'MESSAGE_CREATE',seq:2,data:payload},checkpoint(2));}
-    }};
-  const app=await startLoom(startOptions);
-  cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  return {app,clock,sockets,source,buffers,request,receive,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
+  const gateways: DiscordGatewayOptions[] = [];
+  const discord: SharedBridgeOptions['discord'] = options => { gateways.push(options); options.state?.('connected'); return { close: async () => {} }; };
+  const errors: Error[] = [];
+  const writes = new DataWrites(db, { refreshAccess() {}, changed() {} });
+  const source = { generation: async () => '12345678-1234-4234-8234-123456789abc', read: async (name: string) => Buffer.from('synthetic:' + name) };
+  const daemon = new SharedBridges({ db, clock, writes, source, effectsAllowed: () => true, changed() {}, reportError: error => errors.push(error), request, discord, ...overrides });
+  clean.push(() => daemon.close());
+  let seq = 0;
+  /** One MESSAGE_CREATE through the gateway and the drain that follows it. */
+  const say = async (data: Record<string, unknown>) => {
+    const id = String(600000000000000000n + BigInt(++seq));
+    const d = { type: 0, id, guild_id: guild, channel_id: room, author: { id: person, bot: false }, content: 'Hello', mentions: [], timestamp: '2026-11-14T12:00:00.000Z', ...data };
+    await gateways.at(-1)!.commit({ type: 'MESSAGE_CREATE', data: d, seq }, { session: 'fixture', url: 'wss://gateway.discord.gg', seq }, Buffer.from(JSON.stringify({ op: 0, t: 'MESSAGE_CREATE', s: seq, d })));
+    clock.advance(0); await daemon.idle();
+    return db.select().from(bridgeIncoming).all().find(row => row.id === `bi:${JSON.stringify(['connection', d.id])}`)!;
+  };
+  const dispatch = async (type: string, data: unknown) => {
+    ++seq;
+    await gateways.at(-1)!.commit({type,data,seq}, {session:'fixture',url:'wss://gateway.discord.gg',seq}, Buffer.from(JSON.stringify({op:0,t:type,s:seq,d:data})));
+  };
+  const start = async () => { await daemon.ready(); await daemon.idle(); };
+  return { client, db, clock, writes, daemon, request, answers, calls, gateways, errors, say, start, dispatch };
 }
-it('root uses installed credentials without service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
-  const f=await setup({pending:true});
-  expect(f.app.operations.has('secrets.grantService')).toBe(false);
-  expect(f.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
-  await until(()=>f.receive.mock.calls.length===1 && f.sockets.length===1);await settle();
-  expect(f.request.mock.calls.slice(0,2).map(c=>String(c[0]).split('/').pop())).toEqual(['@me','100']);
-  expect(f.app.db.prepare('SELECT state,event FROM bridges_discord_receipts').get()).toEqual({state:'consumed',event:null});
-  expect(f.source.read.mock.calls.map(c=>c[0])).toContain('bot');expect(f.buffers.every(b=>b.every(x=>x===0))).toBe(true);
-});
-it('missing secret names cause no holder or network IO and recover after the owner describes them',async()=>{
-  const f=await setup({describe:false});await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
-  for(const name of ['bot'])expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`describe-${name}`).ok).toBe(true);
-  f.clock.advance(5000);await until(()=>f.sockets.length===1);
-});
-it('staging holds authentication and dial, then releases one stable connection attempt',async()=>{
-  const f=await setup({staging:true});await settle();expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();
-  f.clock.advance(5000);await settle();
-  const rows=f.app.db.prepare("SELECT id FROM core_effects WHERE kind='bridge-send'").all() as {id:string}[];expect(rows).toHaveLength(1);
-  expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:rows[0].id},'release').ok).toBe(true);
-  f.clock.advance(0);await until(()=>f.sockets.length===1);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(1);
-});
-it('Commits raw dispatches while normalization waits, and root close waits before closing SQLite',async()=>{
-  const handoff=deferred<void>();const receive=vi.fn(async()=>handoff.promise);const f=await setup({receive});await until(()=>f.sockets.length===1);
-  const socket=f.sockets[0];socket.hello();await until(()=>socket.send.mock.calls.length===1);socket.ready();socket.message();await until(()=>socket.send.mock.calls.length===1 && receive.mock.calls.length===1);
-  let closed=false;let closing:Promise<void>|undefined;try {
-  expect(f.app.db.prepare('SELECT state FROM bridges_discord_receipts').get()).toEqual({state:'pending'});
-  // A blocked normalized commit must not occupy the Gateway's raw commit queue.
-  socket.frame({op:0,t:'MESSAGE_CREATE',s:3,d:{...payload,id:'301'}});
-  await until(()=> (f.app.db.prepare('SELECT count(*) n FROM bridges_discord_receipts').get() as {n:number}).n===2);
-  expect(discordInbox(f.app.db,f.clock,{venue,credentialEpoch:'00000000-0000-4000-8000-000000000000'},()=> '00000000-0000-4000-8000-000000000000').load()?.seq).toBe(3);
-  expect(receive).toHaveBeenCalledOnce();
-  closing=f.app.close().then(()=>{closed=true;});
-    await vi.waitFor(()=>expect(socket.terminate).toHaveBeenCalledOnce());
-    expect(closed).toBe(false);expect(f.app.db.open).toBe(true);
-  } finally { handoff.resolve(); await closing; }
-  expect(f.app.db.open).toBe(false);
-});
-it('credential epochs and setup edit/restore retire old receivers and reauthenticate',async()=>{
-  const f=await setup();await until(()=>f.sockets.length===1);const first=f.sockets[0];first.hello();
-  f.rotate();f.clock.advance(5000);await until(()=>f.sockets.length===2);expect(first.terminate).toHaveBeenCalledOnce();
-  const second=f.sockets[1];second.hello();
-  put(f.app.db,'venues',{...venue,bot:'999'});f.app.live.changed([{type:'bridges.venue',id:venue.id}]);
-  put(f.app.db,'venues',venue);f.app.live.changed([{type:'bridges.venue',id:venue.id}]);
-  expect(second.terminate).toHaveBeenCalledOnce();second.message();
-  f.clock.advance(5000);await until(()=>f.sockets.length===3);expect(second.send).not.toHaveBeenCalled();
-  expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(3);
-});
-it('shutdown waits for a deferred Identify holder read before SQLite closes',async()=>{
- const f=await setup();await until(()=>f.sockets.length===1);const held=deferred<Uint8Array>();f.source.read.mockImplementationOnce(()=>held.promise);
- f.sockets[0].hello();await until(()=>f.source.read.mock.results.at(-1)?.value===held.promise);
- let done=false;const closing=f.app.close().then(()=>{done=true;});
- try {await vi.waitFor(()=>expect(f.sockets[0].terminate).toHaveBeenCalledOnce());expect(done).toBe(false);expect(f.app.db.open).toBe(true);}
- finally {held.resolve(Buffer.from('PRIVATE-bot'));await closing;}
- expect(f.sockets[0].send).not.toHaveBeenCalled();expect(f.app.db.open).toBe(false);
-});
-it('detects credential replacement while handoff is pending and suppresses late consumption',async()=>{
-  const held=deferred<void>();const receive=vi.fn(async()=>held.promise);const f=await setup({pending:true,receive});
-  await until(()=>receive.mock.calls.length===1 && f.sockets.length===1);
-  f.rotate();f.clock.advance(5000);await settle();expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
-  held.resolve();await until(()=>f.sockets.length===2);await settle();
-  // A replacement epoch cannot inherit the old raw receipt; late work cannot consume it.
-  expect(receive).toHaveBeenCalledTimes(1);expect(f.app.db.prepare('SELECT state FROM bridges_discord_receipts').get()).toEqual({state:'pending'});
-});
-it.each(['secret.name','secret.grant','secret.policy','core.access'])('immediately retires an active session on %s',async type=>{
-  const f=await setup();await until(()=>f.sockets.length===1);
-  f.app.live.changed([{type,id:'changed'}]);expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
-  await until(()=>f.sockets.length===2);
-});
-it('keeps the authenticated session for traffic and status notifications',async()=>{
-  const f=await setup();await until(()=>f.sockets.length===1);
-  for(const type of ['bridges.venue','bridges.send'])f.app.live.changed([{type,id:'discord'}]);
-  f.clock.advance(5000);await settle();expect(f.sockets).toHaveLength(1);expect(f.sockets[0].terminate).not.toHaveBeenCalled();
-});
-it('released staging lifetime permits reconnect and metadata, but credential replacement is held again',async()=>{
-  const f=await setup({staging:true});await settle();
-  const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due'").get() as {id:string};
-  f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'release-reconnect');
-  f.clock.advance(0);await until(()=>f.sockets.length===1);
-  f.sockets[0].hello();await until(()=>f.sockets[0].send.mock.calls.length===1);f.sockets[0].ready();await settle();f.sockets[0].emit('close');await settle();f.clock.advance(1000);await until(()=>f.sockets.length===2);
-  f.sockets[1].hello();await until(()=>f.sockets[1].send.mock.calls.length===1);f.sockets[1].frame({op:0,t:'RESUMED',s:2,d:{}});f.sockets[1].frame({op:0,t:'MESSAGE_CREATE',s:3,d:payload});await until(()=>f.receive.mock.calls.length===1);
-  f.rotate();f.clock.advance(5000);await settle();expect(f.sockets).toHaveLength(2);expect(f.sockets[1].terminate).toHaveBeenCalledOnce();
-  expect(f.app.db.prepare("SELECT count(*) n FROM core_effects WHERE state='due'").get()).toEqual({n:1});
-});
-it('startup failure awaits pending authentication before SQLite closes',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'discord-start-failure-'));fixture(home);const clock=new FakeClock();
-  const held=deferred<Uint8Array>();const source={generation:async()=>randomUUID(),read:vi.fn(()=>held.promise)};
-  const request=vi.fn<typeof fetch>(async()=>Response.json({ok:false}));
-  let db!:Parameters<typeof installBridges>[0]['db'];
-  const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
-  const starting=startLoom({home,next:true,host:[],clock,sharing,stdout:()=>{},bridges:{source,name:()=>undefined,receive:async()=>{},request},
-    install(a){db=a.db;installSecrets(a.db,a.operations,a.live,sharing);installBridges(a,sharing);put(a.db,'venues',venue);
-      a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name:'bot',description:'bot'},'describe');
-    }});
-  let ended=false;const outcome=starting.then(()=> 'unexpected success',e=>{ended=true;return (e as Error).message;});
-  try {
-    await vi.waitFor(()=>expect(source.read).toHaveBeenCalledOnce());await new Promise<void>(r=>setImmediate(r));
-    expect(ended).toBe(false);expect(db.open).toBe(true);
-  } finally {held.resolve(Buffer.from('PRIVATE'));expect(await outcome).toBe('next mode needs a bind host');rmSync(home,{recursive:true,force:true});}
-  expect(db.open).toBe(false);expect(request).not.toHaveBeenCalled();
-});
-it.each(['secret.name','secret.grant','secret.policy','core.access'])('invalidates pending authentication on %s',async type=>{
-  const f=await setup();await until(()=>f.sockets.length===1);
-  const held=deferred<Response>();f.request.mockImplementationOnce(()=>held.promise);
-  const calls=f.request.mock.calls.length;f.app.live.changed([{type:'secret.name',id:'bot'}]);
-  await until(()=>f.request.mock.calls.length>calls);
-  f.app.live.changed([{type,id:'bot'}]);held.resolve(Response.json({id:'200',bot:true}));
-  await until(()=>f.sockets.length===2);await settle();expect(f.sockets).toHaveLength(2);
-  expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(3);
-});
-it('holds a new staged connection after a daemon restart',async()=>{
-  const f=await setup({staging:true});await settle();
-  const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due'").get() as {id:string};
-  f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'before-restart');f.clock.advance(0);await until(()=>f.sockets.length===1);
-  const second=await f.restart();await settle();expect(f.sockets).toHaveLength(1);
-  expect(second.db.prepare("SELECT count(*) n FROM core_effects WHERE state='due'").get()).toEqual({n:1});
-});
-it('retries authentication after holder rotation during an outstanding authentication call',async()=>{
-  const f=await setup();await until(()=>f.sockets.length===1);
-  const held=deferred<Response>();f.request.mockImplementationOnce(()=>held.promise);
-  const calls=f.request.mock.calls.length;f.app.live.changed([{type:'secret.name',id:'bot'}]);await until(()=>f.request.mock.calls.length>calls);
-  f.rotate();f.clock.advance(5000);held.resolve(Response.json({id:'200',bot:true}));
-  await until(()=>f.sockets.length===2);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(3);
-});
-it('holds a replacement staging identity even if its setup is restored',async()=>{
-  const f=await setup({staging:true});await settle();const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due'").get() as {id:string};
-  f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'before-setup');f.clock.advance(0);await until(()=>f.sockets.length===1);
-  put(f.app.db,'venues',{...venue,bot:'999'});f.app.live.changed([{type:'bridges.venue',id:'discord'}]);
-  put(f.app.db,'venues',venue);f.app.live.changed([{type:'bridges.venue',id:'discord'}]);await settle();
-  expect(f.sockets).toHaveLength(1);expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
-  expect(f.app.db.prepare("SELECT count(*) n FROM core_effects WHERE state='due'").get()).toEqual({n:1});
-});
-it('suppresses metadata HTTP after shutdown during holder acquisition',async()=>{
-  const f=await setup();await until(()=>f.sockets.length===1);const held=deferred<Uint8Array>();
-  f.sockets[0].hello();await until(()=>f.sockets[0].send.mock.calls.length===1);f.source.read.mockImplementationOnce(()=>held.promise);f.sockets[0].ready();f.sockets[0].message();await until(()=>f.source.read.mock.results.at(-1)?.value===held.promise);
-  const calls=f.request.mock.calls.length;const closing=f.app.close();
-  try {await vi.waitFor(()=>expect(f.sockets[0].terminate).toHaveBeenCalledOnce());expect(f.app.db.open).toBe(true);}
-  finally {held.resolve(Buffer.from('PRIVATE'));await closing;}
-  expect(f.request).toHaveBeenCalledTimes(calls);
-});
-it('retains a staging release through temporary authentication failure',async()=>{
-  const f=await setup({staging:true});await settle();
-  f.request.mockImplementationOnce(async()=>Response.json({error:'temporarily_unavailable'}));
-  const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due'").get() as {id:string};
-  f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'release-auth-retry');f.clock.advance(0);await settle();
-  expect(f.sockets).toHaveLength(0);f.clock.advance(5000);await until(()=>f.sockets.length===1);
-  expect(f.app.db.prepare("SELECT id,state FROM core_effects WHERE kind='bridge-send'").all()).toEqual([{id:row.id,state:'started'}]);
+
+it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own role is a mention of the bot', async () => {
+  const f = discordFixture(); await f.start();
+  expect(f.calls.filter(call => call.path === `guilds/${guild}/roles`)).toHaveLength(1);
+  // No channel rule: only a message addressed to Art is delivered.
+  expect(await f.say({ content: 'anyone?' })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@&${artRole}> are you there`, mention_roles: [artRole] })).toMatchObject({ state: 'delivered', mentions: JSON.stringify([bot]) });
+  // Mark's role is Mark's: in a shared place Art answers, a ping of it is not for Art.
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  f.db.insert(agents).values({ id: 'mark', about: '', markBg: '', markFg: '', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'marks', platform: 'discord', workspace: guild, botUser: mark, agent: 'mark', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: new Date(f.clock.now()).toISOString() }).run();
+  expect(await f.say({ content: `<@&${markRole}> yours`, mention_roles: [markRole] })).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
+  expect(f.calls.filter(call => call.path === `guilds/${guild}/roles`)).toHaveLength(1);
 });
 
-it('independently retires an active socket on epoch change while another venue authentication stays pending',async()=>{
- const held=deferred<Response>();const f=await setup({secondAuth:held.promise});
- try {
-   await until(()=>f.sockets.length===1 && f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me')).length===2);
-   f.rotate();f.clock.advance(5000);await settle();
-   // Authentication is still blocked: only the independent detector can retire this socket.
-   expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
-   expect(f.sockets).toHaveLength(1);
- } finally {held.resolve(Response.json({id:'200',bot:true}));}
- await until(()=>f.sockets.length===3);
-});
-it('generation failure retires Discord while another venue authentication is pending',async()=>{
-  const held=deferred<Response>(),f=await setup({secondAuth:held.promise});
-  try {
-    await until(()=>f.sockets.length===1 && f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me')).length===2);
-    f.source.generation.mockRejectedValue(Error('PRIVATE HOLDER FAILURE'));f.clock.advance(5000);await settle();
-    expect(f.sockets[0].terminate).toHaveBeenCalledOnce();expect(f.app.db.open).toBe(true);
-  } finally {held.resolve(Response.json({id:'200',bot:true}));}
-  await settle();const calls=f.request.mock.calls.length;f.clock.advance(5000);await settle();expect(f.request).toHaveBeenCalledTimes(calls);
+it('describes a direct message, named channel and thread where the conversation is opened', async () => {
+  const f = discordFixture(); await f.start();
+  const dm = '700000000000000010', thread = '700000000000000011';
+  f.answers.set(`GET channels/${dm}`, { id: dm, type: 1 });
+  f.answers.set(`GET channels/${room}`, { id: room, guild_id: guild, type: 0, name: 'pond' });
+  f.answers.set(`GET channels/${thread}`, { id: thread, guild_id: guild, type: 11, parent_id: room, name: 'otters' });
+  const addressed = { content: `<@${bot}> hello`, mentions: [{ id: bot }] };
+  const label = async (data: Record<string, unknown>) => {
+    const row = await f.say({ ...addressed, ...data });
+    return f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get()?.label;
+  };
+  expect(await label({ guild_id: undefined, channel_id: dm })).toBe('Discord direct message with owner');
+  expect(await label({ channel_id: thread })).toBe('Discord thread #otters under #pond');
+  expect(await label({ channel_id: room })).toBe('Discord channel #pond');
 });
 
-it('does not acquire Discord credentials until initial asynchronous generation is available',async()=>{
-  const held=deferred<string>(),f=await setup({generation:()=>held.promise});
-  try {
-    await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(f.sockets).toHaveLength(0);
-    held.resolve('00000000-0000-4000-8000-000000000000');await until(()=>f.sockets.length===1);
-  } finally {held.resolve('00000000-0000-4000-8000-000000000000');}
+it('leaves a ping of another bot alone even when that bot has no loom connection', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  expect(await f.say({ content: `<@&${markRole}> yours`, mention_roles: [markRole] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${mark}> yours`, mentions: [{ id: mark, bot: true }] })).toMatchObject({ state: 'dropped' });
+  expect(await f.say({ content: `<@${person}> hello`, mentions: [{ id: person }] })).toMatchObject({ state: 'delivered' });
 });
-it('requires a new Discord staging release after holder failure and same-generation recovery',async()=>{
-  const f=await setup({staging:true});await settle();
-  const release=()=>{const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due' AND kind='bridge-send'").get() as {id:string};expect(row).toBeDefined();expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},`release-${row.id}`).ok).toBe(true);return row.id;};
-  const oldRelease=release();f.clock.advance(0);await until(()=>f.sockets.length===1);const epoch=await f.source.generation();
-  f.source.generation.mockRejectedValue(Error('PRIVATE HOLDER FAILURE'));f.clock.advance(5000);await settle();
-  expect(f.sockets[0].terminate).toHaveBeenCalledOnce();const reads=f.source.read.mock.calls.length,calls=f.request.mock.calls.length;
-  f.source.generation.mockResolvedValue(epoch);f.clock.advance(5000);await settle();
-  expect(f.source.read).toHaveBeenCalledTimes(reads);expect(f.request).toHaveBeenCalledTimes(calls);expect(f.sockets).toHaveLength(1);
-  expect(release()).not.toBe(oldRelease);f.clock.advance(0);await until(()=>f.sockets.length===2);
-  expect(f.source.read.mock.calls.length).toBeGreaterThan(reads);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(2);
+
+it('connects and takes mentions when the roles cannot be read; a role ping waits for evidence', async () => {
+  const f = discordFixture(); f.answers.delete(`GET guilds/${guild}/roles`); await f.start();
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  expect(await f.say({ content: `<@&${artRole}> hello`, mention_roles: [artRole] })).toBeUndefined();
+  expect(await f.say({ content: `<@${bot}> hello`, mentions: [{ id: bot }] })).toMatchObject({ state: 'delivered' });
+});
+
+it('recovers the guild role list after a failed read and follows authenticated role changes', async () => {
+  const f=discordFixture(), key=`GET guilds/${guild}/roles`, roles=f.answers.get(key);
+  f.answers.delete(key); await f.start();
+  f.db.insert(bridgeChannels).values({ platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false }).run();
+  const ping=(role:string)=>f.say({content:`<@&${role}> hello`,mention_roles:[role]});
+  const ordinary='500000000000000009';
+  expect(await ping(markRole)).toBeUndefined();
+  expect(await f.say({content:`<@${mark}> <@&${artRole}> both`,mentions:[{id:mark,bot:true}],mention_roles:[artRole]})).toBeUndefined();
+  expect(await ping(ordinary)).toBeUndefined();
+  expect(await f.say({content:'ordinary message'})).toMatchObject({state:'delivered'});
+  f.answers.set(key,roles); f.clock.advance(5000); await f.daemon.idle(); f.clock.advance(0); await f.daemon.idle();
+  const retried=f.db.select().from(bridgeIncoming).all();
+  expect(retried.find(row=>row.mentions===JSON.stringify([mark]))?.state).toBe('dropped');
+  expect(retried.find(row=>row.text.includes('both'))?.state).toBe('delivered');
+  expect(retried.find(row=>row.text.includes(ordinary))?.state).toBe('delivered');
+  expect(await ping(markRole)).toMatchObject({state:'dropped'});
+  const role={id:'500000000000000008',managed:true,tags:{bot_id:mark}};
+  await f.dispatch('GUILD_ROLE_CREATE',{guild_id:guild,role});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:'other',role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  await f.dispatch('GUILD_ROLE_UPDATE',{guild_id:guild,role:{...role,tags:{bot_id:bot}}});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:JSON.stringify([bot])});
+  await f.dispatch('GUILD_ROLE_DELETE',{guild_id:guild,role_id:role.id});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  // A new gateway session in this same daemon lifetime starts with its guild snapshot.
+  await f.dispatch('GUILD_CREATE',{id:'other',roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'delivered',mentions:'[]'});
+  await f.dispatch('GUILD_CREATE',{id:guild,roles:[role]});
+  expect(await ping(role.id)).toMatchObject({state:'dropped'});
+  expect(await ping(markRole)).toMatchObject({state:'delivered',mentions:'[]'});
+  expect(f.gateways).toHaveLength(1);
+});
+
+it('delivers while the optional thread parent name is pending', async () => {
+  const f=discordFixture(); await f.start();
+  const thread='700000000000000011';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room,name:'otters'});
+  const original=f.request.getMockImplementation()!;
+  let release!: (response:Response)=>void;
+  f.request.mockImplementation((url,options)=>String(url).endsWith('/channels/'+room)?new Promise(resolve=>{release=resolve;}):original(url,options));
+  const delivery=f.say({channel_id:thread,content:`<@${bot}>`,mentions:[{id:bot}]});
+  try{
+    await vi.waitFor(()=>expect(f.db.select().from(conversations).get()?.label).toBe(`Discord thread #otters under #${room}`));
+  }finally{release?.(Response.json({id:room,guild_id:guild,type:0,name:'pond'}));}
+  expect(await delivery).toMatchObject({state:'delivered'});
+  expect(f.db.select().from(conversations).get()?.label).toBe('Discord thread #otters under #pond');
+});
+
+it('takes a thread started from the bot\'s own message as addressed to it, whoever posted that message', async () => {
+  const f = discordFixture(); await f.start();
+  const thread = '700000000000000008', other = '700000000000000009';
+  // The starter was posted outside loom (the old bridge, a script): nothing of it is in loom's send records.
+  f.answers.set(`GET channels/${thread}`, { id: thread, guild_id: guild, type: 11, parent_id: room });
+  f.answers.set(`GET channels/${room}/messages/${thread}`, { id: thread, channel_id: room, author: { id: bot, bot: true } });
+  expect(await f.say({ channel_id: thread, content: 'still you' })).toMatchObject({ state: 'delivered', repliesTo: bot, thread, parent: room });
+  // The starter is read once for the thread, not for each message in it.
+  await f.say({ channel_id: thread, content: 'and again' });
+  expect(f.calls.filter(call => call.path === `channels/${room}/messages/${thread}`)).toHaveLength(1);
+  // A thread under somebody else's message, and one with no starter message, address nobody.
+  f.answers.set(`GET channels/${other}`, { id: other, guild_id: guild, type: 11, parent_id: room });
+  f.answers.set(`GET channels/${room}/messages/${other}`, { id: other, channel_id: room, author: { id: person } });
+  expect(await f.say({ channel_id: other, content: 'not you' })).toMatchObject({ state: 'dropped', repliesTo: person });
+  const bare = '700000000000000010';
+  f.answers.set(`GET channels/${bare}`, { id: bare, guild_id: guild, type: 11, parent_id: room });
+  expect(await f.say({ channel_id: bare, content: 'nobody' })).toMatchObject({ state: 'dropped', repliesTo: null });
+  expect(f.db.select().from(inbox).all()).toHaveLength(2);
+  expect(f.errors).toEqual([]);
+});
+
+it('honors written bot mentions over the implicit thread starter or reply author', async () => {
+  const f=discordFixture();
+  f.answers.set(`GET guilds/${guild}/roles`,[]); await f.start();
+  f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  f.db.insert(bridgeConnections).values({id:'marks',platform:'discord',workspace:guild,botUser:mark,agent:'mark',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:new Date(f.clock.now()).toISOString()}).run();
+  const thread='700000000000000008';
+  f.answers.set(`GET channels/${thread}`,{id:thread,guild_id:guild,type:11,parent_id:room});
+  f.answers.set(`GET channels/${room}/messages/${thread}`,{id:thread,channel_id:room,author:{id:bot}});
+  const foreign={content:`<@${mark}> look`,mentions:[{id:mark,bot:true}]};
+  expect(await f.say({channel_id:thread,...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  // The active peer connection also identifies Mark when the message omits the optional bot flag.
+  expect(await f.say({channel_id:thread,...foreign,mentions:[{id:mark}]})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({type:19,referenced_message:{author:{id:bot}},...foreign})).toMatchObject({state:'dropped',repliesTo:bot});
+  expect(await f.say({channel_id:thread,content:`<@${bot}> <@${mark}> look`,mentions:[{id:bot,bot:true},{id:mark,bot:true}]})).toMatchObject({state:'delivered',repliesTo:bot});
+});
+
+it('ends the working job on the stop word through the runtime\'s Stop, and says so once the pass has committed', async () => {
+  const announced: string[][] = [];
+  let f!: ReturnType<typeof discordFixture>;
+  f = discordFixture({
+    stopJob: (job, member) => { new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).stop(job, member, 'stop'); },
+    jobsEnded: ids => { expect(f.client.inTransaction).toBe(false); expect(f.db.select().from(jobs).where(eq(jobs.id, ids[0])).get()?.state).toBe('stopped'); announced.push([...ids]); },
+  });
+  await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const first = await f.say({ content: 'Do the long thing' });
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: first.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  expect(await f.say({ content: `<@${bot}> stop`, mentions: [{ id: bot }] })).toMatchObject({ state: 'dropped', reason: STOP_WORD, text: '' });
+  expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
+  expect(announced).toEqual([['job']]);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
+it('says "Stopped here." where a stop word stopped a job, through the send queue, and nowhere else', async () => {
+  let f!: ReturnType<typeof discordFixture>;
+  f = discordFixture({ stopJob: (job, member) => { new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).stop(job, member, 'stop'); } });
+  f.answers.set(`POST channels/${room}/messages`, { id: '800000000000000001', channel_id: room });
+  await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const first = await f.say({ content: 'Do the long thing' });
+  // No job is working: "stop" is a message, and nothing is said back by loom.
+  expect(await f.say({ content: 'stop' })).toMatchObject({ state: 'delivered' });
+  expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: first.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  const stop = await f.say({ content: 'Stop!' });
+  expect(stop).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+  await f.daemon.idle();
+  expect(f.db.select().from(bridgeSends).all()).toMatchObject([{ id: 'stopped:' + stop.id, incoming: stop.id, channel: room, thread: null, text: 'Stopped here.', state: 'sent' }]);
+  expect(f.calls.filter(call => call.method === 'POST' && call.path === `channels/${room}/messages`).map(call => call.body)).toEqual([{ content: 'Stopped here.', allowed_mentions: { parse: ['users'], replied_user: false } }]);
+  // The same event again says nothing more.
+  f.daemon.changed(); await f.daemon.idle();
+  expect(f.db.select().from(bridgeSends).all()).toHaveLength(1);
+  expect(f.errors).toEqual([]);
+});
+
+it('reacts to a message a running job has taken, shows typing while it works, and takes the reaction off when the mail is settled', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const row = await f.say({ content: 'Look into this' }), message = JSON.parse(row.id.slice(3))[1] as string;
+  const reaction = `channels/${room}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, typing = `channels/${room}/typing`;
+  const made = (method: string, path: string) => f.calls.filter(call => call.method === method && call.path === path).length;
+  const shown = async () => { f.daemon.changed(); await f.daemon.idle(); };
+  const second = await f.say({ content: 'One more detail' });
+  // Delivered and waiting: nobody has taken it, so nothing is shown.
+  await shown();
+  expect(workingOn(f.db)).toEqual([]); expect(made('PUT', reaction)).toBe(0); expect(made('POST', typing)).toBe(0);
+  // A job takes it.
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
+  expect(workingOn(f.db)).toHaveLength(2);
+  const secondId = JSON.parse(second.id.slice(3))[1] as string;
+  const secondReaction = reaction.replace(message, secondId);
+  f.answers.set(`PUT ${secondReaction}`, null);
+  f.request.mockImplementationOnce(async () => Response.json({ retry_after: 15 }, {status:429,headers:{'Retry-After':'15'}}));
+  const before = f.request.mock.calls.length;
+  await shown(); await shown();
+  expect(f.request.mock.calls.length - before).toBe(1);
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
+  for (let i = 0; i < 2; i++) { f.clock.advance(5_000); await f.daemon.idle(); }
+  expect(f.request.mock.calls.length - before).toBe(1);
+  f.clock.advance(5_000); await f.daemon.idle();
+  expect(made('PUT', reaction)).toBe(1);
+  expect(made('PUT', secondReaction)).toBe(1);
+  expect(made('POST', typing)).toBe(1);
+  await shown(); await shown();
+  expect(made('PUT', reaction)).toBe(1); expect(made('POST', typing)).toBe(1);
+  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(made('POST', typing)).toBe(2);
+  // The reply settles the mail: the reaction comes off and typing stops.
+  f.db.update(inbox).set({ state: 'done' }).run();
+  await shown();
+  expect(made('DELETE', reaction)).toBe(1);
+  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(made('POST', typing)).toBe(2); expect(made('DELETE', reaction)).toBe(1);
+  expect(f.calls.find(call => call.path === reaction)?.body).toBeUndefined();
+});
+
+it('shows nothing for mail whose job is not running, or on a connection that is switched off', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const row = await f.say({ content: 'Look into this' });
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'queued', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(jobs).set({ state: 'running' }).run();
+  expect(workingOn(f.db)).toHaveLength(1);
+  const typingOnly = [{connection:'connection',channel:room}];
+  f.db.update(bridgeIncoming).set({bot:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  f.db.update(bridgeIncoming).set({bot:false,webhook:true}).run();
+  expect(workingOn(f.db)).toEqual(typingOnly);
+  for (const source of ['trigger','handoff'] as const) {
+    f.db.update(inbox).set({source}).run();
+    expect(workingOn(f.db)).toEqual(typingOnly);
+  }
+  f.db.update(inbox).set({state:'done'}).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(inbox).set({source:'discord',state:'taken'}).run();
+  f.db.update(bridgeIncoming).set({webhook:false}).run();
+  for (const state of ['starting','failed','lost','done'] as const) {
+    f.db.update(jobs).set({state}).run();
+    expect(workingOn(f.db)).toEqual([]);
+  }
+  f.db.update(jobs).set({ state: 'stopped' }).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(jobs).set({ state: 'running' }).run();
+  f.db.update(bridgeConnections).set({ enabled: false }).run();
+  expect(workingOn(f.db)).toEqual([]);
+});
+
+it('waits for a body with file tools before fetching a picture-only message, then keeps readable files and reports missing ones', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({platform:'discord',workspace:guild,channel:room,answers:'art',botsMayTalk:false}).run();
+  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png', gone = cat + '?gone';
+  const attachments = [{id:'11',filename:'cat.png',size:7,content_type:'image/png',url:cat},
+    {id:'12',filename:'gone.png',size:2,content_type:'image/png',url:gone}];
+  f.answers.set(`GET ${cat}`, Buffer.from('PNGDATA'));
+  const row = await f.say({content:'',attachments});
+  expect(row.state).toBe('delivered');
+  expect(f.calls.some(call=>call.path===cat)).toBe(false);
+  expect(row.text).toContain('cat.png (image/png, 7 bytes)');
+  expect(row.text).not.toContain('https://');
+  const message = '600000000000000001';
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',attachments});
+  const prepare=async(index:number,permit=()=>true)=>(await f.daemon.prepareDiscordFile(row.id,permit,index,1024))();
+  expect(await prepare(0,()=>false)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  const commit=await f.daemon.prepareDiscordFile(row.id,()=>true,0,1024);
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  expect(commit()).toEqual({state:'saved',count:2,bytes:7});
+  expect(await prepare(1)).toMatchObject({state:'unavailable',count:2});
+  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{file:'11',contents:Buffer.from('PNGDATA')}]);
+  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{connection:'connection',file:'11',incoming:row.id}]);
+  expect(await prepare(0)).toMatchObject({state:'saved'});
+  // A previously kept short response must neither bypass the size check nor reset its original retention.
+  const received=f.db.select().from(bridgeFiles).get()!.fetchedAt;
+  f.db.update(bridgeFiles).set({contents:Buffer.from('PN')}).run();
+  expect(await prepare(0)).toMatchObject({state:'saved',bytes:7});
+  expect(f.db.select().from(bridgeFiles).get()).toMatchObject({contents:Buffer.from('PNGDATA'),fetchedAt:received});
+  f.db.update(bridgeFiles).set({contents:Buffer.from('P')}).run();
+  f.answers.set(`GET ${cat}`,Buffer.from('PN'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeFiles).all()).toEqual([]);
+  f.answers.set(`GET channels/${room}/messages/${message}`,{id:message,channel_id:room,author:{id:person},content:'',edited_timestamp:'2026-11-14T12:02:00Z',attachments:[]});
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  f.request.mockRejectedValueOnce(Error('Discord temporarily offline'));
+  expect(await prepare(0)).toMatchObject({state:'unavailable'});
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  expect(await prepare(0)).toMatchObject({state:'changed'});
+  expect(f.calls.filter(call=>call.path===cat)).toHaveLength(3);
+  expect(f.errors).toEqual([]);
+});
+
+it('shares presence capacity across nine busy Discord channels before their heartbeats expire', async () => {
+  const f = discordFixture();
+  await f.start();
+  for (let i = 0; i < 9; i++) {
+    const channel = String(300000000000000100n + BigInt(i));
+    f.answers.set(`GET channels/${channel}`, {id:channel, type:0, guild_id:guild});
+    const row = await f.say({channel_id:channel, content:`<@${bot}> hello`, mentions:[{id:bot}]});
+    const message = JSON.parse(row.id.slice(3))[1];
+    f.answers.set(`POST channels/${channel}/typing`, null);
+    f.answers.set(`PUT channels/${channel}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, null);
+    f.db.insert(jobs).values({id:'work-'+i, agent:'art', conversation:row.conversation, title:'Work', state:'running',
+      queuedAt:new Date(f.clock.now()).toISOString(),brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next'}).run();
+    f.db.update(inbox).set({state:'taken',job:'work-'+i}).where(eq(inbox.conversation,row.conversation!)).run();
+  }
+  f.daemon.changed();
+  await f.daemon.idle();
+  for (let i = 0; i < 2; i++) { f.clock.advance(1000); await f.daemon.idle(); }
+  expect(f.calls.filter(call => call.path.endsWith('/typing'))).toHaveLength(9);
+  expect(f.calls.filter(call => call.method === 'PUT')).toHaveLength(9);
 });

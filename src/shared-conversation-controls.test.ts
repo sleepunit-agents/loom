@@ -8,7 +8,7 @@ const fixture=()=>bodyFixture(clean);
 async function assignedThread(f:Awaited<ReturnType<typeof fixture>>,title?:string){
  const response=await f.root.http.request('/api/comms/open',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({input:{thread:'th:auto',agent:'art',...(title===undefined?{}:{title})},id:'auto'})});expect(response.status).toBe(200);
  const opened=(await response.json()).value as {thread:string;conversation:string};
- f.root.writes.run(()=>{f.db.update(s.conversations).set({job:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({conversation:opened.conversation,project:null}).where(eq(s.jobs.id,'job')).run();f.db.update(s.conversations).set({job:'job'}).where(eq(s.conversations.id,opened.conversation)).run();});return opened;
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({conversation:opened.conversation,project:null}).where(eq(s.jobs.id,'job')).run();});return opened;
 }
 it('names automatic threads through the current body and preserves a later human title',async()=>{
  const f=await fixture(),opened=await assignedThread(f);expect(f.root.services.comms!.threads.thread(opened.thread)).toMatchObject({title:'New conversation',titledBy:'agent'});

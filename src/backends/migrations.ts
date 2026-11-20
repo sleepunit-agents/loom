@@ -1,9 +1,12 @@
+import {accountPlatforms,accountColumns,accountIndex} from './people-accounts.js';
 /**
  * Schema migration registry for memories.db.
  *
  * Each Migration is idempotent: the `pending` predicate checks current DB
  * state before `run` is called, so migrations are safe to re-run on every
- * backend connect.
+ * backend connect. runMigrations runs each step in one transaction, so a step
+ * with several statements is never left half done. The store's version (see refuseNewerStore) only guards
+ * against a file a newer program has changed.
  *
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
  * existing entries (future migrations may depend on prior state).
@@ -501,6 +504,17 @@ export const MIGRATIONS: readonly Migration[] = [
     pending: (db) => !hasColumn(db, 'memories', 'authored_at'),
     run: (db) => { db.prepare('ALTER TABLE memories ADD COLUMN authored_at TEXT').run(); },
   },
+  {
+    id: 'people_outside_accounts',
+    description: 'Index workspace-qualified outside accounts on live person cards',
+    pending: (db) => hasTable(db, 'people') && accountPlatforms.some(platform =>
+      !db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(accountIndex(platform))),
+    run: (db) => {
+      for (const platform of accountPlatforms) {
+        db.exec(`CREATE INDEX IF NOT EXISTS ${accountIndex(platform)} ON people (${accountColumns(platform).join(', ')}) WHERE archived_at IS NULL AND json_valid(card_json)`);
+      }
+    },
+  },
 ];
 
 /**
@@ -518,6 +532,7 @@ export function runMigrations(
 ): MigrationResult[] {
   const strict = opts.strict ?? true;
   const results: MigrationResult[] = [];
+  refuseNewerStore(db);
 
   for (const m of MIGRATIONS) {
     if (!m.pending(db)) {
@@ -525,7 +540,10 @@ export function runMigrations(
       continue;
     }
     try {
-      m.run(db);
+      // One transaction per step. A step is found pending from the store's shape (a column, an index,
+      // a table), so a step that stopped after its first statement would read as done for ever, its
+      // backfill or index never made. Whole or not at all keeps that question answerable.
+      db.transaction(() => m.run(db)).immediate();
       results.push({ id: m.id, description: m.description, status: 'applied' });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -536,7 +554,55 @@ export function runMigrations(
     }
   }
 
+  // Every step has now run or was already in place.
+  if (results.every((r) => r.status !== 'failed')) markStore(db);
   return results;
+}
+
+/**
+ * Run only the named steps, where pending, each whole. For a store that holds one feature's tables
+ * (the directory's people.db), or a feature opened before the memory tables exist: the other steps
+ * need the memories table and are left for runMigrations. The store is marked the same way.
+ */
+export function runMigrationSteps(db: Database, ids: readonly string[]): void {
+  for (const id of ids) {
+    const step = MIGRATIONS.find((m) => m.id === id);
+    if (!step) throw new Error(`Unknown migration '${id}'`);
+    if (step.pending(db)) db.transaction(() => step.run(db)).immediate();
+  }
+  markStore(db);
+}
+
+/**
+ * For a start of the program on a memories.db that may be older than it: the memory tables' pending
+ * steps, when the file has memory tables. A file without them is left for the first write, which makes
+ * them (SqliteVecBackend); a file a newer program has changed throws and is not altered.
+ */
+export function upgradeMemoryTables(db: Database): void {
+  refuseNewerStore(db);
+  if (hasTable(db, 'memories')) runMigrations(db, { strict: true });
+}
+
+function markStore(db: Database): void {
+  if (storeVersion(db) !== MIGRATIONS.length) db.pragma(`user_version = ${MIGRATIONS.length}`);
+}
+
+const storeVersion = (db: Database) => db.pragma('user_version', { simple: true }) as number;
+
+/**
+ * A store's version is the number of steps in MIGRATIONS known to the newest program that has
+ * prepared it, kept in the file's header (PRAGMA user_version) rather than a table. It says nothing
+ * about which steps have run: each step still decides that from the current shape, and a store that
+ * holds one feature's tables has only that feature's. The number is what lets an older program see
+ * that a newer one has been here, and stop before it creates or rewrites anything.
+ * Call it before any write to a store. It does not check that the file is a memory store at all
+ * (docs/accepted-tradeoffs.md, "Only loom.db and knowledge.db are checked").
+ */
+export function refuseNewerStore(db: Database): void {
+  const at = storeVersion(db);
+  if (at > MIGRATIONS.length) {
+    throw new Error(`This memory store is from a newer program (it has had ${at} steps; this program knows ${MIGRATIONS.length})`);
+  }
 }
 
 /** Return migrations that have not yet been applied, without touching the DB. */

@@ -1,6 +1,6 @@
 import {expect,it,vi} from 'vitest';
 import {z} from 'zod';
-import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
+import {bodyModelTools,BODY_EXTENSION_TOOLS_MAX,type BodyModelTool} from './body-model-tools.js';
 const tool=():BodyModelTool=>({name:'command',description:'Use canonical commands',inputSchema:z.object({command:z.string()}).strict(),execute:vi.fn(async()=>({content:[{type:'text' as const,text:'done'}]}))});
 it('snapshots the exact tool identity and executor used by registration and native policy',()=>{
  const original=tool(),execute=original.execute,input=[original],result=bodyModelTools(input);original.name='other';original.execute=vi.fn();input.length=0;
@@ -8,7 +8,7 @@ it('snapshots the exact tool identity and executor used by registration and nati
 });
 it.each(['request_secret','use_secret','command\n','--option','mcp__foreign__tool!','a'.repeat(65)])('refuses a reserved or invalid tool name %j',name=>{expect(()=>bodyModelTools([{...tool(),name}])).toThrow('Body model tools unavailable');});
 it('rejects duplicate names, oversized catalogues and invalid descriptors before registration',()=>{
- expect(()=>bodyModelTools([tool(),tool()])).toThrow();expect(()=>bodyModelTools(Array.from({length:33},(_,i)=>({...tool(),name:'command'+i})))).toThrow();expect(()=>bodyModelTools([{...tool(),description:''}])).toThrow();expect(()=>bodyModelTools([{...tool(),inputSchema:z.string() as unknown as z.ZodObject}])).toThrow();
+ expect(()=>bodyModelTools([tool(),tool()])).toThrow();expect(()=>bodyModelTools(Array.from({length:BODY_EXTENSION_TOOLS_MAX+1},(_,i)=>({...tool(),name:'command'+i})))).toThrow();expect(()=>bodyModelTools([{...tool(),description:''}])).toThrow();expect(()=>bodyModelTools([{...tool(),inputSchema:z.string() as unknown as z.ZodObject}])).toThrow();
 });
 
 it('reads changing descriptor fields once before validating and snapshotting them',()=>{

@@ -11,13 +11,13 @@ const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
 const dir=()=>{const h=mkdtempSync(join(tmpdir(),'activity-'));homes.push(h);return h;};
 afterEach(async()=>{for(const fn of closes.splice(0).reverse())await fn();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
 const now=Date.parse('2026-11-13T18:00:00Z'),owner:Viewer={kind:'member',id:'owner'},partial:Viewer={kind:'member',id:'partial'};
-const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}},services:{'conversation-reader':{types:['conversation'],operations:[]},'memory-reader':{types:['memory'],operations:[]}}};
+const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}}};
 function source(path=join(dir(),'memories.db')){const db=new BetterSqlite3(path);db.exec('CREATE TABLE memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');closes.push(()=>db.close());return {path,db,add(ref:string,input:Record<string,unknown>={}){const row={ref,title:ref,content:'A complete story mentioning t-12 and sleepunit-agents/loom#941.',created:'2026-11-13T17:00:00Z',project:null,metadata:'{"where":"terminal"}',expires_at:null,category:'episode',archived:0,...input};db.prepare('INSERT OR REPLACE INTO memories VALUES(@ref,@title,@content,@created,@project,@metadata,@expires_at,@category,@archived)').run(row);}};}
 const conv=(id='cv-111111111111',input:Partial<ActivityConversation>={}):ActivityConversation=>({id,agent:'art',venue:'terminal',place:'terminal',label:'Build the household',people:['owner'],...input});
 const run=(key:string,input:Partial<ActivityRun>={}):ActivityRun=>({kind:'digest',key,at:'2026-11-13T17:10:00Z',conversation:conv(),summary:'Shipped Activity. The full story follows.',asked:['Show what happened'],decided:['Use the new role'],tasks:['t-2207'],links:[],more:[],...input});
 function role(rows:ActivityRun[]):ActivityConversations{return {list:(_v,q)=>({available:true,rows:rows.filter(r=>r.conversation.agent===q.agent&&Date.parse(r.at)>=q.from&&Date.parse(r.at)<q.until)}),read:(_v,a,k,key)=>rows.find(r=>r.conversation.agent===a&&r.kind===k&&r.key===key),conversation:(_v,a,id)=>rows.find(r=>r.conversation.agent===a&&r.conversation.id===id)?.conversation};}
 async function fixture(a:string,b?:string,conversations?:ActivityConversations){
- const clock=new FakeClock(now),reader=createActivityReader(clock,{agents:[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])],sharing:()=>sharing,conversations,owner:'owner'});
+ const clock=new FakeClock(now),reader=createActivityReader(clock,{agents:[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])],sharing:()=>sharing,conversations,owner:'owner',timezone:'America/Chicago'});
  closes.push(reader.close);return {clock,reader};
 }
 function list(app:Awaited<ReturnType<typeof fixture>>,v=owner,to='recent'){const row=app.reader.window(to,v);if(!row)throw Error('Activity window absent');return row;}
@@ -28,7 +28,7 @@ it('keeps calendar windows bounded across DST and classifies pure text without o
  expect(oneLine('Shipped the household activity screen. More words.')).toBe('Shipped the household activity screen.');expect(oneLine('x'.repeat(250))).toHaveLength(200);expect(venueKey('loom')).toBe('comms');expect(venueKey('schedule')).toBe('wakes');expect(whatOf({title:'Disk nearly full'})).toBe('system');expect(whatOf({title:'Release',line:'Merged loom#941'})).toBe('work');expect(refsIn('t-12 t-12 https://github.com/sleepunit-agents/loom/pull/941 loom#941','sleepunit-agents')).toMatchObject({tasks:['t-12'],prs:[{label:'loom#941'}]});
 });
 it('does not arm Activity or inspect Conversations when no agent source is configured',()=>{
- let scans=0;const reader=createActivityReader(new FakeClock(now),{agents:[],sharing:()=>sharing,conversations:{...conv,nextDeadline(){scans++;return now+1000;}}});
+ let scans=0;const reader=createActivityReader(new FakeClock(now),{agents:[],sharing:()=>sharing,timezone:'UTC',conversations:{...conv,nextDeadline(){scans++;return now+1000;}}});
  try{expect(reader.allowed(owner)).toBe(false);expect(reader.window('recent',owner)).toBeUndefined();expect(reader.nextDeadline()).toBeUndefined();expect(scans).toBe(0);}finally{reader.close();}
 });
 it('reads active episodes only and keeps absent files absent, with explicit missing conversation owner',async()=>{
@@ -51,13 +51,13 @@ it('checks conversation references at the end of a long episode before listing o
  expect(list(app,partial).entries).toEqual([]);
  expect(read(app,'e~art~long-private',partial)).toBeUndefined();
 });
-it('uses private agent policy and includes other members’ private conversations for household owners',async()=>{
+it('uses private agent policy and keeps another member’s private conversations from a household owner',async()=>{
  const a=source(),b=source();a.add('m-art');b.add('m-other');
  const rows=[run('dg-visible'),run('dg-private',{conversation:conv('cv-222222222222',{venue:'loom',member:'partial',label:'Partial private thread'})}),run('dg-unscoped-comms',{conversation:conv('cv-333333333333',{venue:'loom',label:'No member'})})];
  a.add('m-comms',{metadata:JSON.stringify({where:'loom:thread',conversation:'cv-222222222222'})});a.add('m-mislabeled',{metadata:JSON.stringify({where:'terminal',conversation:'cv-222222222222'})});a.add('m-unknown',{metadata:JSON.stringify({where:'terminal',conversation:'cv-444444444444'})});
- const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-private','d~art~dg-unscoped-comms','d~art~dg-visible','e~other~m-other']);
+ const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-unscoped-comms','d~art~dg-visible','e~other~m-other']);
  expect(list(app,partial).entries.map(e=>e.id)).toEqual(expect.arrayContaining(['d~art~dg-private','d~art~dg-visible']));expect(list(app,partial).entries.some(e=>e.agent==='other')).toBe(false);
- expect(read(app,'d~art~dg-private')).toBeDefined();expect(read(app,'e~art~m-mislabeled')).toBeDefined();expect(read(app,'e~other~m-other',partial)).toBeUndefined();
+ expect(read(app,'d~art~dg-private')).toBeUndefined();expect(read(app,'d~art~dg-private',partial)).toBeDefined();expect(read(app,'e~art~m-mislabeled')).toBeUndefined();expect(read(app,'e~other~m-other',partial)).toBeUndefined();
  expect(app.reader.window('recent',{kind:'member',id:'outsider'})).toBeUndefined();expect(list(app,{kind:'agent',id:'art'}).entries.some(e=>e.agent==='other')).toBe(false);
 });
 it('shows shared project conversations without opening the agent’s episode files',async()=>{
@@ -103,13 +103,11 @@ it('rereads outside writes and clears expired and archived entries',async()=>{
  a.db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-two');expect(read(app,'e~art~m-two')).toBeUndefined();
 });
 
-it('authorizes conversation-only and memory-only services independently and passes the original viewer to every role method',async()=>{
+it('passes the original viewer to every role method',async()=>{
  const a=source();a.add('m-later',{created:'2026-11-13T14:00:00Z'});a.add('m-named',{created:'2026-11-13T14:00:00Z',metadata:'{"conversation":"cv-111111111111","where":"terminal"}'});
  const calls:Array<{method:string;viewer:Viewer}>=[],base=role([run('dg-one')]);
  const original:ActivityConversations={list(v,q){calls.push({method:'list',viewer:v});return base.list(v,q);},read(v,a,k,id){calls.push({method:'read',viewer:v});return base.read(v,a,k,id);},conversation(v,a,id){calls.push({method:'conversation',viewer:v});return base.conversation(v,a,id);}};
- const app=await fixture(a.path,undefined,original),v:Viewer={kind:'service',id:'conversation-reader'},memory:Viewer={kind:'service',id:'memory-reader'};
- expect(list(app,v).entries.map(e=>e.id)).toEqual(['d~art~dg-one']);expect(read(app,'d~art~dg-one',v)).toBeDefined();expect(read(app,'e~art~m-later',v)).toBeUndefined();
- expect(list(app,memory).entries.map(e=>e.id)).toEqual(['e~art~m-later']);expect(read(app,'d~art~dg-one',memory)).toBeUndefined();
+ const app=await fixture(a.path,undefined,original);
  calls.splice(0);list(app,partial);read(app,'d~art~dg-one',partial);read(app,'e~art~m-named',partial);expect(new Set(calls.map(c=>c.method))).toEqual(new Set(['list','read','conversation']));for(const c of calls)expect(c.viewer).toBe(partial);
 });
 it('reports reader failures and absent owners separately from missing, retaining healthy episodes beside corrupt databases',async()=>{
@@ -178,4 +176,16 @@ it('derives the earliest episode deadline without visibility or list caps and cl
  app.clock.advance(1);expect(reader.nextDeadline()).toBe(now+2000);
  app.clock.advance(999);expect(reader.nextDeadline()).toBe(startOf('2026-11-14','America/Chicago'));
  reader.close();expect(reader.nextDeadline()).toBeUndefined();
+});
+it('opens the entries of an agent whose id starts with a digit or is long, as the household allows',()=>{
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{}};
+ for(const agent of ['2fast','a'.repeat(100)]){
+  const a=source();a.add('m-one',{title:`You are ${agent}, in a conversation on wake: Daily review.`,metadata:'{"where":"terminal"}'});
+  const reader=createActivityReader(new FakeClock(now),{agents:[{agent,memories:a.path}],sharing:()=>sharing,timezone:'America/Chicago'});closes.push(reader.close);
+  const entry=reader.window('recent',owner)!.entries[0];
+  expect(entry.id).toBe(`e~${agent}~m-one`);
+  // The runtime's opening line to the body is recognised for this agent too, so it is not shown as the title.
+  expect(entry.title).not.toContain('You are');
+  expect(reader.read(entry.id,owner)).toMatchObject({id:entry.id});
+ }
 });

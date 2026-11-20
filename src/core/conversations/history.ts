@@ -1,5 +1,6 @@
 /** Wordless history kept after detailed turns expire. Uses the same connection
  * and fake clock as conversation writes; no background process or separate DB. */
+import { DAY_MS } from '../day.js';
 import { lt, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { agentStatus, conversationDays, findings, turns } from '../data/schema.js';
@@ -23,7 +24,7 @@ export class ConversationHistory {
    * Lifetime turn_count is deliberately unchanged, so sequence numbers never repeat.
    */
   rollup(): number {
-    const cutoff = new Date(Date.parse(this.now()) - 90 * 86400_000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
+    const cutoff = new Date(Date.parse(this.now()) - 90 * DAY_MS).toISOString().slice(0, 10) + 'T00:00:00.000Z';
     return this.db.transaction(() => {
       const days = this.db.all<typeof conversationDays.$inferSelect>(sql`
         WITH expired AS (

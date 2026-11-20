@@ -1,5 +1,9 @@
 /** Personal action outcomes contain controlled display metadata, never request
- * input, operation output or raw failure messages. Notification cannot undo work. */
+ * input, operation output or raw failure messages. Notification cannot undo work.
+ *
+ * This insert is not a registered operation: it is a notice about a call, written after it, and must be
+ * written when the call was refused or rolled back (docs/accepted-tradeoffs.md, "The notice of a person's
+ * own action ..."). */
 import { createHash } from 'node:crypto';
 import type { Viewer } from './policy.js';
 import type { Operations, Result } from './core/operations/index.js';

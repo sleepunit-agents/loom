@@ -6,7 +6,6 @@ import { createDataSchema } from '../data/database.js';
 import { agents, approvals, conversations, inbox, jobs, members, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
 import { createTempo } from './tempo.js';
-import { tempoSettingsService } from './settings.js';
 
 it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
   const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
@@ -101,7 +100,8 @@ it('settles real conversation mail, retries capacity, and takes only audible ite
   const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
   const at = () => new Date(clock.now()).toISOString();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  const mail = new Conversations(db, at), settings = tempoSettingsService(db, clock);
+  // This test is about volume, not whose word mail is on: a person's late mail joins the running job here.
+  const mail = new Conversations(db, at, () => () => true);
   const cv = mail.open({ agent: 'art', venue: 'loom', place: 'pump', label: 'Pump' });
   let capacity = false, attempts = 0;
   const taken: string[][] = [];
@@ -114,7 +114,6 @@ it('settles real conversation mail, retries capacity, and takes only audible ite
       attempts++;
       if (!capacity) return false;
       db.insert(jobs).values({ id: 'job', agent: 'art', conversation: cv.id, title: 'Pump', state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: 'art', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: at() }).run();
-      db.update(conversations).set({ job: 'job' }).where(eq(conversations.id, cv.id)).run();
       taken.push(mail.take(cv.id, 'job').map(item => item.id));
       // The root publishes claims after committing; this synchronous callback
       // also exercises settling's reentrant capacity notification boundary.
@@ -129,10 +128,9 @@ it('settles real conversation mail, retries capacity, and takes only audible ite
     tempo.volume.set(who, dim.id, 'dim');
     tempo.volume.set(who, muted.id, 'mute', new Date(clock.now() + 20_000).toISOString());
     tempo.start(); clock.advance(1_000);
-    const proposal = settings.prepare(who, { settleSeconds: 2 });
-    expect(() => db.transaction(() => { settings.apply(proposal); throw new Error('Rollback'); })).toThrow('Rollback');
-    expect(settings.read(who).settleSeconds).toBe(5);
-    db.transaction(() => settings.apply(proposal)); tempo.changed();
+    expect(() => db.transaction(() => { tempo.volume.setTimings(who, { settleSeconds: 2 }); throw new Error('Rollback'); })).toThrow('Rollback');
+    expect(tempo.volume.timings(who).settleSeconds).toBe(5);
+    db.transaction(() => tempo.volume.setTimings(who, { settleSeconds: 2 })); tempo.changed();
     clock.advance(1_999); expect(attempts).toBe(0);
     clock.advance(1); expect(attempts).toBe(1); expect(taken).toEqual([]);
     capacity = true; tempo.changed();

@@ -1,7 +1,7 @@
 /** Avatar math; live asset selection and rendering are covered on the shared desk. */
 import {describe,it,expect} from 'vitest';
 import {avatarCrop,avatarFit,avatarHalf} from '../../web/src/pixel-face';
-import {checkSpriteManifest,HouseholdError} from '../household.js';
+import {checkSpriteLayout} from '../desk-sprite-layout.js';
 describe('a small pixel avatar', () => {
   it('is the head: 32 pixels square over the top of what\'s drawn, centred on its head, unless the manifest names its crop', () => {
     const m = { cell: [56, 84] as [number, number], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } } };
@@ -15,10 +15,10 @@ describe('a small pixel avatar', () => {
   });
   it('a manifest\'s crop is kept, checked: whole pixels inside the cell, 8 or more across', () => {
     const m = { cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } } };
-    expect(checkSpriteManifest({ ...m, avatar: { x: 4, y: 6, w: 32, h: 32 } }).avatar).toEqual({ x: 4, y: 6, w: 32, h: 32 });
-    expect(checkSpriteManifest(m).avatar).toBeUndefined();
+    expect(checkSpriteLayout({ ...m, avatar: { x: 4, y: 6, w: 32, h: 32 } }).avatar).toEqual({ x: 4, y: 6, w: 32, h: 32 });
+    expect(checkSpriteLayout(m).avatar).toBeUndefined();
     for (const avatar of [{ x: 40, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 4, h: 24 }, { x: 0.5, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 24 }, 'top'])
-      expect(() => checkSpriteManifest({ ...m, avatar }), JSON.stringify(avatar)).toThrow(HouseholdError);
+      expect(() => checkSpriteLayout({ ...m, avatar }), JSON.stringify(avatar)).toThrow();
   });
   it('is drawn at a whole-pixel scale: the head itself from 28 px, at half its resolution below (t-1925: never its middle)', () => {
     expect([20, 24, 27, 28, 32, 35, 48, 64].map((s) => avatarFit(s, 32))).toEqual([

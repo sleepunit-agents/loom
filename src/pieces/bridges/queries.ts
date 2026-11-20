@@ -1,11 +1,12 @@
 /** Installed read service. Outside visibility comes from root's shared policy;
  * this module neither grants access nor invents a second authentication model. */
+import { DAY_MS } from '../../core/day.js';
 import { and, asc, eq, is, sql, SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
-const day = 86400_000;
+const day = DAY_MS;
 export interface BridgeActivityScope { connections: SQL; incoming: SQL }
 export class BridgeQueries {
   constructor(readonly db: DataDatabase, readonly now: () => number) {}

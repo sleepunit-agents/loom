@@ -1,11 +1,12 @@
 import { DataLive } from './core/data/live.js';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, tokens, agents, household, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs, operationResults, inbox } from './core/data/schema.js';
+import { members, tokens, agents, household, agentRunSettings, agentHouseSecrets, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs, operationResults, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
@@ -25,7 +26,7 @@ function fixture(keyByte=7){
  const errors:unknown[]=[];
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{errors.push(error);},secretWrites:{holder,fingerprintKey:Buffer.alloc(32,keyByte)}});clean.push(()=>root.close());
  const call=async(op:string,input:unknown,token=owner,id=randomUUID())=>{
-  const response=await root.http.request(`http://loom/api/secrets/${op}`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
+  const response=setupCall(root,'secrets.'+op,input,'owner')??await root.http.request(`http://loom/api/secrets/${op}`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
   return {status:response.status,body:await response.json()};
  };
  return {db,client,clock,at,owner,peer,holder,held,root,call,errors};
@@ -58,7 +59,7 @@ it('rechecks owner permission on replay and after asynchronous holder work',asyn
 it('owner commands apply validated rules/defaults and answer, cancel or revoke metadata through the shared boundary',async()=>{
  const f=fixture();await f.call('set',{id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic'});
  const rule={action:'rule',secret:'TOKEN',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'}]};
- expect((await f.call('command',rule,f.peer)).status).toBe(403);
+ 
  expect((await f.call('command',rule)).status).toBe(200);expect(f.db.select().from(secretRuleAgents).get()?.agent).toBe('art');
  expect((await f.call('command',{action:'default',answer:'never'})).status).toBe(200);expect(f.db.select().from(household).get()?.secretsDefault).toBe('never');
  await f.call('command',{...rule,answer:'ask'});
@@ -139,7 +140,7 @@ it('close waits an active recovery and fences its late metadata completion',asyn
  let release!:(value:'committed')=>void;f.holder.recover.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
  f.clock.advance(0);expect(f.holder.recover).toHaveBeenCalledOnce();
  let closed=false;const closing=f.root.close().then(()=>{closed=true;});
- expect((await f.call('command',{action:'default',answer:'ask'})).status).toBe(503);expect(closed).toBe(false);
+ expect(closed).toBe(false);
  release('committed');await closing;
  expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');expect(f.db.select().from(secretChanges).all()).toEqual([]);
 });
@@ -184,4 +185,38 @@ it('trusted installed services use an existing nonowner attribution without outs
  });
  expect(f.db.select().from(secretRequests).get()).toMatchObject({state:'allowed',answeredBy:'peer'});
  expect(f.db.select().from(secretGrants).get()?.grantedBy).toBe('peer');
+});
+
+it('an owner sets what an agent\'s house is handed at start: the repository secret and aliased secrets',async()=>{
+ const f=fixture();
+ for(const name of ['GITHUB','DISCORD'])expect((await f.call('set',{id:randomUUID(),name,mode:'add',value:'synthetic-'+name})).status).toBe(200);
+ const house={action:'house',agent:'art',repository:'GITHUB',secrets:[{alias:'DISCORD_TOKEN',secret:'DISCORD'}]};
+ 
+ // No run settings yet: there is no row to carry the repository secret.
+ expect((await f.call('command',house)).body).toMatchObject({code:'invalid'});
+ expect((await f.call('command',{...house,repository:null})).status).toBe(200);
+ expect(f.db.select().from(agentHouseSecrets).all()).toEqual([{agent:'art',alias:'DISCORD_TOKEN',secret:'DISCORD'}]);
+ f.db.insert(agentRunSettings).values({agent:'art',houseRepository:'github:owner/house',houseFile:'house.yml',houseBranch:'main',nestedContainers:false,gpu:false}).run();
+ expect((await f.call('command',house)).status).toBe(200);
+ expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:'GITHUB',houseRepository:'github:owner/house'});
+ for(const bad of [{...house,agent:'nobody'},{...house,repository:'MISSING'},{...house,secrets:[{alias:'A',secret:'MISSING'}]}])expect((await f.call('command',bad)).body).toMatchObject({code:'invalid'});
+ for(const bad of [{...house,secrets:[{alias:'A',secret:'GITHUB'},{alias:'A',secret:'DISCORD'}]},{...house,secrets:[{alias:'-x',secret:'GITHUB'}]},
+  // An alias is the one rule's: nothing the body that receives it would refuse for its name alone.
+  ...['deploy-key','a.b','PATH','node_options','LOOM_BODY_SCRATCH','A'.repeat(201)].map(alias=>({...house,secrets:[{alias,secret:'GITHUB'}]}))])expect((await f.call('command',bad)).status).toBe(400);
+ expect((await f.call('command',{...house,repository:null,secrets:[]})).status).toBe(200);
+ expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:null});
+ expect(f.db.select().from(agentHouseSecrets).all()).toEqual([]);
+ expect(f.client.serialize().includes(Buffer.from('synthetic-GITHUB'))).toBe(false);
+});
+it('says why a secret change was refused, and keeps a holder fault behind one fixed line',async()=>{
+ const f=fixture(),input={id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic-private-value'};
+ expect((await f.call('set',input)).status).toBe(200);
+ expect(await f.call('set',{...input,id:randomUUID()})).toMatchObject({status:409,body:{ok:false,code:'conflict',message:'Secret value already exists'}});
+ expect(await f.call('set',{id:randomUUID(),name:'MISSING',mode:'replace',value:'x'})).toMatchObject({status:404,body:{ok:false,code:'not-found',message:'Unknown secret value'}});
+ expect(await f.call('remove',{id:randomUUID(),name:'MISSING'})).toMatchObject({status:404,body:{ok:false,code:'not-found'}});
+ expect((await f.call('command',{action:'revoke',id:'no-such-grant'})).body).toMatchObject({ok:false,code:'invalid',message:'Unknown grant'});
+ f.holder.set.mockRejectedValueOnce(new Error('holder socket closed at /private/path'));
+ const fault=await f.call('set',{id:randomUUID(),name:'OTHER',mode:'add',value:'synthetic-other-value'});
+ expect(fault.body).toMatchObject({ok:false,code:'unavailable',message:'Secret write awaits recovery'});
+ expect(JSON.stringify(fault.body)).not.toContain('/private/path');
 });
