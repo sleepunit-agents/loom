@@ -72,7 +72,7 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
 import {triggers as triggerRows} from './core/data/schema.js';
 import {applyKitChange,kitBefore,kitCardName,kitReview,kitQuestion,kitRefusal,kitChange,kitChanges,projectKitDefinitions,type KitRefusal} from './shared-kit-cards.js';
-import {proposalCard,factLines,storedProposal,clipProposalText,type CardContext,type CardNames} from './proposal-words.js';
+import {proposalCard,factLines,storedProposal,clipProposalText,clipWithCount,type CardContext,type CardNames} from './proposal-words.js';
 import {validateBoxSettings,validateMachineReader} from './shared-box-settings.js';
 import {validateAgentRunSettings} from './shared-agent-run-settings.js';
 import {validateAgentAccounts} from './shared-household-access.js';
@@ -189,6 +189,18 @@ const cardWords=(value:Proposal)=>kitChange(value)?{ask:kitQuestion(value)+'?',i
  :value.change==='remove'?{ask:'Remove '+label(value)+'?',ifYes:'It is taken out of use. Its history stays, and it can be restored.',ifNo:'It stays as it is.'}
  :value.change==='restore'?{ask:'Restore '+label(value)+'?',ifYes:'It is put back in use.',ifNo:'It stays removed.'}
  :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
+function exactRequest(input:unknown):string {
+ const limit=40_000;
+ let stringsClipped=false;
+ const json=JSON.stringify(input,(_key,value:unknown)=>{
+  if(typeof value!=='string'||value.length<=2_000)return value;
+  stringsClipped=true;
+  return clipWithCount(value,2_000);
+ },2);
+ const notice='\n\nDisplay clipped. The complete request is kept in storage.';
+ if(json.length>limit||stringsClipped)return clipWithCount(json,limit-notice.length)+notice;
+ return json;
+}
 const plain=(value:Proposal,context:CardContext)=>proposalCard(value.change,value.input,context);
 /** The kinds no standing rule answers: each card waits for a household owner's own answer.
  *  - `rule`: a rule cannot widen the rules.
@@ -594,7 +606,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     run(_ctx,input){
      const card=waiting(input.id);if(!card)throw new OperationError('not-found','No such waiting card');
      let parsed: ReturnType<typeof read>;
-     try{parsed=read(card);}catch{return{summary:card.changeSummary??card.what,problem:null};}
+     try{parsed=read(card);}catch{return{summary:'',problem:null};}
      const {kept,value}=parsed;
      let problem:string|null=null;
      try{check(value,kept);}catch(error){if(!(error instanceof OperationError))throw error;problem=error.message;}
@@ -611,13 +623,15 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     may:(viewer,input)=>householdOwner(db,viewer)&&!!stored(input.id),
     run(ctx,input){
      const card=stored(input.id);if(!card||!householdOwner(db,ctx.viewer))throw new OperationError('not-found','No such household card');
-     const exactOnly=()=>{
-      const inputHeld=storedProposal(card);
-      return inputHeld ? {exact:JSON.stringify(inputHeld.input,null,2)} : {};
+     const unknown=()=>{
+      const held=storedProposal(card);
+      return {summary:'',problem:null,card:null,blocked:null,
+       ...(card.changeSummary ? {exact:exactRequest({summary:card.changeSummary,...(held?{input:held.input}:{})})}
+         : held ? {exact:exactRequest(held.input)} : {})};
      };
-     if(card.state!=='pending')return{summary:'',problem:null,card:null,blocked:null,...exactOnly()};
      let parsed: ReturnType<typeof read>;
-     try{parsed=read(card);}catch{return{summary:card.changeSummary??card.what,problem:null,card:null,blocked:null,...exactOnly()};}
+     try{parsed=read(card);}catch{return unknown();}
+     if(card.state!=='pending')return{summary:'',problem:null,card:null,blocked:null,exact:exactRequest(parsed.kept.after)};
      const {kept,value}=parsed,was=before(value);
      const machineIds=value.change==='runSettings'
       ? [...value.input.boxes,...((was as {boxes?:string[]}|null)?.boxes??[])]
@@ -625,19 +639,21 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const machines=new Map(machineIds.length?db.select({id:boxes.id,name:boxes.name}).from(boxes)
       .where(inArray(boxes.id,[...new Set(machineIds)])).all().map(row=>[row.id,row.name]):[]);
      const names=parts.names?.(ctx.viewer),context:CardContext={
-      before:{value:was},...(names?{names}:{}),
+      before:{value:was},
+      ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
       projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
       machineName:id=>machines.get(id),
      };
      const told=plain(value,context);
+     if(!told)return unknown();
      let blocked=blockedWords(value,kept,was,ctx.viewer,names);
      if(blocked&&value.change==='placeSchedule'&&value.input.asker.kind==='outside'){
-      const askedBy=told?.facts.find(fact=>fact.label==='Asked by')?.value??'The outside account';
+      const askedBy=told.facts.find(fact=>fact.label==='Asked by')?.value??'The outside account';
       blocked=blocked.replace('the outside account '+value.input.asker.id,()=>askedBy);
      }
-     return{summary:told?factLines(told.facts):card.changeSummary??card.what,problem:null,blocked:blocked&&clipProposalText(blocked,1500),
-      card:told?{title:told.title,nothing:told.nothing,facts:told.facts,exact:JSON.stringify(kept.after,null,2),
-       ifYes:told.ifYes,ifNo:told.ifNo}:null};
+     return{summary:factLines(told.facts),problem:null,blocked:blocked&&clipProposalText(blocked,1500),
+      card:{title:told.title,nothing:told.nothing,facts:told.facts,exact:exactRequest(kept.after),
+       ifYes:told.ifYes,ifNo:told.ifNo}};
     },
    });
   },

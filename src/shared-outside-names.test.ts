@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from './core/data/database.js';
-import { agents, bridgeConnections, bridgePeople, conversations, members, secrets } from './core/data/schema.js';
+import { agents, bridgeConnections, bridgeIncoming, bridgePeople, conversations, members, secrets } from './core/data/schema.js';
 import { outsideNames } from './shared-outside-names.js';
 
 const clean: (() => void)[] = [];
@@ -48,4 +48,24 @@ it('holds no name for a workspace: it says the connection that reaches it, or no
   expect(f.names.workspace('slack', 'T1')).toEqual({ name: 'art-slack', source: 'reached by the connection' });
   expect(f.names.workspace('slack', 'T2')).toBeNull();
   expect(f.names.workspace('discord', 'T1')).toBeNull();
+});
+
+it('takes a parent channel name from a shared thread with an exact recorded parent and workspace', () => {
+  const f = fixture();
+  f.db.insert(secrets).values({ name: 'token', description: 'Bot token', changedAt: at, changedBy: 'gage' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'G1', botUser: 'B', tokenSecret: 'token', enabled: true, state: 'connected', stateAt: at }).run();
+  const thread = (id: string, parent: string, name: string, privateThread = false) => {
+    f.db.insert(conversations).values({ id, agent: 'art', venue: 'discord', place: JSON.stringify(['G1', id, id]), label: 'Discord thread #plans under #' + name,
+      member: privateThread ? 'gage' : null, direct: privateThread, startedAt: at, lastAt: at, turnCount: 0 }).run();
+    f.db.insert(bridgeIncoming).values({ id, connection: 'art-discord', channel: id, thread: id, parent, isDm: privateThread,
+      user: 'U1', text: '', postedAt: at, receivedAt: at, state: 'delivered', conversation: id }).run();
+  };
+  thread('T1', 'C1', 'pond');
+  thread('T2', 'C2', 'C2');
+  thread('T3', 'C3', 'private', true);
+  expect(f.names.channel('discord', 'G1', 'C1')?.name).toBe('#pond');
+  expect(f.names.channel('discord', 'G2', 'C1')).toBeNull();
+  expect(f.names.channel('discord', 'G1', 'T1')).toBeNull();
+  expect(f.names.channel('discord', 'G1', 'C2')).toBeNull();
+  expect(f.names.channel('discord', 'G1', 'C3')).toBeNull();
 });

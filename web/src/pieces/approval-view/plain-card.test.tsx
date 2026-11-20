@@ -57,7 +57,8 @@ it('says why a card cannot be allowed before anyone presses Allow: both answer b
   // With nothing against it, Allow is on.
   expect(app(grant)).toMatch(/<button(?![^>]*disabled)[^>]*>Allow<\/button>/);
   // An answered card says nothing against itself, whatever was read while it waited.
-  expect(app({ ...grant, state: 'denied', card, blocked })).not.toContain(blocked);
+  expect(app({ ...grant, state: 'denied', card, blocked })).not.toContain('Art does not take messages');
+  expect(chat({ ...grant, state: 'denied', card, blocked })).not.toContain('Art does not take messages');
 });
 it.each([
   ['bridge', { action: 'disconnect', id: 'mark-discord' }, 'Disconnect the Discord or Slack connection mark-discord'],

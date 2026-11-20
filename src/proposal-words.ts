@@ -29,6 +29,7 @@ export interface CardContext {
   name?(id: string): string;
   projectName?(id: string): string | undefined;
   machineName?(id: string): string | undefined;
+  allAgents?: readonly string[];
 }
 export interface ProposalCard {
   /** One sentence, with no full stop: the card's title, and its question with a question mark. */
@@ -50,8 +51,6 @@ const owns = (name: string) => name + (name.endsWith('s') ? '’' : '’s');
 const platformWord = (platform: string) => platform === 'slack' ? 'Slack' : platform === 'discord' ? 'Discord' : cap(platform);
 const count = (n: number, one: string, many = one + 's') => n + ' ' + (n === 1 ? one : many);
 const yes = (value: unknown) => value ? 'Yes' : 'No';
-const list = (values: string[], none = 'None') => values.length ? values.join(', ') : none;
-const numbered = (values: string[], none = 'None') => values.length ? values.map((value, index) => (index + 1) + '. ' + value).join('\n') : none;
 
 interface Told { title: string; facts: CardFact[]; ifYes?: string; ifNo?: string; nothing?: boolean }
 type Outside = { platform: string; workspace: string; user: string };
@@ -69,6 +68,34 @@ const workspaceWords = (names: CardNames | undefined, platform: string, workspac
 };
 
 const FACT_LIMIT = 1500;
+const ITEM_LIMIT = 10;
+export function clipWithCount(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  let prefix = value.slice(0, limit - 32).replace(/[\uD800-\uDBFF]$/, '');
+  const suffix = () => '…(+' + (value.length - prefix.length) + ' more characters)';
+  prefix = value.slice(0, limit - suffix().length).replace(/[\uD800-\uDBFF]$/, '');
+  return prefix + suffix();
+}
+function displayList(values: string[], none: string, separator: string, limit = FACT_LIMIT, total = values.length): string {
+  const shown: string[] = [];
+  let length = 0;
+  for (const value of values) {
+    const item = clipWithCount(value, limit - 40);
+    if (length + item.length + separator.length > limit - 32) break;
+    shown.push(item);
+    length += item.length + separator.length;
+  }
+  if (shown.length < total) shown.push('and ' + (total - shown.length) + ' more');
+  return shown.length ? shown.join(separator) : none;
+}
+const list = (values: string[], none = 'None') => displayList(values, none, ', ');
+const numbered = (values: string[], none = 'None') => displayList(values.map((value, index) => (index + 1) + '. ' + value), none, '\n');
+
+function shownItems<T>(items: T[], label: string, describe: (item: T, index: number) => CardFact[]): CardFact[] {
+  const shown = items.slice(0, ITEM_LIMIT).flatMap(describe);
+  if (items.length > ITEM_LIMIT) shown.push({ label, value: 'and ' + (items.length - ITEM_LIMIT) + ' more' });
+  return shown;
+}
 const NOTHING = 'Nothing would change: it is already like this.';
 
 /** Field by field: with an owner's reading of what is there, only what differs, as before and after. */
@@ -116,7 +143,8 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     const held = names?.channel(platform, workspace, id) ?? null;
     return { short: (held ? held.name : names ? 'a channel loom has no name for (' + id + ')' : 'the channel ' + id) + ' on ' + platformWord(platform), held };
   };
-  const tools = (value: unknown) => arr(value).map(rec).map(tool => str(tool.name) + ': ' + str(tool.description)).join('\n');
+  const tools = (value: unknown, label: string) => shownItems(arr(value).map(rec), label,
+    tool => [{ label, value: clipWithCount(str(tool.name) + ': ' + str(tool.description), FACT_LIMIT) }]);
 
   switch (change) {
     case 'placeSchedule': {
@@ -151,20 +179,29 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       const agent = name(input.agent), kit = str(input.kit), next = input.tools === null ? null : arr(input.tools).map(rec);
       const had = was ? was.tools : undefined;
       const facts: CardFact[] = [{ label: 'Agent', value: agent }, { label: 'Kit', value: kit }];
-      const commands = (value: unknown) => arr(value).map(rec).map(tool => {
-        const args = arr(tool.args).map(arg => typeof arg === 'string'
-          ? JSON.stringify(arg) : 'Parameter ' + JSON.stringify(str(rec(arg).parameter)));
-        return str(tool.name) + ': ' + JSON.stringify(str(tool.program)) + '\nArguments: ' + (args.length ? '\n' + numbered(args) : 'None');
-      }).join('\n');
-      if (next) {
-        facts.push({ label: next.length === 1 ? 'Tool' : 'Tools', value: tools(next) });
-        facts.push({ label: 'Each runs', value: commands(next) });
-        facts.push({ label: 'Code it runs', value: [...new Set(next.map(tool => str(tool.repository) + ' at commit ' + str(tool.commit).slice(0, 12) + ', image ' + str(tool.image).replace(/^sha256:/, '').slice(0, 12)))].join('\n') });
-        facts.push({ label: 'Secrets handed to it', value: next.map(tool => { const secrets = Object.entries(rec(tool.secrets)).map(([alias, secret]) => str(secret) + ' as ' + alias); return str(tool.name) + ': ' + list(secrets, 'none'); }).join('\n') });
-      }
+      const commands = (value: unknown, now: boolean) => {
+        const label = now ? 'Tool now' : 'Tool';
+        return shownItems(arr(value).map(rec), label, tool => {
+          const args = arr(tool.args);
+          const secrets = Object.entries(rec(tool.secrets));
+          return [
+            { label, value: clipWithCount(str(tool.name) + ': ' + str(tool.description), FACT_LIMIT) },
+            { label: now ? 'Runs now' : 'Runs', value: clipWithCount(JSON.stringify(str(tool.program)), FACT_LIMIT) },
+            ...(args.length ? shownItems(args, 'Arguments', (arg, index) => [{
+              label: 'Argument ' + (index + 1),
+              value: typeof arg === 'string' ? JSON.stringify(clipWithCount(arg, 240)) : 'Parameter ' + JSON.stringify(str(rec(arg).parameter)),
+            }]) : [{ label: 'Arguments', value: 'None' }]),
+            { label: 'Code it runs', value: clipWithCount(str(tool.repository) + ' at commit ' + str(tool.commit).slice(0, 12) + ', image ' + str(tool.image).replace(/^sha256:/, '').slice(0, 12), FACT_LIMIT) },
+            ...(secrets.length ? shownItems(secrets, 'Secrets handed to it', ([alias, secret]) =>
+              [{ label: 'Secret handed to it', value: clipWithCount(str(secret) + ' as ' + alias, FACT_LIMIT) }])
+              : [{ label: 'Secrets handed to it', value: 'None' }]),
+          ];
+        });
+      };
+      if (next) facts.push(...commands(next, false));
       if (was) {
-        if (had) facts.push({ label: 'Each runs now', value: commands(had) });
-        facts.push({ label: 'Now', value: had ? 'The kit has ' + count(arr(had).length, 'tool') + ':\n' + tools(had) : 'There is no such kit yet.' });
+        if (had) facts.push(...commands(had, true));
+        facts.push({ label: 'Now', value: had ? 'The kit has ' + count(arr(had).length, 'tool') + '.' : 'There is no such kit yet.' });
         const granted = [count(arr(was.projects).length, 'project'), count(arr(was.members).length, 'member'), count(arr(was.outside).length, 'outside account')];
         if (had) facts.push({ label: 'Granted to now', value: granted.join(', ') });
       }
@@ -193,7 +230,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
         applies = 'When ' + agent + ' works on that account’s word in an eligible conversation.';
       }
       facts.push({ label: 'Kit', value: kit + ', of ' + agent });
-      if (was) facts.push({ label: 'What the kit does', value: was.tools ? tools(was.tools) : 'There is no kit by that name.' });
+      if (was) facts.push(...(was.tools ? tools(was.tools, 'What the kit does') : [{ label: 'What the kit does', value: 'There is no kit by that name.' }]));
       facts.push({ label: 'Applies', value: applies });
       const same = !!was && was.on === grant;
       if (was) facts.push({ label: same ? 'What changes' : 'Now', value: same ? NOTHING : was.on ? 'This grant is in place.' : 'This grant is absent.' });
@@ -224,7 +261,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       const stands = (value: unknown) => {
         const project = rec(value);
         return !value ? 'There is no such project.' : str(project.name) + (project.removed ? ' (removed)' : project.retired ? ' (retired)' : '')
-          + '. Members: ' + list(strings(project.members).map(name), 'none') + '. Agents: ' + list(strings(project.agents).map(name), 'none')
+          + '. Members: ' + displayList(strings(project.members).map(name), 'none', ', ', 500) + '. Agents: ' + displayList(strings(project.agents).map(name), 'none', ', ', 500)
           + '. ' + count(arr(project.repositories).length, 'repository', 'repositories') + '.';
       };
       return { title: 'Merge the project ' + projectName(input.from) + ' into the project ' + projectName(input.into),
@@ -247,15 +284,25 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     }
     case 'member': {
       const role = (row: Rec) => row.fullOwner ? 'Owner of the household and of every agent' : row.role === 'owner' ? 'Owner of the household' : 'Member';
-      const agentsOf = (value: unknown) => list(strings(value).map(name));
-      const told = changes(before, [['Role', was && role(was), role(input)], field('Their agents', 'agents', agentsOf)]);
+      const rosterOf = (row: Rec) => row === input && row.fullOwner ? context.allAgents ?? [] : strings(row.agents);
+      const agentsOf = (row: Rec) => {
+        const roster = rosterOf(row).map(name);
+        if (!row.fullOwner) return list(roster);
+        return 'As a full owner they have every agent' + (roster.length ? ': ' + displayList(roster, 'None', ', ', FACT_LIMIT - 48) : '.');
+      };
+      const sameRoster = was && !!was.fullOwner === !!input.fullOwner && sameValue(rosterOf(was), rosterOf(input));
+      const told = changes(before, [['Role', was && role(was), role(input)], ['Their agents', was && agentsOf(was), agentsOf(input), sameRoster]]);
+      if (input.fullOwner && !told.facts.some(fact => fact.label.startsWith('Their agents'))) {
+        told.facts.push({ label: 'Their agents', value: agentsOf(input) });
+      }
       return { title: isNew ? 'Add ' + name(input.id) + ' to the household as ' + (input.role === 'owner' ? 'an owner' : 'a member') : was ? 'Change what ' + name(input.id) + ' is in the household'
         : 'Set ' + name(input.id) + ' as ' + (input.role === 'owner' ? 'an owner' : 'a member') + ' of the household', ...told };
     }
     case 'agent': {
       const face = (row: Rec) => str(row.faceShape) + ' with ' + str(row.faceEyes) + ' eyes', colours = (row: Rec) => str(row.markBg) + ' behind ' + str(row.markFg);
       const told = changes(before, [field('About', 'about', value => str(value) || 'Nothing written'), ['Face', was && face(was), face(input)], ['Colours', was && colours(was), colours(input)]]);
-      return { title: isNew ? 'Add an agent called ' + name(input.id) + ' to the household' : 'Change how ' + name(input.id) + ' is described and drawn', ...told };
+      return { title: isNew ? 'Add an agent called ' + name(input.id) + ' to the household' : 'Change how ' + name(input.id) + ' is described and drawn', ...told,
+        ...(isNew ? { ifYes: 'Full owners will have the new agent.' } : {}) };
     }
     case 'settings': {
       const words: Record<string, string> = { defaultAgent: 'Default agent', timezone: 'Time zone', commsDays: 'Days Comms keeps words', githubOwner: 'GitHub owner',
@@ -282,24 +329,28 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       return { title: tier === null ? 'Remove the standing rule for ' + about : 'Set a standing rule for ' + about + ': ' + tier, nothing: same,
         facts: [{ label: 'When asked about', value: cap(kinds[str(input.kind)] ?? str(input.kind)) }, { label: 'Covers', value: cap(where) },
           { label: 'For', value: str(input.person) ? 'Requests made for ' + name(input.person) : 'Requests made for a household owner' },
-          { label: 'Answer', value: tier === null ? 'No standing answer: each request asks.' : tier },
+          { label: 'Answer', value: tier === null ? 'This rule is removed. Other matching rules can still answer.' : tier },
           ...(before ? [{ label: same ? 'What changes' : 'Now', value: same ? NOTHING : had ? 'The standing answer is: ' + had : 'There is no such rule.' }] : [])] };
     }
     case 'bodyPolicy': {
-      const people = (value: unknown) => arr(value).map(rec).map(person => {
+      const people = (value: unknown) => displayList(arr(value).map(rec).map(person => {
         const account = outside(person as unknown as Outside);
         return account.short + (names ? ' [' + str(person.user) + ' in ' + str(person.workspace) + ']' : '') + ': tier ' + str(person.tier) + (names ? '\n' + workspaceWords(names, str(person.platform), str(person.workspace)) : '');
-      }).join('\n') || 'Nobody';
-      const denied = (value: unknown) => arr(value).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')).join('\n') || 'None';
+      }), 'Nobody', '\n');
+      const denied = (value: unknown) => displayList(arr(value).map(rec).map(tool => str(tool.pattern) + (tool.guestsOnly ? ' (only when working for a guest)' : '')), 'None', '\n');
       const told = changes(before, [field('Outside contacts', 'people', people), field('Tools its body is not given', 'deniedTools', denied)]);
       return { title: 'Change ' + owns(name(input.agent)) + ' outside contacts and tool restrictions', ...told };
     }
     case 'secretRule': {
       const answers: Record<string, string> = { ask: 'Ask each time', auto: 'Allow automatically', never: 'Never allow' };
-      const when = (row: Rec, at: string) => list(arr(row.agents).map(rec).filter(entry => entry.when === at).map(entry => name(entry.agent)), 'No agent');
+      const when = (label: string, at: string): ChangeRow => {
+        const scope = (row: Rec) => arr(row.agents).map(rec).filter(entry => entry.when === at).map(entry => str(entry.agent));
+        const prior = was && scope(was), next = scope(input);
+        return [label, prior && list(prior.map(name), 'No agent'), list(next.map(name), 'No agent'), sameValue(prior, next)];
+      };
       const told = changes(before, [['Answer', was && (answers[str(was.answer)] ?? str(was.answer)), answers[str(input.answer)] ?? str(input.answer)],
         ['Automatic grant lasts', was && count(Number(was.minutes), 'minute'), count(Number(input.minutes), 'minute')],
-        ['When asked', was && when(was, 'on_request'), when(input, 'on_request')], ['At startup', was && when(was, 'at_start'), when(input, 'at_start')]]);
+        when('When asked', 'on_request'), when('At startup', 'at_start')]);
       return { title: (isNew ? 'Set' : 'Change') + ' who may use the secret ' + str(input.secret), ...told };
     }
     case 'secretDefault': {
@@ -308,7 +359,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       return { title: 'For a secret with no rule of its own: ' + (answers[str(input.answer)] ?? str(input.answer)), ...told };
     }
     case 'houseSecrets': {
-      const handed = (value: unknown) => arr(value).map(rec).map(entry => str(entry.secret) + ' (as ' + str(entry.alias) + ')').join('\n') || 'None';
+      const handed = (value: unknown) => displayList(arr(value).map(rec).map(entry => str(entry.secret) + ' (as ' + str(entry.alias) + ')'), 'None', '\n');
       const told = changes(before, [['Secret for its house repository', was && (str(was.repository) || 'None'), str(input.repository) || 'None'], field('Secrets handed over at start', 'secrets', handed)]);
       return { title: 'Change which secrets ' + owns(name(input.agent)) + ' house is handed when it starts', ...told };
     }
@@ -320,14 +371,18 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     }
     case 'measuring': {
       const keeps = (row: Rec) => Number(row.keep_days) === 0 ? 'No local history' : count(Number(row.keep_days), 'day');
-      const told = changes(before, [['loom measures itself', was && yes(was.on), yes(input.on)], ['Sends measurements outside', was && yes(was.send_outside), yes(input.send_outside)],
+      const sends = (row: Rec) => row.on ? yes(row.send_outside) : row.send_outside ? 'Off while measuring is off' : 'No';
+      const told = changes(before, [['loom measures itself', was && yes(was.on), yes(input.on)], ['Sends measurements outside', was && sends(was), sends(input)],
         ['Outside address', was && (str(was.outside_address) || 'None'), str(input.outside_address) || 'None'], ['Keeps history for', was && keeps(was), keeps(input)]]);
       return { title: input.on ? 'Have loom measure itself' + (input.send_outside ? ', and send the measurements outside' : '') : 'Stop loom measuring itself', ...told };
     }
     case 'boxSettings': {
-      const runs = (value: unknown) => arr(value).map(rec).map(entry => name(entry.agent) + (entry.lent ? ' (lent to it)' : '')).join(', ') || 'None';
-      const rows: ChangeRow[] = [['Name', was && str(was.name), str(input.name)], ['Runs any agent of its owner', was && yes(was.hostsAny), yes(input.hostsAny)],
-        ['Only reports, runs nothing', was && yes(was.reportOnly), yes(input.reportOnly)], ['Always on', was && yes(was.alwaysOn), yes(input.alwaysOn)], field('Agents it runs', 'agents', runs),
+      const runs = (row: Rec) => {
+        const assigned = arr(row.agents).map(rec).map(entry => name(entry.agent) + (entry.lent ? ' (lent to it)' : ''));
+        return row.reportOnly && assigned.length ? 'None while report-only. Configured: ' + displayList(assigned, 'None', ', ', FACT_LIMIT - 40) : list(assigned);
+      };
+      const rows: ChangeRow[] = [['Name', was && str(was.name), str(input.name)], ['Can host any agent of its owner when hosting is on', was && yes(was.hostsAny), yes(input.hostsAny)],
+        ['Only reports, runs nothing', was && yes(was.reportOnly), yes(input.reportOnly)], ['Always on', was && yes(was.alwaysOn), yes(input.alwaysOn)], ['Agents it runs', was && runs(was), runs(input), sameValue(was?.agents, input.agents) && (was?.reportOnly === input.reportOnly || arr(input.agents).length === 0)],
         field('What its owner says it has', 'facts', value => list(strings(value))),
         ...(input.readers === undefined ? [] : [field('Agents that may read it', 'readers', value => list(strings(value).map(name)))])];
       const told = changes(before, rows), machine = 'the machine ' + str(input.name);
@@ -344,21 +399,22 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     case 'machineReader': return { title: (input.allow ? 'Grant' : 'Remove') + ' explicit read access for ' + name(input.agent) + ' on the machine ' + machineName(input.box),
       facts: [{ label: 'Agent', value: name(input.agent) }, { label: 'Machine', value: machineName(input.box) }] };
     case 'runSettings': {
-      const ports = (row: Rec) => arr(row.ports).map(rec).map(port => str(port.address) + ' port ' + str(port.port)).join(', ') || 'None';
+      const ports = (value: unknown) => list(arr(value).map(rec).map(port => str(port.address) + ' port ' + str(port.port)));
       const told = changes(before, [['House repository', was && (str(was.houseRepository) || 'None'), str(input.houseRepository) || 'None'],
         ['Housefile', was && (str(was.houseFile) || 'None: the core house'), str(input.houseFile) || 'None: the core house'], ['Branch', was && str(was.houseBranch), str(input.houseBranch)],
         ['May run containers inside its house', was && yes(was.nestedContainers), yes(input.nestedContainers)], ['Needs a graphics card', was && yes(was.gpu), yes(input.gpu)],
-        ...(input.prefers === undefined ? [] : [['Prefers a machine with', was && list(strings(was.prefers)), list(strings(input.prefers))] as [string, string | undefined, string]]),
-        field('Machines, in order', 'boxes', value => numbered(strings(value).map(machineName))), ['Ports its house may open', was && ports(was), ports(input)]]);
+        ...(input.prefers === undefined ? [] : [field('Prefers a machine with', 'prefers', value => list(strings(value)))]),
+        field('Machines, in order', 'boxes', value => numbered(strings(value).map(machineName))), field('Ports its house may open', 'ports', ports)]);
       return { title: (isNew ? 'Set how ' : 'Change how ') + name(input.agent) + ' runs' + (input.houseFile === '' ? ', in the core house with no Housefile of its own' : ''), ...told };
     }
     case 'models': {
-      const told = changes(before, [['Models, in order', was && numbered(strings(was.models)), numbered(strings(input.models))]]);
+      const told = changes(before, [field('Models, in order', 'models', value => numbered(strings(value)))]);
       return { title: 'Change the models ' + name(input.agent) + ' may use', ...told };
     }
     case 'agentAccounts': {
-      const told = changes(before, [['GitHub accounts', was && list(strings(was.github)), list(strings(input.github))]]);
-      return { title: 'Set ' + owns(name(input.agent)) + ' GitHub accounts', ...told };
+      const told = changes(before, [field('GitHub accounts', 'github', value => list(strings(value)))]);
+      return { title: 'Set ' + owns(name(input.agent)) + ' GitHub accounts', ...told,
+        ifYes: 'loom uses these logins to attribute GitHub changes.' };
     }
     case 'order': {
       const told = changes(before, [field('Order', 'ids', value => numbered(strings(value).map(name)))]);
@@ -367,7 +423,7 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
     case 'remove': case 'restore': {
       const of = str(input.of), removing = change === 'remove';
       const thing = of === 'member' ? name(input.id) : of === 'agent' ? 'the agent ' + name(input.id) : of === 'project' ? 'the project ' + projectName(input.id) : 'the Discord or Slack connection ' + str(input.id);
-      const after = of === 'member' ? 'They can no longer sign in.' : of === 'agent' ? 'It no longer runs.' : of === 'project' ? 'It is out of use.' : 'It is switched off and taken out of use.';
+      const after = of === 'member' ? 'They can no longer sign in.' : of === 'agent' ? 'It no longer runs, and its bridge connections are switched off.' : of === 'project' ? 'It is out of use.' : 'It is switched off and taken out of use.';
       const same = !!was && !!was.removed === removing;
       const connectionState = of === 'agent' ? ' Its bridge connections stay off until switched on.' : of === 'bridge' ? ' It stays switched off until enabled.' : '';
       return { title: removing ? 'Remove ' + thing + (of === 'project' || of === 'bridge' ? '' : ' from the household') : 'Restore ' + thing + (of === 'project' || of === 'bridge' ? '' : ' to the household'), nothing: same,
@@ -409,10 +465,10 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
       const sameWorkspace = was?.platform === input.platform && was?.workspace === input.workspace;
       const channels = (row: Rec, key: string) => {
         const ids = strings(row[key]);
-        return list(ids.slice(0, 10).map(id => {
+        return displayList(ids.slice(0, ITEM_LIMIT).map(id => {
           const result = channel(str(row.platform), str(row.workspace), id);
           return result.held ? result.short + ' (' + id + ')' : result.short;
-        }).concat(ids.length > 10 ? ['…'] : []));
+        }), 'None', ', ', FACT_LIMIT, ids.length);
       };
       const filter = (label: string, key: string): ChangeRow => sameValue(was?.[key], input[key]) && was
         ? [label, '', '', true] : [label, was && channels(was, key), channels(input, key), false];
@@ -468,11 +524,6 @@ function bridge(input: Rec, context: CardContext, name: (id: unknown) => string,
 
 /** The card's facts as lines of words, for where a card is read as text (the `approvals` tool, a stored summary). */
 export const factLines = (facts: readonly CardFact[]): string => facts.map(fact => fact.value.includes('\n') ? fact.label + ':\n' + fact.value.split('\n').map(line => '  ' + line).join('\n') : fact.label + ': ' + fact.value).join('\n');
-
-export function hasPlainProposal(card: Parameters<typeof storedProposal>[0]): boolean {
-  const kept = storedProposal(card);
-  return !!kept && !!proposalCard(kept.change, kept.input);
-}
 
 export function publicProposalTitle(card: { operation?: string | null; details: string; what: string }): string {
   const kept = storedProposal(card);

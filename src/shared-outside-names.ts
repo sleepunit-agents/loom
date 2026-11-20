@@ -9,7 +9,7 @@
  */
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, bridgeConnections, bridgePeople, conversations } from './core/data/schema.js';
+import { agents, bridgeConnections, bridgeIncoming, bridgePeople, conversations } from './core/data/schema.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
 import type { CardNames, HeldName } from './proposal-words.js';
 
@@ -36,8 +36,20 @@ export function outsideNames(db: DataDatabase, directory?: (platform: 'slack' | 
         inArray(conversations.agent, db.select({ id: agents.id }).from(agents)),
         eq(conversations.place, JSON.stringify([workspace, channel, null])),
         sql`${conversations.label} like 'Discord channel #%'`, sql`${conversations.label} <> ${'Discord channel #' + channel}`)).orderBy(desc(conversations.lastAt), conversations.id).get();
-      const held = row?.label.slice('Discord channel '.length);
-      return held && held !== '#' + channel ? { name: held, source: 'The name Discord gave with a message from there' } : null;
+      const directName = row?.label.slice('Discord channel '.length);
+      if (directName) return { name: directName, source: 'The name Discord gave with a message from there' };
+      const threads = db.selectDistinct({ label: conversations.label, lastAt: conversations.lastAt, id: conversations.id })
+        .from(bridgeIncoming)
+        .innerJoin(conversations, eq(conversations.id, bridgeIncoming.conversation))
+        .where(and(eq(bridgeIncoming.parent, channel), eq(bridgeIncoming.isDm, false),
+          sql`${conversations.place} = json_array(${workspace}, ${bridgeIncoming.channel}, ${bridgeIncoming.thread})`,
+          eq(conversations.venue, 'discord'), isNull(conversations.member), eq(conversations.direct, false),
+          inArray(conversations.agent, db.select({ id: agents.id }).from(agents)),
+          sql`${conversations.label} like 'Discord thread #% under #%'`,
+          sql`substr(${conversations.label}, -length(${' under #' + channel})) <> ${' under #' + channel}`))
+        .orderBy(desc(conversations.lastAt), conversations.id).get();
+      const held = threads?.label.slice(threads.label.lastIndexOf(' under #') + ' under '.length);
+      return held ? { name: held, source: 'The parent channel name Discord gave with a thread message' } : null;
     },
     workspace(platform, workspace): HeldName | null {
       if (platform !== 'discord' && platform !== 'slack') return null;

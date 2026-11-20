@@ -14,7 +14,6 @@ export interface Approval {
   /** For a household owner looking at a waiting household card: the card as the program says it to an owner, with
    * the names it holds and what the change would replace (household.proposalPreview). Not on the card itself. */
   exactRequest?: string;
-  storedSummary?: string;
   card?: { title: string; nothing: boolean; facts: readonly CardFact[]; exact: string; ifYes?: string; ifNo?: string } | null;
   /** For the same owner: the plain line saying this cannot be allowed and what would fix it. The answer operation still decides. */
   blocked?: string | null;

@@ -9,7 +9,10 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { agents, agentKits, agentKitMembers, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { OperationError } from './core/operations/index.js';
+import { applyKitChange, kitBefore } from './shared-kit-cards.js';
+import type { DataDatabase } from './core/data/database.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -1024,11 +1027,35 @@ it.each([
   expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
 });
 
-it('returns the stored words for an unknown household proposal', async () => {
+it('puts serialized older summaries in owner-only Exact request, including after the answer', async () => {
   const f = fixture();
   const id = (await f.call('household/propose', { change: 'settings', input: { commsDays: 7 }, why: 'Keep less' }, 'art')).body.value!.id;
-  f.db.update(approvals).set({ what: 'Saved title', changeSummary: 'Saved summary', details: JSON.stringify({ change: 'fromTheFuture', after: {} }) }).where(eq(approvals.id,id)).run();
-  expect(await preview(f, id)).toEqual({ summary: 'Saved summary', problem: null, card: null, blocked: null, exact: '{}' });
+  const summary = '{"saved":"private settings"}';
+  f.db.update(approvals).set({ what: 'Saved title', changeSummary: summary, details: JSON.stringify({ change: 'fromTheFuture', after: {} }) }).where(eq(approvals.id,id)).run();
+  const expected = { summary: '', problem: null, card: null, blocked: null, exact: JSON.stringify({ summary, input: {} }, null, 2) };
+  expect(await preview(f, id)).toEqual(expected);
+  expect((await f.call('household/proposalPreview', { id }, 'lee')).status).toBe(403);
+  await f.call('approvals/answer', { id, answer: 'deny' }, 'sam');
+  expect(await preview(f, id)).toEqual(expected);
+});
+
+it('shows the same full-owner roster that Allow assigns', async () => {
+  const f = fixture();
+  const input = { id: 'pat', role: 'owner', fullOwner: true, agents: [] };
+  const id = (await f.call('household/propose', { change: 'member', input, why: 'Share ownership' }, 'art')).body.value!.id;
+  expect((await preview(f,id)).card!.facts).toContainEqual({ label: 'Their agents', value: 'As a full owner they have every agent: Art, Mark' });
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.root.services.household.members().find(row => row.id === 'pat')?.agents).toEqual(['art', 'mark']);
+});
+
+it('caps the whole Exact request even when individual values fit', async () => {
+  const f = fixture();
+  const input = { ...pond, members: ['lee', 'sam'], repositories: Array.from({ length: 30 }, (_, i) => 'github:house/' + String(i).padStart(2, '0') + 'x'.repeat(1700)) };
+  const id = (await f.call('household/propose', { change: 'project', input, why: 'Track repositories' }, 'art')).body.value!.id;
+  const exact = (await preview(f, id)).card!.exact;
+  expect(exact.length).toBeLessThanOrEqual(40_000);
+  expect(exact).toContain('Display clipped.');
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details).after).toEqual(input);
 });
 
 it('files, reads, previews and answers a project card with a 5,000-character repository reference', async () => {
@@ -1041,8 +1068,14 @@ it('files, reads, previews and answers a project card with a 5,000-character rep
   const id = filed.body.value!.id;
   expect((await look(f, id)).problem).toBeNull();
   const pending = await preview(f, id);
-  expect(pending.card!.facts.find(fact => fact.label === 'Repositories')?.value).toMatch(/…$/u);
-  expect(JSON.parse(pending.card!.exact)).toEqual(input);
+  expect(pending.card!.facts.find(fact => fact.label === 'Repositories')?.value).toMatch(/…\(\+\d+ more characters\)$/u);
+  const [display, notice] = pending.card!.exact.split('\n\n');
+  expect(notice).toContain('Display clipped.');
+  const [repository] = JSON.parse(display!).repositories as string[];
+  expect(repository.length).toBeLessThanOrEqual(2_000);
+  const suffix = repository.match(/…\(\+(\d+) more characters\)$/u)!;
+  expect(suffix.index! + Number(suffix[1])).toBe(5_000);
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details).after).toEqual(input);
   expect((await answer(id, 'allow')).body.ok).toBe(true);
   const done = await preview(f, id);
   expect(done).toMatchObject({ exact: pending.card!.exact, card: null, blocked: null });
@@ -1104,4 +1137,71 @@ it('reads a filed repeating schedule in plain facts and keeps the arrays in Exac
     { label: 'Machine preferences', value: 'fast' },
   ]));
   expect(JSON.parse(given.card!.exact)).toEqual(ask);
+});
+
+
+// The origin/next apply guard. Supply the same database state and observe whether it reaches the write.
+type Change = Parameters<typeof applyKitChange>[1];
+function upstreamApplyKitChange(db:DataDatabase,value:Change,rows:(db:DataDatabase,value:Change)=>{state:ReturnType<typeof kitBefore>;apply():void}) {
+  const {state,apply}=rows(db,value);
+  const adding=value.change==='kit'?value.input.tools!==null:value.change==='kitGrant'?value.input.grant:value.input.on;
+  if(adding){
+    if('agentLive' in state && !state.agentLive)throw new OperationError('invalid','Choose a live agent');
+    if('project' in state && (!state.project || state.project.removed || state.project.retired))throw new OperationError('invalid','Choose a project in use');
+    if('memberLive' in state && !state.memberLive)throw new OperationError('invalid','Choose a live member');
+    if('linked' in state && state.linked)throw new OperationError('invalid','This account is linked to a member. Name the member instead.');
+    if('known' in state && !state.known)throw new OperationError('invalid','Choose an outside account already known to the agent or household');
+    if(value.change==='kitGrant' && 'tools' in state && !state.tools)throw new OperationError('invalid','No such kit');
+  }
+  if(('on' in state && state.on===adding)||(value.change==='kit' && 'tools' in state && JSON.stringify(state.tools)===JSON.stringify(value.input.tools)))
+    throw new OperationError('conflict','That is how it already is');
+  apply();
+}
+
+it('matches the upstream kit apply guard for every refusal and allowed change', () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const key = { agent: 'art', kit: 'tools' };
+  const to = { platform: 'slack' as const, workspace: 'T1', user: 'U1' };
+  f.root.services.projects.save({ ...pond, id: 'live' });
+  f.root.services.projects.save({ ...pond, id: 'retired' });
+  f.root.services.projects.setRetired({ project: 'retired' }, true);
+  f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
+  f.db.insert(agentKits).values({ ...key, tools: [] }).run();
+  f.db.insert(agentKitMembers).values({ ...key, member: 'lee' }).run();
+  f.db.insert(bridgePeople).values({ ...to, member: 'lee' }).run();
+  const grant = (recipient: Extract<Change, {change:'kitGrant'}>['input']['to'], adding = true): Change =>
+    ({ change: 'kitGrant', input: { ...key, to: recipient, grant: adding } });
+  const rows: [string, Change, string | null][] = [
+    ['dead agent', { change: 'kit', input: { ...key, agent: 'mark', tools: [] } }, 'invalid'],
+    ['missing project', grant({ project: 'missing' }), 'invalid'],
+    ['retired project', grant({ project: 'retired' }), 'invalid'],
+    ['missing member', grant({ member: 'missing' }), 'invalid'],
+    ['linked account takes precedence over unknown', grant(to), 'invalid'],
+    ['unknown account', grant({ ...to, user: 'U2' }), 'invalid'],
+    ['missing kit', { change: 'kitGrant', input: { ...key, kit: 'missing', to: { member: 'lee' }, grant: true } }, 'invalid'],
+    ['existing grant', grant({ member: 'lee' }), 'conflict'],
+    ['absent grant', grant({ member: 'sam' }, false), 'conflict'],
+    ['unchanged tools', { change: 'kit', input: { ...key, tools: [] } }, 'conflict'],
+    ['new grant', grant({ project: 'live' }), null],
+    ['withdraw existing grant', grant({ member: 'lee' }, false), null],
+    ['define kit', { change: 'kit', input: { ...key, kit: 'new', tools: [] } }, null],
+    ['remove kit', { change: 'kit', input: { ...key, tools: null } }, null],
+    ['add outside project person', { change: 'projectOutsidePerson', input: { ...to, user: 'known', project: 'live', on: true } }, null],
+  ];
+  f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'known']), tier: 1 }).run();
+  function outcome(apply: () => void) {
+    try { apply(); return null; }
+    catch (error) {
+      if (!(error instanceof OperationError)) throw error;
+      return { code: error.code, message: error.message };
+    }
+  }
+  for (const [label, value, expectedCode] of rows) {
+    let reachedWrite = false;
+    const rows = (db: DataDatabase, change: Change) => ({ state: kitBefore(db, change), apply: () => { reachedWrite = true; } });
+    const expected = outcome(() => upstreamApplyKitChange(f.db, value, rows));
+    expect(expected?.code ?? null, label).toBe(expectedCode);
+    expect(reachedWrite, label).toBe(expectedCode === null);
+    expect(outcome(() => applyKitChange(f.db, value)), label).toEqual(expected);
+  }
 });

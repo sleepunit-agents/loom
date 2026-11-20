@@ -491,12 +491,29 @@ it('opens Exact request from History and omits the caution and live facts', asyn
  expect(words()).not.toContain('loom will refuse');
 });
 
-it.each(['app','inline'])('shows an older household card’s title, reason and summary (%s)',async surface=>{
+it.each(['app','inline'])('shows older household summaries only inside the owner disclosure (%s)',async surface=>{
  fixture();
- const row=feed.approvals.approvals[0];
- Object.assign(row,{operation:'household.change',what:'Saved title',why:'Saved reason',changeSummary:'Saved summary',details:JSON.stringify({change:'olderKind',after:{}})});
- await draw(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+row.id}):h(LiveApprovalCard,{id:row.id}));
- for (const word of ['Saved title','Saved reason','Saved summary']) expect(words()).toContain(word);
+ const row=feed.approvals.approvals[0], summary='{"saved":"private settings"}';
+ Object.assign(row,{operation:'household.change',what:'Saved title',why:'Saved reason',changeSummary:summary,details:JSON.stringify({change:'olderKind',after:{}})});
+ const view=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+row.id}):h(LiveApprovalCard,{id:row.id});
+ const request=vi.fn(async()=>Response.json({ok:true,value:{summary:'',problem:null,card:null,blocked:null,exact:JSON.stringify({summary},null,2)}}));
+ vi.stubGlobal('fetch',request);
+ await draw(view());
+ for (const word of ['Saved title','Saved reason']) expect(words()).toContain(word);
+ expect(words()).not.toContain('private settings');
+ expect(words()).not.toContain('Exact request');
+ expect(request).not.toHaveBeenCalled();
+ feed.owner=true;
+ await draw(view());
+ if(surface==='inline') {
+  const details=tree.root.findAllByType('Button').find((button:{props:{children:string}})=>button.props.children==='Details');
+  await act(async()=>details!.props.onClick());
+ }
+ const disclosure=tree.root.findAllByType('button').find((button:{props:{children:string}})=>button.props.children==='Exact request');
+ expect(disclosure).toBeDefined();
+ expect(words()).not.toContain('private settings');
+ await act(async()=>disclosure!.props.onClick());
+ expect(JSON.parse(tree.root.findByType('pre').props.children)).toEqual({summary});
 });
 
 it('refreshes an open caution on focus, visibility, the interval, and a refused Allow', async () => {

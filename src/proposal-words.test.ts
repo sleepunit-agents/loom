@@ -7,7 +7,7 @@ const tool = { name: 'pond_status', description: 'Read station status in the Pon
   program: 'bin/pond-kit-read', args: ['status', { parameter: 'station' }], parameters: { station: { type: 'string', description: 'Station' } }, secrets: { KIT_POND_TOKEN: 'pond-read-token' } };
 /** One fixture input per kind of change `household.propose` takes, with the sentence it must say from the input alone. */
 const kinds: Record<string, Array<[input: unknown, title: string, facts?: string[]]>> = {
-  kit: [[{ agent: 'art', kit: 'pond-field', tools: [tool] }, 'Give Art a kit called pond-field, with 1 tool', ['Tool: pond_status: Read station status in the Pond deployment.', 'Each runs:\n  pond_status: "bin/pond-kit-read"\n  Arguments: \n  1. "status"\n  2. Parameter "station"', 'Secrets handed to it: pond_status: pond-read-token as KIT_POND_TOKEN']],
+  kit: [[{ agent: 'art', kit: 'pond-field', tools: [tool] }, 'Give Art a kit called pond-field, with 1 tool', ['Tool: pond_status: Read station status in the Pond deployment.', 'Runs: "bin/pond-kit-read"', 'Argument 1: "status"', 'Argument 2: Parameter "station"', 'Secret handed to it: pond-read-token as KIT_POND_TOKEN']],
     [{ agent: 'art', kit: 'pond-field', tools: null }, 'Remove Art’s pond-field kit']],
   kitGrant: [[{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: true }, 'Let the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit', ['Who: A Slack account', 'Workspace: T02AYL3QM', 'Applies: When Art works on that account’s word in an eligible conversation.', 'Account id: U07V8CZUC1J']],
     [{ agent: 'art', kit: 'pond-et-livonia', to: gage, grant: false }, 'Stop letting the Slack account U07V8CZUC1J (workspace T02AYL3QM) use Art’s pond-et-livonia kit'],
@@ -44,7 +44,7 @@ const kinds: Record<string, Array<[input: unknown, title: string, facts?: string
   models: [[{ agent: 'art', models: ['fable', 'opus'] }, 'Change the models Art may use', ['Models, in order:\n  1. fable\n  2. opus']]],
   agentAccounts: [[{ agent: 'art', github: ['art-bot'] }, 'Set Art’s GitHub accounts', ['GitHub accounts: art-bot']]],
   order: [[{ of: 'agents', ids: ['mark', 'art'] }, 'Change the order agents are listed in', ['Order:\n  1. Mark\n  2. Art']]],
-  remove: [[{ of: 'agent', id: 'mark' }, 'Remove the agent Mark from the household', ['What happens: It no longer runs. Nothing is erased, and it can be restored later.']], [{ of: 'bridge', id: 'mark-discord' }, 'Remove the Discord or Slack connection mark-discord']],
+  remove: [[{ of: 'agent', id: 'mark' }, 'Remove the agent Mark from the household', ['What happens: It no longer runs, and its bridge connections are switched off. Nothing is erased, and it can be restored later.']], [{ of: 'bridge', id: 'mark-discord' }, 'Remove the Discord or Slack connection mark-discord']],
   restore: [[{ of: 'member', id: 'lee' }, 'Restore Lee to the household'], [{ of: 'project', id: 'pond' }, 'Restore the project pond']],
   secretDescription: [[{ secret: 'pond-key', description: 'Reads the pond' }, 'Change what the secret pond-key is said to be for', ['What it is for: Reads the pond', 'Its value: Not shown, and not changed.']]],
   tokenRevoke: [[{ label: 'lee' }, 'Revoke the token lee']],
@@ -138,8 +138,7 @@ it('shows argument boundaries in both versions of a kit', () => {
   const before = [{ ...tool, args: ['north pond'] }];
   const after = [{ ...tool, args: ['north', 'pond'] }];
   const card = proposalCard('kit', { agent: 'art', kit: 'field', tools: after }, { before: { value: { tools: before } } })!;
-  expect(card.facts.find(fact => fact.label === 'Each runs now')?.value).toContain('1. "north pond"');
-  expect(card.facts.find(fact => fact.label === 'Each runs')?.value).toContain('1. "north"\n2. "pond"');
+  expect(card.facts.filter(fact => fact.label.startsWith('Argument')).map(fact => fact.value)).toEqual(['"north"', '"pond"', '"north pond"']);
 });
 
 it('describes the member scope of approvals moved by a project merge', () => {
@@ -156,4 +155,27 @@ it('names an unknown bot and workspace and bounds channel name reads to displaye
   expect(card.facts).toContainEqual({ label: 'Bot account', value: 'A Discord account loom has no name for (B1 in G1)' });
   expect(card.facts).toContainEqual({ label: 'Workspace', value: 'A workspace loom has no name for (G1)' });
   expect(reads).toBe(10);
+  expect(factLines(card.facts)).toContain("and 90 more");
+});
+
+it('clips a long kit argument independently and counts omitted tools and arguments', () => {
+  const args = ['x'.repeat(2000), 'second argument', ...Array.from({ length: 10 }, () => 'extra')];
+  const tools = [{ ...tool, args, description: 'd'.repeat(2000) },
+    ...Array.from({ length: 11 }, (_, index) => ({ ...tool, name: 'tool_' + index, description: 'A separate tool.' }))];
+  const card = proposalCard('kit', { agent: 'art', kit: 'field', tools })!;
+  const first = JSON.parse(card.facts.find(fact => fact.label === 'Argument 1')!.value) as string;
+  const clipped = first.match(/…\(\+(\d+) more characters\)$/u)!;
+  expect(clipped.index! + Number(clipped[1])).toBe(2_000);
+  expect(card.facts).toContainEqual({ label: 'Argument 2', value: '"second argument"' });
+  expect(card.facts).toContainEqual({ label: 'Arguments', value: 'and 2 more' });
+  expect(card.facts).toContainEqual({ label: 'Tool', value: 'tool_0: A separate tool.' });
+  expect(card.facts).toContainEqual({ label: 'Tool', value: 'and 2 more' });
+  expect(card.facts.find(fact => fact.label === 'Tool')!.value).toMatch(/…\(\+\d+ more characters\)$/u);
+});
+
+it('shows that measuring sends nothing while off and report-only machines run no agents', () => {
+  const measuring = proposalCard('measuring', { on: false, send_outside: true, outside_address: 'https://traces.example', keep_days: 7 })!;
+  expect(factLines(measuring.facts)).toContain('Sends measurements outside: Off while measuring is off');
+  const machine = proposalCard('boxSettings', { box: 'one', name: 'one', reportOnly: true, agents: [{ agent: 'art', lent: false }] })!;
+  expect(factLines(machine.facts)).toContain('Agents it runs: None while report-only. Configured: art');
 });

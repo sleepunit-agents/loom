@@ -57,8 +57,7 @@ function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owne
   const held = preview?.id === opened && preview?.revision === revision && preview?.state === state ? preview?.value : undefined;
   const refresh = (id: string) => { if (id === opened) setRevision(value => value + 1); };
   return { snapshot: held ? { ...snapshot, approvals: snapshot.approvals.map(row => row.id === opened
-    ? { ...row, card: held.card, blocked: held.blocked, exactRequest: held.exact,
-        storedSummary: row.state === 'pending' && !held.card ? held.summary : undefined } : row) } : snapshot, refresh };
+    ? { ...row, card: held.card, blocked: held.blocked, exactRequest: held.exact } : row) } : snapshot, refresh };
 }
 
 // Times are said in the household's zone (the desk's own clock reading, data/zone.ts) unless the root supplies

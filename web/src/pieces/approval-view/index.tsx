@@ -1,4 +1,3 @@
-import { clipProposalText, hasPlainProposal } from '../../../../src/proposal-words';
 import { RuleEditor, type SaveRule } from './rule-editor';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, Body } from '../../kit';
@@ -33,7 +32,7 @@ const same = (words: string) => words.trim().replace(/[?.!\s]+$/, '').toLowerCas
 /** Who a private request is for: "for you" when it is the viewer's own, the person's name otherwise. */
 const forWhom = (a: Approval, viewer: string | undefined, name: Name) => a.member ? a.member === viewer ? 'for you' : `for ${name(a.member)}` : '';
 /** A card's plain facts, in the kit's own list. A raw id kept for certainty is drawn small. */
-const cardFacts = (facts: readonly CardFact[]) => facts.map(fact => <Fact key={fact.label} label={fact.label}>{fact.small ? <span className="loom-reader__meta">{fact.value}</span> : fact.value}</Fact>);
+const cardFacts = (facts: readonly CardFact[]) => facts.map((fact, index) => <Fact key={index} label={fact.label}>{fact.small ? <span className="loom-reader__meta">{fact.value}</span> : fact.value}</Fact>);
 function Answer({ approval, actions, caution }: { approval: Approval; actions?: ApprovalActions; caution?: ReactNode }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
   const [allowed, setAllowed] = useState(false);
@@ -81,10 +80,10 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const ends = a.expiresAt && <Meta>Allowance ends {time(a.expiresAt)}</Meta>;
   const whom = forWhom(a, viewer, name);
   const card = a.card;
-  const title = card?.title ?? (a.storedSummary ? clipProposalText(a.what, 240) : approvalTitle(a));
+  const title = card?.title ?? approvalTitle(a);
   const exact = card?.exact ?? a.exactRequest;
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
-  const storedSummary = a.storedSummary ?? (!change && (!household || !hasPlainProposal(a)) && a.changeSummary);
+  const storedSummary = !household && !change && a.changeSummary;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
   const caution = card && a.state === 'pending' && a.blocked
     ? <Body role="note">loom will refuse this as things stand: {a.blocked.replace(/^This cannot be allowed(?: yet| as it stands)?: /, '')}</Body>
