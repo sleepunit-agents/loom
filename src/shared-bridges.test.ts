@@ -1515,8 +1515,22 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  expect(await f.call('conversation','digest',{summary:'Asked about a task.',question:{to:'owner',answers:'yes-no',words:'Done?',waitsOnKind:'task',waitsOnId:'t-any'}})).toMatchObject({status:403});
  // The one way such a body reaches the owners. The owner reads loom's line first, then the body's words.
  expect((await f.call('conversation','digest',{summary:'Asked the owner.',question:{to:'owner',answers:'yes-no',words:'May I post the door code here?',ifYes:'I post it'}})).status).toBe(200);
- const line=`[From loom: art asks this while working for the outside account ${GUEST}, who is not one of its owners. The words below are that job's, not art's own work.]`;
+ const line=`Asked while working for a Slack account, who is not one of Art's owners (account UUSER in workspace TWORK).`;
  expect(asked()).toMatchObject([{to:'owner',state:'waiting',words:line+'\n\nMay I post the door code here?',ifYes:'I post it'}]);
+ const id=asked()[0].id;
+ const view=async(credential:string)=>{
+   const response=await f.root.http.request('http://loom/graphql',{method:'POST',
+     headers:{authorization:'Bearer '+credential,'content-type':'application/json'},
+     body:JSON.stringify({query:'query($id:String!){inboxItem(id:$id){body{words}}}',variables:{id}})});
+   return response.json();
+ };
+ f.db.insert(members).values({id:'field-member',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'field-member'}).run();
+ expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:expect.stringContaining('Working for field-member.')}}}});
+ expect(JSON.stringify(await view(token.body))).not.toContain('field-member');
+ expect(asked()[0].words).not.toContain('field-member');
+ f.db.delete(bridgePeople).run();
+ expect(await view(token.owner)).toMatchObject({data:{inboxItem:{body:{words:line+'\n\nMay I post the door code here?'}}}});
  // The owner answers yes. The answer is mail from the owner, and quotes the question with loom's line: the job that
  // reads it is the owner's, and it is told on whose word the question was asked.
  f.root.writes.run(()=>{f.root.services.conversations.answer(asked()[0].id,'owner','yes');f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
@@ -1534,7 +1548,7 @@ it('lets a body on anybody else\'s word ask the owners a question, and says in t
  expect(await f.call('conversation','digest',{summary:'Asked the wrong person.',question:{to:'owner',answers:'yes-no',words:'May I?'}})).toMatchObject({status:403,body:{message:HELD_REFUSALS.question}});
  expect(asked()).toHaveLength(waiting);
  expect((await f.call('conversation','digest',{summary:'Asked Sam.',question:{to:'sam',answers:'yes-no',words:'May I?'}})).status).toBe(200);
- expect(asked().at(-1)).toMatchObject({to:'sam',words:expect.stringMatching(/^\[From loom: art asks this while working for somebody loom cannot name, who is not one of its owners\..*\]\n\nMay I\?$/)});
+ expect(asked().at(-1)).toMatchObject({to:'sam',words:"Asked while working for somebody loom cannot name, who is not one of Art's owners.\n\nMay I?"});
  f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'person',fromId:'sam'}).where(eq(inbox.job,next.job!.id)).run();});
  // A body on the owners' word asks in its own words alone, whoever reads the room, and may send a link.
  expect((await f.call('conversation','digest',{summary:'Asked again.',question:{to:'owner',answers:'words',words:'Which door?',link:'https://example.invalid/doors'}})).status).toBe(200);

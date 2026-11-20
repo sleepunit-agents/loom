@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > (2026-04-23) and this release ship together as `0.5.0`.
 
 ## [Unreleased]
+- Explain unavailable kits in job briefs and give household owners one actionable notice per cause. Name outside askers in owner questions and tell guest jobs to ask only for owner decisions.
 
 - A private Comms job can ask Loom for a Codex subagent. The result returns to the originating thread and wakes its coordinator. Update the server before its workers.
 - Keep older household proposals answerable, resolve workspace-qualified directory names, and load owner details only when a card is opened.

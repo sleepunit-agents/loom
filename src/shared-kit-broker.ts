@@ -1,6 +1,9 @@
 /** The worker supplies its own bearer and the credential bound to the body on
  * its socket. Neither credential alone can receive a helper's secret inputs. */
-import { randomUUID } from 'node:crypto';
+import {rowsWritten} from './core/data/rows-written.js';
+import { OperationResults } from './core/data/operation-results.js';
+import { RECEIPT_MS } from './core/operations/receipts.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -13,17 +16,21 @@ import { SHA256_HEX } from './core/sha256-hex.js';
 import { kitTool } from './runtime/kit-manifest.js';
 import { householdId } from './slug.js';
 import type { sharedCredentials } from './shared-credentials.js';
+import {kitAvailabilityReport,kitPin,type KitUnavailable} from './runtime/kit-availability.js';
+import {recordKitAvailability} from './shared-kit-notices.js';
 import { currentKitJob } from './shared-kit-access.js';
 
 type Credentials = ReturnType<typeof sharedCredentials>;
 type Target = NonNullable<ReturnType<typeof currentKitJob>>;
 const cursor = z.strictObject({kit:householdId,tool:kitTool.shape.name});
-const list = z.strictObject({repository:kitTool.shape.repository,commit:kitTool.shape.commit,image:kitTool.shape.image,after:cursor.optional()});
+const list = kitPin.extend({after:cursor.optional()});
+const matchesPin=(tool:z.infer<typeof kitTool>,pin:z.infer<typeof kitPin>)=>
+  tool.repository===pin.repository && tool.commit===pin.commit && tool.image===pin.image;
 const call = cursor.extend({definition:z.string().regex(SHA256_HEX)});
 const finish = z.strictObject({use:z.uuid(),outcome:z.enum(['ran','failed','refused'])});
 const changed = 'This tool or its grant changed. Read the available tools for this job again.';
 export function kitBroker(options: {db:DataDatabase;credentials:Credentials;source?:SecretValueSource;
-  now():string;write<T>(fn:()=>T):T; readJson(request:Request,abort:AbortController):Promise<unknown>}) {
+  now():string;write<T>(fn:()=>T,stampOnly?:()=>boolean):T; readJson(request:Request,abort:AbortController):Promise<unknown>}) {
   const {db,credentials}=options;
   const app = new Hono<{Variables:{shutdown:AbortController}}>();
   const resolve = (request:Request) => {
@@ -55,11 +62,55 @@ export function kitBroker(options: {db:DataDatabase;credentials:Credentials;sour
     const raw=await options.readJson(request,c.get('shutdown')),target=current();
     if (!target) return c.json({message:'The job ended'},403);
     const operation=c.req.param('operation');
+    const credentialReady=(tool:z.infer<typeof kitTool>)=>{
+      const names=Object.values(tool.secrets);
+      return !names.length || !!options.source && names.every(name=>secretHasValue(db,name)) &&
+        !db.select({id:secretWriteJournal.id}).from(secretWriteJournal)
+          .where(and(eq(secretWriteJournal.state,'prepared'),inArray(secretWriteJournal.secret,names))).get();
+    };
+    if (operation==='availability') {
+      const parsed=kitAvailabilityReport.safeParse(raw);
+      if(!parsed.success)return c.json({message:'Invalid kit availability report'},400);
+      const {pin,transport,offered:listed}=parsed.data;
+      const unavailable:KitUnavailable[]=[],offered:string[]=[];
+      for(const {kit,tools} of target.kits){
+        const allowed=target.tools.filter(row=>row.kit===kit);
+        const reasons=new Set<KitUnavailable['reason']>();
+        if(!tools.length)reasons.add('empty');
+        else if(allowed.length<tools.length)reasons.add('policy');
+        for(const {tool} of allowed){
+          if(!pin)reasons.add('image');
+          else if(!matchesPin(tool,pin))reasons.add('house');
+          else if(!credentialReady(tool))reasons.add('credential');
+          else if(transport!=='ready')reasons.add(transport);
+          else if(!listed.some(entry=>entry.kit===kit && entry.tool===tool.name))reasons.add('catalog');
+        }
+        const partial=transport==='ready' && listed.some(entry=>entry.kit===kit && allowed.some(row=>row.tool.name===entry.tool));
+        if(reasons.size)for(const reason of reasons)unavailable.push({kit,reason,...(partial && {partial:true as const})});
+        else offered.push(kit);
+      }
+      const caller='kit-availability:'+JSON.stringify([target.job.id,target.job.box]);
+      const inputHash=createHash('sha256').update(JSON.stringify(parsed.data)).digest('hex');
+      let receiptOnly=false;
+      const accepted=options.write(()=>db.transaction(()=>{
+        const receipts=new OperationResults(db), {id}=parsed.data;
+        const previous=receipts.get(caller,id);
+        if(previous)return previous.inputHash===inputHash;
+        const before=rowsWritten(db);
+        recordKitAvailability(db,options.now,target.job,unavailable,offered);
+        receiptOnly=rowsWritten(db)===before;
+        receipts.insert({caller,id,operation:'kit.availability',inputHash,result:{ok:true,value:null},
+          expires:Date.parse(options.now())+RECEIPT_MS});
+        return true;
+      }),()=>receiptOnly);
+      if(!accepted)return c.json({message:'This report ID was already used'},409);
+      return c.json({unavailable});
+    }
     if (operation==='list') {
       const parsed=list.safeParse(raw);
       if (!parsed.success) return c.json({message:'Invalid mounted house or cursor'},400);
-      const {repository,commit,image,after}=parsed.data;
-      const ordered=target.tools.filter(({kit,tool})=>tool.repository===repository && tool.commit===commit && tool.image===image
+      const {after}=parsed.data;
+      const ordered=target.tools.filter(({kit,tool})=>matchesPin(tool,parsed.data) && credentialReady(tool)
         && (!after || kit>after.kit || (kit===after.kit && tool.name>after.tool)))
         .sort((a,b)=>a.kit<b.kit?-1:a.kit>b.kit?1:a.tool.name<b.tool.name?-1:a.tool.name>b.tool.name?1:0);
       const first=ordered[0];

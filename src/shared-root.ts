@@ -91,7 +91,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobWord, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -195,7 +195,15 @@ export function sharedRoot(options: {
   // currentToken writes it where it reads the job (core/data/authentication.ts).
   const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)&&kitQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
-  const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
+  const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey, (viewer,account)=>{
+    let identity:unknown;
+    try { identity=JSON.parse(account); } catch { return undefined; }
+    const parsed=outsideAccount.safeParse(identity);
+    if(!parsed.success)return undefined;
+    const name=(...address:typeof parsed.data)=>memory.people.outsideName(viewer,...address);
+    if(!holds(policyRules.householdOwner,viewer,{},sharedSharing(db)))return name(...parsed.data);
+    return outsideNames(db,name).person(...parsed.data)?.name;
+  }) : undefined;
   // Mail about a task goes into its conversation only for a person who reads that conversation (policy.ts, addressee).
   const tasks=taskService(db,now,(person,conversation)=>canReadSharedConversation(db,addressee(person),conversation));
   const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding,report);
@@ -283,8 +291,8 @@ export function sharedRoot(options: {
 
   const requests = new SecretRequests(db, now);
   late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume; late.schedule = ask => tempo.placeSchedule(ask);
-  const secretCommit = <T>(write: () => T): T => {
-    const result = data.writes.run(write);
+  const secretCommit = <T>(write: () => T, stampOnly?:()=>boolean): T => {
+    const result = data.writes.run(write,stampOnly);
     for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
     return result.value;
   };

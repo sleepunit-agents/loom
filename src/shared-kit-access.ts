@@ -68,5 +68,5 @@ export function currentKitJob(db:DataDatabase, credentials:Pick<ReturnType<typeo
   const tools = access.kits.flatMap(({kit,tools,reasons})=>tools.filter(tool=>!kitToolDenied(tool.name,denials,kit)).map(tool=>({
     kit,tool,reasons,definition:createHash('sha256').update(JSON.stringify(tool)).digest('hex'),
   })));
-  return {job,word,tools,projects:access.projects};
+  return {job,word,tools,kits:access.kits,projects:access.projects};
 }

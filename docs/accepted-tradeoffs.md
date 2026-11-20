@@ -647,7 +647,7 @@ replacement worker can leave another asleep if the mount is still hung.
   84% reaches an open window up to a minute late.
 - **What is enforced.** Only a write that has checked what it wrote may be kept back: a report that left
   the machine's facts and room as they were, closed no notice, gave no work, ended no job, and came from
-  a machine that was already reporting (`Machines.report`, `Context.stampOnly`). Everything else, and
+  a machine that was already reporting (`Machines.report`, `Context.stampOnly`). A kit availability report that writes only its retry receipt also uses the quiet path. A change to an owner notice wakes readers immediately. Everything else, and
   every change of who may see what, is told to every selection at once, as before
   (`DataWrites.run`). A machine heard from again after a silence is told at once.
   A machine's reading of itself is kept back only when `MachineConditions.read` says no state a person

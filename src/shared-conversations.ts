@@ -12,13 +12,13 @@ import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { sharedSharing } from './shared-sharing.js';
 import { CommsMessages } from './core/conversations/messages.js';
 import { CommsQueries, commsQueryFields } from './core/conversations/comms-query.js';
-import { InboxQueries, inboxQueryFields } from './core/conversations/inbox-query.js';
+import { InboxQueries, inboxQueryFields, type QuestionAsker } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
 import { lateMailJoins } from './shared-place-mail.js';
 import type { WordsKey } from './core/conversations/words.js';
 
-export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey) {
+export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey, questionAsker?:QuestionAsker) {
   const now = () => new Date(clock.now()).toISOString();
   // Bodies take their mail through this service: mail a person writes after a job was admitted joins it only
   // when the same asker wrote it (shared-place-mail.ts, lateMailJoins).
@@ -29,7 +29,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   // Who may answer an item is the household's rule (policy.ts, answers), asked here for the read side's
   // "can answer" and for the write alike.
   const answers = (viewer: Viewer) => { const sharing = sharedSharing(db); return (item: { toKind: string; to: string }) => holds(rules.answers, viewer, item, sharing); };
-  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers);
+  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers, questionAsker);
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
     type: 'conversation', member: row.member ?? undefined, project: row.project ?? undefined, agent: row.agent ?? undefined,

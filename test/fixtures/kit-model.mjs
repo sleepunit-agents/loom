@@ -5,6 +5,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 const args=process.argv.slice(2),session=args[args.indexOf('--session-id')+1];
+const kitBrief=readFileSync(0,'utf8').split('\n').find(line=>line.startsWith('Kit pond is unavailable'))??null;
 const endpoint=JSON.parse(readFileSync(3,'utf8')).mcpServers.loom;
 const client=new Client({name:'fixture-model',version:'1'},{capabilities:{}});
 await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url),{requestInit:{headers:endpoint.headers}}));
@@ -13,7 +14,7 @@ try{
   if(names.includes('kit_lookup'))for(const sample of ['pond $(date); echo','leak','after withdrawal']){
     results.push(await client.callTool({name:'kit_lookup',arguments:{sample}}));
   }
-  writeFileSync('model-report.json',JSON.stringify({names,results,ambient:Object.hasOwn(process.env,'KIT_POND'),args,
+  writeFileSync('model-report.json',JSON.stringify({names,results,kitBrief,ambient:Object.hasOwn(process.env,'KIT_POND'),args,
     ephemeral:args.includes('--no-session-persistence')&&!args.includes('--resume')}));
 }finally{await client.close();}
 const answer='Finished the requested check.';

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { afterEach,expect,it,vi } from 'vitest';
@@ -139,4 +139,77 @@ it.each(['owner','member'] as const)('revokes a linked %s on the next call when 
   db.insert(bridgePeople).values({...address,member:'lee'}).run();
   expect((await post('authorize',call)).status).toBe(403);
   expect(source.read).not.toHaveBeenCalled();
+});
+
+it('reports the mounted house mismatch once and closes it when a later job is offered the kit',async()=>{
+  const {db,post,root,source,at}=fixture();
+  const tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const different={...pin,commit:'2'.repeat(40)};
+  const changed=vi.fn();
+  const stop=root.writes.observe(changed);
+  clean.push(stop);
+  const notices=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all();
+
+  const report=async(pin:typeof different,offered:string[]=[],transport='ready')=>
+    (await (await post('availability',{id:randomUUID(),pin,transport,offered:offered.map(kit=>({kit,tool:tool.name}))})).json()).unavailable;
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toMatchObject([{to:'owner',state:'waiting',words:expect.stringContaining('different house')}]);
+  changed.mockClear();
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toHaveLength(1);
+  expect(changed).not.toHaveBeenCalled();
+
+  expect(await report(pin,[],'socket')).toEqual([{kit:'weather',reason:'socket'}]);
+  expect(notices()).toHaveLength(2);
+  expect((await (await post('list',pin)).json()).tools).toHaveLength(1);
+  expect(await report(pin,['weather'])).toEqual([]);
+  expect(notices().map(row=>row.state)).toEqual(['resolved','resolved']);
+  expect(await report(different)).toEqual([{kit:'weather',reason:'house'}]);
+  expect(notices()).toHaveLength(3);
+
+  db.insert(secretChanges).values({id:'removed',secret:'weather',action:'removed',at,by:'owner'}).run();
+  expect((await (await post('list',pin)).json()).tools).toEqual([]);
+  expect(await report(pin)).toEqual([{kit:'weather',reason:'credential'}]);
+  expect(source.read).not.toHaveBeenCalled();
+});
+
+it('reports a missing second tool and keeps a machine-specific notice open across another worker’s recovery',async()=>{
+  const {db,post,raw}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const changed={...tool,name:'other',commit:'a'.repeat(40)};
+  db.update(agentKits).set({tools:[tool,changed]}).run();
+  const body={pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]};
+  const report=async(runner=raw.runner)=>(await (await post('availability',{...body,id:randomUUID()},runner)).json()).unavailable;
+  expect(await report()).toEqual([{kit:'weather',reason:'house',partial:true}]);
+  db.update(jobs).set({box:'elsewhere'}).run();
+  db.update(agentKits).set({tools:[tool]}).run();
+  expect(await report(raw.other)).toEqual([]);
+  expect(db.select().from(inbox).where(eq(inbox.source,'notice')).get()?.state).toBe('waiting');
+  db.update(jobs).set({box:'box'}).run();
+  expect(await report()).toEqual([]);
+  expect(db.select().from(inbox).where(eq(inbox.source,'notice')).get()?.state).toBe('resolved');
+});
+
+it('reports a partially denied kit without disclosing the denied tool name',async()=>{
+  const {db,post}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  db.update(agentKits).set({tools:[tool,{...tool,name:'other'}]}).run();
+  db.insert(agentDeniedTools).values({agent:'art',pattern:'mcp__loom__kit_other',guestsOnly:false}).run();
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const result=await post('availability',{id:randomUUID(),pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]});
+  expect(await result.json()).toEqual({unavailable:[{kit:'weather',reason:'policy',partial:true}]});
+});
+
+it('cannot replay a notice or its recovery after a newer observation',async()=>{
+  const {db,post}=fixture(),tool=db.select().from(agentKits).get()!.tools[0];
+  const pin={repository:tool.repository,commit:tool.commit,image:tool.image};
+  const failure={id:randomUUID(),pin,transport:'socket',offered:[]};
+  const recovery={id:randomUUID(),pin,transport:'ready',offered:[{kit:'weather',tool:tool.name}]};
+  const states=()=>db.select().from(inbox).where(eq(inbox.source,'notice')).all().map(row=>row.state);
+  for(const report of [failure,recovery,failure])expect((await post('availability',report)).status).toBe(200);
+  expect(states()).toEqual(['resolved']);
+  expect((await post('availability',{...failure,id:randomUUID()})).status).toBe(200);
+  expect((await post('availability',recovery)).status).toBe(200);
+  expect(states()).toEqual(['resolved','waiting']);
+  expect((await post('availability',{...recovery,id:failure.id})).status).toBe(409);
 });
