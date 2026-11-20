@@ -15,7 +15,7 @@ import {readActivityWindow} from '../core/data/activity-read.js';
 
 export function memoryQueryFields(db: DataDatabase, options: {
   sources?: MindSources; sharing(): Sharing; now(): number;
-  projects: ProjectQueryReader; activity: Pick<ReturnType<typeof createActivityReader>, 'window' | 'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'>> & {nextDeadline?():number|undefined};
+  projects: ProjectQueryReader; activity: Pick<ReturnType<typeof createActivityReader>, 'window' | 'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'|'episodePage'>> & {nextDeadline?():number|undefined};
   conversationHref(id: string): string; projectHref(agent: string, slug: string): string;
 }) {
   const deadlines=new QueryDeadlines(options.now);
