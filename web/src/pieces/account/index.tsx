@@ -1,4 +1,3 @@
-import {OwnerMachines} from '../runtime/machines';
 import {sessionChange} from '../../signin/session-change';
 import DeviceLink from '../../signin/DeviceLink';
 import { decode as dec } from './encoding';
@@ -46,7 +45,6 @@ export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(pa
  <h2 className="text-xl font-semibold">{account.member}</h2>
  {feed.status!=='live'&&<ErrorView text="Connection lost. Account changes are disabled."/>}
  {message&&<p role="status" className="break-all">{message}</p>}
- {active&&feed.status==='live'&&<OwnerMachines key={account.member} member={account.member}/>}
  <DeviceLink enabled={enabled} member={account.member}/>
  <section aria-label="Passkeys" className="grid gap-4"><h2>Passkeys</h2><Registration enabled={enabled}/>{!account.passkeys.length&&<p>No passkeys yet.</p>}{account.passkeys.map(key=><div key={key.ref} className="rounded-xl border p-4"><h3>{key.label}</h3><p>{key.ended?'Stopped':'Active'} · Added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt?` · Last used ${new Date(key.lastUsedAt).toLocaleString()}`:''}</p><Button disabled={!enabled} variant="danger-quiet" onClick={()=>void change('account.removePasskey',key.ref)}>Remove passkey</Button></div>)}</section>
  <section aria-label="Signed-in browsers" className="grid gap-4"><h2>Signed-in browsers</h2>{account.sessions.map(session=><div key={session.ref} className="rounded-xl border p-4"><h3>{session.device}</h3><p>{session.ended?'Ended':'Signed in'} · Last used {new Date(session.seenAt).toLocaleString()}</p><Button disabled={!enabled} variant="outline" onClick={()=>void change('account.revokeSession',session.ref)}>Sign out browser</Button></div>)}</section>

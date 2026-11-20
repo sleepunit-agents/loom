@@ -1,8 +1,8 @@
 import type { RegisteredApp } from './index';
 const sections = ['Work','People & agents','Library','System','Look & feel','Pieces'] as const;
 type Section = typeof sections[number];
-const group:Readonly<Record<string,Section>> = {agents:'People & agents',comms:'People & agents',people:'People & agents',knowledge:'Library',bridges:'System',clock:'System',setup:'System',settings:'System',subscriptions:'System',account:'System',staging:'System',appearance:'Look & feel'};
-const keywords:Readonly<Record<string,readonly string[]>> = {subscriptions:['models','providers','quota','sign-ins'],account:['profile','account','passkey','passkeys','sign out','log out'],setup:['household','members','agents'],appearance:['look','theme','desk background','ground','sound','motion','contrast','pixel','haptics','zoom','one window']};
+const group:Readonly<Record<string,Section>> = {agents:'People & agents',comms:'People & agents',people:'People & agents',knowledge:'Library',bridges:'System',clock:'System',setup:'System',settings:'System',machines:'System',subscriptions:'System',account:'System',staging:'System',appearance:'Look & feel'};
+const keywords:Readonly<Record<string,readonly string[]>> = {machines:['workers','boxes','jobs','machine history'],subscriptions:['models','providers','quota','sign-ins'],account:['profile','account','passkey','passkeys','sign out','log out'],setup:['household','members','agents'],appearance:['look','theme','desk background','ground','sound','motion','contrast','pixel','haptics','zoom','one window']};
 /** The registrations remain the only app inventory; unknown apps keep a place in Work. */
 export function launcherSections(apps:readonly RegisteredApp[],query:string) {
  const q=query.trim().toLowerCase();

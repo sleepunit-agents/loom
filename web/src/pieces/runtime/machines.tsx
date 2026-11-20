@@ -3,6 +3,7 @@ import {useDataQuery} from '../../data/graphql';
 import {memberOperation} from '../../data/operation';
 import {Button, Error as ErrorView, Loading} from '../../kit';
 import {conditionLine, readingAge, readingLine, readingsOf, type Reading} from './machine-readings';
+import {fullTime} from '../../kit/time';
 import {useHouseholdZone} from '../../data/zone';
 
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null; readingsLeftOut:number};
@@ -33,6 +34,7 @@ function MachineReadings({readings}: {readings:Reading[]}) {
 }
 
 function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
+ const zone=useHouseholdZone();
  const [revision, refresh] = useState(0);
  const [history, setHistory] = useState<Entry[]>();
  const [cards, setCards] = useState<Card[]>();
@@ -79,7 +81,7 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
    {!history&&!error&&<Loading label="Opening machine history…"/>}
    {history?.length===0&&<p>No machine reads recorded.</p>}
    <ol>{history?.map(row=><li key={row.id} className="rounded-xl border p-3">
-    <strong>{row.read}</strong> · <time dateTime={row.askedAt}>{new Date(row.askedAt).toLocaleString()}</time>
+    <strong>{row.read}</strong> · <time dateTime={row.askedAt}>{fullTime(row.askedAt,zone)}</time>
     <p>{row.agent} · {row.word}{row.person?' · '+row.person:''}</p>
     <p>Job {row.job}{row.conversation?' · Conversation '+row.conversation:''}</p>
     <p>Arguments <code>{row.args}</code></p><p>{row.outcome} · {row.bytes} bytes</p>
