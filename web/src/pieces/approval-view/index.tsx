@@ -66,7 +66,7 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
         <Button disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
       </Actions></>}
     {busy && <Body quiet role="status">Saving answer…</Body>}
-    {error && <Error text={error} />}
+    {error && <Error title="Couldn’t save your answer" text={error} />}
   </>;
 }
 type DetailsToggle = { open: boolean; toggle(): void };

@@ -116,6 +116,7 @@ it('says the program\'s own refusal of an answer as it is, and shows what alread
   await act(async () => { buttons()[0].props.onClick(); });
   await act(async () => { reject(Object.assign(new Error('At least one household owner must remain'), { name: 'WorkRefused' })); });
   expect(tree.root.findAllByType('Error').map((node: { props: { text: string } }) => node.props.text)).toEqual(['At least one household owner must remain']);
+  expect(tree.root.findByType('Error').props.title).toBe('Couldn’t save your answer');
   // A card nothing stands against says nothing about it.
   await draw(snapshot, { allow: vi.fn(), deny: vi.fn() });
   expect(JSON.stringify(tree.toJSON())).not.toContain('cannot be allowed');
