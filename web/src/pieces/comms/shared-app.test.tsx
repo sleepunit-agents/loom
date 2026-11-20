@@ -356,7 +356,7 @@ it('opening a thread leaves the list, counts, search and pages as they were, and
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/filter', go })); });
   expect(titles()).toEqual(rows); expect(tree.root.findByType('Split').props).toMatchObject({ folders, listBusy: undefined });
   expect(tree.root.findByType('Search').props.disabled).toBe(false); expect(pager('Conversation pages').props).toMatchObject({ disabled: false, hasPrevious: false });
-  expect(asked('Comms')).toEqual(list); expect(asked('Comms')?.variables).toMatchObject({ selected: false });
+  expect(asked('Comms')).toEqual(list); expect(asked('Comms')?.variables).not.toHaveProperty('id');
   expect(asked('CommsThread')).toMatchObject({ variables: { id: 'th:filter', before: null }, options: { keep: true, pause: false } });
   expect(tree.root.findAllByType('Loading')).toHaveLength(1); expect(named('Send')).toBeUndefined();
   // The thread that was open before is not the open thread: its kept words are not drawn and nothing can act on it.

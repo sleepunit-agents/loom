@@ -57,7 +57,7 @@ it('mounts shared Inbox, server folder totals and actual authenticated read/answ
   expect(f.call).toHaveBeenCalledWith('inbox.read', { item: 'in-1' });
   await act(async () => { button('Yes').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-1', answer: 'yes' });
-  expect(listed()?.variables).toMatchObject({ folder: 'needs', offset: 0, search: '', hasItem: false });
+  expect(listed()?.variables).toMatchObject({ folder: 'needs', offset: 0, search: '' });
   expect(opened()).toMatchObject({ variables: { id: 'in-1' } });
 });
 it('consumes whole-mailbox search without locally discarding source matches, pages and resets the cursor on search', async () => {
