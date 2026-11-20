@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendJobs, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
 import { STOP_WORD } from './incoming.js';
 
@@ -87,7 +87,7 @@ export class BridgeSends {
    * and is made in a conversation (`at`), whose place the caller read (shared-place-mail.ts, placeAddress).
    * `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
    * was not delivered, addressed like any other to where that message was said. */
-  queue(input: { id: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
+  queue(input: { id: string; text: string; author?: { job:string; intermediate:boolean }; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new BridgeQueueRefusal('Reply needs an id and text');
     const queued: (typeof bridgeSendFiles.$inferInsert)[] = [];
@@ -95,7 +95,8 @@ export class BridgeSends {
       queued.length = 0;
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
-        if (old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new BridgeQueueRefusal('Reply id reused');
+        const author = tx.select({job:bridgeSendJobs.job}).from(bridgeSendJobs).where(eq(bridgeSendJobs.send,old.id)).get();
+        if ((author && author.job !== input.author?.job) || old.incoming !== (input.incoming ?? null) || old.text !== input.text || (input.at && (old.conversation !== input.at.conversation || old.channel !== input.at.channel || old.thread !== input.at.thread))) throw new BridgeQueueRefusal('Reply id reused');
         // The same id is the same post, files and all. While the post still has its files they are compared;
         // once it is settled they are gone, and a repeat that names files cannot be told from the first.
         const kept = tx.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, old.id)).orderBy(asc(bridgeSendFiles.position)).all();
@@ -118,6 +119,7 @@ export class BridgeSends {
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread, conversation: input.at?.conversation ?? null,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
+      if (input.author?.intermediate) tx.insert(bridgeSendJobs).values({send:row.id,job:input.author.job}).run();
       if (queued.length) tx.insert(bridgeSendFiles).values(queued).run();
       return row;
     }));

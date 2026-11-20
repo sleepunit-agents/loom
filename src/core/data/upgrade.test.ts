@@ -301,6 +301,7 @@ describe('upgrading a household database', () => {
     old.prepare("DELETE FROM bridge_sends WHERE id = 's-7'").run();
     expect(() => old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('none', 0, 'a', x'00')").run()).toThrow('FOREIGN');
     // The two new tables, empty, keyed as stated and tied to what they hang off.
+    expect(old.prepare('SELECT count(*) AS n FROM bridge_send_jobs').get()).toEqual({ n: 0 });
     expect(old.prepare('SELECT count(*) AS n FROM bridge_send_files').get()).toEqual({ n: 0 });
     expect(old.prepare('SELECT count(*) AS n FROM conversation_sessions').get()).toEqual({ n: 0 });
     old.prepare("INSERT INTO bridge_send_files (send, position, name, contents) VALUES ('s-1', 0, 'plot.png', x'00ff')").run();

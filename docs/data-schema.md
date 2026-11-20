@@ -8,7 +8,7 @@ definitions, person and project grants, outside project membership and use histo
 Schema 16 added the scheduled program firing ledger. Schema 17 adds machine inspection
 grants and request history. Schema 20 adds a reading sequence and a silence marker to `boxes`, plus `box_readings` (the latest reading of each thing a machine's worker watches on it: the room under each watched disk path, the memory available, whether the container runtime answers; no history, with the last evaluated lines, occasion counters, report sequences, and accumulated unknown and absent observations) and `box_alert_settings` (the household's lines those readings are held to; a default row on installation or upgrade, editable by an owner). Schema 19 adds who made each terminal binding (`terminal_credentials.issued_by`); bindings from before have nobody recorded. Schema 18 adds `model_account_logins`: what loom last
 learned about each model account sign-in (account, machine, harness and place), never a
-credential. Schema 23 adds private trigger lessons and state, plus the accepting job for each acknowledged trigger delivery. Total: 112 tables. The programme
+credential. Schema 23 adds private trigger lessons and state, plus the accepting job for each acknowledged trigger delivery. Schema 24 adds `bridge_send_jobs` to record which job queued an intermediate bridge post. Existing posts acquire no job association. Total: 113 tables. The programme
 marker is independent of its record-type and operation rows, so clearing every grant
 cannot make a token ordinary. These additional tables contain no raw bearer
 credential. Every part of the program reads and writes this one schema; where each

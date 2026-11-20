@@ -1636,6 +1636,13 @@ CREATE TABLE `bridge_send_parts` (
 );
 
 CREATE INDEX `bridge_send_parts_posted_id_idx` ON `bridge_send_parts` (`posted_id`);
+CREATE TABLE `bridge_send_jobs` (
+	`send` text PRIMARY KEY NOT NULL,
+	`job` text NOT NULL,
+	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE `bridge_file_messages` (
 	`connection` text NOT NULL,
 	`file` text NOT NULL,
