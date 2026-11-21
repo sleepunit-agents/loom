@@ -168,6 +168,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail-question');
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','privateConversationQuestion'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false,cleanup:{jobsStopped:true,credentialsRevoked:true}});
  });
+ it('delivers a scheduled reminder only to its recipient and preserves it across restart',{retry:0},async()=>{
+  const step=await steps.next();
+  expect(step.value.phase,step.value.fatal).toBe('scheduled-inbox');
+  const action=step.value.actions.scheduledInbox;
+  expect(action,JSON.stringify(action)).toMatchObject({ok:true,recipients:2,delivered:2,unchangedAfterRestart:true});
+ });
  it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
   expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
