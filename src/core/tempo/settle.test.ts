@@ -151,3 +151,21 @@ it('stops before reading inbox groups when an expiry notification closes the inb
   expect(() => clock.advance(1_000)).not.toThrow();
   expect(clientClosed).toBe(true);
 });
+
+it.each(['ending','gone'])('keeps one desktop notification per login-%s occasion', kind => {
+  const {db, service, clock, batches, add} = fixture();
+  const file = (id:string) => {
+    add(id);
+    db.update(inbox).set({sourceId:'login-'+kind+':'+id}).where(eq(inbox.id,id)).run();
+    service.changed();
+    clock.advance(5000);
+  };
+  file('first');
+  db.update(inbox).set({words:'Updated login warning',changedAt:new Date(clock.now()).toISOString()}).where(eq(inbox.id,'first')).run();
+  service.changed(); clock.advance(5000);
+  expect(batches).toEqual([['jonathan','first']]);
+  db.update(inbox).set({state:'resolved'}).where(eq(inbox.id,'first')).run();
+  service.changed();
+  file('second');
+  expect(batches).toEqual([['jonathan','first'],['jonathan','second']]);
+});
