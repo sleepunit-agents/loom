@@ -56,7 +56,8 @@ it('mounts what an agent is doing through the real root, each viewer by the hous
   const f = fixture(), source = '{ agentDoing(agent:"art") { more items { id kind title with machine href } } }';
   const ids = async (who: keyof typeof keys) => { const response = await f.post(who, source), body = await response.json(); expect(body.errors).toBeUndefined();
     return (body.data.agentDoing.items as { id: string; kind: string; machine: string | null }[]).map(item => [item.id, item.kind, item.machine].join(' ')); };
-  f.db.update(jobs).set({ box: 'worker' }).run();
+  expect(await ids('house')).toEqual([]);
+  f.db.update(jobs).set({ state:'running', box: 'worker' }).run();
   // The machine is the household owner's: nobody else is told its name.
   expect(await ids('alice')).toEqual(['owned job ', 'private-alice job ']);
   expect(await ids('house')).toEqual(['owned job Worker', 'private-house job Worker']);
