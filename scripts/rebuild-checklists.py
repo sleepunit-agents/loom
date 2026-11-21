@@ -163,6 +163,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
    # taskLifecycle claims, hands back, claims again, closes, reopens and closes again; taskStructure covers ready and blocked.
    if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
+ if f.stem=='machines':
+  for row in rows:
+   if row['promise'].startswith(('Retries a job that fails to start','A job that fails to start is tried again')):row['probe']={'kind':'action','action':'workerRetries'}
  if f.stem=='tools':
   for row in rows:
    if row['promise']=='Write a note, read one by path, list notes under a prefix.':row['probe']={'kind':'action','action':'namedNotes'}

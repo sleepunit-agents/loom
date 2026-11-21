@@ -261,6 +261,12 @@ export async function* walkthroughSteps(output) {
    report.actions.knowledgeDue=await dueKnowledgeDelivery();
   } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
   save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
+  phase='worker start retries';
+  try {
+   const {workerRetryEvidence}=await import('./rebuild-worker-retries.mjs');
+   report.actions.workerRetries=await workerRetryEvidence();
+  } catch(error) { report.actions.workerRetries={ok:false,error:String(error)}; }
+  save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
   phase='named agent tools';
   try {
    const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
