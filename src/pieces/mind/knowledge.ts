@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /** Read-only projection of the existing commons knowledge store. No schema writes. */
 import { DAY_MS } from '../../core/day.js';
 import type { Database } from 'better-sqlite3';
@@ -95,3 +96,9 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
   }
 }
 
+
+
+/** An exact reference to the claims and version anchor read for a check. */
+export function knowledgeCheckRevision(page: {body:string; freshness_anchor?:string|null}): string {
+  return createHash('sha256').update(JSON.stringify([page.body,page.freshness_anchor ?? null])).digest('hex');
+}

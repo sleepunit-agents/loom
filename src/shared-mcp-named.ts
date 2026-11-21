@@ -4,7 +4,7 @@
 import {clipProposalText,publicProposalTitle} from './proposal-words.js';
 import {DAY} from './core/day.js';
 import {dossier} from './pieces/mind/dossier.js';
-import {expectedKnowledgePage,pageSlug} from './pieces/mind/actions.js';
+import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
 import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
 import {randomUUID} from 'node:crypto';
@@ -293,10 +293,10 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('knowledge_read','Read one shared knowledge page by slug, with its sources and kept versions.',
   z.object({slug:pageSlug}).strict(),
   async input=>{
-   const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;sources:{claim:string;locator:string}[]|null;annotations:{kind:string;actor:string;words:string;evidence:string;created:string}[];supersessions:{revision:number;actor:string;reason:string;evidence:string;created:string}[];history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
-    'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body sources{claim locator} annotations{kind actor words evidence created} supersessions{revision actor reason evidence created} history{id op replacedAt actor}}}',{slug:input.slug});
+   const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;checkRevision:string;sources:{claim:string;locator:string}[]|null;annotations:{kind:string;actor:string;words:string;evidence:string;created:string}[];supersessions:{revision:number;actor:string;reason:string;evidence:string;created:string}[];history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
+    'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body checkRevision sources{claim locator} annotations{kind actor words evidence created} supersessions{revision actor reason evidence created} history{id op replacedAt actor}}}',{slug:input.slug});
    const page=data.memoryKnowledgePage;if(!page)return 'No knowledge page '+input.slug;
-   const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','',page.body];
+   const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','Check revision: '+page.checkRevision,'',page.body];
    if(page.sources?.length)lines.push('','## Sources',...page.sources.map(row=>'- '+row.locator));
    if(page.annotations?.length)lines.push('','## Annotations',...page.annotations.map(row=>'- '+row.kind+' by '+row.actor+' on '+row.created+' — '+row.words+(row.evidence?' ('+row.evidence+')':'')));
    if(page.supersessions?.length)lines.push('','## Supersessions',...page.supersessions.map(row=>'- '+row.actor+' replaced revision '+row.revision+' on '+row.created+' — '+row.reason+' ('+row.evidence+')'));
@@ -306,8 +306,8 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('knowledge_edit','Replace page text, add a source URL, or both. Previous text is kept.',
   z.object({slug:pageSlug,body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
- tool('knowledge_check','Record a page check. A note adds a dated section. freshnessAnchor gives the verified version or date. Supply expected with the SHA-256 of the UTF-8 page body and its current freshness anchor to refuse a changed page.',
-  z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),expected:expectedKnowledgePage.optional(),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
+ tool('knowledge_check','Record a verdict. Pass the read revision to guard it. A note appends a dated section.',
+  z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),expectedRevision:z.string().optional(),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
   async input=>{const {outcome:_outcome,...check}=input;await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',check);return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
  tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',
   z.object({slug:pageSlug,revision:z.number().int().positive()}).strict(),

@@ -2,7 +2,6 @@
 import {expect,it,vi} from 'vitest';
 import {writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {createHash} from 'node:crypto';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {sharedUiProgram} from '../test/fixtures/shared-ui-program.js';
@@ -290,9 +289,11 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
  try{
   expect((await art.call('knowledge_write',{title:'Fictional hose',domain:'pond',body:'FICTIONAL_FIRST_FACT'})).text).toBe('Wrote knowledge page fictional-hose');
   expect((await art.call('knowledge_edit',{slug:'fictional-hose',body:'FICTIONAL_SECOND_FACT'})).error).toBe(false);
-  const guard={bodySha256:createHash('sha256').update('FICTIONAL_SECOND_FACT').digest('hex'),freshnessAnchor:null};
-  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expected:{...guard,freshnessAnchor:'obsolete'}})).error).toBe(true);
-  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expected:guard})).text).toBe('Marked fictional-hose still true');
+  const read=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
+  const expectedRevision=/^Check revision: ([0-9a-f]{64})$/m.exec(read)?.[1];
+  expect(expectedRevision).toBeTruthy();
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expectedRevision:'0'.repeat(64)})).error).toBe(true);
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expectedRevision})).text).toBe('Marked fictional-hose still true');
   const page=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
   expect(page).toContain('# Fictional hose');expect(page).toContain('FICTIONAL_SECOND_FACT');expect(page).toContain('## Earlier versions');
   // A check without a note leaves the words alone; one with a note appends it.
