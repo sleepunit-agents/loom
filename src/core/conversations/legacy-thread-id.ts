@@ -1,5 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { ArchiveReader } from './archive-reader.js';
 
 export function legacyConversationId(agent:string, venue:string, place:string) {
   return 'cv-' + createHash('sha256').update([agent, venue, place].join('\0')).digest('hex').slice(0,12);
@@ -20,7 +20,7 @@ function prefix(bytes:Buffer, length:number) {
   throw Error('Incomplete thread prefix');
 }
 
-export function legacyThreadLookup(open:(agent:string)=>Database.Database, readSalt:()=>Buffer) {
+export function legacyThreadLookup(open:(agent:string)=>ArchiveReader, readSalt:()=>Buffer) {
   const agents=new Map<string,{ordinary:Map<string,string>; spawned:string[]}>();
   const memberships=new Map<string,Map<string,Set<string>>>();
   return (agent:string, member:string, thread:string):string|undefined => {

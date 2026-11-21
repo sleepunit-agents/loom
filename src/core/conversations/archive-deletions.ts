@@ -1,11 +1,11 @@
-import type Database from 'better-sqlite3';
+import type { ArchiveReader } from './archive-reader.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { threads } from '../data/schema.js';
 
 /** V1 commits the tombstone and removes the live thread in household.db before
  * cleaning up comms.db. A stopped archive can land between those commits. */
-export function pendingThreadDeletions(household: Database.Database, destination: DataDatabase) {
+export function pendingThreadDeletions(household: ArchiveReader, destination: DataDatabase) {
   const pending = new Set<string>();
   if (!household.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='comms_delete_pending'").get()) return pending;
   const journal = household.prepare(`SELECT p.id, d.id AS tombstone, t.id AS live

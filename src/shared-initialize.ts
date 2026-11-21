@@ -10,9 +10,14 @@ import type {Clock} from './core/clock.js';
 import {assertHomeReady} from './core/home-state.js';
 import {ownHome} from './core/daemon-home.js';
 import {createDataSchema} from './core/data/database.js';
-export async function initializeSharedHome(home:string,clock:Clock){
+export interface InitialHousehold {
+ defaultAgent:string;
+ populate(service:ReturnType<typeof householdService>):void;
+ commsIdentity?:string;
+}
+export async function initializeSharedHome(home:string,clock:Clock,fromArchive?:InitialHousehold){
  const config=join(home,'program.json');
- try{lstatSync(config);return;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+ try{lstatSync(config);if(fromArchive)throw Error('Migration requires an empty destination');return;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
  assertHomeReady(home);mkdirSync(home,{recursive:true,mode:0o700});
  const release=await ownHome(home);let client:Database.Database|undefined;
  try{
@@ -23,20 +28,22 @@ export async function initializeSharedHome(home:string,clock:Clock){
    try{writeFileSync(fd,bytes);fsyncSync(fd);}finally{closeSync(fd);}
   };
   publish('loom.db',new Uint8Array());client=new Database(join(stage,'loom.db'));client.pragma('journal_mode = WAL');
-  const at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>at),username=userInfo().username;
-  // The first owner is named after the OS user when that name is one the household accepts.
-  const member=memberInput.shape.id.safeParse(username).success?username:'owner',service=householdService(db,()=>at);
+  const at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>at),service=householdService(db,()=>at);
   // Through the household service, so the first member and agent meet the same rules as every later one.
   db.transaction(()=>{
+   if(fromArchive){fromArchive.populate(service);return;}
+   // A fresh installation names its first owner after the OS user when that name is valid.
+   const username=userInfo().username,member=memberInput.shape.id.safeParse(username).success?username:'owner';
    service.setAgent({id:'assistant',about:'Help with the work you are given.',markBg:'#313244',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'});
    service.setMember({id:member,role:'owner',fullOwner:true,agents:[]});service.initialize('assistant');
   });
   client.close();client=undefined;
-  await loadKey(stage);
+  if(fromArchive?.commsIdentity)publish('comms.key',Buffer.from(fromArchive.commsIdentity+'\n'));
+  else await loadKey(stage);
   // Where things are, and nothing about who is in the household: the first owner and agent are rows above,
   // and sign-in and Memory read them from there (shared-startup.ts).
   const commons=join(home,'commons');
-  const program={secretHolder:true,database:join(home,'loom.db'),commsKey:join(home,'comms.key'),memory:{checkingAgent:'assistant',sources:{
+  const program={secretHolder:true,database:join(home,'loom.db'),commsKey:join(home,'comms.key'),memory:{checkingAgent:fromArchive?.defaultAgent??'assistant',sources:{
    commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},
   }}};
   publish('program.json',Buffer.from(JSON.stringify(program)+'\n'));

@@ -88,6 +88,15 @@ it('restores a job-backed private thread only under its recorded backing convers
       writer.exec('UPDATE comms_threads SET channel=7');
       expect(()=>importThreads(source,db,recover)).toThrow(/differs/);
       writer.exec('UPDATE comms_threads SET channel=1');
+      const started='2026-11-18T00:00:00.000Z';
+      destination.prepare('UPDATE conversations SET started_at=?,turn_count=3').run(started);
+      const recorded=(agent:string,cv:string)=>{
+        expect([agent,cv]).toEqual(['fern','cv-0b37adc83353']);
+        return {started,last:at};
+      };
+      expect(importThreads(source,db,recover,recorded).inserted).toBe(0);
+      destination.prepare('UPDATE conversations SET started_at=?').run('2026-11-15T00:00:00.000Z');
+      expect(()=>importThreads(source,db,recover,recorded)).toThrow(/differs/);
       writer.exec("UPDATE comms_deleted SET member='other'");
       expect(()=>importThreads(source,db,recover)).toThrow(/deletion differs/);
       expect(destination.prepare('SELECT id,member,venue,place FROM conversations').all()).toEqual([

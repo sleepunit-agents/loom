@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
@@ -11,7 +11,7 @@ import { migrateComms } from './migrate-questions.js';
 
 it('opens completed archive backups only while the destination is stopped', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'loom-question-command-'));
-  const source = join(temp, 'archive'), home = join(temp, 'home');
+  const source = join(temp, 'archive #100%'), home = join(temp, 'home');
   let stdout = '';
   const run = () => migrateComms('archived-questions', ['--source', source, '--home', home], {
     stdout: value => { stdout = value; }, stderr: () => {},
@@ -72,5 +72,30 @@ it('opens completed archive backups only while the destination is stopped', asyn
       expect(result.status,result.stderr).toBe(0);
       expect(result.stdout).toContain('Imported 0 of 0 '+report);
     }
+    const late = new Database(join(source,'household.db'));
+    try {
+      late.exec('DROP TABLE comms_deleted; CREATE TABLE comms_deleted(id,conversation,agent,member,at)');
+      late.prepare('INSERT INTO comms_deleted VALUES(?,?,?,?,?)')
+        .run('retired-fixture','old-conversation',thread.agent,thread.member,new Date().toISOString());
+      late.pragma('journal_mode = WAL');
+    } finally { late.close(); }
+    const combined = () => migrateComms('comms',['--source',source,'--home',home],{
+      stdout:value=>{stdout+=value;},stderr:()=>{},
+    });
+    stdout='';
+    expect(await combined()).toBe(1); // the final archived ask has no source thread
+    expect(stdout).toBe('');
+    const inspect = new Database(join(home,'app.db'),{readonly:true});
+    const tombstone=inspect.prepare("SELECT 1 FROM deleted_threads WHERE id='retired-fixture'");
+    try {
+      expect(tombstone.get()).toBeUndefined();
+      const fixed=new Database(path);
+      try {fixed.exec('DELETE FROM comms_asks');} finally {fixed.close();}
+      expect(await combined()).toBe(0);
+      expect(tombstone.get()).toBeDefined();
+      expect(stdout).toContain('new deletion records: 1');
+      expect(existsSync(join(source,'household.db-shm'))).toBe(false);
+      expect(existsSync(join(source,'household.db-wal'))).toBe(false);
+    } finally {inspect.close();}
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }, 30_000);
