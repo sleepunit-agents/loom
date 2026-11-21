@@ -98,3 +98,33 @@ it.each(['recipient','private-label','quiet','device-remove','device-rebind','se
   if(change==='token-expire')f.db.update(tokens).set({expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.member,'sam')).run();
  });release();await pending;expect(f.send).toHaveBeenCalledOnce();
 });
+
+it('recovers unattempted device pushes on restart while leaving uncertain attempts alone', async () => {
+ const f = fixture();
+ await f.call('notifications/subscribe', {sub, device:'Phone'});
+ f.item('waiting'); f.item('uncertain');
+ f.root.writes.run(() => f.root.services.notifications!.enqueue('sam', ['waiting', 'uncertain']));
+ f.db.update(notificationQueue).set({attempts:1}).where(eq(notificationQueue.item,'uncertain')).run();
+ await f.root.close();
+ const reopened = sharedRoot({db:f.db, clock:f.clock, originAllowed:()=>true, reportError:()=>{},
+   notifications:{vapid:f.vapid, send:f.send}});
+ clean.push(() => reopened.close());
+ await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+ expect(f.db.select().from(notificationQueue).where(eq(notificationQueue.item,'waiting')).get())
+   .toMatchObject({attempts:1, sentAt:expect.any(String)});
+ expect(f.db.select().from(notificationQueue).where(eq(notificationQueue.item,'uncertain')).get())
+   .toMatchObject({attempts:1, sentAt:null});
+});
+
+it('continues sending to healthy devices after unreadable stored subscription keys', async () => {
+ const f = fixture();
+ const healthy = {...sub, endpoint:sub.endpoint+'-second'};
+ await f.call('notifications/subscribe', {sub, device:'Old phone'});
+ await f.call('notifications/subscribe', {sub:healthy, device:'New phone'});
+ f.db.update(notificationDevices).set({keys:'unreadable'}).where(eq(notificationDevices.endpoint,sub.endpoint)).run();
+ f.item('ready');
+ await f.root.services.notifications!.publish('sam',['ready']);
+ expect(f.send.mock.calls.map(([target]) => target.endpoint)).toEqual([healthy.endpoint]);
+ expect(f.db.select().from(notificationQueue).all()).toMatchObject([{device:healthy.endpoint, sentAt:expect.any(String)}]);
+ expect(f.db.select().from(notificationDevices).all()).toMatchObject([{endpoint:healthy.endpoint}]);
+});

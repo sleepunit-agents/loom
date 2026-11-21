@@ -41,7 +41,9 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
   if(closed||!options.config)return;
   for(const row of db.select().from(notificationQueue).where(and(eq(notificationQueue.attempts,0),sql`${notificationQueue.sentAt} is null`)).all()){
    if(closed)return;const target=device(row.device);if(!target||!visible(target.member,row.item)){write(()=>db.delete(notificationQueue).where(eq(notificationQueue.id,row.id)).run());continue;}
-   const keys=subscription.safeParse({endpoint:target.endpoint,keys:JSON.parse(target.keys)});if(!keys.success){write(()=>remove(target.endpoint));continue;}
+   let storedKeys: unknown;
+   try { storedKeys = JSON.parse(target.keys); } catch { /* The invalid subscription is removed below. */ }
+   const keys=subscription.safeParse({endpoint:target.endpoint,keys:storedKeys});if(!keys.success){write(()=>remove(target.endpoint));continue;}
    const claim=write(()=>{const current=device(row.device);if(!current||current.session!==target.session||current.keys!==target.keys||!visible(current.member,row.item))return 0;return db.update(notificationQueue).set({attempts:1}).where(and(eq(notificationQueue.id,row.id),eq(notificationQueue.attempts,0))).run().changes;});if(!claim)continue;
    const current=device(row.device);if(closed||!current||current.session!==target.session||current.keys!==target.keys||!visible(current.member,row.item))continue;
    const abort=new AbortController();aborts.add(abort);const stop=clock.at(clock.now()+15000,()=>abort.abort());
