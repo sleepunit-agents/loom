@@ -22,11 +22,12 @@ export function AgentJobs({ agent, name }: { agent: string; name: string }) {
   const row = (job: Job) => <NoteRow key={job.id} title={job.title || 'Untitled job'}
     meta={[stateWords[job.state] ?? job.state, job.box && machines.has(job.box) ? `on ${machines.get(job.box)}` : '', `queued ${time(job.queuedAt)}`,
       job.claimedAt ? `started ${time(job.claimedAt)}` : '', job.endedAt ? `ended ${time(job.endedAt)}` : ''].filter(Boolean).join(' · ')} />;
-  const now = jobs.filter(job => current.includes(job.state)), earlier = jobs.filter(job => !current.includes(job.state));
+  const now = jobs.filter(job => current.includes(job.state) && job.state !== 'queued'), queued = jobs.filter(job => job.state === 'queued'), earlier = jobs.filter(job => !current.includes(job.state));
   return <Section label="Jobs">
     {query.status === 'loading' || query.status === 'live' && !live ? <Body quiet>Checking…</Body> : !live ? <Body quiet>Can’t read jobs right now.</Body>
       : !jobs.length ? <Body quiet>None yet.</Body> : <>
         {now.length > 0 && <List label={`${name} jobs now`}>{now.map(row)}</List>}
+        {queued.length > 0 && <><Body quiet>Queued</Body><List label={`${name} queued jobs`}>{queued.map(row)}</List></>}
         {earlier.length > 0 && <><Body quiet>Earlier</Body><List label={`${name} earlier jobs`}>{earlier.map(row)}</List></>}
       </>}
   </Section>;

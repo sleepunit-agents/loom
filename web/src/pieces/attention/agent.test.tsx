@@ -75,8 +75,9 @@ it('holds everything about one agent in full: what it is doing, its jobs, its la
  await act(async()=>section('What Art E Fish is doing').findByType('a').props.onClick({button:0,preventDefault(){}}));expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-7');
  expect(words(tree!.root.findByProps({'aria-label':'Art E Fish agent window'}).findAllByProps({className:'loom-reader__meta '})[0])).toBe('Working · 1 needs you');
  // Jobs: one name, the ones running now first with their machine and times, then the earlier ones.
- expect(section('Art E Fish jobs now').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Compare pumps','Order hose']);
- expect(words(section('Art E Fish jobs now'))).toMatch(/Running · on one · queued Nov 14, \d+:\d\d [AP]M · started Nov 14, \d+:\d\d [AP]M/);expect(words(section('Art E Fish jobs now'))).toMatch(/Queued · queued Nov 14, \d+:\d\d [AP]M/);
+ expect(section('Art E Fish jobs now').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Compare pumps']);
+ expect(section('Art E Fish queued jobs').findAllByProps({className:'loom-kit-title'}).map(words)).toEqual(['Order hose']);
+ expect(words(section('Art E Fish jobs now'))).toMatch(/Running · on one · queued Nov 14, \d+:\d\d [AP]M · started Nov 14, \d+:\d\d [AP]M/);expect(words(section('Art E Fish queued jobs'))).toMatch(/Queued · queued Nov 14, \d+:\d\d [AP]M/);
  expect(words(section('Art E Fish earlier jobs'))).toMatch(/Drain the pond.*Done · queued Nov 13, .* · started Nov 13, .* · ended Nov 13, \d+:\d\d [AP]M/);expect(text()).not.toContain('box-hidden');expect(text()).not.toContain('Not Art’s job');
  expect(text()).not.toMatch(/Runtime jobs|Current jobs/);
  // The last answer whole, and where it was said.
