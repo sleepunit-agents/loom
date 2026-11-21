@@ -1,7 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { jobMatchesConversation, reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import { jobMatchesConversation, reviewThread, reviewRequest, REVIEW_BRIEF_EXPIRED, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
@@ -107,14 +107,14 @@ export class Dispatcher {
           const brief = this.db.select({at:inbox.at,words:inbox.words}).from(inbox).where(and(
             eq(inbox.conversation,cv.id),eq(inbox.source,'handoff'),eq(inbox.sourceId,JSON.stringify([review.parent,review.clientId])))).get();
           if (!brief || handoffDeadline(brief,commsKeepDays(this.db)) <= Date.parse(at)) {
-            if (this.jobs.unplaceable(job.id,'The scheduled handoff brief expired.')) ended?.push(job.id);
+            if (this.jobs.unplaceable(job.id,REVIEW_BRIEF_EXPIRED)) ended?.push(job.id);
             continue;
           }
         }
         const selected=review?.role;
         const workRole=selected && this.workRoles.find(role=>role.agent===job.agent && role.id===selected.id && roleRevision(role)===selected.revision);
         if(selected && !workRole){
-          if(this.jobs.unplaceable(job.id,'The requested work role changed or was removed.'))ended?.push(job.id);
+          if(this.jobs.unplaceable(job.id,REVIEW_ROLE_CHANGED))ended?.push(job.id);
           continue;
         }
         if(review && !reviewThread(this.db,cv!)){

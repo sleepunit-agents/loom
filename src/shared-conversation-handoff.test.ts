@@ -348,6 +348,12 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(mode==='role-changed'){
   db.update(s.conversations).set({place:reviewPlace('job','review-one',{id:'research',revision:'0'.repeat(64)})}).where(eq(s.conversations.id,child)).run();
   await next('changed-role',true);
+  const failure = await vi.waitFor(()=>{
+   const result=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
+   expect(result).toBeDefined();return result!;
+  });
+  expect(failure.thread).toBe(f.thread.id);
+  expect(await f.key.open(failure.words!)).toContain('The requested work role changed or was removed.');
   expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()).toMatchObject({state:'failed'});
   return;
  }
