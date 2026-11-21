@@ -1,3 +1,4 @@
+import {BridgeReceiver} from './pieces/bridges/receiver.js';
 import {reviewPlace} from './core/conversations/review-place.js';
 import {reviewReply} from './pieces/bridges/sends.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
@@ -2045,11 +2046,13 @@ it('delivers a held progress message promoted to the final answer once after the
  expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed',run:'body'}]);
 });
 
-it.each(['yes', 'no'] as const)('returns only the %s decision to an outside Slack DM', async verdict => {
+it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as const)('returns a private %s DM decision (%s)', async (platform,verdict) => {
  const f = fixture(() => true, true);
  const daemon = f.root.services.bridges.daemon!;
  await daemon.ready();
  await daemon.idle();
+ const guest = JSON.stringify([platform,'TWORK','UUSER']);
+ if(platform==='slack'){
  const provider = f.request.getMockImplementation()!;
  f.request.mockImplementation(async (url, options) => String(url).endsWith('conversations.info')
   ? Response.json({ok:true, channel:{id:'DGUEST', context_team_id:'TWORK', is_im:true}})
@@ -2059,6 +2062,17 @@ it.each(['yes', 'no'] as const)('returns only the %s decision to an outside Slac
   payload:{type:'event_callback', event_id:'guest-dm', team_id:'TWORK', event}})));
  f.clock.advance(0);
  await daemon.idle();
+ }else{
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(bridgeConnections).values({id:'discord',platform,workspace:'TWORK',botUser:'UBOT',agent:'art',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:at}).run();
+  f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+  const receiver = new BridgeReceiver(f.db,f.clock,{discord:()=>({id:'DGUEST',kind:'dm'}),slack:()=>undefined});
+  clean.push(()=>receiver.close());
+  receiver.discord('discord',Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:1,d:{
+   id:'guest-message',type:0,channel_id:'DGUEST',author:{id:'UUSER'},content:'Private guest message',timestamp:at,mentions:[]
+  }})),{session:'test-session',sequence:1,resumeUrl:'wss://gateway.discord.gg/',identity:'test-identity'});
+  expect(receiver.drain('discord')).toBe(1);
+ }
  const incoming = f.db.select().from(bridgeIncoming).get()!;
  expect(incoming).toMatchObject({state:'delivered', isDm:true});
  const conversation = incoming.conversation!;
@@ -2092,6 +2106,12 @@ it.each(['yes', 'no'] as const)('returns only the %s decision to an outside Slac
  f.db.insert(memberAgents).values({member:'new-director',agent:'art'}).run();
  expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
  f.db.delete(memberAgents).where(eq(memberAgents.member,'new-director')).run();
+ f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+ f.db.insert(bridgePeople).values({platform,workspace:'TWORK',user:'UUSER',member:'owner'}).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.delete(bridgePeople).where(eq(bridgePeople.user,'UUSER')).run();
  expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(200);
  const mail = f.db.select().from(inbox).where(eq(inbox.conversation,conversation)).all();
  const returned = mail.filter(row => row.toKind==='agent' && !initialMail.has(row.id));
@@ -2102,7 +2122,7 @@ it.each(['yes', 'no'] as const)('returns only the %s decision to an outside Slac
  expect(f.db.select().from(inbox).where(eq(inbox.conversation,ownerQuestion.conversation!)).all().filter(row => row.toKind==='agent' && row.state==='waiting')).toHaveLength(0);
  const next = scheduler.admission(conversation);
  expect(next.started).toBe(true);
- expect(jobWord(f.db,next.job!)).toMatchObject({woke:'others',person:{kind:'outside',id:GUEST}});
+ expect(jobWord(f.db,next.job!)).toMatchObject({woke:'others',person:{kind:'outside',id:guest}});
  f.root.writes.run(() => {
   f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();
   f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();

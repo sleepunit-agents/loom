@@ -1,3 +1,4 @@
+import {parseOutsidePersonKey} from './pieces/bridges/keys.js';
 /** Mail that starts work in a named bridge conversation without a message from the bridge: a trigger's
  * firing there (core/tempo) and a note one body of an agent hands to its body in another conversation
  * (core/conversations/handoff.ts). What both need is said here once: where such a conversation is posted
@@ -6,7 +7,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, conversations, inbox } from './core/data/schema.js';
+import { agentPeople, agents, bridgeChannelFilters, bridgeChannels, bridgeConnections, bridgeIncoming, bridgePeople, conversations, inbox } from './core/data/schema.js';
 import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAgent, type Asker, type OnWord, type Woke } from './policy.js';
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
@@ -193,12 +194,21 @@ export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: 
  * Nothing for a job on owners' word or the agent's own work: its question is its own words alone.
  * Given the question, it also refuses one such a job may not ask (throws an OperationError). */
 export const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.string()]);
+/** A reply stays in the original outside-account scope while the agent knows that
+ * account and it has not been linked to a household member. */
+export function currentDecisionGuest(db:DataDatabase,agent:string,key:string):boolean {
+  const account=parseOutsidePersonKey(key);
+  if(!account||!stillKnown(db,agent,{kind:'outside',id:key}))return false;
+  return !db.select({member:bridgePeople.member}).from(bridgePeople).where(and(
+    eq(bridgePeople.platform,account.platform),eq(bridgePeople.workspace,account.workspace),eq(bridgePeople.user,account.user)
+  )).get();
+}
 /** A private bridge question can leave the source room only for the agent's current directors. */
 export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:{direct:boolean;member:string|null;venue:string;place:string}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
   const {cv}=work;
   if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue)||q.answers!=='yes-no'||q.refs?.length||q.link!==undefined||q.waitsOnKind!==undefined)return;
   const word=jobWord(db,work.job);
-  if(word.woke!=='others'||word.person?.kind!=='outside'||!tellOwners(db,work.job.agent).includes(q.to))return;
+  if(word.woke!=='others'||word.person?.kind!=='outside'||!currentDecisionGuest(db,work.job.agent,word.person.id)||!tellOwners(db,work.job.agent).includes(q.to))return;
   try{
     const account=outsideAccount.parse(JSON.parse(word.person.id)),place:unknown=JSON.parse(cv.place);
     if(Array.isArray(place)&&place.length===4&&place[0]===account[1]&&cv.venue===account[0]&&Array.isArray(place[3])&&place[3].length===2&&place[3][0]==='member'&&place[3][1]===null)return word.person.id;

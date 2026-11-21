@@ -18,7 +18,7 @@ import { CommsQueries, commsQueryFields } from './core/conversations/comms-query
 import { InboxQueries, inboxQueryFields, type QuestionAsker } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
-import { lateMailJoins, tellOwners } from './shared-place-mail.js';
+import { lateMailJoins, tellOwners, currentDecisionGuest } from './shared-place-mail.js';
 import type { WordsKey } from './core/conversations/words.js';
 
 export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey, questionAsker?:QuestionAsker) {
@@ -34,6 +34,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   const answers = (viewer: Viewer) => { const sharing = sharedSharing(db); return (item: typeof inboxTable.$inferSelect) => {
     if(item.source==='thread'&&item.sourceId?.startsWith('guest-decision:')){
       if(!item.agent||viewer.kind!=='member'||viewer.id!==item.to||!tellOwners(db,item.agent).includes(viewer.id))return false;
+      if(!item.onWord||item.onWordKind!=='outside'||!currentDecisionGuest(db,item.agent,item.onWord))return false;
       if(privateInboxDeadline(item,commsKeepDays(db))<=clock.now())return false;
     }
     return holds(rules.answers, viewer, item, sharing);
