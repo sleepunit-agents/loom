@@ -45,6 +45,10 @@ const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
 
 const match = new GraphQLObjectType({ name:'MemoryKnowledgeMatch', fields:{ slug:requiredText,title:requiredText,domain:requiredText,updated:requiredText,verified_at:text,freshness_anchor:text,sla_class:text,body:requiredText } });
 
+const filingCandidate = new GraphQLObjectType({name:'MemoryKnowledgeFilingCandidate',fields:{
+ slug:requiredText,title:requiredText,domain:requiredText,reason:requiredText,
+}});
+
 export function knowledgeQueryFields(options: { path?:string; timezone?():string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
  nextDeadline():number|undefined;
@@ -101,6 +105,30 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?{...read(),timezone:options.timezone}:null},
+   memoryKnowledgeFilingReview:{
+    type:new GraphQLList(new GraphQLNonNull(filingCandidate)),
+    description:'Review provisional and conversation-only pages for the shared household audience. Private thoughts belong in agent memory.',
+    args:{after:{type:GraphQLString},first:{type:GraphQLInt}},
+    resolve:(_source,args:{after?:string|null;first?:number|null},context)=>{
+     if(!allowed(context))return null;
+     const first=args.first??50;
+     if(first<1||first>100)throw new GraphQLError('Choose first from 1 to 100');
+     if(failed)throw new GraphQLError('Knowledge is unavailable');
+     if(!db)return [];
+     try{
+      // Older files can lack citations. Only an explicit provisional classification is evidence in that case.
+      const citations=db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='citations'").get();
+      const conversationOnly=citations ? `WHEN EXISTS (SELECT 1 FROM citations c WHERE c.page_id=p.id)
+       AND NOT EXISTS (SELECT 1 FROM citations c WHERE c.page_id=p.id AND c.source_kind IS NOT 'conversation')
+       THEN 'All citations are conversations'` : '';
+      return db.prepare(`SELECT slug,title,domain,reason FROM (
+       SELECT p.slug,p.title,p.domain,CASE WHEN p.sourcing='provisional' THEN 'Provisional sourcing'
+        ${conversationOnly} END AS reason FROM pages p
+       WHERE p.status='active' AND p.slug>? AND NOT (substr(p.domain,1,5)='ours/' AND p.sourcing IS 'internal')
+      ) WHERE reason IS NOT NULL ORDER BY slug LIMIT ?`).all(args.after??'',first);
+     }catch{throw new GraphQLError('Knowledge is unavailable');}
+    },
+   },
    // One statement, no access stamp: every word must appear in the title, body or domain.
    memoryKnowledgeSearch:{type:new GraphQLList(new GraphQLNonNull(match)),args:{query:{type:new GraphQLNonNull(GraphQLString)},domain:{type:GraphQLString},first:{type:GraphQLInt}},
     resolve:(_source,args:{query:string;domain?:string|null;first?:number|null},context)=>{
