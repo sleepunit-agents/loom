@@ -57,7 +57,11 @@
     {
       "id": "desk-007",
       "promise": "A rail card lists the agent's current jobs.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "desk-008",
