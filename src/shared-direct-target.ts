@@ -1,7 +1,7 @@
 import {and,eq,isNull} from 'drizzle-orm';
 import type {BridgeSend} from './pieces/bridges/sends.js';
 import type {Viewer} from './policy.js';
-import {inHousehold,mayRunPrivateWork} from './policy.js';
+import {inHousehold,mayRunPrivateWork,outsideTierMayReceiveDirect} from './policy.js';
 import {machineCurrent} from './core/data/authentication.js';
 import {assignedConversation} from './core/conversations/body-scope.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -56,7 +56,7 @@ export function directTargets(db:DataDatabase,directory:DirectoryAccount){
      eq(bridgePeople.workspace,workspace),eq(bridgePeople.user,user))).get())return;
    const tier=db.select({tier:agentPeople.tier}).from(agentPeople).where(and(eq(agentPeople.agent,job.agent),
     eq(agentPeople.person,outsidePersonKey(platform,workspace,user)))).get()?.tier;
-   if(!tier||tier<2)return;
+   if(!outsideTierMayReceiveDirect(tier))return;
   }
   const connection=db.select({id:bridgeConnections.id,bot:bridgeConnections.botUser}).from(bridgeConnections).where(and(
    eq(bridgeConnections.agent,job.agent),eq(bridgeConnections.platform,platform),eq(bridgeConnections.workspace,workspace),

@@ -38,7 +38,7 @@
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
 import {parseOutsidePersonKey} from './pieces/bridges/keys.js';
-import {randomBytes} from 'node:crypto';
+import {createHash,randomBytes} from 'node:crypto';
 import {and,asc,desc,eq,inArray,isNull,like,sql} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
@@ -143,7 +143,7 @@ const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)},househo
 type Proposal=z.infer<typeof proposal>;
 const changeName=z.enum(everyChange);
 // What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
-const details=z.object({change:changeName,after:z.json(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
+const details=z.object({change:changeName,after:z.json(),origin:z.string().optional(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
 // A card from before the digest kept the replaced value itself; those are rewritten once, at start.
 const olderDetails=z.object({change:changeName,before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
@@ -214,21 +214,23 @@ const plain=(value:Proposal,context:CardContext)=>proposalCard(value.change,valu
  *  - `placeSchedule`: a repeating schedule somebody who is not an owner asked for in a shared place. The owner
  *    ruled that such a request is asked of an owner; a rule for settings is not an owner reading this
  *    person's words and times. */
-export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule','kit','kitGrant','projectOutsidePerson']);
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule','kit','kitGrant','projectOutsidePerson','colleague']);
 // A kit change that cannot be made, said to the owner with what would fix it (shared-kit-cards.ts, kitRefusal).
-type KitProposal=Extract<Proposal,{change:'kit'|'kitGrant'|'projectOutsidePerson'}>;
+type KitProposal=Extract<Proposal,{change:'kit'|'kitGrant'|'projectOutsidePerson'|'colleague'}>;
 const kitBlocked=(value:KitProposal,refused:KitRefusal,names?:CardNames):string=>{
  const cap=(id:string)=>id?id[0]!.toUpperCase()+id.slice(1):id;
- const account=value.change==='projectOutsidePerson'?value.input:value.change==='kitGrant'&&'user' in value.input.to?value.input.to:undefined;
+ const account=value.change==='colleague'||value.change==='projectOutsidePerson'?value.input:value.change==='kitGrant'&&'user' in value.input.to?value.input.to:undefined;
  const who=account?names?.person(account.platform,account.workspace,account.user)?.name??'this account':'';
  const agent='agent' in value.input?cap(value.input.agent):'';
  // Restoring a target or changing a link changes who or what the card affects, so it needs a fresh card.
  const again=' Deny this card, and ask for it again once that is done.';
  switch(refused.cause){
   case 'agent':return 'This cannot be allowed: '+agent+' is not an agent in the household now. The agent would have to be restored first.'+again;
-  case 'project':return 'This cannot be allowed: the project '+(value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.'+again;
+  case 'project':return 'This cannot be allowed: the project '+(value.change==='colleague'||value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.'+again;
   case 'member':return 'This cannot be allowed: '+(value.change==='kitGrant'&&'member' in value.input.to?cap(value.input.to.member):'that person')+' is not a member of the household now. They would have to be restored first.'+again;
-  case 'linked':return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
+  case 'full':return 'The agent has reached its outside contact limit. An owner can update its outside contacts before asking again.';
+  case 'linked':if(value.change==='colleague')return 'This Slack account belongs to the household member '+refused.member+'. Outside contact tiers apply only to unlinked accounts.';
+   return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
   case 'unplaced':return 'This cannot be allowed yet: '+(value.change==='projectOutsidePerson'?'no agent in the household knows ':agent+' does not know ')+who+' as an outside contact. An owner can add the account to the outside people '+(value.change==='projectOutsidePerson'?'an agent can talk to':agent+' can talk to')+', then deny this card and ask for a fresh one.';
   case 'no-kit':return 'This cannot be allowed: '+agent+' has no kit called '+('kit' in value.input?value.input.kit:'')+'. The kit would have to be defined first.'+again;
   case 'same':return 'This cannot be allowed: it is already so, and nothing would change. Deny it.';
@@ -417,15 +419,22 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string)=>{
+ type OriginThread={conversation:string;member:string|null;project:string|null};
+ const colleagueOrigin=(agent:string,where?:OriginThread,owner?:string,terminal?:string)=>
+  JSON.stringify([owner?'member':'agent',owner??agent,terminal??null,agent,where?.conversation??null,where?.member??null,where?.project??null]);
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:OriginThread,owner?:string,terminal?:string)=>{
   const value=proposal.parse({change:raw.change,input:raw.input});
   // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
-  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
+  // A private proposal is discoverable only from the same authenticated origin. Bind the
+  // opaque tag to this target too, so visible cards for different contacts cannot be correlated.
+  const origin=value.change==='colleague'?parts.digest(JSON.stringify(['colleague-pending',target(value),colleagueOrigin(agent,where,owner,terminal)])):undefined;
+  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'),
+    origin?sql`json_extract(${approvals.details}, '$.origin') = ${origin}`:undefined)).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
   if(value.change!=='machineReader'&&!householdOwners(db).length)throw new OperationError('conflict','No household owner can allow this');
   const nonce=randomBytes(16).toString('hex');
   const machineOwner=value.change==='machineReader'||value.change==='boxSettings'&&value.input.readers!==undefined
    ?db.select({owner:boxes.owner}).from(boxes).where(eq(boxes.id,value.input.box)).get()?.owner:undefined;
-  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
+  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),...(origin?{origin}:{}),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
    askedFrom:where?.conversation??(owner?(value.change==='machineReader'?'machine owner':'household owner'):ASKED_FROM_TERMINAL),actingFor:householdChangePrincipal(where?.member,owner),what:said(value),why:raw.why,...cardWords(value)},machineOwner);
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
@@ -454,6 +463,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const machines=new Map(machineIds.length?db.select({id:boxes.id,name:boxes.name}).from(boxes)
       .where(inArray(boxes.id,[...new Set(machineIds)])).all().map(row=>[row.id,row.name]):[]);
      const context:CardContext={
+      ...(value.change==='colleague'?{name:(id:string)=>id.charAt(0).toUpperCase()+id.slice(1)}:{}),
       ...(was!==undefined?{before:{value:was}}:{}),
       ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
       projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
@@ -470,6 +480,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    let was: unknown;
    switch(value.change) {
     case 'kitGrant': platform='platform' in value.input.to ? value.input.to.platform : undefined; break;
+    case 'colleague':
     case 'projectOutsidePerson': platform=value.input.platform; break;
     case 'placeSchedule': platform=value.input.asker.kind==='outside' ? parseOutsidePersonKey(value.input.asker.id)?.platform : undefined; break;
     case 'bridge':
@@ -496,9 +507,26 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // agent onto a project (policy.ts, rule `asksToJoin`).
    const agent=(viewer:Viewer,input:z.infer<typeof asked>)=>kitChange(input)&&householdOwner(db,viewer)?true:input.change==='projectJoin'
     ?holds(policyRules.asksToJoin,viewer,{agent:input.input.agent},sharedSharing(db))
-    :holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
+    :(input.change!=='colleague'||input.input.agent===viewer.id)&&holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
+   const threadOf=(viewer:Viewer):OriginThread|undefined=>{
+    const found=current?.(viewer);
+    return found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined;
+   };
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
-    input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
+    inputHash(canonical,{actor,input}){
+     if(input.change!=='colleague')return createHash('sha256').update(canonical).digest('hex');
+     const where=threadOf(actor);
+     const origin=colleagueOrigin(input.input.agent,where,actor.kind==='member'?actor.id:undefined,actor.kind==='agent'?actor.atTerminalOf:undefined);
+     return parts.digest(JSON.stringify(['colleague-receipt',origin,canonical]));
+    },
+    validateReplay(viewer,input){
+     if(input.change==='colleague'){
+      const blocked=held(viewer);
+      if(blocked)throw new OperationError('denied',blocked);
+     }
+    },
+    input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),
+    may:(viewer,input)=>agent(viewer,input) && (input.change!=='colleague' || viewer.kind!=='agent' || !viewer.workingFor || !!current?.(viewer)),
     run(ctx,raw){
      const heldBy=held(ctx.viewer);if(heldBy)throw new OperationError('denied',heldBy);
      if(raw.change==='projectJoin'){
@@ -509,7 +537,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
        :holds(policyRules.project,ctx.viewer,{id:raw.input.project},sharedSharing(db))?alreadyOnProject(raw.input):undefined;
       if(refused)throw refused;
      }
-     const found=current?.(ctx.viewer);
+     const where=threadOf(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input. A card an owner files
      // is about the agent it names, and is recorded as asked by that owner.
      // A project outside-person card is household-wide. Attribute an owner-filed card to
@@ -519,7 +547,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       :'agent' in raw.input?raw.input.agent:undefined;
      if(ctx.viewer.kind==='member'&&!cardAgent)throw new OperationError('invalid','Choose a live agent for this card');
      const card=ctx.viewer.kind==='member'?file(service,cardAgent!,raw,undefined,ctx.viewer.id)
-      :file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
+      :file(service,ctx.viewer.id,raw,where,undefined,ctx.viewer.kind==='agent'?ctx.viewer.atTerminalOf:undefined);
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id,state:card.state};
     },
    });
@@ -677,8 +705,18 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
       const askedBy=told.facts.find(fact=>fact.label==='Asked by')?.value??'The outside account';
       blocked=blocked.replace('the outside account '+value.input.asker.id,()=>askedBy);
      }
+     // Only an owner can open this preview. The stored card holds a digest of the
+     // effects. Show the definitions read here in full; Allow compares that digest again.
+     let exact:string;
+     if(value.change==='colleague'){
+      const state=was as ReturnType<typeof kitBefore>;
+      const matches=seal(value,kept.seal.nonce,was)===kept.seal.digest;
+      exact=JSON.stringify({request:kept.after,effects:matches?'Match the state sealed when filed':'Current definitions. The sealed state has changed and this card cannot be allowed.',
+       ...('grants' in state && value.input.project?{projectKitRoster:{project:value.input.project,kits:state.grants}}:{}),
+       ...('returning' in state && state.returning?{reactivatedKitGrants:{agent:value.input.agent,...state.returning}}:{})},null,2);
+     }else exact=exactRequest(kept.after);
      return{summary:factLines(told.facts),problem:null,blocked:blocked&&clipProposalText(blocked,1500),
-      card:{title:told.title,nothing:told.nothing,facts:told.facts,exact:exactRequest(kept.after),
+      card:{title:told.title,nothing:told.nothing,facts:told.facts,exact,
        ifYes:told.ifYes,ifNo:told.ifNo}};
     },
    });

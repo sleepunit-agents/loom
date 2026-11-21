@@ -4,13 +4,12 @@ import { approvalTitle } from '../approval-view/model';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { useEffect, useMemo, useState } from 'react';
-import { useDataQuery } from '../../data/graphql';
 import { useAnswered } from '../../data/graphql/selection';
+import { approvalRequestId } from '../inbox-view/model';
 import { InboxView, type InboxActions } from '../inbox-view';
 import { useHouseholdZone } from '../../data/zone';
-import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem } from './inbox-query';
+import { answerInboxItem, inboxSelection, useInboxSelection, useInboxItem, inboxPageSize, inboxSourcePath, inboxRefPath, retainedInboxItem, useInboxProposalTitles } from './inbox-query';
 export { stamp } from './time';
-const titlesQuery = 'query InboxProposalTitles($ids:[String!]!) { inboxProposalTitles(ids:$ids) { approval title } }';
 const inboxBase = '/p/inbox-preview';
 export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
@@ -60,11 +59,9 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const cards = useApprovalList();
   const cardOf = (row: { waitsOnKind?: string | null; waitsOnId?: string | null }) => row.waitsOnKind === 'approval' && cards.status === 'live' ? cards.approvals.find(card => card.id === row.waitsOnId) : undefined;
 
-
-  const ids = [...new Set([...(data?.items.slice(0,inboxPageSize) ?? []), ...(current ? [current] : [])]
+  const ids = [...new Set([...(data?.items.slice(0,inboxPageSize).filter(approvalRequestId) ?? []), ...(current ? [current] : [])]
     .map(cardOf).filter(card => card?.operation === 'household.change').map(card => card!.id))];
-  const titles = useDataQuery<{inboxProposalTitles: {approval: string; title: string}[]}>(titlesQuery, {ids}, {pause: !ids.length});
-  const named = new Map(titles.status === 'live' ? titles.data?.inboxProposalTitles.map(row => [row.approval,row.title]) : []);
+  const {named} = useInboxProposalTitles(ids);
 
   const actions: InboxActions | undefined = live ? {
     volume: current?.canSetVolume ? (id, volume) => mutate('inbox.volume', { item: id, volume }) : undefined,
@@ -75,7 +72,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView zone={zone} snapshot={{ status, settling: reading.settling, folder: drawnFolder, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status: detailStatus, item: current }} actions={actions}
-    words={row => { const approval = cardOf(row); return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
+    words={row => { const approval = approvalRequestId(row) ? cardOf(row) : undefined; return approval?.operation === 'household.change' ? named.get(approval.id) ?? approvalTitle(approval) : undefined; }}
     sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/>
       : cardOf(item) ? <LiveApprovalCard key={item.id} id={item.waitsOnId!} displayTitle={named.get(item.waitsOnId!)} /> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}

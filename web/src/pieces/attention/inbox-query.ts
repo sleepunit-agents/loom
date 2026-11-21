@@ -1,11 +1,19 @@
 import { taskSegment } from '../tasks/route';
 import { useMemo } from 'react';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
-import type { DataQuerySnapshot } from '../../data/graphql';
+import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import type { InboxAnswer, InboxFolders, InboxItem } from '../inbox-view/model';
 import { memberOperation } from '../../data/operation';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
+const titlesQuery = 'query InboxProposalTitles($ids:[String!]!) { inboxProposalTitles(ids:$ids) { approval title } }';
+/** The server returns names only for household proposals this viewer may read. */
+export function useInboxProposalTitles(ids: string[]) {
+  const reading = useDataQuery<{inboxProposalTitles: {approval:string; title:string}[]}>(titlesQuery, {ids}, {pause: !ids.length});
+  const rows = reading.status === 'live' ? reading.data?.inboxProposalTitles : undefined;
+  return useMemo(() => ({ready: !!rows, named: new Map(rows?.map(row => [row.approval, row.title]))}), [rows]);
+}
+
 /** Recording an answer to an Inbox item: the one action, for the Inbox and for Home's band. */
 export const answerInboxItem = (id: string, answer: InboxAnswer, words?: string) =>
   memberOperation<void>('inbox.answer', { item: id, answer, ...(words ? { words } : {}) });

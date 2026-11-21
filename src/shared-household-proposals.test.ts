@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { bodyCredentials,bodyFixture } from '../test/fixtures/conversation-body.js';
 import { PeopleStore } from './backends/people.js';
 import type { SharedMemoryOptions } from './shared-memory.js';
 import Database from 'better-sqlite3';
@@ -9,7 +10,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentKits, agentKitMembers, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { agentKitProjects, agentKitOutsidePeople, projectOutsidePeople, jobs, agents, agentKits, agentKitMembers, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { applyKitChange, kitBefore } from './shared-kit-cards.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -841,6 +842,141 @@ it('lets the owner file a kit or outside roster card and seals project grants on
   expect((await allow(waiting.body.value!.id)).body.message).toContain('changed since');
 });
 
+it('adds a single colleague tier and optional project kit roster together on the owner’s answer',async()=>{
+  const f=fixture(),account={platform:'slack' as const,workspace:'TWORK',user:'UROBIN'};
+  const proposed={...account,agent:'art',tier:2},person=JSON.stringify(['slack','TWORK','UROBIN']);
+  f.db.insert(projects).values({id:'pond',name:'Pond'}).run();
+  f.db.insert(agentKits).values({agent:'art',kit:'field',tools:[]}).run();
+  f.db.insert(agentKitProjects).values({agent:'art',kit:'field',project:'pond'}).run();
+  f.db.insert(agentDeniedTools).values({agent:'art',pattern:'Bash',guestsOnly:true}).run();
+  f.db.insert(agentPeople).values({agent:'mark',person,tier:1}).run();
+  const unrelated={agent:'art',person:JSON.stringify(['slack','TOTHER','UROBIN']),tier:3 as const};
+  f.root.writes.run(()=>f.root.services.setup.rule({kind:'setting',scope:'*',person:'',tier:'do'},'sam'));
+  const offer={change:'colleague',input:{...proposed,project:'pond'},why:'Let Robin discuss field work'};
+  const filed=await f.call('household/propose',offer,'art','file-robin'),id=filed.body.value!.id;
+  expect(filed.body.value).toMatchObject({state:'pending'});
+  expect(await f.call('household/propose',offer,'art','file-robin')).toEqual(filed);
+  expect((await f.call('household/propose',{...offer,input:{...offer.input,agent:'mark'}},'art')).status).toBe(403);
+  expect((await f.call('household/proposalPreview',{id},'art')).status).toBe(403);
+  expect(await preview(f,id)).toMatchObject({blocked:null,card:{facts:expect.arrayContaining([
+    {label:'Interaction tier',value:'New contact → Tier 2'},
+    {label:'Project kit roster',value:'Pond'},
+    {label:'Direct messages',value:expect.stringContaining('can initiate a Slack DM')},
+    {label:'Kits granted through this project',value:'Art’s field kit'},
+  ])}});
+  expect((await f.call('approvals/answer',{id,answer:'allow'},'lee')).body.ok).toBe(false);
+  expect(f.db.select().from(projectOutsidePeople).all()).toEqual([]);
+  expect(f.db.select().from(agentPeople).all()).toEqual([{agent:'mark',person,tier:1}]);
+  // An unrelated, concurrent contact change survives Allow without invalidating the card.
+  f.db.insert(agentPeople).values(unrelated).run();
+  const allowed=await f.call('approvals/answer',{id,answer:'allow'},'sam','allow-robin');
+  expect(allowed.body.ok).toBe(true);
+  expect(await f.call('approvals/answer',{id,answer:'allow'},'sam','allow-robin')).toEqual(allowed);
+  const people=f.db.select().from(agentPeople).all();
+  expect(people).toHaveLength(3);
+  expect(people).toEqual(expect.arrayContaining([unrelated,{agent:'mark',person,tier:1},{agent:'art',person,tier:2}]));
+  expect(f.db.select().from(projectOutsidePeople).all()).toEqual([{...account,project:'pond'}]);
+  expect(f.db.select().from(projectMembers).all()).toEqual([]);
+  expect(f.db.select().from(projectAgents).all()).toEqual([]);
+  expect(f.db.select().from(agentDeniedTools).all()).toEqual([{agent:'art',pattern:'Bash',guestsOnly:true}]);
+  const update=await f.call('household/propose',{...offer,input:{...proposed,tier:1}},'art');
+  expect((await preview(f,update.body.value!.id)).card!.facts).toContainEqual({label:'Direct messages',value:expect.stringContaining('can reply')});
+  expect((await f.call('approvals/answer',{id:update.body.value!.id,answer:'allow'},'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(agentPeople).all()).toContainEqual({agent:'art',person,tier:1});
+  expect(f.db.select().from(projectOutsidePeople).all()).toEqual([{...account,project:'pond'}]);
+});
+
+it('isolates pending colleague proposals and their receipts between private conversations',async()=>{
+  const f=await bodyFixture(clean);
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'alice')).run();
+  f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run();
+  f.db.insert(projectMembers).values({member:'bob',project:'pond'}).run();
+  const second=f.root.services.comms!.threads.open({member:'bob',agent:'art',project:'pond',title:'Another private conversation'});
+  const input={change:'colleague',input:{agent:'art',platform:'slack',workspace:'TWORK',user:'UROBIN',tier:2},why:'Introduce the field contact'};
+  const ask=async(id:string)=>{
+    const response=await f.root.http.request('/api/household/propose',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.body,'content-type':'application/json'},body:JSON.stringify({input,id})});
+    return await response.json();
+  };
+  const first=await ask('same-receipt');
+  expect(first).toMatchObject({ok:true,value:{state:'pending'}});
+  expect(await ask('same-receipt')).toEqual(first);
+  expect(await ask('repeat-alice')).toMatchObject({ok:false,message:'A card for this is already waiting for an answer'});
+  f.root.writes.run(()=>f.db.update(jobs).set({member:'bob',conversation:second.conversation}).where(eq(jobs.id,'job')).run());
+  expect(await ask('same-receipt')).toMatchObject({ok:false,code:'conflict',message:'Operation id already used for different input'});
+  const theirs=await ask('bob-receipt');
+  expect(theirs).toMatchObject({ok:true,value:{state:'pending'}});
+  expect(theirs.value.id).not.toBe(first.value.id);
+  expect(await ask('bob-receipt')).toEqual(theirs);
+  const third=f.root.services.comms!.threads.open({member:'bob',agent:'art',project:'pond',title:'Separate thread for the same member'});
+  f.root.writes.run(()=>f.db.update(jobs).set({conversation:third.conversation}).where(eq(jobs.id,'job')).run());
+  expect(await ask('bob-receipt')).toMatchObject({ok:false,code:'conflict'});
+  expect(await ask('third-receipt')).toMatchObject({ok:true,value:{state:'pending'}});
+});
+
+it('shows owners every consequential colleague kit definition and its immutable pins beyond the summary limit',async()=>{
+  const f=fixture(),who={platform:'slack' as const,workspace:'TWORK',user:'UROBIN'},input={agent:'art',...who,tier:2,project:'pond'};
+  f.db.insert(projects).values([{id:'pond',name:'Pond'},{id:'lab',name:'Lab'}]).run();
+  const tool={name:'status',description:'Inspect fictional fixtures',program:'bin/field-status',repository:'https://example.org/fixtures.git',
+    commit:'a'.repeat(40),image:'sha256:'+'b'.repeat(64),args:['status'],parameters:{},secrets:{FIELD_TOKEN:'field-token'}};
+  const definitions=Array.from({length:100},(_,i)=>({agent:'art',kit:'field-instrument-'+String(i).padStart(3,'0'),tools:[tool]}));
+  f.db.insert(agentKits).values(definitions).run();
+  f.db.insert(agentKitProjects).values(definitions.map(row=>({agent:row.agent,kit:row.kit,project:'pond'}))).run();
+  f.db.insert(agentKitProjects).values({agent:'art',kit:definitions[99].kit,project:'lab'}).run();
+  f.db.insert(projectOutsidePeople).values({...who,project:'lab'}).run();
+  f.db.insert(agentKitOutsidePeople).values({...who,agent:'art',kit:definitions[0].kit}).run();
+  const filed=await f.call('household/propose',{change:'colleague',input,why:'Review the instrument kits'},'art'),id=filed.body.value!.id;
+  const record=f.db.select().from(approvals).where(eq(approvals.id,id)).get()!;
+  expect(record.details).not.toContain(tool.program);
+  expect(record.details).not.toContain('field-instrument');
+  for(const viewer of ['lee','art'] as const)expect((await f.call('household/proposalPreview',{id},viewer)).status).toBe(403);
+  const shown=await preview(f,id);
+  expect(shown.summary).not.toContain(definitions[98].kit);
+  expect(shown.card!.exact.length).toBeGreaterThan(40_000);
+  expect(JSON.parse(shown.card!.exact)).toEqual({request:input,effects:'Match the state sealed when filed',projectKitRoster:{project:'pond',kits:definitions},
+    reactivatedKitGrants:{agent:'art',direct:[{kit:definitions[0].kit,tools:[tool]}],inherited:[{kit:definitions[99].kit,project:'lab',tools:[tool]}]}});
+  const changed={...tool,commit:'c'.repeat(40)};
+  f.db.update(agentKits).set({tools:[changed]}).where(eq(agentKits.kit,definitions[99].kit)).run();
+  const stale=await preview(f,id);
+  expect(stale.blocked).toContain('changed since');
+  expect(JSON.parse(stale.card!.exact).effects).toContain('Current definitions');
+  expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).body.ok).toBe(false);
+});
+
+it('rechecks linked identities, live projects and every kit that a new colleague would gain before Allow',async()=>{
+  const f=fixture(),who={platform:'slack' as const,workspace:'TWORK',user:'UROBIN'},input={agent:'art',...who,tier:2};
+  f.db.insert(projects).values([{id:'pond',name:'Pond'},{id:'lab',name:'Lab'}]).run();
+  f.db.insert(agentKits).values(['field','bench'].map(kit=>({agent:'art',kit,tools:[]}))).run();
+  f.db.insert(agentKitProjects).values({agent:'art',kit:'bench',project:'lab'}).run();
+  f.db.insert(projectOutsidePeople).values({...who,project:'lab'}).run();
+  const ask=async(project?:string)=>{const row=await f.call('household/propose',{change:'colleague',input:{...input,project},why:'Review this contact'},'art');return row.body.value!.id;};
+  const answer=(id:string,word:'allow'|'deny')=>f.call('approvals/answer',{id,answer:word},'sam');
+  const stale=await ask('pond');
+  expect((await preview(f,stale)).card!.facts).toContainEqual({label:'Existing kit grants that become available',value:'bench (via Lab)'});
+  f.db.insert(agentKitProjects).values({agent:'art',kit:'field',project:'pond'}).run();
+  expect((await answer(stale,'allow')).body.message).toContain('changed since');
+  await answer(stale,'deny');
+  const direct=await ask();
+  f.db.insert(agentKitOutsidePeople).values({agent:'art',kit:'field',...who}).run();
+  expect((await answer(direct,'allow')).body.message).toContain('changed since');
+  await answer(direct,'deny');
+  const already=await ask('lab');
+  const onRoster=await preview(f,already);
+  expect(onRoster.card?.title).toContain('keep them on the Lab kit roster');
+  expect(onRoster.card?.ifYes).toContain('remains on the Lab kit roster');
+  expect(onRoster.card?.facts).toContainEqual({label:'Existing kit grants that become available',value:expect.stringContaining('bench (via Lab)')});
+  await answer(already,'deny');
+  const missing=await ask('missing');
+  expect((await preview(f,missing)).blocked).toContain('not in use');
+  expect((await answer(missing,'allow')).body.ok).toBe(false);
+  await answer(missing,'deny');
+  f.db.insert(bridgePeople).values({...who,member:'lee'}).run();
+  const linked=await ask('pond');
+  expect((await preview(f,linked)).blocked).toContain('household member lee');
+  expect((await answer(linked,'allow')).body.ok).toBe(false);
+  expect(f.db.select().from(agentPeople).all()).toEqual([]);
+  expect(f.db.select().from(projectOutsidePeople).all()).toEqual([{...who,project:'lab'}]);
+});
+
 it('requires the current machine owner to approve each explicit reader and revocation', async () => {
  const f=fixture(), at=new Date(f.clock.now()).toISOString();
  f.db.insert(boxes).values({id:'work',name:'Workshop',owner:'lee',sameMachineAsLoom:false,hostsAny:false,reportOnly:true,alwaysOn:false,enrolledAt:at}).run();
@@ -916,6 +1052,14 @@ it('tells a household owner who a card is for, and nobody else: the names loom h
     const result=await response.json();expect(result.errors).toBeUndefined();return result.data.inboxProposalTitles;
   };
   expect(await titles('sam')).toEqual([{approval:id,title:expect.stringContaining('gage (Slack)')}]);
+  const colleague=(await f.call('household/propose',{change:'colleague',input:{agent:'art',...gage,tier:3},why:'Review the contact tier'},'art')).body.value!.id;
+  const colleagueTitle=(await preview(f,colleague)).card!.title;
+  expect(colleagueTitle).toBe('Set gage (Slack) to tier 3 with Art');
+  expect(await titles('sam',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
+  expect(await titles('lee',[colleague])).toEqual([]);
+  expect(await titles('art',[colleague])).toEqual([]);
+  await f.call('approvals/answer',{id:colleague,answer:'deny'},'sam');
+  expect(await titles('sam',[colleague])).toEqual([{approval:colleague,title:colleagueTitle}]);
   expect(await titles('lee')).toEqual([]);
   expect(await titles('art')).toEqual([]);
   for (const actor of ['lee', 'art'] as const) {

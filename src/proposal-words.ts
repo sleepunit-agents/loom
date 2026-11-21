@@ -9,6 +9,7 @@
  * what is there now is said (shared-household-proposals.ts, the file header: proposing must not be a way to read).
  *
  * It never guesses a name. Where an owner is reading and loom holds none, it says so in words. */
+import { outsideTierMayReceiveDirect } from './policy.js';
 import { parseOutsidePersonKey } from './pieces/bridges/keys.js';
 
 export interface CardFact { label: string; value: string; /** A raw id kept for certainty: drawn small, and last. */ small?: boolean }
@@ -241,6 +242,34 @@ function tell(change: string, input: Rec, context: CardContext): Told | undefine
       if (last) facts.push(last);
       return { title: grant ? 'Let ' + whom + ' use ' + whose : 'Stop letting ' + whom + ' use ' + whose, facts, nothing: same,
         ifYes: grant ? 'This grant makes the kit available for eligible work by ' + agent + '.' : 'This grant ends. Access through other grants stays in place.', ifNo: 'Who can use the kit stays as it is.' };
+    }
+    case 'colleague': {
+      const who=outside(input as unknown as Outside),agent=name(input.agent),tier=str(input.tier);
+      const project=input.project?projectName(input.project):undefined;
+      const facts:CardFact[]=[...who.facts,{label:'Agent',value:agent},{label:'Interaction tier',value:was && was.tier!==input.tier?(was.tier===null?'New contact':'Tier '+str(was.tier))+' → Tier '+tier:'Tier '+tier}];
+      facts.push({label:'Messages',value:'This account can start eligible conversations with '+agent+'. Its requests run with outside-contact permissions.'},
+        {label:'Direct messages',value:outsideTierMayReceiveDirect(Number(input.tier))
+          ? agent+' can initiate a Slack DM from eligible work when the account has a matching directory entry and connection.'
+          : agent+' can reply in an eligible conversation. This tier does not permit initiating a Slack DM.'});
+      if(project){
+        facts.push({label:'Project kit roster',value:project});
+        if(was){
+          const grants=arr(was.grants).map(rec).map(grant=>owns(name(grant.agent))+' '+str(grant.kit)+' kit');
+          facts.push({label:'Kits granted through this project',value:list(grants,'The project currently grants no kits.')});
+        }
+      }
+      if(was?.returning){
+        const returning=rec(was.returning);
+        const earlier=[...arr(returning.direct).map(rec).map(grant=>str(grant.kit)+' (direct grant)'),
+          ...arr(returning.inherited).map(rec).map(grant=>str(grant.kit)+' (via '+projectName(grant.project)+')')];
+        if(earlier.length)facts.push({label:'Existing kit grants that become available',value:list(earlier)});
+      }
+      const roster=project?'the '+project+' kit roster':'';
+      const rosterTitle=was?(was.on?' and keep them on ':' and add them to '):' and include them on ';
+      const rosterEffect=was?(was.on?' The account remains on ':' The account joins '):' The account will be on ';
+      return {title:'Set '+who.short+' to tier '+tier+' with '+agent+(roster?rosterTitle+roster:''),
+        facts:[...facts,who.id],nothing:!!was && was.tier===input.tier && (!project || was.on===true),
+        ifYes:'This Slack account can interact with '+agent+' at tier '+tier+'.'+(roster?rosterEffect+roster+'.':''),ifNo:'Keep the current access.'};
     }
     case 'projectOutsidePerson': {
       const who = outside(input as unknown as Outside), project = projectName(input.project), on = !!input.on;
