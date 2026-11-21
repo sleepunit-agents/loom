@@ -587,6 +587,7 @@ export const threads = sqliteTable('threads', {
   workingSince: text('working_since'),
   workingBeat: text('working_beat'),
   stopRequested: integer('stop_requested', { mode: 'boolean' }).notNull(),
+  sourceChannel: integer('source_channel'),
 }, t => [
   check('threads_archived_at_utc', utc(t.archivedAt)),
   check('threads_opened_at_utc', utc(t.openedAt)),
@@ -644,6 +645,9 @@ export const deletedThreads = sqliteTable('deleted_threads', {
   id: text('id').primaryKey().notNull(),
   conversation: text('conversation').notNull(),
   at: text('at').notNull(),
+  sourceMember: text('source_member'),
+  sourceAgent: text('source_agent'),
+  sourceChannel: integer('source_channel'),
 }, t => [
   check('deleted_threads_at_utc', utc(t.at)),
 ]);

@@ -11,6 +11,10 @@ import { Conversations, lateMailWaits, type LateJoins } from './index.js';
 type Thread = typeof threads.$inferSelect;
 export type ThreadInput = { id?: string; venue?: 'loom' | 'terminal'; member: string; agent: string; project?: string; title: string; titledBy?: Thread['titledBy'] };
 
+export function recordThreadDeletion(db: DataDatabase, row: typeof deletedThreads.$inferInsert) {
+  db.insert(deletedThreads).values(row).run();
+}
+
 export class Threads {
   readonly conversations: Conversations;
   /** `lateJoins` is the conversations service's (index.ts): closed unless the composition gives the rule. */

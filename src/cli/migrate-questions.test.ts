@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -5,20 +7,20 @@ import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
 import { ownHome } from '../core/daemon-home.js';
 import { exampleHome } from '../example-home.js';
-import { migrateQuestions } from './migrate-questions.js';
+import { migrateComms } from './migrate-questions.js';
 
 it('opens completed archive backups only while the destination is stopped', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'loom-question-command-'));
   const source = join(temp, 'archive'), home = join(temp, 'home');
   let stdout = '';
-  const run = () => migrateQuestions(['--source', source, '--home', home], {
+  const run = () => migrateComms('archived-questions', ['--source', source, '--home', home], {
     stdout: value => { stdout = value; }, stderr: () => {},
   });
   try {
     await exampleHome(home);
     mkdirSync(source);
     copyFileSync(join(home, 'comms.key'), join(source, 'comms.key'));
-    writeFileSync(join(source, 'household.json'), '{}');
+    writeFileSync(join(source, 'household.json'), '{"github":null}');
     const target = new Database(join(home, 'app.db'), { readonly: true });
     let thread;
     try {
@@ -59,5 +61,16 @@ it('opens completed archive backups only while the destination is stopped', asyn
     expect(await run()).toBe(0);
     expect(stdout).toBe('Imported 0 of 1 archived questions.\n');
     expect(readFileSync(path)).toEqual(original);
+    const metadata=new Database(join(source,'household.db')), words=new Database(path);
+    try {
+      metadata.exec('DELETE FROM comms_threads; ALTER TABLE comms_threads ADD COLUMN project text; CREATE TABLE comms_deleted(id)');
+      words.exec('CREATE TABLE comms_messages(thread,seq,kind,sender,id,at,run,text,delivered)');
+    } finally {metadata.close();words.close();}
+    for (const [phase,report] of [['comms-threads','Comms threads'],['comms-text','Comms text messages']]) {
+      const entry=fileURLToPath(new URL('../index.ts',import.meta.url));
+      const result=spawnSync(process.execPath,['--import','tsx',entry,'migrate',phase,'--home',home,'--source',source],{encoding:'utf8'});
+      expect(result.status,result.stderr).toBe(0);
+      expect(result.stdout).toContain('Imported 0 of 0 '+report);
+    }
   } finally { rmSync(temp, { recursive: true, force: true }); }
-});
+}, 30_000);

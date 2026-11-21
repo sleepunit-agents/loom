@@ -537,6 +537,7 @@ CREATE TABLE `threads` (
 	`working_since` text,
 	`working_beat` text,
 	`stop_requested` integer NOT NULL,
+	`source_channel` integer,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "threads_archived_at_utc" CHECK("threads"."archived_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."archived_at") = "threads"."archived_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."archived_at") = "threads"."archived_at", 0)),
 	CONSTRAINT "threads_opened_at_utc" CHECK("threads"."opened_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."opened_at") = "threads"."opened_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."opened_at") = "threads"."opened_at", 0)),
@@ -592,6 +593,9 @@ CREATE TABLE `deleted_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`conversation` text NOT NULL,
 	`at` text NOT NULL,
+	`source_member` text,
+	`source_agent` text,
+	`source_channel` integer,
 	CONSTRAINT "deleted_threads_at_utc" CHECK("deleted_threads"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "deleted_threads"."at") = "deleted_threads"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "deleted_threads"."at") = "deleted_threads"."at", 0))
 );
 

@@ -1,3 +1,4 @@
+import { pendingThreadDeletions } from './archive-deletions.js';
 /** Offline phase of a household move. Thread identities and the old Comms key must already be staged. */
 import type Database from 'better-sqlite3';
 import { and, eq, isNotNull, or, sql } from 'drizzle-orm';
@@ -22,10 +23,12 @@ export async function importArchivedQuestions(input:{
 }) {
   const {archive,household,destination:db,sourceDays,key,now}=input;
   if(!archive.readonly||!household.readonly||!validKeepDays(sourceDays))throw Error('Expected a read-only archive with its original Comms retention');
+  const deleted=pendingThreadDeletions(household, db);
   const oldThreads=new Map(household.prepare('select id,agent,member,conversation from comms_threads').all()
     .map(raw=>{const t=scope.parse(raw);return [t.id,t] as const;}));
   const prepared: (typeof archivedQuestions.$inferSelect)[]=[];
   for(const raw of archive.prepare('select thread,ref,approval,raised,seen,words,answer_json from comms_asks order by thread,ref').iterate()){
+    if (deleted.has((raw as {thread:string}).thread)) continue;
     const q=sourceQuestion.parse(raw);
     const source=oldThreads.get(q.thread);
     if(!source)throw Error('Archived question has no source thread');
