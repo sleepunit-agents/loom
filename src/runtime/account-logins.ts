@@ -152,8 +152,15 @@ export class AccountLogins {
         .innerJoin(boxes, eq(boxes.id, modelAccountLogins.box)).innerJoin(modelAccounts, eq(modelAccounts.id, modelAccountLogins.account))
         .where(isNull(boxes.revokedAt)).all()
         .filter(({ box }) => loginMachineReporting(box.lastSeenAt,now,silenceMs));
-      const send = (row: typeof rows[number], sourceId: string, words: string) => notices.send({ toKind: 'person', to: row.account.owner, member: row.account.owner,
-        source: 'notice', sourceId, fromKind: 'unknown', words, refs: [row.box.id] });
+      const send = (row: typeof rows[number], sourceId: string, words: string) => {
+        const notice = notices.send({ toKind: 'person', to: row.account.owner, member: row.account.owner,
+          source: 'notice', sourceId, fromKind: 'unknown', words, refs: [row.box.id] });
+        if (notice.state === 'waiting' && notice.words !== words) {
+          notices.restate(notice.id, {words, why:notice.why});
+          return notices.item(notice.id);
+        }
+        return notice;
+      };
       return rows.flatMap(row => {
         const { login, box, account } = row;
         if (login.state === 'signed-out')
