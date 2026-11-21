@@ -85,13 +85,14 @@ export default function AgentRail({ go }: { go(path: string): void }) {
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
       </section>}</WithDoing>;
   };
+  const first = companion ?? (fold ? agents.find(agent => agent.id === opened) : undefined) ?? agents[0];
   return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
-    {companion&&card(companion)}
-    <div className="desk-rail-needs">
+    {first&&card(first)}
+    {(waiting.status!=='live'||!!waiting.total)&&<div className="desk-rail-needs">
       <span className="desk-rail-kicker">Needs you{waiting.status==='live'?` · ${waiting.total}`:''}</span>
-      {waiting.status!=='live'?<span>Waiting items unavailable</span>:waiting.total?<WaitingRow go={go} onChange={waitingChanged}/>:<span>All clear.</span>}
+      {waiting.status!=='live'?<span>Waiting items unavailable</span>:<WaitingRow go={go} onChange={waitingChanged}/>}
       <button type="button" className="desk-rail-kicker" onClick={()=>go(waitingPath())}>{waiting.status==='live'&&(waiting.total??0)>1?`${waiting.total!-1} more · Inbox ›`:'Inbox ›'}</button>
-    </div>
-    {roster.status !== 'live' ? <p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p> : !agents.length ? <p>No agents of your own.</p> : agents.filter(a=>a.id!==companion?.id).map(card)}
+    </div>}
+    {roster.status !== 'live' ? <p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p> : !agents.length ? <p>No agents of your own.</p> : agents.filter(a=>a.id!==first?.id).map(card)}
   </div>;
 }
