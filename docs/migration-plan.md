@@ -1,5 +1,11 @@
 # Offline migration plan preparation
 
+## Current Comms history import
+
+Run `loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME` against completed SQLite backups and a stopped, prepared home with its original Comms key. The command holds the home lock while it restores threads, text messages, tool cards and saved questions. It refuses an archive with additional message kinds before writing any threads. Each phase commits separately. After correcting an error, rerun the command with the same archive and home. A successful run reports the number of new and source records for each phase.
+
+## Historical whole-household commands
+
 > **This describes commands that are no longer in the tree.** `loom migrate` and its importers were removed with
 > the older program (commit abbf6857, 2026-11-16) and are in the repository's history. They wrote into the earlier
 > composition's store, which `loom serve` does not read, so a move into the current household database needs new
