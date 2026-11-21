@@ -71,7 +71,11 @@
     {
       "id": "desk-009",
       "promise": "The ticker reads counts from each part, such as tasks in progress and ready.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskTicker"
+      }
     },
     {
       "id": "desk-010",
