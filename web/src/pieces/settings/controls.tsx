@@ -23,7 +23,7 @@ export function ValueControl({ name, description = '' }: { name?: string; descri
     void command.run(() => submitSecret({ name: name ?? String(data.get('name')), description: String(data.get('description')), mode: name ? 'replace' : 'add', field }));
   };
   return <form onSubmit={save} className="grid gap-3">
-    {name ? <h2>Replace {name}</h2> : <label>Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autoComplete="off" /></label>}
+    {name ? <h2>Replace {name}</h2> : <label>Name<Input name="name" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" autoComplete="off" /></label>}
     <label>Description<Input name="description" defaultValue={description} maxLength={4000} /></label>
     <label>Value<Input ref={value} type="password" required autoComplete="new-password" spellCheck={false} /></label>
     <Button type="submit" disabled={command.busy}>{command.busy ? 'Saving…' : name ? 'Save replacement' : 'Add secret'}</Button>
