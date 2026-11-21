@@ -95,7 +95,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable=true]');
       if (!typing && e.key === 'Escape') setLauncher(false);
-      if(typing||document.querySelector('[role=dialog],[role=menu]')||!e.altKey) return;
+      if(typing||document.querySelector(':is([role=dialog],[role=menu]):not([hidden], [hidden] *)')||!e.altKey) return;
       if(!e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();router.home();return;}
       const tile=visible.find(t=>t.id===route.focused);if(!tile)return;
       const key=e.key.toLowerCase();let acted=true;
@@ -136,15 +136,16 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       {route.tiles.map(tile => {
         const shown=presented.some(t => t.id === tile.id);
         const app = apps.find(a => a.id === tile.id)!;
+        const isMaximized = route.maximized === tile.id;
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
           style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={e => { if(e.target!==e.currentTarget) carets.current.set(tile.id,e.target as HTMLElement); if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
-          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},...(!phone?[{id:'maximize',label:route.maximized===tile.id?'Restore size':'Maximize',run:()=>router.maximize(tile.id)}]:[]),{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},...(!phone?[{id:'maximize',label:isMaximized?'Restore size':'Maximize',run:()=>router.maximize(tile.id)}]:[]),...(visible[0]?.id!==tile.id?[{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)}]:[]),{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
             <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon app={app.id} name={app.icon} size="sm" house={24} /></button>
             <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
             <span className="next-spacer" />
             {/* The three window controls, drawn as the how-it-works site draws them: a square, a line, a cross. */}
-            {!phone && <button type="button" className="next-win" data-act={route.maximized===tile.id?'restore':'maximize'} aria-label={`${route.maximized===tile.id?'Restore':'Maximize'} ${app.title}`} title={route.maximized===tile.id?'Restore size':'Maximize'} onClick={() => router.maximize(tile.id)}><i aria-hidden="true" /></button>}
+            {!phone && <button type="button" className="next-win" data-act={isMaximized?'restore':'maximize'} aria-label={`${isMaximized?'Restore':'Maximize'} ${app.title}`} title={isMaximized?'Restore size':'Maximize'} onClick={() => router.maximize(tile.id)}><i aria-hidden="true" /></button>}
             <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => router.remove(tile.id,true)}><i aria-hidden="true" /></button>
             <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => router.remove(tile.id)}><i aria-hidden="true" /></button>
           </header>

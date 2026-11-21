@@ -694,7 +694,7 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     ours. With nothing focused, Shift+F10 opens it with focus on the first item; ↓ and End move, ↓ from the last goes
     round, Home goes to the first, ↑ from the first goes round, Esc closes, Tab closes, Enter on Vitals adds it, Space
     on Backup adds it; the Menu key on the Inbox's dock key opens its menu and Esc
-    gives focus back to it. A second tile's strip: Minimize, Make it the big one, Close; the big one's: Minimize,
+    gives focus back to it. A second desktop tile's strip: Minimize, Maximize (Restore size while maximized), Make it the big one, Close; the big one's: Minimize, Maximize or Restore size,
     Close; an agent's: Minimize, Pin its card to the desktop, Close, and Pin adds the card, then Take its card off
     removes it. An agent's card: Chat, Open, Unpin from the desktop. A dock key: Open; then Open, Minimize, Close; then
     Open, Close; Home, All apps and your own key none. An Inbox row: Open (picks it in the reader) and Mark done (posts `needs-done`, the row leaves); with

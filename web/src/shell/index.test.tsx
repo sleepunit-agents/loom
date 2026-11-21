@@ -80,13 +80,19 @@ it('the three window controls still make a tile big, send it to the dock and clo
  expect(JSON.parse(new URL(location.href).searchParams.get('paths')!)).toEqual({tasks:'/tasks'});
 });
 it('keeps the maximized app and its trail across navigation, reload and keyboard restore',async()=>{
- await mount();await dock('tasks');await dock('inbox');await altKey('f',{shiftKey:true});
+ await mount();await dock('tasks');await act(async()=>screen('tasks').props.go('/tasks/first'));
+ await dock('inbox');await altKey('f',{shiftKey:true});
  await act(async()=>screen('inbox').props.go('/inbox/detail'));
  await act(async()=>tree.unmount());await mount();
  expect(shownTiles()).toEqual(['inbox']);expect(screen('inbox').props.path).toBe('/inbox/detail');
  await altKey('f',{shiftKey:true});expect(shownTiles()).toEqual(['tasks','inbox']);
  await browser(-1);expect(shownTiles()).toEqual(['inbox']);
  await dock('tasks');expect(shownTiles()).toEqual(['tasks','inbox']);
+ expect(screen('tasks').props.path).toBe('/tasks/first');
+ await altKey('ArrowLeft');expect(screen('tasks').props.path).toBe('/tasks');
+ await altKey('ArrowRight');expect(screen('tasks').props.path).toBe('/tasks/first');
+ await dock('inbox');await altKey('ArrowLeft');expect(screen('inbox').props.path).toBe('/inbox');
+ await altKey('ArrowRight');expect(screen('inbox').props.path).toBe('/inbox/detail');
 });
 it('double-clicking the bar outside a control still sends the tile to the dock',async()=>{
  await mount();await dock('tasks');
