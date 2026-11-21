@@ -231,7 +231,7 @@ const kitBlocked=(value:KitProposal,refused:KitRefusal,names?:CardNames):string=
   case 'full':return 'The agent has reached its outside contact limit. An owner can update its outside contacts before asking again.';
   case 'linked':if(value.change==='colleague')return 'This Slack account belongs to the household member '+refused.member+'. Outside contact tiers apply only to unlinked accounts.';
    return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
-  case 'unplaced':return 'This cannot be allowed yet: '+(value.change==='projectOutsidePerson'?'no agent in the household knows ':agent+' does not know ')+who+' as an outside contact. An owner can add the account to the outside people '+(value.change==='projectOutsidePerson'?'an agent can talk to':agent+' can talk to')+', then deny this card and ask for a fresh one.';
+  case 'unplaced':return 'This cannot be allowed yet: '+(value.change==='projectOutsidePerson'?'no agent in the household knows ':agent+' does not know ')+who+' as an outside contact. An owner can add the account to the outside people '+(value.change==='projectOutsidePerson'?'an agent can talk to':agent+' can talk to')+'.';
   case 'no-kit':return 'This cannot be allowed: '+agent+' has no kit called '+('kit' in value.input?value.input.kit:'')+'. The kit would have to be defined first.'+again;
   case 'same':return 'This cannot be allowed: it is already so, and nothing would change. Deny it.';
  }
@@ -607,9 +607,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    const agentExists=(id:string)=>!!db.select({id:agents.id}).from(agents).where(eq(agents.id,id)).get();
    const secretExists=(name:string)=>!!db.select({name:secrets.name}).from(secrets).where(eq(secrets.name,name)).get();
    const blockedWords=(value:Proposal,kept:z.infer<typeof details>,was:unknown,viewer:Extract<Viewer,{kind:'member'}>,names?:CardNames):string|null=>{
-    if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)return 'This cannot be allowed: what it would change has changed since the card was filed. Deny it, and ask for a fresh card.';
     const kit=kitChange(value)?kitRefusal(value,was as ReturnType<typeof kitBefore>):undefined;
     if(kit&&kitChange(value))return kitBlocked(value,kit,names);
+    if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)return 'This cannot be allowed: what it would change has changed since the card was filed. Deny it, and ask for a fresh card.';
     let refused:OperationError|undefined=refusal(value,was);
     // What Allow would refuse this owner for, where it can be found out by reading alone. One owner may be able
     // to make a change another may not, so this is the reader's own answer; Allow still checks for itself.

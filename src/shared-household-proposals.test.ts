@@ -1124,6 +1124,10 @@ it('says on the card, before anyone presses Allow, why it cannot be allowed and 
 
   // The account is not placed with the agent: no owner has given it a tier.
   const unplaced = await file('kitGrant', grant);
+  const kitState = f.db.select().from(agentKits).where(eq(agentKits.kit,'tools')).get()!;
+  f.db.delete(agentKits).where(eq(agentKits.kit,'tools')).run();
+  expect(await blocked(unplaced)).toMatch(/does not know this account as an outside contact/);
+  f.db.insert(agentKits).values(kitState).run();
   await stands(unplaced, /^This cannot be allowed yet: Art does not know this account as an outside contact\./);
   expect((await allow(unplaced)).body.message).toBe('Choose an outside account already known to the agent or household');
   f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'U1']), tier: 2 }).run();
@@ -1157,7 +1161,7 @@ it('says on the card, before anyone presses Allow, why it cannot be allowed and 
   const marks = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
   expect(await blocked(marks)).toBeNull();
   f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
-  expect(await blocked(marks)).toMatch(/changed since the card was filed/);
+  expect(await blocked(marks)).toMatch(/not an agent in the household/);
   await deny(marks);
   // Filed while the agent is removed, it says so; restored, a fresh card is clear.
   const removed = await file('kit', { agent: 'mark', kit: 'tools', tools: [] }, 'sam');
