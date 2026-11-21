@@ -136,7 +136,7 @@ describe('upgrading a household database', () => {
     upgradeDataSchema(old);
     expect(privateHistory()).toEqual([
       before[0].map(row => ({ ...row as object, handoff_not_before: null })),
-      before[1],
+      before[1].map(row => ({ ...row as object, source_channel: null })),
       before[2].map(row => ({ ...row as object, archived_step_meta: null, archived_step_words: null, archived_notice: null })),
       before[3],
     ]);
