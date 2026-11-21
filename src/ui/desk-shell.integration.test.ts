@@ -212,7 +212,9 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await set({oneWindow:false},'one-window-off');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
-  const maximize=b.getByRole('button',{name:'Maximize Tasks',exact:true});await maximize.click();
+  const maximize=b.getByRole('button',{name:'Maximize Tasks',exact:true});
+  const strip=b.locator('[aria-label="Tasks tile"] .next-strip');
+  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Maximize',exact:true}).click();
   await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   // A covered app may still contain its own dialog. It cannot capture the focused app's shortcuts.
   await b.locator('[aria-label="Agents tile"]').evaluate(tile=>{
@@ -221,6 +223,15 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await b.getByRole('button',{name:'Restore Tasks',exact:true}).press('Alt+Shift+F');
   await b.locator('[data-fixture=covered]').evaluate(el=>el.remove());
   await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Maximize',exact:true}).click();
+  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Restore size',exact:true}).click();
+  const otherStrip=b.locator('[data-tile] .next-strip').nth(1);
+  const promoted=await otherStrip.evaluate(el=>el.closest('[data-tile]')!.getAttribute('data-tile'));
+  await otherStrip.click({button:'right'});await b.getByRole('menuitem',{name:'Make this the big one',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe(promoted);
+  await b.setViewportSize({width:390,height:900});await expect.poll(()=>b.locator('.next-shell[data-shell=phone]').count()).toBe(1);
+  expect(await b.getByRole('button',{name:/^Maximize /}).count()).toBe(0);
+  await b.setViewportSize({width:1440,height:900});await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await maximize.focus();
   await expect.poll(()=>maximize.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
   await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');

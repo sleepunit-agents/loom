@@ -39,11 +39,10 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   if (preferences.status === 'live') lastOneWindow.current = preferences.records[0]?.prefs.oneWindow === true;
   else if (preferences.status === 'denied') lastOneWindow.current = false;
   const oneWindow = lastOneWindow.current;
-  // Pick a shell once. Resizing relays layout room, never replaces its navigation owner.
-  const [phone] = useState(() => innerWidth < 1024);
   const ground = useRef<HTMLDivElement>(null);
   const [area,setArea] = useState<Rect>({x:0,y:0,w:innerWidth-48,h:innerHeight-130});
   const [width,setWidth] = useState(innerWidth);
+  const phone = width < 1024;
   const [notice,setNotice] = useState('');
   const [menu,setMenu] = useState<MenuAt>();
   const hiding = useHiding(!!menu,setNotice);
