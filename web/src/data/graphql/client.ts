@@ -107,7 +107,7 @@ export function browserQueryTransport(url: string): QueryTransport {
     }),
     on:{connecting:armWatchdog,connected:clearWatchdog,
       ping:received=>{if(!received)armWatchdog();},pong:received=>{if(received)clearWatchdog();},
-      closed:event=>{offline();if((event as CloseEvent).code===4403)globalThis.window?.dispatchEvent(new Event(checkSessionEvent));},
+      closed:event=>{offline();if((event as CloseEvent|undefined)?.code===4403)globalThis.window?.dispatchEvent(new Event(checkSessionEvent));},
       error:()=>{offline();globalThis.window?.dispatchEvent(new Event(checkSessionEvent));}},
   });
   return {subscribe(request,sink){
