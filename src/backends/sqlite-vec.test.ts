@@ -1374,6 +1374,40 @@ describe('SqliteVecBackend', () => {
       expect(hits.map((h) => h.path)).toContain(ref);
     });
 
+    it('restores the elapsed row when the TTL sweep archives it during embedding', async () => {
+      const {ref}=await backend.remember({category:'reference',title:'Notice',content:'alpha',ttl:'1h'});
+      backend.getDatabase().prepare('UPDATE memories SET expires_at=? WHERE ref=?').run('2000-01-01T00:00:00.000Z',ref);
+      const embedder=makeKeywordEmbedder(), encode=embedder.embedBatch.bind(embedder);
+      embedder.embedBatch=async words=>{
+        expect((await backend.prune()).expired).toEqual([ref]);
+        return encode(words);
+      };
+      const second=new SqliteVecBackend({dbPath:join(tmpDir,'test.db')},embedder);
+      try{
+        expect((await second.restore({ref})).restored).toEqual([ref]);
+        expect((await backend.recall({query:'alpha'})).map(hit=>hit.path)).toContain(ref);
+      }finally{second.close();}
+    });
+
+    it('preserves a concurrent renewal while restoring an elapsed memory', async () => {
+      const input={category:'reference',title:'Brief notice',content:'alpha workshop',ttl:'1h'};
+      const {ref}=await backend.remember(input);
+      backend.getDatabase().prepare('UPDATE memories SET expires_at=? WHERE ref=?').run('2000-01-01T00:00:00.000Z',ref);
+      const embedder=makeKeywordEmbedder(), encode=embedder.embedBatch.bind(embedder);
+      embedder.embedBatch=async words=>{
+        await backend.remember({...input,ttl:'7d'});
+        return encode(words);
+      };
+      const second=new SqliteVecBackend({dbPath:join(tmpDir,'test.db')},embedder);
+      try{
+        expect((await second.restore({ref})).restored).toEqual([]);
+        const row=backend.getDatabase().prepare('SELECT ttl,expires_at FROM memories WHERE ref=?').get(ref) as {ttl:string;expires_at:string};
+        expect(row.ttl).toBe('7d');
+        expect(Date.parse(row.expires_at)).toBeGreaterThan(Date.now()+6*86400000);
+        expect((await backend.recall({query:'alpha'})).map(hit=>hit.path)).toContain(ref);
+      }finally{second.close();}
+    });
+
     it('renews an elapsed lifetime on restoration without reheating or extending unexpired memories', async () => {
       vi.useFakeTimers({toFake:['Date']});
       try {
