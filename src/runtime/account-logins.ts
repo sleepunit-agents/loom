@@ -11,7 +11,7 @@
  *
  * A machine that has stopped reporting raises nothing here. Its sign-ins keep what was last learned, and
  * the machine being away is its own notice (Machines.sweep) for the machines marked always on. */
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { boxes, inbox, modelAccountBoxes, modelAccountLogins, modelAccounts } from '../core/data/schema.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
@@ -60,8 +60,18 @@ export class AccountLogins {
     const notices = new Conversations(this.db, () => at, lateMailWaits);
     if (before.state === 'signed-out' && (!after || after.state === 'signed-in' || after.since !== before.since))
       notices.resolveSource('notice', goneId(before), after ? 'Signed in again' : 'No longer watched');
-    if (before.expiresAt !== null && (!after || after.expiresAt !== before.expiresAt || after.state !== 'signed-in' || after.since !== before.since))
-      notices.resolveSource('notice', endingId(before), !after ? 'No longer watched' : after.state === 'signed-in' ? 'Signed in again' : 'Signed out');
+    if (before.expiresAt !== null && (!after || after.expiresAt !== before.expiresAt || after.state !== 'signed-in' || after.since !== before.since)) {
+      const id = endingId(before);
+      notices.resolveSource('notice', id, !after ? 'No longer watched' : after.state === 'signed-in' ? 'Signed in again' : 'Signed out');
+      this.retireEnding(id);
+    }
+  }
+
+  // Keep the completed occasion on its original Inbox item. The same end date may return
+  // without any intervening sign-out, including after the owner dismissed the first warning.
+  private retireEnding(id: string): void {
+    this.db.update(inbox).set({ sourceId: sql`${id} || ':' || ${inbox.id}` })
+      .where(and(eq(inbox.source, 'notice'), eq(inbox.sourceId, id))).run();
   }
 
   private write(key: Key, next: Pick<Login, 'state' | 'expiresAt' | 'learnedFrom' | 'why'>, at: string): Login {
@@ -156,7 +166,13 @@ export class AccountLogins {
         if (left > endingMs) return [];
         const days = Math.floor(left / DAY_MS);
         const when = left <= 0 ? 'has ended' : days < 1 ? 'ends within a day' : `ends in ${days} day${days === 1 ? '' : 's'}`;
-        return [send(row, endingId(login), `The ${account.label} sign-in on ${box.name} (${placeWords(login)}) ${when}, on ${login.expiresAt!.slice(0, 10)}.`)];
+        const id = endingId(login);
+        // Releases before occasion retirement left a resolved warning under the active key.
+        const words = `The ${account.label} sign-in on ${box.name} (${placeWords(login)}) ${when}, on ${login.expiresAt!.slice(0, 10)}.`;
+        const notice = send(row, id, words);
+        if (notice.state !== 'resolved') return [notice];
+        this.retireEnding(id);
+        return [send(row, id, words)];
       });
     }, { behavior: 'immediate' });
   }

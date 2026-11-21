@@ -173,3 +173,23 @@ it('keeps no end for a time outside the years the database holds, and still reco
   expect(f.service.checked('loom', [{ ...claude, place: 'containers', state: 'signed-in', expiresAt: '9999-12-31T23:59:59-01:00' }])).toEqual(['sub']);
   expect(f.rows()).toMatchObject([{ state: 'signed-in', expiresAt: null }]);
 });
+
+it('warns again when a renewal is rolled back without signing out', () => {
+  const f = fixture(), end = f.at(DAY);
+  const report = (expiresAt: string) => f.service.checked('loom', [{ ...claude, place: 'host', state: 'signed-in', expiresAt }]);
+  report(end);
+  const [first] = f.service.sweep();
+  report(f.at(30 * DAY));
+  expect(f.mail()[0].state).toBe('resolved');
+  report(end);
+  const [second] = f.service.sweep();
+  expect(second.state).toBe('waiting');
+  expect(second.id).not.toBe(first.id);
+  expect(f.service.sweep()[0].id).toBe(second.id);
+  // Simulate the resolved item an older release kept under the current key.
+  f.db.update(inbox).set({ state: 'resolved' }).where(eq(inbox.id, second.id)).run();
+  const [third] = f.service.sweep();
+  expect(third.state).toBe('waiting');
+  expect(third.id).not.toBe(second.id);
+  expect(f.mail().filter(item => item.state === 'waiting')).toHaveLength(1);
+});
