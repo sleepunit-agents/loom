@@ -78,7 +78,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
-    name: `tempo.${action}`, input: id.extend({ occurrence: action === 'stop' ? occurrence.optional() : z.never().optional() }), output: saved,
+    name: `tempo.${action}`, input: id.extend({ occurrence: action === 'stop' ? occurrence.optional() : z.never().optional(),
+      scheduleAgent: action === 'runNow' ? z.string().min(1).optional() : z.never().optional() }), output: saved,
     may: (viewer, input) => triggerAccess(viewer, input.id, action),
     run(ctx, input) {
       // On whose word the caller works matters for these as for setting: a body working for anybody but owners starts,
@@ -86,6 +87,9 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const held = options.heldRefusal?.(ctx.viewer, action); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
+      if (input.scheduleAgent && (!stored || stored.sourceKind !== 'time' || stored.lifespan !== 'until-stopped'
+        || stored.targetKind !== 'inbox' || stored.toKind !== 'agent' || stored.to !== input.scheduleAgent))
+        throw new OperationError('conflict', 'This is not a recurring wake for the selected clock');
       if (action === 'stop') tempo.triggers.stop(input.id, input.occurrence);
       else tempo.triggers[action](input.id);
       if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);

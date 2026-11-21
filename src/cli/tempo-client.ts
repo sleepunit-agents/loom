@@ -237,6 +237,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
   let laneUpdate: { name: string; file?: string; words?: string } | undefined;
+  let runSchedule: string | undefined;
   let cancel: { id: string; at?: string } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
@@ -251,7 +252,8 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         laneUpdate = { name: decodeURIComponent(positionals[0]), file: values['prompt-file'], words: values.prompt };
       } else if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
     } else if (verb === 'schedule') {
-      if (argv[1] !== 'list' || argv.length !== 2) throw Error();
+      if (argv[1] === 'run' && argv.length === 3 && argv[2]) runSchedule = decodeURIComponent(argv[2]);
+      else if (argv[1] !== 'list' || argv.length !== 2) throw Error();
     } else if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
       const [encoded, at, extra] = argv[1].split('@');
@@ -261,7 +263,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule run NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -284,6 +286,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         }
         await response.body?.cancel();
         if (response.status === 401) throw new DoorRefusal('Loom rejected the credential.');
+        if (runSchedule && response.status === 409) throw new DoorRefusal('The run conflicted with the current schedule. Check schedule list and wake log.');
         if (laneUpdate && response.status === 409) throw new DoorRefusal('The lane changed during the update. Read its current text before retrying.');
         if (response.status === 403) throw new DoorRefusal('Loom denied this clock request.');
         if (response.status !== 503 || attempt >= 3) throw Error();
@@ -320,6 +323,12 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         return 2;
       }
       agent = choice.data.tempoDefaultAgent;
+    }
+    if (runSchedule) {
+      const answer = await post('/api/tempo/runNow', { id: randomUUID(), input: { id: runSchedule, scheduleAgent: agent } });
+      z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
+      io.stdout('Requested a run of ' + onOneLine(runSchedule) + '.\n');
+      return 0;
     }
     if (verb === 'schedule') { io.stdout(await listSchedules(read, agent)); return 0; }
     if (cancel) {
@@ -380,6 +389,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
     else if (laneUpdate) io.stderr('Could not confirm the stored lane update.\n');
     else if (verb === 'lane') io.stderr('Could not read the household lane.\n');
+    else if (runSchedule) io.stderr('Could not confirm the run. Check wake log before retrying.\n');
     else if (verb === 'schedule') io.stderr('Could not read recurring schedules from Loom.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
