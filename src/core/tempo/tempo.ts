@@ -1,3 +1,4 @@
+import { parkedDestination, parkedSource } from './parked.js';
 import type { OnWord } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
@@ -9,7 +10,7 @@ import { TempoSources } from './sources.js';
 /** Structural slice of Conversations: built-ins share one service/connection.
  * Kept small so Tempo does not own Inbox or conversation lifecycle. */
 export interface TempoConversations {
-  open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null; member?: string }): { id: string; member?: string | null };
+  open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null; member?: string }): { id: string; member?: string | null; project?: string | null };
   send(input: { toKind: 'person' | 'agent'; to: string; conversation?: string; source: 'trigger' | 'notice'; sourceId: string;
     fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[];
     onWordKind?: OnWord['kind']; onWord?: string }): unknown;
@@ -55,6 +56,9 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
+      const park = parkedSource(t);
+      if (park && (!t.to || !parkedDestination(db, park, {agent:t.to, project:t.project, conversation:t.conversation, member:options.worksFor?.(t)})))
+        return 'stop';
       // A trigger that names a conversation is mail there, on its asker's word, and opens no wake. One that
       // can no longer fire is stopped here, in the firing's transaction, and its agent's owners are told once.
       if (t.conversation) {
@@ -78,6 +82,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
       const opened = t.toKind === 'agent' ? options.conversations.open({ agent: t.to!, venue: 'wake', place: wakePlace(t.id, member), label: t.note, project: t.project, ...(member === undefined ? {} : { member }) }) : undefined;
       // A place is found, not made, when it exists. One that is somebody else's must not take this work.
       if (opened && (opened.member ?? undefined) !== member) throw new Error('The conversation at this trigger\'s place belongs to other work');
+      if (park && opened && (opened.project ?? null) !== t.project) throw new Error('The wake conversation belongs to another project');
       const conversation = opened?.id;
       options.conversations.send({ toKind: t.toKind!, to: t.to!, conversation, source: 'trigger', sourceId: occurrence,
         fromKind: 'schedule', fromId: t.owner ?? undefined, member: t.toKind === 'person' ? t.to! : member, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });

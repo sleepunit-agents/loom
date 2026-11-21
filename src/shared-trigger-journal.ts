@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { bodyOperationDefaults, type conversationBodyScope } from './core/conversations/body-scope.js';
 import type { DataDatabase } from './core/data/database.js';
-import { inbox, inboxRefs, triggerAcceptances, triggers } from './core/data/schema.js';
+import { jobs, inbox, inboxRefs, triggerAcceptances, triggers } from './core/data/schema.js';
 import { operation, OperationError, type Operations } from './core/operations/index.js';
 import { TRIGGER_JOURNAL_BYTES, appendLesson, hasAgentJournal, readJournal, replaceJournalState } from './core/tempo/journal.js';
 import type { Viewer } from './policy.js';
@@ -15,43 +15,56 @@ function ownTrigger(db: DataDatabase, viewer: Viewer, scope?: Scope) {
   const { job, cv } = scope;
   if (viewer.id !== job.agent || jobWord(db, job).woke !== 'own') return;
   const trigger = db.select().from(triggers).where(eq(triggers.id, cv.place)).get();
-  if (trigger && hasAgentJournal(trigger) && trigger.to === job.agent && trigger.project === cv.project) return trigger.id;
+  if (trigger && hasAgentJournal(trigger) && trigger.to === job.agent && trigger.project === cv.project) return trigger;
 }
 
 export function registerTriggerJournal(operations: Operations, db: DataDatabase,
   current: ReturnType<typeof conversationBodyScope>, hash: (text: string) => string) {
   function mine(viewer: Viewer, deliveries?: string[]) {
-    const scope = current(viewer), id = ownTrigger(db, viewer, scope);
-    if (!scope || !id) return;
+    const scope = current(viewer), trigger = ownTrigger(db, viewer, scope);
+    if (!scope || !trigger) return;
+    const id = trigger.id;
     const { job, cv } = scope;
-    const delivered = db.select({ item: inbox.id }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id))
+    const delivered = db.select({ item: inbox.id, sourceId:inbox.sourceId }).from(inbox).innerJoin(inboxRefs, eq(inboxRefs.item, inbox.id))
       .innerJoin(triggerAcceptances, eq(triggerAcceptances.item, inbox.id)).where(and(
         deliveries ? and(inArray(inbox.id, deliveries), eq(inbox.takenVolume, 'full')) : undefined,
         eq(inbox.job, job.id), eq(triggerAcceptances.job, job.id), inArray(inbox.state, ['taken', 'done']),
         eq(inbox.conversation, cv.id), eq(inboxRefs.ref, id), eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
         eq(inbox.fromKind, 'schedule'), eq(inbox.fromId, job.agent), eq(inbox.source, 'trigger'), isNull(inbox.member), isNull(inbox.onWordKind),
       )).limit(1).get();
-    if (delivered) return id;
+    if (delivered) return { id, job:job.id, cv, sourceKind:trigger.sourceKind, sourceId:delivered.sourceId };
   }
-  function required(viewer: Viewer) {
-    const id = mine(viewer);
-    if (!id) throw new OperationError('denied', 'This job has no accepted trigger journal');
-    return id;
+  function required(viewer: Viewer, items?:string[]) {
+    const delivery = mine(viewer,items);
+    if (!delivery) throw new OperationError('denied', 'This job has no accepted trigger journal');
+    return delivery;
   }
   const defaults = { ...bodyOperationDefaults(current, hash, 'trigger-journal'), may: (viewer: Viewer) => !!mine(viewer), refuses: true };
   // Acknowledged mail in the current model turn, checked again after the body reported receipt.
   // Ineligible wakes have no lessons to attach and continue normally.
   operations.register(operation({ ...defaults, write: false, name: 'tempo.wakeLessons', may: viewer => !!current(viewer),
     input: z.object({ items: z.array(z.string().min(1)).min(1).max(100) }).strict(), output: z.string().nullable(),
-    run(ctx, { items }) { const id = mine(ctx.viewer, items); return id ? readJournal(db, id).lessons : null; },
+    run(ctx, { items }) { const delivery = mine(ctx.viewer, items); return delivery ? readJournal(db, delivery.id).lessons : null; },
   }));
-  operations.register(operation({ ...defaults, write: false, name: 'tempo.readJournal', input: z.object({}).strict(),
-    output: z.object({trigger:z.string(), lessons:z.string(), state:z.string(), stateRevision:z.number(), stateChangedAt:z.string().nullable()}),
-    run: ctx => readJournal(db, required(ctx.viewer)),
+  operations.register(operation({ ...defaults, write: false, name: 'tempo.readJournal', input: z.object({ item:z.string().min(1).optional(), priorJob:z.string().min(1).optional() }).strict(),
+    output: z.object({trigger:z.string(), lessons:z.string(), state:z.string(), stateRevision:z.number(), stateChangedAt:z.string().nullable(),
+      priorJobState:z.enum(jobs.state.enumValues).nullable().optional(), firing:z.object({job:z.string(),item:z.string(),scheduledAt:z.string().datetime().nullable()}).optional()}),
+    run(ctx, {item,priorJob}) {
+      const delivery = required(ctx.viewer,item ? [item] : undefined);
+      const prior = priorJob ? db.select({state:jobs.state}).from(jobs).where(and(eq(jobs.id,priorJob),
+        eq(jobs.conversation,delivery.cv.id),eq(jobs.agent,delivery.cv.agent),isNull(jobs.member),
+        delivery.cv.project ? eq(jobs.project,delivery.cv.project) : isNull(jobs.project))).get() : undefined;
+      const journal = {...readJournal(db, delivery.id), ...(priorJob ? {priorJobState:prior?.state ?? null} : {})};
+      if (!item) return journal;
+      const prefix = delivery.id + ':time:';
+      const at = delivery.sourceId?.startsWith(prefix) ? delivery.sourceId.slice(prefix.length) : undefined;
+      const scheduled = z.string().datetime().safeParse(at);
+      return {...journal, firing:{job:delivery.job,item,scheduledAt:delivery.sourceKind === 'time' && scheduled.success ? scheduled.data : null}};
+    },
   }));
   operations.register(operation({ ...defaults, name: 'tempo.appendLesson', input: z.object({ lesson: z.string().min(1).max(TRIGGER_JOURNAL_BYTES) }).strict(),
     output: z.object({ saved: z.literal(true) }), run(ctx, { lesson }) {
-      const id = required(ctx.viewer);
+      const {id} = required(ctx.viewer);
       appendLesson(db, id, lesson);
       ctx.changed('triggers', id);
       return { saved: true };
@@ -59,7 +72,7 @@ export function registerTriggerJournal(operations: Operations, db: DataDatabase,
   }));
   operations.register(operation({ ...defaults, name: 'tempo.replaceJournalState', input: z.object({ revision: z.number().int().nonnegative(), state: z.string().max(TRIGGER_JOURNAL_BYTES) }).strict(),
     output: z.object({ revision: z.number() }), run(ctx, input) {
-      const id = required(ctx.viewer);
+      const {id} = required(ctx.viewer);
       const revision = replaceJournalState(db, id, input.revision, input.state, new Date(ctx.now).toISOString());
       if (revision !== input.revision) ctx.changed('triggers', id);
       return { revision };

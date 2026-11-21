@@ -1,10 +1,12 @@
+import { clockLanes, clockLaneText, clockScheduleRevision } from './lanes.js';
+import { wakeDeliveries } from './deliveries.js';
 /** Safe household display projection for Tempo; never expose settings wholesale. */
-import { GraphQLInt, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { triggerLog, triggers } from '../data/schema.js';
 import { dataValue } from '../data/subscriptions.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { isHouseholdOwner, rules, type Viewer } from '../../policy.js';
+import { directsAgent, isHouseholdOwner, rules, type Viewer } from '../../policy.js';
 import { sqlHolds } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
 import { householdTimezone } from '../data/household-settings.js';
@@ -29,6 +31,26 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
      if (!trigger || !hasAgentJournal(trigger)) return null;
      const { lessons, state, stateChangedAt } = readJournal(db, id);
      return { lessons, state, stateChangedAt };
+   },
+ }, tempoDeliveries: { type: dataValue, args: { agent: { type: new GraphQLNonNull(GraphQLString) },
+   events: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLInt))) } },
+   resolve: (_source: unknown, { agent, events }: { agent: string; events: number[] }) =>
+     current() ? wakeDeliveries(db, viewer, agent, events, canReadProgram()) : [],
+ }, tempoLanes: { type: dataValue, args: { after: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { after }: { after: string }) => current() ? clockLanes(db, viewer, after) : [],
+ }, tempoLaneText: { type: dataValue, args: { agent: {type:GraphQLString}, id: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { id, agent }: { id: string; agent?: string }) => current() ? clockLaneText(db, viewer, id, agent) : null,
+ }, tempoScheduleRevision: { type: GraphQLString, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { id }: { id: string }) => current() ? clockScheduleRevision(db, viewer, id) : null,
+ }, tempoDefaultAgent: { type: GraphQLString,
+   resolve: () => {
+     if (!current() || (viewer.kind !== 'agent' && viewer.kind !== 'member')) return null;
+     const sharing = sharedSharing(db);
+     if (viewer.kind === 'agent') return directsAgent(viewer, viewer.id, sharing) ? viewer.id : null;
+     const clocks = (sharing.agents ?? []).filter(agent => directsAgent(viewer, agent, sharing));
+     if (clocks.length <= 1) return clocks[0] ?? null;
+     const chosen = db.query.household.findFirst({ columns: { defaultAgent: true } }).sync()?.defaultAgent;
+     return chosen && clocks.includes(chosen) ? chosen : null;
    },
  }, tempoTimezone: { type: GraphQLString,
    resolve: () => current() ? householdTimezone(db) : null,
