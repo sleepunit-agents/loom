@@ -14,7 +14,22 @@ const timestamp=z.iso.datetime({offset:true}).transform(date=>new Date(date).toI
 const sourceQuestion=z.object({thread:id,ref:id,approval:id.nullable(),raised:timestamp,seen:timestamp,
   words:z.instanceof(Buffer).nullable(),answer_json:z.string().nullable()});
 const answer=z.object({verdict:id,by:id.optional(),at:timestamp.optional()}).strict();
-const scope=z.object({id,agent:id,member:id,conversation:id});
+const scope=z.object({id,agent:id,member:id,conversation:id,project:id.nullable().default(null)});
+
+/** The two earliest released Comms layouts had only a message table. An
+ * unrelated or newer archive missing its questions must not report success. */
+function hasSavedQuestions(archive: Database.Database) {
+  const tables = archive.prepare("SELECT name,type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT GLOB 'sqlite_*'").all() as {name:string;type:string}[];
+  if (tables.some(row => row.name === 'comms_asks' && row.type === 'table')) return true;
+  const columns = archive.prepare("SELECT name || ':' || upper(type) || ':' || pk FROM pragma_table_info('comms_messages') ORDER BY cid").pluck().all().join(',');
+  const original = [
+    'thread:TEXT:1', 'seq:INTEGER:2', 'at:TEXT:0', 'kind:TEXT:0', 'sender:TEXT:0', 'id:TEXT:0',
+    'hash:TEXT:0', 'text:BLOB:0', 'card_json:TEXT:0', 'run:TEXT:0', 'delivered:INTEGER:0',
+  ].join(',');
+  if (tables.length === 1 && tables[0].name === 'comms_messages' && tables[0].type === 'table'
+    && [original, original + ',sending_at:INTEGER:0,delivery_json:TEXT:0'].includes(columns)) return false;
+  throw Error('Unrecognized archive without a saved question table');
+}
 
 export async function importArchivedQuestions(input:{
   archive:Database.Database; household:Database.Database; destination:DataDatabase; key:WordsKey;
@@ -22,12 +37,23 @@ export async function importArchivedQuestions(input:{
 }) {
   const {archive,household,destination:db,sourceDays,key,now}=input;
   if(!archive.readonly||!household.readonly||!validKeepDays(sourceDays))throw Error('Expected a read-only archive with its original Comms retention');
-  const oldThreads=new Map(household.prepare('select id,agent,member,conversation from comms_threads').all()
+  if (!hasSavedQuestions(archive)) return {total:0,inserted:0};
+  const oldThreads=new Map(household.prepare('select * from comms_threads').all()
     .map(raw=>{const t=scope.parse(raw);return [t.id,t] as const;}));
+  const readThreads = () => new Map(db.select({id:threads.id,conversation:threads.conversation,agent:conversations.agent,
+    member:conversations.member,project:conversations.project,place:conversations.place,venue:conversations.venue})
+    .from(threads).innerJoin(conversations,eq(threads.conversation,conversations.id)).all().map(t=>[t.id,t]));
+  const checkThread = (thread:string, staged:ReturnType<typeof readThreads>) => {
+    const source=oldThreads.get(thread), target=staged.get(thread);
+    if (!source || !target || target.venue!=='loom' || target.place!==thread || target.member!==source.member ||
+      target.project!==source.project || target.agent!==source.agent || target.conversation!==source.conversation)
+      throw Error('Archived question destination thread differs');
+  };
+  const initialThreads=readThreads();
   const prepared: (typeof archivedQuestions.$inferSelect)[]=[];
   for(const raw of archive.prepare('select thread,ref,approval,raised,seen,words,answer_json from comms_asks order by thread,ref').iterate()){
     const q=sourceQuestion.parse(raw);
-    if(!oldThreads.has(q.thread))throw Error('Archived question has no source thread');
+    checkThread(q.thread,initialThreads);
     const outcome=q.answer_json===null?null:answer.parse(JSON.parse(q.answer_json));
     const keepUntil=keepUntilFor(q.seen,sourceDays);
     let words=null;
@@ -40,15 +66,11 @@ export async function importArchivedQuestions(input:{
       verdict:outcome?.verdict??null,answeredBy:outcome?.by??null,answeredAt:outcome?.at??null});
   }
   return db.transaction(()=>{
-    const currentThreads=new Map(db.select({id:threads.id,conversation:threads.conversation,agent:conversations.agent,
-      member:conversations.member,venue:conversations.venue}).from(threads).innerJoin(conversations,eq(threads.conversation,conversations.id))
-      .all().map(t=>[t.id,t]));
+    const currentThreads=readThreads();
     const days=commsKeepDays(db),at=now();
     let inserted=0;
     for(const row of prepared){
-      const source=oldThreads.get(row.thread)!,target=currentThreads.get(row.thread);
-      if(!target||target.venue!=='loom'||target.member!==source.member||target.agent!==source.agent||target.conversation!==source.conversation)
-        throw Error('Archived question destination thread differs');
+      checkThread(row.thread,currentThreads);
       const words=wordsKept({at:row.seenAt,keepUntil:row.keepUntil},days,at)?row.words:null;
       const result=db.insert(archivedQuestions).values({...row,words}).onConflictDoNothing().run();
       if(result.changes){inserted++;continue;}
