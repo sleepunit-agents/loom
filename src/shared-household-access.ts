@@ -1,3 +1,4 @@
+import {registerAgentPortrait} from './shared-agent-portrait.js';
 import {SHA256_HEX} from './core/sha256-hex.js';
 import { readHouseholdSetup } from './core/data/household-read.js';
 import { reattributeChanges, AttributionConflict, type MergeRuleReader } from './apps/changes.js';
@@ -29,6 +30,7 @@ export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:Merge
  };
 }
 export function registerSharedHouseholdAccess(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
+ registerAgentPortrait(operations,db);
  const isOwner=(viewer:Viewer)=>householdOwner(db,viewer);
  operations.register({name:'sessions.revoke',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(SHA256_HEX)}).strict(),output:z.object({revoked:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.revokeSession(input.ref);ctx.changed('core.access','household');return result;}});
 }
@@ -36,7 +38,7 @@ export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof
  const ownerReads=new WeakSet<Viewer>();
  const strings=new GraphQLList(GraphQLString);
  const member=new GraphQLObjectType({name:'SetupMember',fields:{id:{type:GraphQLString},role:{type:GraphQLString},fullOwner:{type:GraphQLBoolean},agents:{type:strings}}});
- const agent=new GraphQLObjectType({name:'SetupAgent',fields:{id:{type:GraphQLString},about:{type:GraphQLString},markBg:{type:GraphQLString},markFg:{type:GraphQLString},faceShape:{type:GraphQLString},faceEyes:{type:GraphQLString},github:{type:strings},removedAt:{type:GraphQLString}}});
+ const agent=new GraphQLObjectType({name:'SetupAgent',fields:{spriteVersion:{type:GraphQLString},id:{type:GraphQLString},about:{type:GraphQLString},markBg:{type:GraphQLString},markFg:{type:GraphQLString},faceShape:{type:GraphQLString},faceEyes:{type:GraphQLString},github:{type:strings},removedAt:{type:GraphQLString}}});
  const token=new GraphQLObjectType({name:'SetupToken',fields:{fingerprint:{type:GraphQLString},label:{type:GraphQLString},kind:{type:GraphQLString},expired:{type:GraphQLBoolean},identity:{type:GraphQLString},createdAt:{type:GraphQLString},expiresAt:{type:GraphQLString},revokedAt:{type:GraphQLString},lastUsedAt:{type:GraphQLString}}});
  const session=new GraphQLObjectType({name:'SetupBrowser',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},issuedAt:{type:GraphQLString},seenAt:{type:GraphQLString},isAgent:{type:GraphQLBoolean},ended:{type:GraphQLBoolean},member:{type:GraphQLString},tokenLabel:{type:GraphQLString}}});
  const settings=new GraphQLObjectType({name:'SetupSettings',fields:{timezone:{type:GraphQLString},commsDays:{type:GraphQLInt},githubOwner:{type:GraphQLString},secretsDefault:{type:GraphQLString},backupTarget:{type:GraphQLString},backupAt:{type:GraphQLString},backupKeep:{type:GraphQLInt},backupRecipients:{type:strings}}});
