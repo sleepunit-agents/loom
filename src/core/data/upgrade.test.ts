@@ -561,3 +561,52 @@ it('starts upgraded households with no machine readings and the default lines fo
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','memory','','first','worrying',?)").run(at)).toThrow(/box_readings_level/);
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('nobody','memory','','first','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
 });
+
+it('keeps an archived question and its sealed words intact through the checkpoint upgrade', () => {
+  const old = household(32);
+  old.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam', 'member', '${at}');
+    INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+    INSERT INTO conversations (id, agent, member, venue, place, label, direct, started_at, last_at, turn_count)
+      VALUES ('cv', 'art', 'sam', 'loom', 'th', 'Private', 1, '${at}', '${at}', 0);
+    INSERT INTO threads (id, conversation, title, titled_by, pinned, opened_at, last_at, read_seq, working, stop_requested)
+      VALUES ('th', 'cv', 'Private', 'member', 0, '${at}', '${at}', 0, 0, 0);
+    INSERT INTO archived_questions (thread, ref, raised_at, seen_at, keep_until, words, verdict, answered_by, answered_at)
+      VALUES ('th', 'card', '${at}', '${at}', '2026-11-29T00:00:00.000Z', X'0000FF', 'deny', 'sam', '${at}')`);
+  const archived = () => old.prepare('SELECT * FROM archived_questions').all();
+  const before = archived();
+  upgradeDataSchema(old, () => at);
+  expect(archived()).toEqual(before);
+  expect(old.pragma('foreign_key_check')).toEqual([]);
+});
+
+it('retires legacy bridge checkpoints from completed jobs whose private input bounds were never recorded',()=>{
+  const old=household(31);
+  old.prepare("INSERT INTO household (comms_days) VALUES (2)").run();
+  old.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('agent','','','','drop','dot')");
+  old.prepare("INSERT INTO conversations (id,agent,venue,place,label,started_at,last_at,turn_count) VALUES ('room','agent','slack','channel','Channel',?,?,0)").run(at,at);
+  const files=Buffer.from('fictional sealed checkpoint');
+  old.prepare('INSERT INTO conversation_sessions (conversation,harness,session,files,bytes,started_at) VALUES (?,?,?,?,?,?)')
+    .run('room','claude','abcd-1234',files,files.length,at);
+  old.prepare("INSERT INTO jobs (id,agent,conversation,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES ('finished','agent','room','fixture','done','','fixture','agent','agent','repo','','main',?)").run(at);
+  old.prepare('INSERT INTO inbox (id,to_kind,"to",conversation,source,from_kind,from_id,at,changed_at,state) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run('old-handoff','agent','agent','room','handoff','agent','agent','2026-11-12T00:00:00.000Z',at,'done');
+  upgradeDataSchema(old,()=>at);
+  expect(old.prepare('SELECT files FROM conversation_sessions').get()).toBeUndefined();
+  expect(old.prepare("SELECT state FROM jobs WHERE id='finished'").get()).toEqual({state:'done'});
+});
+
+it('fences pre-upgrade workers with unrecorded inputs until their jobs end', () => {
+  const old = household(31);
+  old.prepare("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('agent','','','','drop','dot')").run();
+  old.prepare("INSERT INTO members (id,role,joined_at) VALUES ('alice','member',?)").run(at);
+  const room = old.prepare("INSERT INTO conversations (id,agent,venue,place,label,member,started_at,last_at,turn_count) VALUES (?,'agent',?,?,'Fixture',?,?,?,0)");
+  const job = old.prepare("INSERT INTO jobs (id,agent,conversation,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES (?,'agent',?,'Job',?,'','fixture','agent','agent','','','',?)");
+  for (const [venue, state] of [['slack','running'], ['discord','running'], ['loom','running'], ['slack','done'], ['discord','queued'], ['loom','starting']]) {
+    const id = venue + '-' + state;
+    room.run(id,venue,id,venue === 'loom' ? 'alice' : null,at,at);
+    job.run(id,id,state,at);
+  }
+  upgradeDataSchema(old, () => at);
+  expect(old.prepare('SELECT job FROM job_session_limits WHERE invalidated=1 ORDER BY job').all())
+    .toEqual(['discord-running','loom-running','slack-running'].map(job => ({job})));
+});

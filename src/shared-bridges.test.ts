@@ -6,18 +6,20 @@ import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodySecretTools} from './runtime/body-secret-tools.js';
 import {houseRuntimeCli} from './house-runtime-cli.js';
 import { kitAccess } from './shared-kit-access.js';
-import { agentKitMembers, agentKits } from './core/data/schema.js';
+import { agentKitMembers, agentKits, household } from './core/data/schema.js';
 import Database from 'better-sqlite3';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {createHash,randomUUID} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
+import {DAY_MS} from './core/day.js';
 import {createDataSchema} from './core/data/database.js';
 import {approvals,approvalRecord,approvalNotices,operationResults,agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
+import {ConversationSessions} from './core/conversations/sessions.js';
 import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs,SET_ASIDE_NOTE} from './runtime/jobs.js';
@@ -53,8 +55,8 @@ function fixture(effectsAllowed:()=>boolean=()=>true,comms=false,admission:'spy'
  const receive=async()=>{await root.services.bridges.daemon!.ready();await root.services.bridges.daemon!.idle();await transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'event',team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'Hello',ts:'1794432000.000001'}}})));clock.advance(0);await root.services.bridges.daemon!.idle();return db.select().from(bridgeIncoming).get()!;};
  return {client,db,clock,root,source,transports,closed,request,call,receive,admitted};
 }
-it('admits a linked owner’s Slack DM once without a channel roster or channel route',async()=>{
- const f=fixture(()=>true,false,'runtime');
+it('admits a linked owner’s Slack DM once and bounds its first checkpoint by when the DM arrived',async()=>{
+ const f=fixture(()=>true,true,'runtime');
  const channel='DOWNER',workspace='TWORK',user='UOWNER';
  f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  f.db.insert(bridgePeople).values({platform:'slack',workspace,user,member:'owner'}).run();
@@ -78,6 +80,53 @@ it('admits a linked owner’s Slack DM once without a channel roster or channel 
  expect(f.db.select().from(conversations).where(eq(conversations.id,cv)).get()).toMatchObject({agent:'art',member:'owner',direct:true,venue:'slack'});
  expect(f.db.select().from(jobs).where(eq(jobs.conversation,cv)).all()).toMatchObject([{state:'queued',agent:'art',member:'owner'}]);
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('conversations.members'))).toBe(false);
+ // A delayed first delivery has no prior session or history to supply its retention ceiling.
+ const receivedAt=new Date(f.clock.now()-13*DAY_MS).toISOString(),mailAt=new Date(f.clock.now()-12*DAY_MS).toISOString();
+ const deadline=new Date(f.clock.now()+DAY_MS).toISOString();
+ const job=f.db.select().from(jobs).where(eq(jobs.conversation,cv)).get()!;
+ f.root.writes.run(()=>{
+  f.db.update(bridgeIncoming).set({receivedAt}).where(eq(bridgeIncoming.id,incoming[0].id)).run();
+  f.db.update(inbox).set({at:mailAt}).where(eq(inbox.conversation,cv)).run();
+  f.db.update(jobs).set({state:'running',box:'box',harness:'claude'}).where(eq(jobs.id,job.id)).run();
+  f.db.update(tokens).set({job:job.id}).where(eq(tokens.label,'body')).run();
+ });
+ const take=(credential=token.body)=>f.root.http.request('http://loom/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ expect(await (await take()).json()).toMatchObject({value:{items:[{words:'Fictional private question',keepUntil:deadline}]}});
+ const checkpoint={session:randomUUID(),files:Buffer.from('Fictional private question').toString('base64')};
+ expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({status:200,body:{value:{saved:true}}});
+ expect(f.db.select().from(conversationSessions).get()).toMatchObject({startedAt:receivedAt,keepUntil:deadline});
+ expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:{session:checkpoint.session}}}});
+ expect((await f.call('conversation','session',{})).status).toBe(403);
+ const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
+ const oldPack=await key.seal(JSON.stringify({model:job.model,files:checkpoint.files,at:receivedAt}));
+ f.root.writes.run(()=>f.db.update(conversationSessions).set({files:oldPack}).where(eq(conversationSessions.conversation,cv)).run());
+ expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:null}}});
+ expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({body:{value:{saved:true}}});
+ // Even before the next sweep erases the underlying row, neither door releases its expired words.
+ const now=vi.spyOn(f.clock,'now').mockReturnValue(Date.parse(deadline));
+ try {
+  expect(await (await take()).json()).toMatchObject({value:{items:[{words:null}]}});
+  expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:null}}});
+  expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({body:{value:{saved:false}}});
+ } finally {now.mockRestore();}
+
+ // A fresh worker now reads the first DM only from retained history. Slack's
+ // posted time is newer than Loom's receipt; only the receipt dates retention.
+ f.root.writes.run(()=>{
+  const mail=f.db.select().from(inbox).where(eq(inbox.conversation,cv)).get()!;
+  f.root.services.conversations.confirm(mail.id,job.id);
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,job.id)).run();
+  f.db.update(jobs).set({conversation:cv,member:'owner',harness:'claude'}).where(eq(jobs.id,'other')).run();
+ });
+ const followup=JSON.parse(payload.toString());
+ followup.envelope_id='dm-followup';followup.payload.event_id='dm-followup';
+ followup.payload.event.ts='1794432001.000008';followup.payload.event.text='Fictional follow-up';
+ await socket.receive({},Buffer.from(JSON.stringify(followup)));f.clock.advance(0);await daemon.idle();
+ expect(await (await take(token.other)).json()).toMatchObject({value:{items:[{words:'Fictional follow-up',
+  history:[{words:'Fictional private question',at:incoming[0].postedAt,keepUntil:deadline}]}]}});
+ expect(await f.call('conversation','sessionSave',checkpoint,token.other)).toMatchObject({body:{value:{saved:true}}});
+ f.root.writes.run(()=>f.db.insert(household).values({commsDays:12}).onConflictDoUpdate({target:household.singleton,set:{commsDays:12}}).run());
+ expect(await f.call('conversation','session',{retention:true},token.other)).toMatchObject({body:{value:{session:null}}});
 });
 it('mounts actual intake, committed Tempo admission, body reply door and current-credential network send',async()=>{
  const f=fixture();f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();expect(f.db.select().from(inbox).get()?.conversation).toBe(incoming.conversation);expect(f.db.select().from(conversations).get()?.venue).toBe('slack');expect(f.admitted).toHaveBeenCalledOnce();
@@ -278,7 +327,7 @@ it('hands the body that takes the next bridge message what was said before in th
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();});
  const take=async()=>{const response=await f.root.http.request('http://loom/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});return (await response.json()).value.items as {words:string|null;history?:{kind:string;sender:string;words:string;keepUntil:string|null}[]}[];};
  // The first message of a conversation has nothing before it.
- const first=await take();expect(first).toMatchObject([{words:'Hello'}]);expect(first[0].history).toBeUndefined();
+ const first=await take();expect(first).toMatchObject([{words:'Hello',keepUntil:null}]);expect(first[0].history).toBeUndefined();
  expect((await f.call('bridges','say',{id:randomUUID(),text:'Looking'})).status).toBe(200);
  expect((await f.call('bridges','reply',{id:randomUUID(),incoming:incoming.id,text:'Hello back',model:'observed',outcome:'progressed'})).status).toBe(200);await f.root.services.bridges.daemon!.idle();
  // A reply in the same Slack thread: the same conversation. Its body is handed the earlier exchange.
@@ -364,6 +413,18 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:wake.id}).where(eq(jobs.id,'other')).run();});
  expect((await take(token.other)).status).toBe(403);expect((await save({session,files},token.other)).status).toBe(403);
  expect(await take()).toMatchObject({status:200,body:{value:{session:{session,files}}}});
+ // Another save can land between decryption and publication, reusing both the session id and the clock tick.
+ const open = ConversationSessions.prototype.open;
+ const replacement = Buffer.from('new snapshot').toString('base64');
+ const duringRead = vi.spyOn(ConversationSessions.prototype, 'open').mockImplementationOnce(async function(this: ConversationSessions, ...args) {
+  const previous = await open.apply(this, args);
+  expect(await save({session, files: replacement})).toMatchObject({body:{value:{saved:true}}});
+  return previous;
+ });
+ try { expect(await take()).toMatchObject({status:200,body:{value:{session:null}}}); }
+ finally { duringRead.mockRestore(); }
+ expect(await take()).toMatchObject({body:{value:{session:{files:replacement}}}});
+ expect(await save({session, files})).toMatchObject({body:{value:{saved:true}}});
  // Stored sealed: neither the bytes nor their base64 are in the database file, and no query serves the table.
  const stored=f.db.select().from(conversationSessions).all();
  expect(stored).toMatchObject([{conversation:incoming.conversation,harness:'claude',session,bytes:Buffer.byteLength(files,'base64')}]);
@@ -380,8 +441,7 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  expect(await take()).toMatchObject({body:{value:{session:null}}});
  f.root.writes.run(()=>{f.db.update(jobs).set({harness:'claude'}).where(eq(jobs.id,'body')).run();});
  // The conversation was answered after the session was saved (its body died before saving, or another harness
- // answered): the session is behind what was said and is not handed on.
- f.clock.advance(1000);
+ // answered in the same clock tick): the session is behind what was said and is not handed on.
  expect((await f.call('bridges','reply',{id:randomUUID(),incoming:incoming.id,text:'Answered since',model:'observed',outcome:'progressed'})).status).toBe(200);
  expect(await take()).toMatchObject({body:{value:{session:null}}});
  // Saved again after the answer, it is current.

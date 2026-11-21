@@ -25,19 +25,71 @@
  * and will be behind the conversation as soon as the body answers. A session too large to keep is not
  * kept and removes the one before it for the same reason.
  */
-import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversationSessions, deletedThreads } from '../data/schema.js';
+import { bridgeConnections, conversations, conversationSessions, deletedThreads, jobs, jobSessionLimits, turns } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { ageCutoff } from './retention.js';
+import { ageCutoff, ageLimit, keepUntilFor, wordsDeadline } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
 import type { WordsKey } from './words.js';
 
 export interface KeptSession { session: string; files: string }
 /** What `open` hands back: the session, when it was started (the row's `started_at`) and when it was last saved. */
-export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; covered?: string[] };
+export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; ciphertext: Buffer; throughReply?: number; covered?: string[] };
 /** A session sealed and ready to store: made outside the transaction that stores it. */
-export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string }
+export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string; keepUntil?: string; scope?:string }
+
+/** Written inside the same transaction that releases private input or starts a replacement job.
+ * Re-taking the same batch leaves the publication revision unchanged. */
+export function constrainJobSession(db: DataDatabase, job:string, since:number, until:number) {
+  const first=new Date(since).toISOString(), last=new Date(until).toISOString();
+  db.insert(jobSessionLimits).values({job,since:first,keepUntil:last}).onConflictDoUpdate({
+    target:jobSessionLimits.job,
+    set:{since:sql`min(${jobSessionLimits.since}, ${first})`,keepUntil:sql`min(${jobSessionLimits.keepUntil}, ${last})`},
+    setWhere:sql`${jobSessionLimits.since} > ${first} or ${jobSessionLimits.keepUntil} > ${last}`,
+  }).run();
+}
+
+/** Reserve the current checkpoint's bounds before the new worker can open any of its words.
+ * This reservation survives the source row expiring while the worker is still running. */
+export function inheritJobSessionLimit(db:DataDatabase, job:string, conversation:string, harness:string, now:string) {
+  const row=db.select({at:conversationSessions.startedAt,keepUntil:conversationSessions.keepUntil}).from(conversationSessions)
+    .where(and(eq(conversationSessions.conversation,conversation),eq(conversationSessions.harness,harness))).get();
+  if (!row) return;
+  const deadline=wordsDeadline(row,commsKeepDays(db));
+  if (deadline>Date.parse(now)) constrainJobSession(db,job,Date.parse(row.at),deadline);
+}
+
+/** A running private body can still hold the old project's transcript after its job is refiled.
+ * Keep this refusal on the job until it ends, including across later takes and coordinator restarts. */
+export function invalidateRefiledJobSessions(db: DataDatabase, project: string) {
+  const running = db.select({
+    job: jobs.id, since: jobs.queuedAt, keepUntil: jobs.queuedAt, invalidated: sql<boolean>`1`.as('invalidated'),
+  }).from(jobs).innerJoin(conversations, eq(jobs.conversation, conversations.id)).where(and(
+    eq(jobs.project, project), eq(jobs.state, 'running'),
+    or(and(eq(conversations.venue, 'loom'), sql`${conversations.member} is not null`),
+       and(inArray(conversations.venue, bridgeConnections.platform.enumValues), or(eq(conversations.direct, true), sql`${conversations.member} is not null`))),
+  ));
+  db.insert(jobSessionLimits).select(running).onConflictDoUpdate({
+    target: jobSessionLimits.job, set: {invalidated: true},
+  }).run();
+}
+
+export function releaseJobSessionLimit(db:DataDatabase, job:string) {
+  db.delete(jobSessionLimits).where(eq(jobSessionLimits.job,job)).run();
+}
+
+// Tighten both copies in the settings transaction, including reservations held by
+// running jobs whose source checkpoint may already have been erased.
+export function tightenSessionDeadlines(db: DataDatabase, days: number) {
+  const offset = '+' + days + ' days';
+  const checkpoint = sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${conversationSessions.startedAt}, ${offset})`;
+  const running = sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${jobSessionLimits.since}, ${offset})`;
+  db.update(conversationSessions).set({keepUntil: checkpoint})
+    .where(sql`julianday(${conversationSessions.keepUntil}) > julianday(${checkpoint})`).run();
+  db.update(jobSessionLimits).set({keepUntil: running})
+    .where(sql`julianday(${jobSessionLimits.keepUntil}) > julianday(${running})`).run();
+}
 
 export class ConversationSessions {
   constructor(private db: DataDatabase, private now: () => string, private key: WordsKey) {}
@@ -46,30 +98,47 @@ export class ConversationSessions {
    * stores as a removal. */
   /** `since` is the time of the oldest word this body was handed that is erased at the keep time (a direct
    * conversation's kept history): the session holds that word, so its count starts no later than then. */
-  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; covered?: string[] }): Promise<SealedSession> {
+  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; keepUntil?: string; scope?:string; covered?: string[] }): Promise<SealedSession> {
     const bytes = Buffer.byteLength(input.files, 'base64');
     const keep = SESSION_ID.test(input.session) && bytes > 0 && bytes <= SESSION_BYTES;
-    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}),
+    const preparedAt = this.now(), days = commsKeepDays(this.db);
+    const first = input.since && Date.parse(input.since) < Date.parse(preparedAt) ? input.since : preparedAt;
+    const fixed = keepUntilFor(first, days);
+    const keepUntil = input.keepUntil === undefined || Date.parse(fixed) <= Date.parse(input.keepUntil) ? fixed : input.keepUntil;
+    const lastReply = this.db.select({seq: turns.seq}).from(turns)
+      .where(and(eq(turns.conversation, input.conversation), eq(turns.kind, 'reply')))
+      .orderBy(desc(turns.seq)).limit(1).get();
+    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}), scope:input.scope, keepUntil,
       // When it was last saved is sealed with it: the row's own time is when the session was started.
-      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now(), covered:input.covered })) : null };
+      sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: preparedAt, throughReply: lastReply?.seq ?? 0, scope:input.scope, covered:input.covered })) : null };
   }
 
   /** Replace the conversation's session for this harness, or remove it when there is nothing to keep. */
-  store(sealed: SealedSession): boolean {
+  store(sealed: SealedSession, job?:string): boolean {
     return this.db.transaction(() => {
       // Sealing happens outside the write transaction. Deletion may have committed in the meantime.
       if (this.db.select({id:deletedThreads.id}).from(deletedThreads)
         .where(eq(deletedThreads.conversation,sealed.conversation)).limit(1).get()) return false;
       const where = and(eq(conversationSessions.conversation, sealed.conversation), eq(conversationSessions.harness, sealed.harness));
+      const delivered = job ? this.db.select().from(jobSessionLimits).where(eq(jobSessionLimits.job,job)).get() : undefined;
+      if (delivered?.invalidated) return false;
       if (!sealed.sealed) { this.db.delete(conversationSessions).where(where).run(); return false; }
       // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
       // session kept here, if one is still within the keep time (this save continues or replaces it); the
       // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
-      const now = this.now(), times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
+      if (sealed.scope && !delivered) return false;
+      const previous = this.kept(sealed.conversation, sealed.harness);
+      const now = this.now(), times = [previous?.startedAt, delivered?.since, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
       const startedAt = times.reduce((oldest, at) => Date.parse(at) < Date.parse(oldest) ? at : oldest);
       // Already past the keep time by that count: there is nothing it may be kept for.
-      if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, commsKeepDays(this.db)))) { this.db.delete(conversationSessions).where(where).run(); return false; }
-      const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed, bytes: sealed.bytes, startedAt };
+      const days = commsKeepDays(this.db);
+      const deadline = Math.min(Date.parse(keepUntilFor(startedAt, days)),
+        previous?.keepUntil == null ? Infinity : Date.parse(previous.keepUntil),
+        delivered ? Date.parse(delivered.keepUntil) : Infinity,
+        sealed.keepUntil === undefined ? Infinity : Date.parse(sealed.keepUntil));
+      if (!(deadline > Date.parse(now))) { this.db.delete(conversationSessions).where(where).run(); return false; }
+      const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed,
+        bytes: sealed.bytes, startedAt, keepUntil: new Date(deadline).toISOString() };
       this.db.insert(conversationSessions).values(row).onConflictDoUpdate({ target: [conversationSessions.conversation, conversationSessions.harness], set: row }).run();
       return true;
     }, { behavior: 'immediate' });
@@ -79,21 +148,21 @@ export class ConversationSessions {
   kept(conversation: string, harness: string): typeof conversationSessions.$inferSelect | undefined {
     const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness),
       notInArray(conversationSessions.conversation,this.db.select({conversation:deletedThreads.conversation}).from(deletedThreads)))).get();
-    return row && Date.parse(row.startedAt) > Date.parse(ageCutoff(this.now(), commsKeepDays(this.db))) ? row : undefined;
+    return row && wordsDeadline({at: row.startedAt, keepUntil: row.keepUntil}, commsKeepDays(this.db)) > Date.parse(this.now()) ? row : undefined;
   }
 
   /** What the next body is handed, or nothing: none kept, kept too long, or kept under another family of models. */
-  async open(conversation: string, harness: string, model: string): Promise<OpenedSession | null> {
+  async open(conversation: string, harness: string, model: string, scope?:string): Promise<OpenedSession | null> {
     const row = this.kept(conversation, harness);
     if (!row) return null;
     try {
-      const value = JSON.parse(await this.key.open(row.files)) as { model?: unknown; files?: unknown; at?: unknown; covered?: string[] };
-      if (typeof value.model !== 'string' || typeof value.files !== 'string' || typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))
+      const value = JSON.parse(await this.key.open(row.files)) as { scope?: unknown; model?: unknown; files?: unknown; at?: unknown; throughReply?: number; covered?: string[] };
+      if (value.scope !== scope || typeof value.model !== 'string' || typeof value.files !== 'string' || typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))
         || modelFamily(value.model) !== modelFamily(model)) return null;
       // Opening can yield while the thread is deleted, the session is replaced, or its words expire.
       const current = this.kept(conversation, harness);
       if (!current || current.startedAt !== row.startedAt || current.session !== row.session || !current.files.equals(row.files)) return null;
-      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ...(value.covered ? {covered:value.covered} : {}) };
+      return { session: row.session, files: value.files, startedAt: row.startedAt, lastSavedAt: value.at, ciphertext: row.files, throughReply: value.throughReply, ...(value.covered ? {covered:value.covered} : {}) };
     } catch { return null; }
   }
 
@@ -106,15 +175,18 @@ export function eraseConversationSessions(db: DataDatabase, conversation: string
 
 /** Remove every session started at or before `cutoff`: the sweep that erases words at the keep time calls
  * this with the same cutoff (messages.ts, expire). Returns how many went. */
-export function expireConversationSessions(db: DataDatabase, cutoff: string): number {
+export function expireConversationSessions(db: DataDatabase, now: string): number {
+  const cutoff = ageCutoff(now, commsKeepDays(db));
   const removed = db.select({conversation: deletedThreads.conversation}).from(deletedThreads);
   return db.delete(conversationSessions).where(or(
     sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`,
+    sql`coalesce(julianday(${conversationSessions.keepUntil}), 0) <= julianday(${now})`,
     inArray(conversationSessions.conversation, removed),
   )).run().changes;
 }
-/** When the oldest kept session was started, for the sweep's schedule (lifetime.ts). */
-export function oldestConversationSession(db: DataDatabase): number | undefined {
-  const row = db.select({ at: conversationSessions.startedAt }).from(conversationSessions).orderBy(sql`julianday(${conversationSessions.startedAt})`).get();
-  return row ? Date.parse(row.at) : undefined;
+/** The next physical erasure uses the earliest fixed deadline or current household age limit. */
+export function nextConversationSessionExpiry(db: DataDatabase, days: number): number | undefined {
+  const row = db.select({at: sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', min(julianday(${conversationSessions.startedAt})))`,
+    until: sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', min(coalesce(julianday(${conversationSessions.keepUntil}), 2440587.5)))`}).from(conversationSessions).get();
+  return row?.at ? Math.min(ageLimit(Date.parse(row.at),days),Date.parse(row.until)) : undefined;
 }

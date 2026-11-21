@@ -20,13 +20,27 @@
  */
 import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs } from '../data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeSendJobs, bridgeSends, conversations, inbox, inboxRefs } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
 import type { HistoryLine } from './history-context.js';
 import { keepUntilFor } from './retention.js';
 import { outsidePersonKey } from '../../pieces/bridges/keys.js';
 
+
+/** A reply goes to the incoming message's conversation. A standalone post carries its own. */
+function sentInConversation(db: DataDatabase, conversation: string) {
+  return or(inArray(bridgeSends.incoming, db.select({id: bridgeIncoming.id}).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation))),
+    and(isNull(bridgeSends.incoming), eq(bridgeSends.conversation, conversation)));
+}
+
+/** Include the job's local progress even if the bridge is still posting it. Once sent, its
+ * history key is the same send ID. A separately addressed DM belongs to its recipient. */
+export function bridgeSessionPostKeys(db: DataDatabase, conversation: string, job: string, limit: number) {
+  return db.select({id: bridgeSends.id}).from(bridgeSendJobs).innerJoin(bridgeSends, eq(bridgeSends.id, bridgeSendJobs.send))
+    .where(and(eq(bridgeSendJobs.job, job), isNull(bridgeSendJobs.directTarget), sentInConversation(db, conversation)))
+    .orderBy(desc(bridgeSends.createdAt), desc(sql`${bridgeSends}.rowid`)).limit(limit).all().reverse().map(row => row.id);
+}
 
 export function prepareBridgeHistory(db: DataDatabase, now: () => string, conversation: string, identify = false): () => HistoryLine[] {
   const cv = db.select().from(conversations).where(eq(conversations.id, conversation)).get();
@@ -47,9 +61,7 @@ export function prepareBridgeHistory(db: DataDatabase, now: () => string, conver
       .map(row => ({ ...(identify ? {sourceKey: row.id} : {}), kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : workspace !== null && row.user ? `the outside account ${outsidePersonKey(cv.venue as 'discord' | 'slack', workspace, row.user)}` : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
     const sent: Said[] = db.select({ id: bridgeSends.id, order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
       .where(and(eq(bridgeSends.state, 'sent'), ne(bridgeSends.text, ''),
-        // What it posted there: answers to the conversation's messages, and posts that answered none.
-        or(inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation))),
-          and(isNull(bridgeSends.incoming), eq(bridgeSends.conversation, conversation)))))
+        sentInConversation(db, conversation)))
       .orderBy(desc(bridgeSends.createdAt), desc(sql`${bridgeSends}.rowid`)).limit(HISTORY_LINES).all()
       .map(row => ({ ...(identify ? {sourceKey: row.id} : {}), kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at), order: row.order }));
     const kept = [...received, ...sent].filter(line => line.keepUntil === null || Date.parse(line.keepUntil) > Date.parse(now()))

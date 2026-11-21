@@ -2,6 +2,8 @@
  * The tables are read from the schema, so a table added later with a project on it fails here until the
  * merge says what it does with it. */
 import Database from 'better-sqlite3';
+import { bodyFixture, bodyCredentials } from '../test/fixtures/conversation-body.js';
+import { bodyConversationClient } from './runtime/conversation-client.js';
 import { afterEach, expect, it } from 'vitest';
 import { eq, getTableName, is, sql } from 'drizzle-orm';
 import { SQLiteTable, getTableConfig } from 'drizzle-orm/sqlite-core';
@@ -170,4 +172,36 @@ it('keeps outside identities on their named project and refuses a merge with pro
   f.client.prepare('INSERT INTO project_outside_people(project,platform,workspace,user) VALUES (?,?,?,?)').run('pond','slack','W','U');
   f.service.merge({from:'pond',into:'garden'});
   expect(f.client.prepare('SELECT project FROM project_outside_people').all()).toEqual([{project:'pond'}]);
+});
+
+
+it('fences the original private worker after its project merges even when it takes mail in the new project', async () => {
+  const clean: (() => void | Promise<void>)[] = [];
+  try {
+    const f = await bodyFixture(clean);
+    f.db.update(jobs).set({harness:'claude'}).where(eq(jobs.id,'job')).run();
+    const body = bodyConversationClient({url:'https://loom.invalid', token:bodyCredentials.body, job:'job',
+      conversation:f.thread.conversation, signal:new AbortController().signal, clock:f.clock,
+      fetch:async (url, init) => f.root.http.request(new Request(url, init))});
+    clean.push(() => body.close());
+    const checkpoint = {session:'old-project', files:Buffer.from('Private words in Pond').toString('base64')};
+    await f.send('Pond input','first');
+    await body.takeAndAccept(async item => { expect(item.words).toBe('Pond input'); });
+    await body.reply({clientId:'first-answer', words:'Pond reply'});
+    expect(await (await f.call('sessionSave', checkpoint, 'save-before')).json()).toMatchObject({ok:true,value:{saved:true}});
+    expect(await (await f.call('session', {retention:true}, 'open-before')).json()).toMatchObject({ok:true,value:{session:checkpoint}});
+    const prior = f.db.select().from(schema.conversationSessions).get();
+
+    expect(sharedProjects(f.db).merge({from:'pond',into:'other'})).toEqual({id:'other'});
+    expect(f.db.select().from(jobs).where(eq(jobs.id,'job')).get()?.project).toBe('other');
+    expect((await f.call('session', {retention:true}, 'open-after')).status).toBe(403);
+    await f.send('New project input','second');
+    expect((await body.takeAndAccept(async item => { expect(item.words).toBe('New project input'); })).accepted).toBe(1);
+    expect(f.db.select().from(schema.jobSessionLimits).get()?.invalidated).toBe(true);
+    expect((await f.call('sessionSave', checkpoint, 'copy-after')).status).toBe(403);
+    expect((await f.call('sessionSave', {session:null}, 'erase-after')).status).toBe(403);
+    expect(f.db.select().from(schema.conversationSessions).get()).toEqual(prior);
+  } finally {
+    for (const close of clean.reverse()) await close();
+  }
 });
