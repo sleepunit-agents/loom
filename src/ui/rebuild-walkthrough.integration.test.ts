@@ -182,6 +182,8 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
+  expect(step.value.actions.conversationSingleJob).toMatchObject({ok:true,deliveries:3});
+  expect(step.value.actions.conversationTempoDelivery).toMatchObject({ok:true,recipient:'moss'});
   for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
  });
  it('records a private background question in Inbox and returns its answer to the body',{retry:0},async()=>{
