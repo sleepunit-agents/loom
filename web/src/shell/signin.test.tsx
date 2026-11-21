@@ -186,3 +186,20 @@ it('opens the desk automatically when the initial session read recovers',async()
   expect(tree.root.findByType('section').props.children).toBe('Desk content');
   expect(fetch).toHaveBeenCalledTimes(3);
 });
+
+it.each(['focus','poll'])('withdraws the previous desk before reloading a changed account on %s',async trigger=>{
+  vi.useFakeTimers();
+  const {fetch,append}=environment(),window=new EventTarget();
+  vi.stubGlobal('window',window);
+  Object.assign(document,{visibilityState:'visible'});
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'first'},csrf:'old'})})
+    .mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'other'},csrf:'other'})});
+  const reload=vi.fn(()=>expect(tree.root.findAllByType('section')).toHaveLength(0));
+  vi.stubGlobal('location',{reload});
+  await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
+  expect(tree.root.findByType('section').props.children).toBe('Private desk');
+  await act(async()=>{if(trigger==='focus')window.dispatchEvent(new Event('focus'));else await vi.advanceTimersByTimeAsync(60_000);});
+  expect(reload).toHaveBeenCalledOnce();expect(tree.root.findAllByType('section')).toHaveLength(0);
+  expect(append.mock.calls[0][0].content).toBe('');
+  expect(words(tree.toJSON())).toContain('Your account changed');
+});

@@ -135,3 +135,25 @@ it('closes a transport even when its handshake never acknowledges',async()=>{
     expect(after.complete).toHaveBeenCalledOnce();
   }finally{vi.unstubAllGlobals();vi.useRealTimers();}
 });
+
+it('times out an unacknowledged handshake even when the server sends a pong',async()=>{
+  vi.useFakeTimers();
+  const codes:number[]=[];
+  class Unacknowledged {
+    static CONNECTING=0;static OPEN=1;static CLOSING=2;static CLOSED=3;
+    readyState=Unacknowledged.OPEN;
+    constructor(){queueMicrotask(()=>this.onopen?.());}
+    onopen?:()=>void;
+    onclose?:(event:{code:number;reason:string})=>void;
+    onmessage?:(event:{data:string})=>void;
+    send(){queueMicrotask(()=>this.onmessage?.({data:'{"type":"pong"}'}));}
+    close(code:number,reason:string){codes.push(code);this.readyState=Unacknowledged.CLOSED;this.onclose?.({code,reason});}
+  }
+  vi.stubGlobal('WebSocket',Unacknowledged);
+  const transport=browserQueryTransport('ws://fixture/graphql');
+  try{
+    transport.subscribe({query:'subscription { example }'},{next:vi.fn(),error:vi.fn(),complete:vi.fn()});
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(codes).toContain(4504);
+  }finally{transport.close();vi.unstubAllGlobals();vi.useRealTimers();}
+});

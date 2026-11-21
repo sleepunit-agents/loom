@@ -5,3 +5,7 @@ export function reconnectDelay(attempt:number):number {
 
 /** A socket failure cannot distinguish a server outage from an expired browser cookie. */
 export const checkSessionEvent='loom-check-session';
+
+let member:string|null=null;
+export function setDeskMember(id:string|null){member=id;}
+export function deskConnectionParams(){return member===null?{}:{expectedMember:member};}

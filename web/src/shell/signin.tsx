@@ -4,7 +4,7 @@
 // link (src/core/signin/page.ts) wears the same look with no script; the values the two share are listed there and
 // in signin.css, and are kept in step by hand.
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
-import {reconnectDelay,checkSessionEvent} from '../data/connection';
+import {reconnectDelay,checkSessionEvent,setDeskMember} from '../data/connection';
 import { lookOf, wearLook } from '../look';
 import './signin.css';
 import { WovenCloth } from '../woven-cloth';
@@ -45,11 +45,14 @@ function Weave(){
 
 export default function Signin({children}:{children:ReactNode}){
   const [session,setSession]=useState<{viewer:{id:string}|null;csrf?:string}|undefined>(),[message,say]=useState('');
+  const [changedMember,setChangedMember]=useState(false);
+  useEffect(()=>{if(changedMember)location.reload();},[changedMember]);
   const [greeting]=useState(()=>greetingAt(new Date().getHours()));
   useEffect(()=>{
     const lifetime=new AbortController();
     let timer:ReturnType<typeof setTimeout>|undefined,attempt=0,checking=false;
-    let member:string|null|undefined;
+    let member:string|null|undefined,deskOwner:string|undefined;
+    let meta:HTMLMetaElement|undefined;
     async function check(){
       if(lifetime.signal.aborted||checking||timer!==undefined)return;
       checking=true;
@@ -60,19 +63,36 @@ export default function Signin({children}:{children:ReactNode}){
         if(!value||!(value.viewer===null||typeof value.viewer?.id==='string'))throw Error();
         if(lifetime.signal.aborted)return;
         const id=value.viewer?.id??null;
-        if(member!==undefined&&member!==null&&id!==null&&member!==id){location.reload();return;}
+        if(deskOwner&&id!==null&&deskOwner!==id){
+          lifetime.abort();
+          if(meta)meta.content='';
+          setDeskMember(null);setSession(undefined);
+          say('Your account changed. Reload to open its desk.');setChangedMember(true);
+          return;
+        }
+        if(id!==null)deskOwner=id;
+        if(!meta){meta=document.createElement('meta');meta.name='loom-csrf';document.head.append(meta);}
+        meta.content=value.csrf??'';
         attempt=0;if(member===id)return;
-        member=id;setSession(value);say('');
-        const meta=document.createElement('meta');meta.name='loom-csrf';meta.content=value.csrf??'';document.head.append(meta);
+        member=id;setDeskMember(id);setSession(value);say('');
       }catch{
         if(lifetime.signal.aborted)return;
         if(member===undefined)say('Could not reach loom. Reconnecting…');
         timer=setTimeout(()=>{timer=undefined;void check();},reconnectDelay(attempt++));
       }finally{checking=false;}
     }
+    const visible=()=>{if(document.visibilityState==='visible')void check();};
+    const poll=setInterval(visible,60_000);
+    globalThis.document?.addEventListener?.('visibilitychange',visible);
+    globalThis.window?.addEventListener('focus',check);
     globalThis.window?.addEventListener(checkSessionEvent,check);
     void check();
-    return ()=>{lifetime.abort();clearTimeout(timer);globalThis.window?.removeEventListener(checkSessionEvent,check);};
+    return ()=>{
+      lifetime.abort();clearTimeout(timer);clearInterval(poll);setDeskMember(null);meta?.remove?.();
+      globalThis.document?.removeEventListener?.('visibilitychange',visible);
+      globalThis.window?.removeEventListener('focus',check);
+      globalThis.window?.removeEventListener(checkSessionEvent,check);
+    };
   },[]);
   const login=async()=>{try{const o=await post('/login/passkey/options',{});const c=await navigator.credentials.get({publicKey:{challenge:dec(o.challenge),rpId:o.rpId,userVerification:'required',timeout:o.timeout}}) as PublicKeyCredential;const r=c.response as AuthenticatorAssertionResponse;await post('/login/passkey',{id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.authenticatorData),signature:enc(r.signature)});location.reload();}catch(e){say(e instanceof Error?e.message:'Sign-in cancelled');}};
   const state=session?.viewer?'in':session?'out':message?'down':'connecting',shown=state==='out'||state==='down';
