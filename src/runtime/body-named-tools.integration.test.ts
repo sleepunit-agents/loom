@@ -9,7 +9,8 @@ import {tmpdir} from 'node:os';
 import {eq} from 'drizzle-orm';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {bodyFixture,bodyCredentials} from '../../test/fixtures/conversation-body.js';
+import Database from 'better-sqlite3';
+import {bodyFixture,bodyCredentials,credentialHash} from '../../test/fixtures/conversation-body.js';
 import * as schema from '../core/data/schema.js';
 import {prepareSharedMemorySources} from '../shared-memory.js';
 import {bodyProgramTools} from './body-program-tools.js';
@@ -256,6 +257,61 @@ it('identifies the scheduled instant and job of one accepted journal delivery', 
  expect((await read('another-delivery')).text).toContain('denied');
 });
 
+it('recovers an interrupted verification from the journal without stamping the same page twice', async () => {
+ const b=await body(), {db,root,clock}=b.fixture;
+ db.insert(schema.household).values({timezone:'UTC'}).onConflictDoUpdate({target:schema.household.singleton,set:{timezone:'UTC'}}).run();
+ const trigger=root.services.tempo.triggers.set({id:'verify',ownerKind:'agent',owner:'art',sourceKind:'time',times:'18:01,18:02',
+   lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',project:'pond',note:'Verify pages',instructions:'Verify'});
+ async function command(token:string, operation:string,input:unknown,id:string) {
+   const res=await root.http.request('/api/'+operation.replace('.','/'),{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+     body:JSON.stringify({input,id})});
+   const reply=await res.json();
+   expect(res.status,JSON.stringify(reply)).toBe(200);
+   return reply.value;
+ }
+ const nextDelivery=() => {
+   const at=new Date(clock.now()+60_000).toISOString();
+   clock.advance(60_000);
+   return db.select().from(schema.inbox).where(eq(schema.inbox.sourceId,trigger.id+':time:'+at)).get()!;
+ };
+ async function accept(item:typeof schema.inbox.$inferSelect, job:string, token:string) {
+   db.update(schema.inbox).set({state:'taken',job,takenVolume:'full'}).where(eq(schema.inbox.id,item.id)).run();
+   expect((await b.fixture.call('accept',{items:[item.id]},'accept-'+item.id,token)).status).toBe(200);
+   return command(token,'tempo.readJournal',{item:item.id},'read-'+item.id);
+ }
+ const first=nextDelivery(), token=bodyCredentials.body;
+ db.update(schema.jobs).set({conversation:first.conversation,member:null}).where(eq(schema.jobs.id,'job')).run();
+ const initial=await accept(first,'job',token);
+ const page=await command(token,'mind.knowledgeAdd',{title:'Fixture pump',domain:'fixture',body:'Check the pump.'},'create-page');
+ const intent={id:'verify-first-pump',operation:'mind.knowledgeVerify',input:{slug:page.slugs[0]}};
+ const claim={scheduledAt:initial.firing.scheduledAt,job:initial.firing.job,pending:intent};
+ await command(token,'tempo.replaceJournalState',{revision:0,state:JSON.stringify(claim)},'record-intent');
+ await command(token,intent.operation,intent.input,intent.id);
+ // The page write committed. The first worker died before it could checkpoint the result.
+ db.update(schema.jobs).set({state:'lost',endedAt:new Date(clock.now()).toISOString()}).where(eq(schema.jobs.id,'job')).run();
+ const second=nextDelivery(), replacement='e'.repeat(64);
+ const previous=db.select().from(schema.jobs).where(eq(schema.jobs.id,'job')).get()!;
+ db.insert(schema.jobs).values({...previous,id:'replacement',state:'running',endedAt:null}).run();
+ db.insert(schema.tokens).values({fingerprint:credentialHash(replacement),kind:'agent',label:'Replacement body',agent:'art',job:'replacement',createdAt:previous.queuedAt}).run();
+ const recovered=await accept(second,'replacement',replacement);
+ expect(recovered.firing.job).toBe('replacement');
+ expect(recovered.firing.scheduledAt).not.toBe(initial.firing.scheduledAt);
+ const saved=JSON.parse(recovered.state);
+ expect(saved).toEqual(claim);
+ const status=await command(replacement,'tempo.readJournal',{item:second.id,priorJob:saved.job},'holder-state');
+ expect(status.priorJobState).toBe('lost');
+ db.insert(schema.jobs).values({...previous,id:'unrelated',conversation:b.fixture.thread.conversation,member:'alice'}).run();
+ expect((await command(replacement,'tempo.readJournal',{priorJob:'unrelated'},'unknown-holder')).priorJobState).toBeNull();
+ const takeover=await command(replacement,'tempo.replaceJournalState',{revision:recovered.stateRevision,
+   state:JSON.stringify({...saved,job:recovered.firing.job})},'take-over-original');
+ const receipt=await command(replacement,saved.pending.operation,saved.pending.input,saved.pending.id);
+ expect(receipt.stamped).toBe(true);
+ const source=new Database(join(b.home,'commons','knowledge.db'),{readonly:true});
+ try {expect(source.prepare('SELECT count(*) AS n FROM verifications').get()).toEqual({n:1});} finally {source.close();}
+ const complete={lastCompleted:saved.scheduledAt,claim:null};
+ await command(replacement,'tempo.replaceJournalState',{revision:takeover.revision,state:JSON.stringify(complete)},'finish-original');
+ expect(JSON.parse((await command(replacement,'tempo.readJournal',{},'verify-checkpoint')).state)).toEqual(complete);
+});
 it('carries a journal between actual trigger deliveries and confines body commands to the accepted wake', async () => {
  const b = await body(), {db,root,clock} = b.fixture;
  const engine = root.services.tempo.triggers;

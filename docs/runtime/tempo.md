@@ -229,7 +229,7 @@ The firing job uses its existing `loom_command` tool. Loom identifies the trigge
 
 | Operation | Input | Result |
 | --- | --- | --- |
-| `tempo.readJournal` | `{}` or `{"item":"in-…"}` | Lessons, state, state revision and last state change. With an accepted, full-volume inbox item, also returns `firing.job`, `firing.item` and `firing.scheduledAt`. The scheduled instant is UTC for a listed time and null for a manual or event firing. |
+| `tempo.readJournal` | `{}` or `{"item":"in-…"}` | Lessons, state, state revision and last state change. With an accepted, full-volume inbox item, also returns `firing.job`, `firing.item` and `firing.scheduledAt`. The scheduled instant is UTC for a listed time and null for a manual or event firing. Optional `priorJob` returns `priorJobState` for that job in the same private wake conversation, or null if unavailable. |
 | `tempo.appendLesson` | `{"lesson":"Check both sources."}` | Appends a lesson that arrives with the next wake |
 | `tempo.replaceJournalState` | `{"revision":0,"state":"page 2"}` | Returns the new revision |
 
