@@ -22,11 +22,17 @@ it('validates scope before opening an envelope, rolls back conflicts and keeps p
     const envelope=Buffer.from('fixture envelope');
     for(const n of [1,3])add.run(t.id,n,'reply'+n,at,envelope);
     let opens=0, current=at;
-    const run=()=>importTextHistory({archive,household:archive,destination,sourceDays:2,github:'orchard',now:()=>current,
+    const run=(clock=()=>current)=>importTextHistory({archive,household:archive,destination,sourceDays:2,github:'orchard',now:clock,
       key:{async open(){opens++;return 't-432 tools#3 note:garden/log';},async seal(){throw Error('unexpected');},hash(){throw Error('unexpected');}}});
     await expect(run()).rejects.toThrow(/thread differs/);
     expect(opens).toBe(0);
     writer.exec("UPDATE comms_threads SET member='alex'");
+    client.exec('SAVEPOINT deadline');
+    let ticks=0;
+    await run(()=>++ticks<3?at:'2026-11-22T00:00:00.000Z');
+    expect(client.prepare('SELECT seq,words FROM messages ORDER BY seq').all()).toEqual([{seq:1,words:null},{seq:3,words:null}]);
+    client.exec('ROLLBACK TO deadline; RELEASE deadline');
+    opens=0;
     expect(await run()).toEqual({total:2,inserted:2});
     expect(opens).toBe(2);
     expect(client.prepare('SELECT ref,message_seq FROM thread_refs ORDER BY ref').all()).toEqual(
