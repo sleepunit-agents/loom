@@ -267,11 +267,14 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
   return matches.reverse().map(match => match.line).join('\n') + '\n';
 }
 
+const usage = 'usage: loom-wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | park --on REQUEST (-p WORDS --note PURPOSE | -f REPO_FILE) | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n';
+
 export async function runTempoClient(argv: string[], io: IOStreams, request = fetch): Promise<number> {
   let agent = io.env.WAKE_AGENT || io.env.WAKE_LOCAL_AGENT;
   if (argv[0] === '--agent') { agent = argv[1]; argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
+  if ((verb === '--help' || verb === '-h') && argv.length === 1) { io.stdout(usage); return 0; }
   const changesClock = verb === 'pause' || verb === 'resume';
   let laneUpdate: { name: string; file?: string; words?: string } | undefined;
   let scheduleSet: ReturnType<typeof scheduleOptions> | undefined;
@@ -309,7 +312,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | park --on REQUEST (-p WORDS --note PURPOSE | -f REPO_FILE) | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr(usage);
     return 2;
   }
   try {

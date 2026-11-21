@@ -36,6 +36,22 @@ Two other ways a time passes are not misses:
 Events (an answer, a job, a pull request) are not times. One seen while the
 agent is paused fires when the agent resumes.
 
+## Using the clock client
+
+`loom-wake` connects to the coordinator using `LOOM_URL` and `LOOM_TOKEN_FILE`.
+Use `--agent` to select a clock when you have access to several. Times on the
+calendar use the household time zone. These commands list pending wakes, show
+recent deliveries, and schedule a recurring wake.
+
+```sh
+loom-wake --agent art list
+loom-wake --agent art log --since 24h
+loom-wake --agent art schedule set nightly --at 22:44 --days mon-fri -f routines/nightly.md
+```
+
+Run `loom-wake --help` for one-off wakes, parked waits, lane text, and clock controls.
+The legacy `wake` executable can coexist with `loom-wake` during migration.
+
 ## Choosing a machine for a firing
 
 The same caller who may set or edit a trigger may give it `needs` and
