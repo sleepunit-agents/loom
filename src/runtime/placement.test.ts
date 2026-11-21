@@ -217,6 +217,8 @@ it('explains quota only for an eligible container sign-in and a usable window re
   expect(quotaLimited()).toBe(false);
   db.delete(modelAccountLogins).run();
   db.update(modelAccounts).set({usageReadSucceeded:true}).run();
+  db.insert(modelAccountLogins).values({...login,place:'host'}).run();
+  expect(quotaLimited()).toBe(false);
   db.insert(modelAccounts).values({id:'unbound',owner:'owner',provider:'provider',label:'Other',hasRoom:false}).run();
   db.insert(modelAccountLogins).values({...login,place:'containers',account:'unbound'}).run();
   expect(quotaLimited()).toBe(false);

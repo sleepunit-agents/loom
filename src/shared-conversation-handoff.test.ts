@@ -1,5 +1,5 @@
 /** Real Root and receiving SDK; all bodies/people/words are fictional. */
-import {recordAccountWindows} from './runtime/account-windows.js';
+import * as accountWindows from './runtime/account-windows.js';
 import {accountUsageUnavailable} from './runtime/account-usage.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {fileURLToPath} from 'node:url';
@@ -298,8 +298,11 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(mixed){
   const identity={account:'paid',owner:'alice',provider:'openai'};
   const window={name:'week',usage:1,readAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000};
-  recordAccountWindows(db,identity,[window],now());
+  accountWindows.recordAccountWindows(db,identity,[window],now());
   db.insert(s.modelAccountLogins).values({account:'paid',box:'box',harness:'codex',place:'containers',state:'signed-in',checkedAt:now(),since:now(),learnedFrom:'check'}).run();
+  const refresh=vi.spyOn(accountWindows,'refreshAccountWindows');
+  const outgoing=vi.spyOn(globalThis,'fetch').mockRejectedValue(Error('Unexpected outbound request'));
+  clean.push(()=>{outgoing.mockRestore();refresh.mockRestore();});
   const unavailable=await f.call('handoffOptions',{},'exhausted');
   const details=(await unavailable.json()).value;
   expect(details.codexUnavailableReason).toBe('An eligible worker reported a signed-in account. Its quota window leaves too little room to start this job.');
@@ -318,9 +321,14 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
   for(const selector of [{role:'research'},{harness:'codex'}]){
    const blocked=await f.call('handoff',{...request,role:undefined,harness:undefined,...selector},'failed-read-'+Object.keys(selector)[0]);
    expect(blocked.status).toBe(503);
-   expect(await blocked.text()).not.toContain(details.codexUnavailableReason);
+   const message=selector.role?'No eligible worker is available for this work role':'No eligible Codex worker with a signed-in account and free capacity is available for this job.';
+   expect(await blocked.json()).toEqual({ok:false,code:'unavailable',message});
   }
-  recordAccountWindows(db,identity,[{...window,usage:0.1}],now());
+  expect(refresh).not.toHaveBeenCalled();
+  expect(outgoing).not.toHaveBeenCalled();
+  outgoing.mockRestore();
+  refresh.mockRestore();
+  accountWindows.recordAccountWindows(db,identity,[{...window,usage:0.1}],now());
  }
  if(mode==='success'){
   const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
