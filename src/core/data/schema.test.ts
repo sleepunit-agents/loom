@@ -41,6 +41,7 @@ describe('the approved data model', () => {
     actual.inbox = actual.inbox.filter(n => !['taken_volume','first_accepted_at'].includes(n));
     // The provider read outcome is internal bookkeeping for handoff diagnostics.
     actual.model_accounts = actual.model_accounts.filter(n => n !== 'usage_read_succeeded');
+    expect(actual.threads.pop()).toBe('source_channel');
     expect(actual.deleted_threads.slice(-3)).toEqual(['source_member','source_agent','source_channel']);
     actual.deleted_threads=actual.deleted_threads.slice(0,-3);
     expect(actual).toEqual(expected);

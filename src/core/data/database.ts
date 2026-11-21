@@ -392,7 +392,8 @@ const upgrades: readonly (readonly string[])[] = [
   // 33: a v1 tombstone also records the original reader, agent and channel number.
   ['ALTER TABLE deleted_threads ADD COLUMN source_member text',
    'ALTER TABLE deleted_threads ADD COLUMN source_agent text',
-   'ALTER TABLE deleted_threads ADD COLUMN source_channel integer'],
+   'ALTER TABLE deleted_threads ADD COLUMN source_channel integer',
+   'ALTER TABLE threads ADD COLUMN source_channel integer'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
