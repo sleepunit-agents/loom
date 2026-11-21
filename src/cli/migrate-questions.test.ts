@@ -5,20 +5,20 @@ import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
 import { ownHome } from '../core/daemon-home.js';
 import { exampleHome } from '../example-home.js';
-import { migrateQuestions } from './migrate-questions.js';
+import { migrateComms } from './migrate-questions.js';
 
 it('opens completed archive backups only while the destination is stopped', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'loom-question-command-'));
   const source = join(temp, 'archive'), home = join(temp, 'home');
   let stdout = '';
-  const run = () => migrateQuestions(['--source', source, '--home', home], {
+  const run = () => migrateComms('archived-questions', ['--source', source, '--home', home], {
     stdout: value => { stdout = value; }, stderr: () => {},
   });
   try {
     await exampleHome(home);
     mkdirSync(source);
     copyFileSync(join(home, 'comms.key'), join(source, 'comms.key'));
-    writeFileSync(join(source, 'household.json'), '{}');
+    writeFileSync(join(source, 'household.json'), '{"github":null}');
     const target = new Database(join(home, 'app.db'), { readonly: true });
     let thread;
     try {
