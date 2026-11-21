@@ -1,90 +1,54 @@
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
+type Dissolve = 'matrix' | 'hexagon';
 
-/** Render the effect at the window's original size. The dock trajectory moves the frame separately. */
-export function drawDissolve(frame: HTMLElement, effect: 'matrix' | 'hexagon', duration: number) {
-  const canvas = document.createElement('canvas');
-  const width = frame.clientWidth, height = frame.clientHeight;
-  if (!width || !height) return;
-  canvas.width = width;
-  canvas.height = height;
-  frame.append(canvas);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const paint = effect === 'matrix' ? matrix(ctx, width, height) : hexagons(ctx, width, height);
-  const start = performance.now();
-  function tick(now: number) {
-    if (!frame.isConnected) return;
-    const progress = clamp((now - start) / duration);
-    paint(progress);
-    if (progress < 1) requestAnimationFrame(tick);
+// Each mask repeats horizontally or in both dimensions. The same geometry drives the
+// luminous edge and the browser's snapshot of the window, including scrolled content.
+function layers(effect: Dissolve, width: number, height: number, p: number) {
+  const step = Math.max(18, Math.ceil(width / 80));
+  const tileWidth = effect === 'matrix' ? step * 11 : step * 3;
+  const pitch = Math.sqrt(3) * step;
+  const tileHeight = effect === 'matrix' ? height : pitch;
+  let mask = '', ink = '';
+  if (effect === 'matrix') {
+    for (let i = 0; i < 11; i++) {
+      const t = clamp((p * 1.32 - ((i * 7) % 11) / 34));
+      const y = Math.round(height * t), x = i * step;
+      mask += '<rect x="'+x+'" y="'+y+'" width="'+step+'" height="'+(height-y)+'"/>';
+      if (t > 0 && t < 1) {
+        for (let j = 0; j < 3; j++) {
+          const glyph = '01+:/<>F'[(i + j + Math.floor(t * 21)) % 8];
+          const escaped = glyph === '<' ? '&lt;' : glyph === '>' ? '&gt;' : glyph;
+          ink += '<text x="'+(x+3)+'" y="'+(y-j*15)+'" fill="'+['#c6ffe5','#52dba8','#288f78'][j]+'">'+escaped+'</text>';
+        }
+      }
+    }
+  } else {
+    for (let col = 0; col <= 2; col++) {
+      for (let row = -1; row <= 1; row++) {
+        const cx = col * step * 1.5, cy = (row + col % 2 / 2) * pitch;
+        const r = step * (1 - clamp((p * 1.15 - col % 2 * .15)) ** 1.6);
+        const points = Array.from({length:6}, (_, i) => {
+          const a = i * Math.PI / 3;
+          return (cx+r*Math.cos(a)).toFixed(2)+','+(cy+r*Math.sin(a)).toFixed(2);
+        }).join(' ');
+        mask += '<polygon points="'+points+'" stroke="white" stroke-width=".8"/>';
+        if (p > 0 && p < 1) ink += '<polygon points="'+points+'" fill="none" stroke="#89ecf5" stroke-opacity="'+Math.sin(Math.PI*p).toFixed(2)+'"/>';
+      }
+    }
   }
-  tick(start);
+  function image(body: string) {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+tileWidth+'" height="'+tileHeight+'" viewBox="0 0 '+tileWidth+' '+tileHeight+'" fill="white" font-family="monospace" font-size="14">'+body+'</svg>';
+    return 'url("data:image/svg+xml,'+encodeURIComponent(svg)+'")';
+  }
+  return {maskImage: p === 0 ? 'none' : image(p === 1 ? '' : mask), backgroundImage: image(ink)};
 }
 
-function matrix(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  // Paint the type once. Each strip then has its own speed, starting row and bright leading glyph.
-  const sheet = document.createElement('canvas');
-  const step = Math.max(17, Math.ceil(width / 100));
-  sheet.width = width;
-  sheet.height = height + step;
-  const ink = sheet.getContext('2d')!;
-  ink.font = '14px monospace';
-  const alphabet = '0123456789ABCDEF:<>+=';
-  const columns = Math.ceil(width / step);
-  for (let col = 0; col < columns; col++) {
-    for (let row = 0; row * step < sheet.height; row++) {
-      const digit = ((row + 7) * (col + 13) * 31 + row * 7 + col) >>> 0;
-      ink.fillStyle = ['#27ac75', '#65e39a', '#21835f', '#81f9ad'][digit % 4];
-      ink.fillText(alphabet[digit % alphabet.length], col * step + 2, (row + 1) * step - 2);
-    }
-  }
-  return (p: number) => {
-    ctx.clearRect(0, 0, width, height);
-    ctx.font = ink.font;
-    for (let col = 0; col < columns; col++) {
-      const t = clamp((p - ((col * 17) % 23) / 110) / .77);
-      const x = col * step, y = Math.floor(height * t * t);
-      if (y >= height) continue;
-      ctx.fillStyle = '#071b12';
-      ctx.fillRect(x, y, step, height - y);
-      const drift = Math.floor(t * step * (4 + col % 7)) % step;
-      ctx.drawImage(sheet, x, step - drift, step, height - y, x, y, step, height - y);
-      ctx.fillStyle = '#c7ffda';
-      ctx.fillText(alphabet[(col + Math.floor(t * 32)) % alphabet.length], x + 2, y + step - 2);
-    }
-  };
-}
-
-function hexagons(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const radius = Math.max(18, Math.ceil(width / 45));
-  const pitch = Math.sqrt(3) * radius;
-  const cells: { x: number; y: number; delay: number }[] = [];
-  for (let col = 0; col * radius * 1.5 < width + radius; col++) {
-    for (let row = -1; row * pitch < height + pitch; row++) {
-      const x = col * radius * 1.5, y = (row + (col % 2) / 2) * pitch;
-      cells.push({ x, y, delay: .48 * Math.hypot((x - width / 2) / width, (y - height / 2) / height) });
-    }
-  }
-  const hex = new Path2D();
-  for (let i = 0; i < 6; i++) {
-    const angle = i * Math.PI / 3;
-    if (i === 0) hex.moveTo(radius, 0);
-    else hex.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
-  }
-  hex.closePath();
-  return (p: number) => {
-    ctx.clearRect(0, 0, width, height);
-    for (const {x, y, delay} of cells) {
-      const t = clamp((p - delay - .08) / .55);
-      if (t >= 1) continue;
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(1 - t * t, 1 - t * t);
-      ctx.fillStyle = '#102738';
-      ctx.strokeStyle = t > .05 ? '#a2efff' : '#367a91';
-      ctx.fill(hex);
-      ctx.stroke(hex);
-      ctx.restore();
-    }
-  };
+export function animateDissolve(effect: Dissolve, width: number, height: number, duration: number) {
+  const frames = Array.from({length:25}, (_, index) => layers(effect,width,height,index/24));
+  const timing = {duration, easing:'linear', fill:'both' as const};
+  const root = document.documentElement;
+  return [
+    root.animate(frames.map(({maskImage}) => ({maskImage})), {...timing,pseudoElement:'::view-transition-old(loom-departure)'}),
+    root.animate(frames.map(({backgroundImage}) => ({backgroundImage})), {...timing,pseudoElement:'::view-transition-image-pair(loom-departure)'}),
+  ];
 }
