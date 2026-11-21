@@ -1,10 +1,10 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createClient, gql } from '@urql/core';
 import type { FormattedExecutionResult } from 'graphql';
 import type { Sink, SubscribePayload } from 'graphql-ws';
 import { cacheExchange } from '@urql/exchange-graphcache';
 import { filter, map, pipe } from 'wonka';
-import { dataCacheKeys, applyDataPatch, generatedDataClient, type QueryTransport } from './client';
+import { browserQueryTransport, dataCacheKeys, applyDataPatch, generatedDataClient, type QueryTransport } from './client';
 
 class Transport implements QueryTransport {
   feeds: { request: SubscribePayload; sink: Sink<FormattedExecutionResult> }[] = [];
@@ -111,4 +111,27 @@ it('updates another open selection when a shared entity changes without reopenin
   expect(wire.feeds).toHaveLength(3);
   a.unsubscribe(); b.unsubscribe(); c.unsubscribe();
   expect(wire.feeds).toHaveLength(0);
+});
+
+it('closes a transport even when its handshake never acknowledges',async()=>{
+  vi.useFakeTimers();
+  let closed=0;
+  class SilentSocket {
+    static CONNECTING=0;static OPEN=1;static CLOSING=2;static CLOSED=3;
+    readyState=SilentSocket.CONNECTING;
+    close(){this.readyState=SilentSocket.CLOSED;closed++;}
+  }
+  vi.stubGlobal('WebSocket',SilentSocket);
+  try{
+    const transport=browserQueryTransport('ws://fixture/graphql');
+    const sink={next:vi.fn(),error:vi.fn(),complete:vi.fn()};
+    transport.subscribe({query:'subscription { example }'},sink);
+    transport.close();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(closed).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    const after={...sink,complete:vi.fn()};
+    transport.subscribe({query:'subscription { example }'},after);
+    expect(after.complete).toHaveBeenCalledOnce();
+  }finally{vi.unstubAllGlobals();vi.useRealTimers();}
 });

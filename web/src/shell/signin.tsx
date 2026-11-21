@@ -4,6 +4,7 @@
 // link (src/core/signin/page.ts) wears the same look with no script; the values the two share are listed there and
 // in signin.css, and are kept in step by hand.
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import {reconnectDelay,checkSessionEvent} from '../data/connection';
 import { lookOf, wearLook } from '../look';
 import './signin.css';
 import { WovenCloth } from '../woven-cloth';
@@ -45,7 +46,34 @@ function Weave(){
 export default function Signin({children}:{children:ReactNode}){
   const [session,setSession]=useState<{viewer:{id:string}|null;csrf?:string}|undefined>(),[message,say]=useState('');
   const [greeting]=useState(()=>greetingAt(new Date().getHours()));
-  useEffect(()=>{fetch('/auth/session').then(r=>r.json()).then(s=>{setSession(s);const m=document.createElement('meta');m.name='loom-csrf';m.content=s.csrf ?? '';document.head.append(m);}).catch(()=>say('Could not reach loom. Reload to try again.'));},[]);
+  useEffect(()=>{
+    const lifetime=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined,attempt=0,checking=false;
+    let member:string|null|undefined;
+    async function check(){
+      if(lifetime.signal.aborted||checking||timer!==undefined)return;
+      checking=true;
+      try{
+        const response=await fetch('/auth/session',{signal:AbortSignal.any([lifetime.signal,AbortSignal.timeout(15_000)])});
+        if(!response.ok)throw Error();
+        const value=await response.json();
+        if(!value||!(value.viewer===null||typeof value.viewer?.id==='string'))throw Error();
+        if(lifetime.signal.aborted)return;
+        const id=value.viewer?.id??null;
+        if(member!==undefined&&member!==null&&id!==null&&member!==id){location.reload();return;}
+        attempt=0;if(member===id)return;
+        member=id;setSession(value);say('');
+        const meta=document.createElement('meta');meta.name='loom-csrf';meta.content=value.csrf??'';document.head.append(meta);
+      }catch{
+        if(lifetime.signal.aborted)return;
+        if(member===undefined)say('Could not reach loom. Reconnecting…');
+        timer=setTimeout(()=>{timer=undefined;void check();},reconnectDelay(attempt++));
+      }finally{checking=false;}
+    }
+    globalThis.window?.addEventListener(checkSessionEvent,check);
+    void check();
+    return ()=>{lifetime.abort();clearTimeout(timer);globalThis.window?.removeEventListener(checkSessionEvent,check);};
+  },[]);
   const login=async()=>{try{const o=await post('/login/passkey/options',{});const c=await navigator.credentials.get({publicKey:{challenge:dec(o.challenge),rpId:o.rpId,userVerification:'required',timeout:o.timeout}}) as PublicKeyCredential;const r=c.response as AuthenticatorAssertionResponse;await post('/login/passkey',{id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.authenticatorData),signature:enc(r.signature)});location.reload();}catch(e){say(e instanceof Error?e.message:'Sign-in cancelled');}};
   const state=session?.viewer?'in':session?'out':message?'down':'connecting',shown=state==='out'||state==='down';
   useLayoutEffect(()=>shown?wearGateLook():undefined,[shown]);
