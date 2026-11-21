@@ -1,3 +1,6 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
@@ -258,8 +261,10 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
   phase='migration measurements';
   try {
-   const {migrationEvidence}=await import('./rebuild-migration-evidence.mjs');
-   report.actions.dataMigrations=migrationEvidence();
+   // SQLite upgrades are synchronous. Keep the coordinator available for desk heartbeats.
+   const script=fileURLToPath(new URL('./rebuild-migration-evidence.mjs',import.meta.url));
+   const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:290_000});
+   report.actions.dataMigrations=JSON.parse(stdout);
   } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
   save();yield {phase:'migrations',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));

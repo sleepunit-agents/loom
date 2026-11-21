@@ -12,7 +12,7 @@ const member = db => db.prepare('SELECT id, role, joined_at FROM members').all()
 const schemaVersion = db => db.pragma('schema_version', {simple: true});
 
 // Exercise the installed upgrade routine against disposable copies of every shipped shape.
-export function migrationEvidence() {
+function migrationEvidence() {
   const shapes = new URL('../src/core/data/shipped-shapes/', import.meta.url);
   const versions = Array.from({length: dataSchemaNumber}, (_, i) => i + 1);
   assert.ok(versions.length > 0);
@@ -58,3 +58,5 @@ export function migrationEvidence() {
     rmSync(dir, {recursive: true, force: true});
   }
 }
+
+console.log(JSON.stringify(migrationEvidence()));
