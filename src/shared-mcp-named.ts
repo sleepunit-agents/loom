@@ -4,7 +4,7 @@
 import {clipProposalText,publicProposalTitle} from './proposal-words.js';
 import {DAY} from './core/day.js';
 import {dossier} from './pieces/mind/dossier.js';
-import {pageSlug} from './pieces/mind/actions.js';
+import {expectedKnowledgePage,pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
 import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
 import {randomUUID} from 'node:crypto';
@@ -306,8 +306,8 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
  tool('knowledge_edit','Replace page text, add a source URL, or both. Previous text is kept.',
   z.object({slug:pageSlug,body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
- tool('knowledge_check','Record a page check. A note adds a dated section. freshnessAnchor gives the verified version or date.',
-  z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
+ tool('knowledge_check','Record a page check. A note adds a dated section. freshnessAnchor gives the verified version or date. Supply expected with the SHA-256 of the UTF-8 page body and its current freshness anchor to refuse a changed page.',
+  z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),expected:expectedKnowledgePage.optional(),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
   async input=>{const {outcome:_outcome,...check}=input;await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',check);return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
  tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',
   z.object({slug:pageSlug,revision:z.number().int().positive()}).strict(),

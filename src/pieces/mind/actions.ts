@@ -1,5 +1,7 @@
 /** Knowledge's page actions; source effects and retry receipts commit together. */
 import type { Viewer } from '../../policy.js';
+import { createHash } from 'node:crypto';
+import { SHA256_HEX } from '../../core/sha256-hex.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
@@ -15,6 +17,12 @@ import { operation, mayAct, OperationError, RecoveredWrite, type Context, type O
  */
 export interface KnowledgeActionResult { verified: number; slugs: string[]; verified_at: string; stamped: boolean; noted: boolean }
 export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: string; outcome: 'confirmed' | 'stale'; note?: string; freshness_anchor?: string; verifier: string }, now: number) => KnowledgeActionResult;
+
+/** Bind a knowledge verdict to the words and version anchor a reader actually checked. */
+export const expectedKnowledgePage = z.object({
+  bodySha256: z.string().regex(SHA256_HEX),
+  freshnessAnchor: z.string().nullable(),
+}).strict();
 
 /** Opt-in alongside the read installer. Never creates a missing content store.
  * The added tables hold migration/retry metadata, never page bodies or notes.
@@ -43,7 +51,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     ['knowledgeRecheck', 'stale'],
   ] as const) {
     const name = `mind.${verb}`;
-    operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
+    operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, expected:expectedKnowledgePage.optional(), note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
       recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, input) {
@@ -57,9 +65,13 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
           // Another daemon sharing this source may have committed since lookup.
           const replay = recover(ctx);
           if (replay) return replay;
-          const page = db.prepare('SELECT status FROM pages WHERE slug = ?').get(input.slug) as { status: string } | undefined;
+          const page = db.prepare('SELECT status, body, freshness_anchor FROM pages WHERE slug = ?').get(input.slug) as
+            { status:string; body:string; freshness_anchor:string|null } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before checking it');
+          if (input.expected && (page.freshness_anchor !== input.expected.freshnessAnchor ||
+              createHash('sha256').update(page.body).digest('hex') !== input.expected.bodySha256))
+            throw new OperationError('conflict', 'The knowledge page changed. Read it again before recording a check');
           const answer = options.verify(db, { slug: input.slug, outcome, ...(input.note ? { note: input.note } : {}), ...(input.freshnessAnchor ? { freshness_anchor: input.freshnessAnchor } : {}), verifier: ctx.viewer.id }, ctx.now);
           mindReceipts.save(db, receipt, answer, receipt.expires);
           return answer;
