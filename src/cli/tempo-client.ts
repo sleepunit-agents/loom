@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DAY_MS } from '../core/day.js';
+import { datedWake, HH_MM } from '../core/tempo/calendar.js';
+import { laneFile } from '../core/tempo/lane-file.js';
+import { DAY, DAY_MS } from '../core/day.js';
 import { onOneLine } from '../core/line-name.js';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
@@ -49,13 +51,40 @@ function logOptions(args: string[]) {
   const { values } = parseArgs({ args, options: {
     since: { type: 'string', default: '24h' }, grep: { type: 'string', default: '' },
   } });
-  const duration = values.since!;
+  return { since: new Date(Date.now() - durationMs(values.since!)).toISOString(), grep: values.grep! };
+}
+
+function durationMs(duration: string) {
   if (!/^(?:\d+[smhd])+$/.test(duration)) throw Error();
   const units: Record<string, number> = { s: 1000, m: 60000, h: 3600000, d: DAY_MS };
   let ms = 0;
   for (const [, count, unit] of duration.matchAll(/(\d+)([smhd])/g)) ms += Number(count) * units[unit];
   if (!Number.isSafeInteger(ms)) throw Error();
-  return { since: new Date(Date.now() - ms).toISOString(), grep: values.grep! };
+  return ms;
+}
+
+function wakeOptions(verb: 'at' | 'in', args: string[], agent: string) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+    prompt: { type: 'string', short: 'p' }, 'prompt-file': { type: 'string', short: 'f' },
+    note: { type: 'string' }, model: { type: 'string' },
+  } });
+  const instructions = values.prompt, file = values['prompt-file'];
+  if (!!instructions === !!file || (file && !laneFile(file))) throw Error();
+  if (instructions && (!instructions.trim() || !values.note?.trim() ||
+    (!/\s/.test(instructions.trim()) && /\/|\.md$/.test(instructions.trim())))) throw Error();
+  const input = { ownerKind: 'agent', owner: agent, sourceKind: 'time', lifespan: 'once', targetKind: 'inbox',
+    toKind: 'agent', to: agent, instructions, file, note: values.note || file,
+    wantsModel: values.model, execution: instructions?.includes('<!-- house: local -->') ? 'host' : 'container' };
+  if (verb === 'in') {
+    const ms = durationMs(positionals.join(''));
+    return { input, times: new Date(Date.now() + ms).toISOString() };
+  }
+  const parts = positionals.join(' ').trim().split(/\s+/);
+  const time = parts.pop()!.replace(/^(\d):/, '0$1:');
+  if (!parts.length && HH_MM.test(time)) return { input, times: time };
+  if (parts.length !== 1 || !(parts[0] === 'tomorrow' || DAY.test(parts[0]))
+    || !HH_MM.test(time.slice(0,5)) || !/^(?:\d{2}:\d{2})(?::[0-5]\d)?$/.test(time)) throw Error();
+  return { input, day: parts[0], time };
 }
 
 function householdTime(zone: string) {
@@ -125,13 +154,15 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
+  let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
   try {
     if (!agent) throw Error();
-    if (verb === 'log') options = logOptions(argv.slice(1));
+    if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1), agent);
+    else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake --agent AGENT list | pause | resume | log [--since DURATION] [--grep TEXT] (or set WAKE_AGENT)\n');
+    io.stderr('usage: wake --agent AGENT list | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -166,6 +197,23 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       return 0;
     }
     const read: Read = (query, variables) => post('/graphql', { query, variables });
+    if (wake) {
+      let times = wake.times;
+      if (times === undefined) {
+        const { data } = z.object({ data: z.object({ tempoTimezone: z.string() }) }).strict()
+          .parse(await read('{tempoTimezone}', {}));
+        try {
+          times = new Date(datedWake(wake.day!, wake.time!, Date.now(), data.tempoTimezone)).toISOString();
+        } catch {
+          io.stderr('Choose a future date and time that exists in the household time zone.\n');
+          return 2;
+        }
+      }
+      const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, times } });
+      const { value } = z.object({ ok: z.literal(true), value: z.object({ id: z.string(), waits: z.string().optional() }) }).parse(result);
+      io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : value.id + ' will wake at ' + times) + '\n');
+      return 0;
+    }
     if (options) { io.stdout(await readLog(read, agent, options)); return 0; }
     const rows: z.infer<typeof pending>[] = [];
     let after = '', timezone: string;
@@ -192,6 +240,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     return 0;
   } catch (error) {
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
+    else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
     else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');
     else io.stderr('Could not read ' + (verb === 'log' ? 'wake history' : 'pending wakes') + ' from Loom.\n');
     return 1;

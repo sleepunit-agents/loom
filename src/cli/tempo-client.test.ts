@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
+import { datedWake } from '../core/tempo/calendar.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, agentPauses, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
@@ -62,9 +63,9 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
   }
 });
 
-it('replays the same pause receipt after a lost response and resumes only the selected clock', async () => {
+it('replays creation and pause after lost responses and delivers once to the resumed agent', async () => {
   const client = new Database(':memory:');
-  const clock = new FakeClock();
+  const clock = new FakeClock(Date.now());
   const db = createDataSchema(client);
   const at = new Date(clock.now()).toISOString();
   const dir = mkdtempSync(join(tmpdir(), 'loom-clock-control-'));
@@ -96,14 +97,16 @@ it('replays the same pause receipt after a lost response and resumes only the se
     };
     const paused = () => db.select({ agent: agentPauses.agent }).from(agentPauses).orderBy(agentPauses.agent).all();
     for (const agent of ['fern', 'birch']) {
-      const result = await app.http.request('/api/tempo/set', { method: 'POST',
-        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-        body: JSON.stringify({ id: randomUUID(), input: { ownerKind: 'household', sourceKind: 'time',
-          times: new Date(clock.now() + 1000).toISOString(), lifespan: 'once', targetKind: 'inbox',
-          toKind: 'agent', to: agent, instructions: 'Work', note: 'Fixture' } }),
-      });
-      expect(result.status, await result.text()).toBe(200);
+      const args = ['--agent', agent, 'in', '1m', '1s', '-p', 'Recheck the fixture', '--note', 'Fixture', '--model', 'normal'];
+      expect(await runTempoClient(args, io, request), errors).toBe(0);
     }
+    expect(attempts[0]).toBe(attempts[1]);
+    expect(attempts[2]).not.toBe(attempts[1]);
+    const scheduled = db.select().from(triggers).all();
+    expect(scheduled).toHaveLength(2);
+    expect(scheduled.map(row => row.to)).toEqual(['fern', 'birch']);
+    expect(scheduled[0]).toMatchObject({ lifespan: 'once', instructions: 'Recheck the fixture', note: 'Fixture', wantsModel: 'normal' });
+    attempts.length = 0;
     const recipients = () => db.select({ to: inbox.to }).from(inbox).all();
     expect(await runTempoClient(['pause'], io, request)).toBe(0);
     expect(attempts).toHaveLength(2);
@@ -111,14 +114,22 @@ it('replays the same pause receipt after a lost response and resumes only the se
     expect(output).toContain("Paused fern's clock.");
     expect(paused()).toEqual([{ agent: 'fern' }]);
     expect(await runTempoClient(['--agent=birch', 'pause'], io, request)).toBe(0);
-    clock.advance(1001);
+    clock.advance(Math.max(...scheduled.map(row => Date.parse(row.nextDueAt!))) - clock.now());
     expect(recipients()).toEqual([]);
     expect(await runTempoClient(['resume'], io, request)).toBe(0);
     expect(recipients()).toEqual([{ to: 'fern' }]);
     expect(paused()).toEqual([{ agent: 'birch' }]);
     expect(output).toContain("Resumed fern's clock.");
+    expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, request)).toBe(0);
+    expect(db.select().from(triggers).all().at(-1)).toMatchObject({ file:'routines/check.md', note:'routines/check.md', instructions:null });
+    const beforeHost = db.select().from(triggers).all().length;
+    expect(await runTempoClient(['in','1h','-p','<!-- house: local --> do work','--note','Fixture'], io, request)).toBe(1);
+    expect(db.select().from(triggers).all()).toHaveLength(beforeHost);
     const calls = attempts.length;
     expect(await runTempoClient(['resume', 'everything'], io, request)).toBe(2);
+    expect(await runTempoClient(['in','1h','-p','No note'], io, request)).toBe(2);
+    expect(await runTempoClient(['in','1h','-f','../private'], io, request)).toBe(2);
+    expect(await runTempoClient(['in','1h','-f','routines/check.md','--continuation','handle'], io, request)).toBe(2);
     expect(attempts).toHaveLength(calls);
     writeFileSync(file, randomUUID());
     output = '';
@@ -132,4 +143,13 @@ it('replays the same pause receipt after a lost response and resumes only the se
     client.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+it('uses household calendar days across DST for dated and tomorrow wakes', () => {
+  const zone = 'America/Chicago';
+  const before = Date.parse('2026-03-08T05:45:00Z');
+  expect(new Date(datedWake('tomorrow','09:30',before,zone)).toISOString()).toBe('2026-03-08T14:30:00.000Z');
+  expect(() => datedWake('2026-03-08','02:30',before,zone)).toThrow();
+  expect(() => datedWake('2026-02-30','10:30',before,zone)).toThrow();
+  expect(new Date(datedWake('2026-11-01','01:30:45',before,zone)).toISOString()).toBe('2026-11-01T06:30:45.000Z');
 });

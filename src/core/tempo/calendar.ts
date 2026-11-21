@@ -50,3 +50,18 @@ export function nextTime(times: string, days: string | null, after: number, zone
   }
   throw new Error('No next time');
 }
+
+/** Resolve a dated wake against the household wall clock, including a day with two
+ * occurrences of the same time. The scheduler uses the first of those occurrences. */
+export function datedWake(dayText: string, time: string, after: number, zone: string): number {
+  const dayTextUtc = dayText === 'tomorrow'
+    ? new Date(Date.parse(localDate(after, zone) + 'T00:00:00Z') + DAY_MS).toISOString().slice(0, 10)
+    : dayText;
+  const wall = dayTextUtc + 'T' + time + (time.length === 5 ? ':00' : '') + 'Z';
+  const nominal = Date.parse(wall);
+  if (!Number.isFinite(nominal) || new Date(nominal).toISOString().replace('.000Z', 'Z') !== wall)
+    throw Error('Invalid calendar date');
+  const first = calendar(zone).instants(nominal)[0];
+  if (first === undefined || first <= after) throw Error('Wake time is missing or past');
+  return first;
+}
