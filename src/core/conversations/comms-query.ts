@@ -1,3 +1,5 @@
+import { noticeInfo } from './legacy-notice.js';
+import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
 import { archivedQuestionsField } from './archived-questions.js';
 import { readAll } from '../data/execution.js';
 import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
@@ -16,7 +18,7 @@ import type { WordsKey } from './words.js';
 import { commsKeepDays } from '../data/comms-days.js';
 type Message = typeof messages.$inferSelect;
 const projected=Symbol('Comms message projection');
-type MessageView = Omit<Message, 'words'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string } & { [projected]?: Record<string,unknown> };
+type MessageView = Omit<Message, 'words'|'archivedStepWords'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string } & { [projected]?: Record<string,unknown> };
 export type CommsQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
 const limit = (value: number, max: number) => { if (!Number.isInteger(value) || value < 1 || value > max) throw new Error('Invalid Comms page size'); return value; };
 
@@ -76,27 +78,33 @@ export class CommsQueries {
 
   async projectMessages(viewer:Viewer,rows:MessageView[],info:GraphQLResolveInfo,retain:(at:number)=>void){
     if(!rows.length)return [];
-    const fields=selectedQueryFields(info),words=fields.has('words'),thread=rows[0].thread,seqs=rows.map(row=>row.seq);
-    const before=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words);
+    const fields=selectedQueryFields(info),words=fields.has('words'),details=fields.has('stepDetails'),thread=rows[0].thread,seqs=rows.map(row=>row.seq);
+    const before=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words,details);
     const service=new CommsQueries(this.db,this.key,this.policy,this.now);service.readSet=before;
     const deadlines:number[]=[];
     const result=await readAll(rows.map(async row=>{
       const current=before.entry(row.seq);
       if(!current)throw Error('Comms changed; retry the query');
-      const {words:_cipher,...message}=current.message;
+      const {words:_cipher,archivedStepWords:_step,...message}=current.message;
       if(JSON.stringify({...message,conversation:current.conversation,agent:current.agent,project:current.project,member:current.member})!==JSON.stringify(row))throw Error('Comms changed; retry the query');
       const values:Record<string,unknown>={};
       if(fields.has('wordsKeepUntil'))values.wordsKeepUntil=service.wordsKeepUntil(viewer,row);
       if(words)values.words=await service.words(viewer,row,at=>deadlines.push(at));
+      if(details)values.stepDetails=await service.stepDetails(viewer,row,at=>deadlines.push(at));
       return Object.assign({...row},{[projected]:values});
     }));
-    const after=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words);
+    const after=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words,details);
     if(before.fingerprint!==after.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))throw Error('Comms changed; retry the query');
     for(const at of deadlines)retain(at);
     return result;
   }
 
-  async words(viewer: Viewer, expected: MessageView, retainedUntil?: (at: number) => void): Promise<string | null> {
+  async stepDetails(viewer:Viewer, expected:MessageView, retain:(at:number)=>void) {
+    if(expected.kind!=='card'||!expected.archivedStepMeta||!expected.tool)return null;
+    const parts=await this.words(viewer,expected,retain,'archivedStepWords');
+    return parts===null?null:legacyStepWords(parts,expected.tool);
+  }
+  async words(viewer: Viewer, expected: MessageView, retainedUntil?: (at: number) => void, column:'words'|'archivedStepWords'='words'): Promise<string | null> {
     const row = () => this.readSet?this.readSet.entry(expected.seq):this.db.select({ message: messages, agent: conversations.agent, project: conversations.project, member: conversations.member, conversation: conversations.id })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
@@ -106,11 +114,13 @@ export class CommsQueries {
     const scope = (entry: ReturnType<typeof row>) => !!entry && entry.agent === expected.agent && entry.project === expected.project && entry.member === expected.member && entry.conversation === expected.conversation;
     const before = row(), keep = days();
     if (!retained(before, keep) || !before?.message.words || !same(before.message) || !scope(before)) return null;
-    const words = await this.key.open(before.message.words);
+    const envelope=before.message[column];
+    if(!envelope)return null;
+    const words = await this.key.open(envelope);
     const after = row();
     if (!retained(after, days()) || days() !== keep || !after?.message.words || !same(after.message) || !scope(after)
       || after.agent !== before.agent || after.project !== before.project || after.member !== before.member || after.conversation !== before.conversation
-      || !after.message.words.equals(before.message.words)) return null;
+      || !after.message.words.equals(before.message.words) || !after.message[column]?.equals(envelope)) return null;
     retainedUntil?.(wordsDeadline(after.message, keep));
     return words;
   }
@@ -123,9 +133,24 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['pinned', 'working', 'stopRequested'].map(name => [name, { type: new GraphQLNonNull(GraphQLBoolean) }])),
     readSeq: { type: new GraphQLNonNull(GraphQLInt) },
   } });
+  const notice = new GraphQLObjectType({ name:'ArchivedCommsNotice', fields:{
+    error:{type:new GraphQLNonNull(GraphQLString)}, attempt:{type:GraphQLInt}, settled:{type:GraphQLBoolean},
+    retryAt:{type:GraphQLString,resolve:row=>row.retry_at},
+  }});
+  const stepInfo=new GraphQLObjectType({name:'ArchivedStepInfo',fields:{
+    exit:{type:GraphQLInt},limit:{type:GraphQLInt},parent:{type:GraphQLString},t0:{type:GraphQLString},t1:{type:GraphQLString},
+  }});
+  const planItem=new GraphQLObjectType({name:'ArchivedStepPlanItem',fields:{text:{type:GraphQLString},state:{type:GraphQLString}}});
+  const stepDetails=new GraphQLObjectType({name:'ArchivedStepDetails',fields:{
+    detail:{type:GraphQLString},body:{type:GraphQLString},result:{type:GraphQLString},items:{type:new GraphQLList(planItem)},
+  }});
   const message = new GraphQLObjectType<MessageView, { viewer: Viewer }>({ name: 'CommsMessageView', fields: {
     ...Object.fromEntries(['thread', 'kind', 'sender', 'at'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['keepUntil', 'delivery', 'inboxItem', 'verdict', 'run', 'tool', 'cardState', 'clientId'].map(name => [name, { type: GraphQLString }])),
+    notice:{type:notice,resolve:row=>row.archivedNotice?noticeInfo.parse(JSON.parse(row.archivedNotice)):null},
+    stepInfo:{type:stepInfo,resolve:row=>row.archivedStepMeta?legacyToolCard.parse(JSON.parse(row.archivedStepMeta)):null},
+    stepDetails:{type:stepDetails,resolve:(row,_args,context)=>row[projected]&&Object.hasOwn(row[projected],'stepDetails')?row[projected].stepDetails:
+      service.stepDetails(context.viewer,row,until=>keepReadUntil(context,until))},
     wordsKeepUntil: { type: GraphQLString, resolve:(row,_args,context)=>row[projected]&&Object.hasOwn(row[projected],'wordsKeepUntil')?row[projected].wordsKeepUntil:service.wordsKeepUntil(context.viewer,row) },
     seq: { type: new GraphQLNonNull(GraphQLInt) }, words: { type: GraphQLString, resolve:(row,_args,context)=>row[projected]&&Object.hasOwn(row[projected],'words')?row[projected].words:service.words(context.viewer,row,until=>keepReadUntil(context,until)) },
   } });

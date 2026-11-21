@@ -383,3 +383,12 @@ it('says an answer under its words as a quiet note, and as the bubble itself whe
   expect(classed('comms-bubble').map(words)).toEqual(['Go ahead', 'Answered No']);
   expect(classed('comms-delivery').map(words)).toEqual(['Answered Yes']);
 });
+
+it('shows archived retry state after its private reason expires', async () => {
+  const notice: CommsDetail['messages'][number] = {
+    thread: thread.id, seq: 5, kind: 'notice', sender: 'loom', at: thread.lastAt,
+    words: null, notice: { error: 'start-retry', settled: true, attempt: 2 },
+  };
+  await draw(actions(), { ...detail, messages: [notice] });
+  expect(words(classed('comms-notice')[0])).toContain('The agent started after a retry · attempt 2');
+});

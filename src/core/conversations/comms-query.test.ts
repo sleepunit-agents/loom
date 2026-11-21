@@ -99,6 +99,22 @@ it('enforces stored and household deadlines independently, before and after decr
     expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(phase === 'before' ? 0 : 1);
   }
 });
+it('rechecks the reader and expiry of archived step details independently of the summary',async()=>{
+  for(const change of ['expiry','revoked'] as const){
+    const f=await fixture();
+    f.db.update(messages).set({tool:'Read',archivedStepMeta:JSON.stringify({tool:'Read',state:'done'}),
+      archivedStepWords:await f.key.seal(JSON.stringify({detail:'private result'}))}).where(eq(messages.seq,3)).run();
+    const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(f.service)})});
+    const read=(viewer:typeof alice)=>graphql({schema,source:'{ commsMessages(thread:"th:alice",limit:1){stepDetails{detail}} }',contextValue:{viewer}});
+    expect((await read(alice)).data).toMatchObject({commsMessages:[{stepDetails:{detail:'private result'}}]});
+    expect(JSON.stringify((await read({kind:'member',id:'bob'})).data)).not.toContain('private result');
+    f.onOpen(()=>change==='expiry'?f.time('2026-12-01T00:00:00.000Z'):f.revoke());
+    const after=await read(alice);
+    expect(JSON.stringify(after.data)).not.toContain('private result');
+    if(change==='expiry')expect(after.data).toMatchObject({commsMessages:[{stepDetails:null}]});
+    else expect(after.errors).toBeDefined();
+  }
+});
 it('rejects invalid bounds and absent SQL rather than widening reads', async () => {
   const f = await fixture();
   expect(() => f.service.list(alice, { limit: 101 })).toThrow(); expect(() => f.service.list(alice, { offset: -1 })).toThrow();

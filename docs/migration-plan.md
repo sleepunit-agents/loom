@@ -1,5 +1,19 @@
 # Offline migration plan preparation
 
+## Prepare a rebuilt household
+
+Run `loom migrate prepare --source STOPPED_ARCHIVE --home EMPTY_HOME` with the archived `household.json` and, when present, its private `comms.key`. Use an empty directory or a new directory under an existing parent. The command publishes the prepared home atomically and refuses an existing installation. It carries the agent and member directory, ownership scopes, descriptions, mark colors, face settings, default agent, time zone, Comms retention, and GitHub owner. A household with Comms data requires its original key. After preparation, run the store imports against the same home before its first startup. Starting the program creates agent memory directories that the Notes staging tool expects to create itself.
+
+## Current Comms history import
+
+Run `loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME` against completed SQLite backups and a stopped, prepared home with its original Comms key. The command holds the home lock while it restores threads, text messages, tool cards, delivery notices and saved questions. It refuses an archive with additional message kinds before writing any threads. The combined command commits all phases in one transaction. A failed phase rolls back earlier phases and their counts. After correcting an error, rerun the command with the same archive and home. A successful run reports the number of new and source records for each phase.
+
+A v1 deletion can commit its tombstone before the old process removes the remaining messages, references and questions. The import preserves that tombstone and omits the revoked history. A pending deletion that conflicts with a live thread stops the import.
+
+Released v1 households kept questions in `comms_asks`. The early proposal for an `ask` row inside `comms_messages` was superseded before it shipped. The importer reads saved questions from their own table and reports zero questions for recognized message databases from before that table existed.
+
+## Historical whole-household commands
+
 > **This describes commands that are no longer in the tree.** `loom migrate` and its importers were removed with
 > the older program (commit abbf6857, 2026-11-16) and are in the repository's history. They wrote into the earlier
 > composition's store, which `loom serve` does not read, so a move into the current household database needs new
