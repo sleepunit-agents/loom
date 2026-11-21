@@ -31,10 +31,13 @@ function migrationEvidence() {
       const retained = [{id: 'walk-member', role: 'member', joined_at: installedAt}];
       let version;
       try {
-        fixture.exec(readFileSync(new URL(from + '.sql', shapes), 'utf8'));
-        const insert = fixture.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
-        for (let n = 1; n <= from; n++) insert.run(n, installedAt);
-        fixture.prepare('INSERT INTO members (id, role, joined_at) VALUES (?, ?, ?)').run('walk-member', 'member', installedAt);
+        // Build one committed historical database before exercising the real upgrade.
+        fixture.transaction(() => {
+          fixture.exec(readFileSync(new URL(from + '.sql', shapes), 'utf8'));
+          const insert = fixture.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
+          for (let n = 1; n <= from; n++) insert.run(n, installedAt);
+          fixture.prepare('INSERT INTO members (id, role, joined_at) VALUES (?, ?, ?)').run('walk-member', 'member', installedAt);
+        })();
         upgradeDataSchema(fixture, () => upgradedAt);
         assert.deepEqual(ledger(fixture), expected);
         assert.deepEqual(dataSchemaShape(fixture), shape);
