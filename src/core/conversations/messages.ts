@@ -9,8 +9,9 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
+import { recordThreadRef } from './thread-ref-store.js';
 import { refsIn } from './refs.js';
 import { recordThreadDeletion, Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
@@ -63,8 +64,7 @@ export class CommsMessages {
       fromKind: person ? 'person' : 'agent', fromId: input.sender,
       run: person ? null : input.run, ...detail,
     }, at);
-    for (const ref of new Set(refs)) this.db.insert(threadRefs).values({ thread: thread.id, ref, messageSeq: seq })
-      .onConflictDoUpdate({ target: [threadRefs.thread, threadRefs.ref], set: { messageSeq: seq } }).run();
+    for (const ref of new Set(refs)) recordThreadRef(this.db,thread.id,ref,seq);
     return row;
   }
 

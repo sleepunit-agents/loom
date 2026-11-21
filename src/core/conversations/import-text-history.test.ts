@@ -22,13 +22,16 @@ it('validates scope before opening an envelope, rolls back conflicts and keeps p
     const envelope=Buffer.from('fixture envelope');
     for(const n of [1,3])add.run(t.id,n,'reply'+n,at,envelope);
     let opens=0, current=at;
-    const run=()=>importTextHistory({archive,household:archive,destination,sourceDays:2,now:()=>current,
-      key:{async open(){opens++;return 'fixture';},async seal(){throw Error('unexpected');},hash(){throw Error('unexpected');}}});
+    const run=()=>importTextHistory({archive,household:archive,destination,sourceDays:2,github:'orchard',now:()=>current,
+      key:{async open(){opens++;return 't-432 tools#3 note:garden/log';},async seal(){throw Error('unexpected');},hash(){throw Error('unexpected');}}});
     await expect(run()).rejects.toThrow(/thread differs/);
     expect(opens).toBe(0);
     writer.exec("UPDATE comms_threads SET member='alex'");
     expect(await run()).toEqual({total:2,inserted:2});
     expect(opens).toBe(2);
+    expect(client.prepare('SELECT ref,message_seq FROM thread_refs ORDER BY ref').all()).toEqual(
+      ['github:orchard/tools#3','note:garden/log','t-432'].map(ref=>({ref,message_seq:3})));
+
     client.exec("DELETE FROM messages WHERE seq=1; UPDATE messages SET sender='other' WHERE seq=3");
     await expect(run()).rejects.toThrow(/Conflicting/);
     expect(client.prepare('SELECT seq FROM messages').all()).toEqual([{seq:3}]);
@@ -39,6 +42,16 @@ it('validates scope before opening an envelope, rolls back conflicts and keeps p
     const before=opens;
     expect(await run()).toEqual({total:2,inserted:0});
     expect(opens).toBe(before);
+    writer.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');
+    const index=writer.prepare('INSERT INTO comms_refs VALUES(?,?,?,?,?)');
+    index.run(t.id,'t-123',1,0,at);
+    index.run(t.id,'t-999',99,0,at);
+    await expect(run()).rejects.toThrow(/archived thread reference/);
+    expect(client.prepare("SELECT ref FROM thread_refs WHERE ref='t-123'").get()).toBeUndefined();
+    writer.exec('DELETE FROM comms_refs WHERE seq=99');
+    await run();
+    expect(client.prepare("SELECT message_seq FROM thread_refs WHERE ref='t-123'").get()).toEqual({message_seq:1});
+
     expect(client.prepare('SELECT seq,words FROM messages ORDER BY seq').all()).toEqual([{seq:1,words:null},{seq:3,words:null}]);
   } finally {
     client.close();archive.close();writer.close();rmSync(dir,{recursive:true,force:true});
