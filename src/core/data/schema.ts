@@ -2319,6 +2319,9 @@ export const triggerAcceptances = sqliteTable('trigger_acceptances', {
 /** A card that a member saw on an old thread. It carries history only and cannot be answered. */
 export const archivedQuestions = sqliteTable('archived_questions', {
   thread: text('thread').notNull().references(() => threads.id, {onDelete:'cascade'}),
+  sourceMember: text('source_member').notNull(),
+  sourceAgent: text('source_agent').notNull(),
+  sourceConversation: text('source_conversation').notNull(),
   ref: text('ref').notNull(),
   approval: text('approval'),
   raisedAt: text('raised_at').notNull(),

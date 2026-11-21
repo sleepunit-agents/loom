@@ -13,11 +13,12 @@ reread its paragraph.
 
 ## What starts
 
-`package.json` installs eight executables. Only `loom serve` opens a household's data.
+`package.json` installs eight executables. The running household belongs to `loom serve`. The offline migration command takes the same exclusive home lock before opening a prepared destination.
 
 | Executable | Source | What it does |
 |---|---|---|
 | `loom serve` | `src/index.ts`, then `src/shared-startup.ts` | Runs the household's program: one process, one HTTP listener, one household database. |
+| `loom migrate archived-questions` | `src/cli/migrate-questions.ts` | Reads completed v1 backups and restores saved questions to a stopped rebuilt household. |
 | `loom signin` | `src/index.ts`, then `src/core/signin/operator.ts` | Asks the running program for a one-time sign-in link, over a socket only the data folder's owner can reach. It opens no store. |
 | `loom mcp` | `src/index.ts`, then `src/shared-mcp-stdio.ts` | A stdio MCP session that forwards to a running `loom serve` over HTTP. It opens no store. |
 | `loom-worker` | `src/worker.ts`, then `src/runtime/worker-program.ts` | Runs on a machine that does work. Asks the program for jobs, starts a body for each, reports back. |
@@ -25,7 +26,7 @@ reread its paragraph.
 | `loom-household`, `loom-taskstore`, `loom-wake`, `loom-token`, `loom-account`, `loom-sessions` | `src/household-client.ts`, `src/taskstore-client.ts`, `src/tempo-client.ts`, `src/token-client.ts`, `src/account-client.ts`, `src/sessions-client.ts`, all over `src/cli` | Command-line clients of the running program's HTTP door. They open no store. |
 
 `loom` accepts `serve`, `signin`, `mcp` (also under its earlier spelling, `--next`),
-`--version` and `--help`, and nothing else. The
+`note`, `runtime send`, `migrate archived-questions`, `--version` and `--help`. The
 older program (its own stdio server, a subcommand per verb, server-rendered pages) is
 gone, and so are the copies of the household, its tokens, browser sessions and secrets
 that it and an earlier composition kept beside the ones that run.

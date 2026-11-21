@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { archivedQuestions, conversations, threads } from '../data/schema.js';
 import type { DataDatabase } from '../data/database.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import type { WordsKey } from './words.js';
 import { archivedQuestionBody } from './archived-questions.js';
 
@@ -27,7 +27,8 @@ export async function importArchivedQuestions(input:{
   const prepared: (typeof archivedQuestions.$inferSelect)[]=[];
   for(const raw of archive.prepare('select thread,ref,approval,raised,seen,words,answer_json from comms_asks order by thread,ref').iterate()){
     const q=sourceQuestion.parse(raw);
-    if(!oldThreads.has(q.thread))throw Error('Archived question has no source thread');
+    const source=oldThreads.get(q.thread);
+    if(!source)throw Error('Archived question has no source thread');
     const outcome=q.answer_json===null?null:answer.parse(JSON.parse(q.answer_json));
     const keepUntil=keepUntilFor(q.seen,sourceDays);
     let words=null;
@@ -36,7 +37,7 @@ export async function importArchivedQuestions(input:{
       try {archivedQuestionBody.parse(JSON.parse(await key.open(q.words)));} catch {throw Error('Archived question envelope could not be verified');}
       words=q.words;
     }
-    prepared.push({thread:q.thread,ref:q.ref,approval:q.approval,raisedAt:q.raised,seenAt:q.seen,keepUntil,words,
+    prepared.push({thread:q.thread,sourceMember:source.member,sourceAgent:source.agent,sourceConversation:source.conversation,ref:q.ref,approval:q.approval,raisedAt:q.raised,seenAt:q.seen,keepUntil,words,
       verdict:outcome?.verdict??null,answeredBy:outcome?.by??null,answeredAt:outcome?.at??null});
   }
   return db.transaction(()=>{
@@ -53,13 +54,15 @@ export async function importArchivedQuestions(input:{
       const result=db.insert(archivedQuestions).values({...row,words}).onConflictDoNothing().run();
       if(result.changes){inserted++;continue;}
       const prior=db.query.archivedQuestions.findFirst({where:(q,{and,eq})=>and(eq(q.thread,row.thread),eq(q.ref,row.ref))}).sync();
-      if(!prior||prior.raisedAt!==row.raisedAt||prior.seenAt!==row.seenAt||prior.keepUntil!==row.keepUntil||
+      if(!prior||prior.sourceMember!==row.sourceMember||prior.sourceAgent!==row.sourceAgent||prior.sourceConversation!==row.sourceConversation||prior.raisedAt!==row.raisedAt||prior.seenAt!==row.seenAt||prior.keepUntil!==row.keepUntil||
         prior.approval!==row.approval||prior.verdict!==row.verdict||prior.answeredBy!==row.answeredBy||prior.answeredAt!==row.answeredAt||
         (prior.words&&words&&!prior.words.equals(words)))throw Error('Conflicting archived question');
       // An expired source or shorter policy may remove bytes on retry; no retry restores purged words.
       if(prior.words&&!words)db.update(archivedQuestions).set({words:null}).where(
         and(eq(archivedQuestions.thread,row.thread),eq(archivedQuestions.ref,row.ref))).run();
     }
+    const finished=now();
+    expireArchivedQuestions(db,finished,ageCutoff(finished,days));
     return {total:prepared.length,inserted};
   });
 }

@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
-import { constants, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, fstatSync, openSync, readSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
+import { COMMS_DAYS_MAX } from '../core/data/comms-days.js';
 import { ownHome } from '../core/daemon-home.js';
 import { dataDatabase, dataSchemaNumber, recogniseDataSchema } from '../core/data/database.js';
 import { privateBytes } from '../pieces/secrets/local-holder.js';
@@ -25,7 +26,8 @@ export async function migrateQuestions(args:string[],io:{stdout(text:string):voi
     const program=z.object({database:z.string(),commsKey:z.string()}).parse(JSON.parse(privateBytes(join(home,'program.json')).toString()));
     const target=realpathSync(program.database);
     if(dirname(target)!==home)throw Error('use a staged database in its own home');
-    const sourceConfig=z.object({comms_days:z.number().int().min(1).max(14).default(14)}).parse(JSON.parse(
+    // Decode the historical household.json contract, including the fallback used by the v1 writer.
+    const sourceConfig=z.object({comms_days:z.number().int().min(1).max(COMMS_DAYS_MAX).default(14)}).parse(JSON.parse(
       // The archive is a stopped v1 household; its ordinary household.json need not be mode 0600.
       readFileSync(join(source,'household.json'),'utf8')));
     const identity=readKey(program.commsKey);
@@ -35,7 +37,17 @@ export async function migrateQuestions(args:string[],io:{stdout(text:string):voi
       const file=join(source,name),copy=join(tmp,name);
       if(!lstatSync(file).isFile()||realpathSync(file)===target)throw Error('source must be a separate snapshot');
       // This phase consumes completed SQLite backups. A nonempty journal means the snapshot step is incomplete.
-      for(const suffix of ['-wal','-journal'])if(existsSync(file+suffix)&&lstatSync(file+suffix).size)throw Error('snapshot needs its journal');
+      if(existsSync(file+'-wal')&&lstatSync(file+'-wal').size)throw Error('snapshot needs its WAL');
+      const journal=file+'-journal';
+      if(existsSync(journal)){
+        const fd=openSync(journal,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        try {
+          const stat=fstatSync(fd),header=Buffer.alloc(Math.min(stat.size,28));
+          // PERSIST clears its 28-byte header on commit; journal_size_limit may truncate it further.
+          if(!stat.isFile()||(stat.size && (readSync(fd,header)!==header.length||header.some(byte=>byte!==0))))
+            throw Error('snapshot needs rollback recovery');
+        } finally {closeSync(fd);}
+      }
       copyFileSync(file,copy,constants.COPYFILE_EXCL);
       const db=new Database(copy,{readonly:true,fileMustExist:true});clean.push(()=>{db.close();});return db;
     };

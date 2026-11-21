@@ -30,10 +30,10 @@ it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open
       const t=svc.threads.open({id:'th:archived-questions',member:'alex',agent:'fern',title:'Old garden questions'});
       thread=t.id;
       meta.exec('create table comms_threads(id,agent,member,conversation)');
-      meta.prepare('insert into comms_threads values(?,?,?,?)').run(t.id,'fern','alex',t.conversation);
+      meta.prepare('insert into comms_threads(id,agent,member,conversation) values(?,?,?,?)').run(t.id,'fern','alex',t.conversation);
       old.exec('create table comms_asks(thread,ref,approval,raised,seen,words,answer_json)');
-      old.prepare('insert into comms_asks values(?,?,?,?,?,?,?)').run(t.id,'approval:a-41','a-41',iso(now+day*9),iso(now-day*2+keepMs),
-        await key.seal(JSON.stringify({text,why})),JSON.stringify({verdict:'allowed',by:'alex',at:iso(now-1500)}));
+      old.prepare('insert into comms_asks(thread,ref,approval,raised,seen,words,answer_json) values(?,?,?,?,?,?,?)').run(t.id,'approval:a-41','a-41',iso(now+day*9),iso(now-day*2+keepMs),
+        await key.seal(JSON.stringify({text,why,kind:'question',if_yes:'Water the plums'})),JSON.stringify({verdict:'allowed',by:'alex',at:iso(now-1500)}));
     }finally{old.close();meta.close();}
 
     const archive=new Database(oldPath,{readonly:true}),household=new Database(metaPath,{readonly:true});
@@ -43,6 +43,22 @@ it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open
       const before=counts();
       expect(await importArchivedQuestions(options)).toEqual({total:1,inserted:1});
       expect(await importArchivedQuestions(options)).toEqual({total:1,inserted:0});
+      const changed=new Database(oldPath);
+      try {
+        // The new question sorts before the conflicting previously imported one.
+        changed.exec("insert into comms_asks(thread,ref,approval,raised,seen,words,answer_json) select thread,'a-first',null,raised,seen,words,null from comms_asks");
+        changed.exec("update comms_asks set approval='different' where ref='approval:a-41'");
+      } finally { changed.close(); }
+      await expect(importArchivedQuestions(options)).rejects.toThrow('Conflicting archived question');
+      expect(client.prepare('select ref from archived_questions').all()).toEqual([{ref:'approval:a-41'}]);
+      // Cross the stored deadline after the insert pass but before publication.
+      const fix=new Database(oldPath);
+      try {fix.exec("delete from comms_asks where ref='a-first'; update comms_asks set approval='a-41'");} finally {fix.close();}
+      client.exec('savepoint expiry_probe; delete from archived_questions');
+      let reads=0;
+      await importArchivedQuestions({...options,now:()=>iso(++reads<3?now:now+keepMs)});
+      expect(client.prepare('select words from archived_questions').get()).toEqual({words:null});
+      client.exec('rollback to expiry_probe; release expiry_probe');
       expect(counts()).toEqual(before);
     }finally{client.close();archive.close();household.close();}
 
@@ -58,6 +74,7 @@ it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open
     const history=page.getByRole('region',{name:'Archived questions'});
     await history.getByText(text,{exact:true}).waitFor();
     expect(await history.getByText(why,{exact:true}).count()).toBe(1);
+    await history.getByText('If yes · Water the plums').waitFor();
     expect(await history.getByRole('button').count()).toBe(0);
     await history.getByText(/Recorded outcome · allowed/).waitFor();
     const query='query($thread:String!){commsArchivedQuestions(thread:$thread){ref body{text} verdict answeredBy}}';
