@@ -15,7 +15,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { HOST_SCHEDULE_REFUSAL, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
+import { HOST_SCHEDULE_REFUSAL, matchesClockSchedule, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
@@ -50,10 +50,6 @@ export interface TempoOperationOptions {
 }
 const id = z.object({ id: z.string().min(1) }).strict();
 const occurrence = z.object({ agent: z.string().min(1), at: z.string().datetime().optional() }).strict();
-function matchesClockSchedule(row: Trigger | undefined, agent: string) {
-  return row && !row.scheduleRemovedAt && row.sourceKind === 'time' && row.lifespan === 'until-stopped'
-    && row.targetKind === 'inbox' && row.toKind === 'agent' && row.to === agent;
-}
 const saved = z.object({ saved: z.literal(true) }).strict();
 /** `waits`: nothing was set or changed, and why, in words for the caller (an owner is asked first). */
 const waits = z.string().optional();

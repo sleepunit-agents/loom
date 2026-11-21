@@ -45,7 +45,7 @@ const schedulePage = z.object({ data: z.object({ tempoTimezone: z.string(), trig
   note: z.string(), state: z.string(),
 })) }) }).strict();
 
-async function listSchedules(read: Read, agent: string) {
+async function listSchedules(read: Read, agent: string, displayId: (id: string) => string) {
   const lines: string[] = [];
   let after = '';
   for (;;) {
@@ -55,7 +55,7 @@ async function listSchedules(read: Read, agent: string) {
       after = nextCursor(after, row.id);
       const when = (row.days || 'daily') + ' ' + row.times;
       const next = row.nextDueAt ? format.format(new Date(row.nextDueAt)) : '(none armed)';
-      lines.push(onOneLine(encodeURIComponent(row.scheduleName ?? row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
+      lines.push(onOneLine(displayId(row.scheduleName ?? row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
     }
     if (data.triggers.length < pageSize) break;
   }
@@ -106,8 +106,8 @@ async function laneFileText(path: string) {
   } finally { await handle.close(); }
 }
 
-async function storedLane(read: Read, name: string) {
-  const answer = await read('query($id:String!){tempoLaneText(id:$id)}', { id: name });
+async function storedLane(read: Read, name: string, agent?: string) {
+  const answer = await read('query($id:String!,$agent:String){tempoLaneText(id:$id,agent:$agent)}', { id: name, agent });
   const row = laneText.parse(answer).data.tempoLaneText;
   if (!row) throw new DoorRefusal('No readable stored lane with that name.');
   if ('file' in row) throw new DoorRefusal('This lane reads its instructions at firing from ' + onOneLine(row.file) + '.');
@@ -115,7 +115,7 @@ async function storedLane(read: Read, name: string) {
   return row;
 }
 
-async function listLanes(read: Read): Promise<string> {
+async function listLanes(read: Read, displayId: (id:string) => string, agent?: string): Promise<string> {
   const lines: string[] = [];
   let after = '';
   for (;;) {
@@ -123,8 +123,9 @@ async function listLanes(read: Read): Promise<string> {
     const rows = lanePage.parse(answer).data.tempoLanes;
     for (const row of rows) {
       after = nextCursor(after, row.id);
+      if (agent && row.agent !== agent) continue;
       const size = row.file ? 'file ' + row.file : row.characters + ' chars';
-      lines.push(onOneLine(`${encodeURIComponent(row.id).padEnd(22)} ${row.agent.padEnd(8)} ${row.times} ${row.days || 'daily'}  ${size}  — ${row.note}`));
+      lines.push(onOneLine(`${displayId(row.id).padEnd(22)} ${row.agent.padEnd(8)} ${row.times} ${row.days || 'daily'}  ${size}  — ${row.note}`));
     }
     if (rows.length < pageSize) break;
   }
@@ -133,9 +134,9 @@ async function listLanes(read: Read): Promise<string> {
 
 function logOptions(args: string[]) {
   const { values } = parseArgs({ args, options: {
-    since: { type: 'string', default: '24h' }, grep: { type: 'string', default: '' },
+    since: { type: 'string', default: '24h' }, grep: { type: 'string', default: '' }, all: {type:'boolean'},
   } });
-  return { since: new Date(Date.now() - durationMs(values.since!)).toISOString(), grep: values.grep! };
+  return { since: new Date(Date.now() - durationMs(values.since!)).toISOString(), grep: values.grep!, limit: values.all ? Infinity : 2000 };
 }
 
 function durationMs(duration: string) {
@@ -222,7 +223,7 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
     const format = householdTime(data.tempoTimezone);
     let before: number | undefined;
     let found = 0;
-    while (found < 2000) {
+    while (found < options.limit) {
       const cursor = before === undefined ? '' : ',seq:{lt:$before}';
       const query = `query WakeLog($ids:[String!]!, $since:String!, $limit:Int! ${cursor ? ',$before:Int!' : ''}){
         triggerLog(where:{trigger:{inArray:$ids},at:{gte:$since}${cursor}},orderBy:{seq:{direction:desc,priority:0}},limit:$limit){
@@ -255,12 +256,12 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
         const line = onOneLine(`${format.format(new Date(row.at))} | ${row.event} | ${row.trigger} ${row.note}`.trimEnd() + suffix);
         if (!line.includes(options.grep)) continue;
         matches.push({ seq: row.seq, line });
-        if (++found === 2000) break;
+        if (++found === options.limit) break;
       }
       if (triggerLog.length < pageSize) break;
     }
     matches.sort((a, b) => b.seq - a.seq);
-    matches.splice(2000);
+    if (matches.length > options.limit) matches.splice(options.limit);
     const last = ids[ids.length - 1];
     after = nextCursor(after,last);
     if (ids.length < pageSize) break;
@@ -268,7 +269,7 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
   return matches.reverse().map(match => match.line).join('\n') + '\n';
 }
 
-const usage = 'usage: loom-wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | park --on REQUEST (-p WORDS --note PURPOSE | -f REPO_FILE) | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n';
+const usage = 'usage: loom-wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | park --on REQUEST (-p WORDS --note PURPOSE | -f REPO_FILE) | pause | resume | log [--since DURATION] [--grep TEXT] [--all] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n';
 
 export async function runTempoClient(argv: string[], io: IOStreams, request = fetch): Promise<number> {
   let agent = io.env.WAKE_AGENT || io.env.WAKE_LOCAL_AGENT;
@@ -318,6 +319,13 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   }
   try {
     const { base, token } = await doorConnection(io.env);
+    const redact = (value:string) => parseRedactedJSON(JSON.stringify(value), token) as string;
+    const displayId = (id:string) => {
+      if (redact(id) !== id) throw new DoorRefusal('This clock contains an identifier that cannot be displayed safely.');
+      return encodeURIComponent(id);
+    };
+    const {stdout, stderr} = io;
+    io = {...io, stdout:words=>stdout(redact(words)), stderr:words=>stderr(redact(words))};
     const post = async (path: string, payload: unknown) => {
       const url = new URL(path, base);
       const body = JSON.stringify(payload);
@@ -328,7 +336,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
             method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
             headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body,
           });
-          if (response.ok) return parseRedactedJSON(await response.text(), token);
+          if (response.ok) return await response.json();
         } catch (error) {
           if (attempt >= 3) throw error;
           await delay(100 * attempt);
@@ -345,10 +353,11 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     };
     const read: Read = (query, variables) => post('/graphql', { query, variables });
     if (verb === 'lane') {
-      if (argv[1] === 'list') io.stdout(await listLanes(read));
+      if (argv[1] === 'list') io.stdout(await listLanes(read, displayId, agent));
       else {
         const name = laneUpdate?.name ?? decodeURIComponent(argv[2]);
-        const row = await storedLane(read, name);
+        const row = await storedLane(read, name, agent);
+        if (!laneUpdate && redact(row.text) !== row.text) throw new DoorRefusal('The lane text contains a credential.');
         if (!laneUpdate) io.stdout(row.text.endsWith('\n') ? row.text : row.text + '\n');
         else {
           if (!row.revision) throw new DoorRefusal('A household owner updates stored lanes.');
@@ -412,7 +421,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       io.stdout((scheduleAction === 'run' ? 'Requested a run of ' : 'Removed schedule ') + onOneLine(scheduleName!) + '.\n');
       return 0;
     }
-    if (verb === 'schedule') { io.stdout(await listSchedules(read, agent)); return 0; }
+    if (verb === 'schedule') { io.stdout(await listSchedules(read, agent, displayId)); return 0; }
     if (cancel) {
       const answer = await post('/api/tempo/stop', { id: randomUUID(), input: { id: cancel.id, occurrence: { agent, at: cancel.at } } });
       z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
@@ -468,7 +477,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const when = parked && row.nextDueAt ? 'waiting for ' + parked[1] + ' until ' + format.format(new Date(row.nextDueAt))
         : row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';
-      const key = encodeURIComponent(row.id) + (row.lifespan !== 'once' && row.nextDueAt ? '@' + row.nextDueAt : '');
+      const key = displayId(row.id) + (row.lifespan !== 'once' && row.nextDueAt ? '@' + row.nextDueAt : '');
       const line = `${key}  ${when}  [${row.state}]  ${row.note}`;
       io.stdout(onOneLine(line) + '\n');
     }

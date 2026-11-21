@@ -15,6 +15,10 @@ import { localDate, nextTime } from './calendar.js';
 import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 
 export type Trigger = typeof triggers.$inferSelect;
+export function matchesClockSchedule(row: Trigger | undefined, agent?: string) {
+  return row && !row.scheduleRemovedAt && row.sourceKind === 'time' && row.lifespan === 'until-stopped'
+    && row.targetKind === 'inbox' && row.toKind === 'agent' && (agent === undefined || row.to === agent);
+}
 const text = z.string().min(1);
 const placement = { needs: machineFacts.nullish(), prefers: machineFacts.nullish() };
 export const HOST_SCHEDULE_REFUSAL = 'Host execution is unavailable for scheduled work. Schedule a container job or use an approved machine read.';
@@ -194,7 +198,7 @@ export class TriggerEngine {
           throw Error('This wake is no longer pending on that clock');
         if (trigger.lifespan !== 'once') {
           if (!occurrence.at || trigger.sourceKind !== 'time') throw Error('Select a pending occurrence of the schedule');
-          const after = Math.max(this.clock.now(), Date.parse(occurrence.at));
+          const after = Date.parse(occurrence.at);
           const next = this.expired(trigger) ? undefined : this.following(trigger, after);
           this.log(id, 'cancelled', 'time:' + occurrence.at);
           if (next !== undefined) {
@@ -213,8 +217,7 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => {
       const row = this.get(id);
-      if (row.scheduleRemovedAt || row.sourceKind !== 'time' || row.lifespan !== 'until-stopped'
-        || row.targetKind !== 'inbox' || row.toKind !== 'agent') throw Error('Select a recurring wake');
+      if (!matchesClockSchedule(row)) throw Error('Select a recurring wake');
       const at = this.now();
       this.db.update(triggers).set({ scheduleRemovedAt: at, enabled: false, state: 'stopped', nextDueAt: null, changedAt: at })
         .where(eq(triggers.id, id)).run();

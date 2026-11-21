@@ -126,6 +126,15 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     }).run();
     const native = /delivered (cv-[\w-]+)/.exec(out)![1];
     sql.prepare("UPDATE approvals SET conversation=? WHERE id='a-report'").run(native);
+    for (const id of ['ghp_fixture','[redacted]']) db.insert(triggers).values({
+      id,ownerKind:'agent',owner:'fern',sourceKind:'time',times:'11:00',lifespan:'until-stopped',targetKind:'inbox',
+      toKind:'agent',to:'fern',enabled:false,state:'stopped',createdAt:at,changedAt:at,note:'Fixture',
+    }).run();
+    out = '';
+    expect(await runTempoClient(['schedule','rm','ghp_fixture'], io, request)).toBe(0);
+    expect(out).not.toContain('ghp_fixture');
+    expect(sql.prepare("SELECT id FROM triggers WHERE id IN ('ghp_fixture','[redacted]') AND schedule_removed_at IS NOT NULL").all())
+      .toEqual([{id:'ghp_fixture'}]);
     const park = (id:string) => ['park','--on',id,'-p','Check the result','--note','Follow up'];
     expect(await runTempoClient(['--agent','birch',...park('a-report')], io, request)).toBe(1);
     expect(await runTempoClient(park('a-report'), io, request),err).toBe(0);
@@ -139,6 +148,15 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     });
     const resumed = db.select().from(inbox).all().filter(row => row.sourceId?.endsWith(':park:resume'));
     expect(resumed.map(row => [row.to,row.words])).toEqual([['fern','Request a-report is denied.\n\nCheck the result']]);
+    const insert = sql.prepare("INSERT INTO trigger_log(trigger,event,at,note) VALUES ('fern','held',?,?)");
+    sql.transaction(()=>{for (let i=0;i<2001;i++) insert.run(at,'bulk event '+i);})();
+    for (const all of [false,true]) {
+      out = '';
+      expect(await runTempoClient(['log','--grep','bulk event',...(all?['--all']:[])],io,request)).toBe(0);
+      expect(out.trimEnd().split('\n')).toHaveLength(all?2001:2000);
+      expect(out.includes('bulk event 0\n')).toBe(all);
+    }
+
   } finally {
     await app.close();
     sql.close();
@@ -302,6 +320,9 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
     expect(names.slice(-2).map(decodeURIComponent)).toEqual(['Ｚ','😀']);
     expect(names).toContain('other');
     expect(names).not.toContain('off');
+    expect(await run(owner,'--agent=birch','lane','list')).toMatchObject({code:0,out:expect.stringMatching(/^other\s+birch[^\n]+\n$/)});
+    expect(await run(owner,'--agent=birch','lane','text','lane-102')).toMatchObject({code:1,out:''});
+    expect(await run(owner,'--agent=birch','lane','set','lane-102','-p','wrong clock')).toMatchObject({code:1,out:''});
     expect(await run(owner,'lane','text','other')).toMatchObject({code:0,out:'No final newline\n'});
     expect(await run(agent,'lane','text','lane-102')).toMatchObject({code:0,out:words});
     expect(await run(agent,'--agent=birch','lane','text','other')).toMatchObject({code:1,out:''});

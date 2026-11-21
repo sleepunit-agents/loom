@@ -49,6 +49,8 @@ loom-wake --agent art log --since 24h
 loom-wake --agent art schedule set nightly --at 22:44 --days mon-fri -f routines/nightly.md
 ```
 
+The log prints the latest 2,000 matching entries by default. Use `log --all` to read every match in the requested interval. A selected agent scopes lane commands to that agent; without a selection, lane commands address visible household lanes.
+
 Run `loom-wake --help` for one-off wakes, parked waits, lane text, and clock controls.
 The legacy `wake` executable can coexist with `loom-wake` during migration.
 

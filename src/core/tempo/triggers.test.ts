@@ -481,12 +481,12 @@ it('cancels only the named occurrence, even when a second request arrives after 
   expect(() => engine.stop(lane.id, { agent: 'art' })).toThrow();
   expect(() => engine.stop(lane.id, { ...first, agent: 'other' })).toThrow();
   engine.pause('art');
+  clock.advance(150000);
   engine.stop(lane.id, first);
   expect(row(lane.id)).toMatchObject({ enabled:true, state:'held', nextDueAt:'2026-11-14T18:02:00.000Z' });
   expect(() => engine.stop(lane.id, first)).toThrow();
   const second = { agent: 'art', at: row(lane.id).nextDueAt! };
   engine.resume('art');
-  clock.advance(120000);
   expect(items()).toHaveLength(1);
   expect(() => engine.stop(lane.id, second)).toThrow();
   expect(row(lane.id)).toMatchObject({ enabled:true, nextDueAt:'2026-11-14T18:03:00.000Z' });

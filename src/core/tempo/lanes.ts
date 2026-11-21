@@ -18,9 +18,9 @@ export function clockLanes(db: DataDatabase, viewer: Viewer, after: string) {
     .from(triggers).where(and(visibleLane(viewer), gt(triggers.id, after))).orderBy(asc(triggers.id)).limit(100).all();
 }
 
-export function clockLaneText(db: DataDatabase, viewer: Viewer, id: string) {
+export function clockLaneText(db: DataDatabase, viewer: Viewer, id: string, agent?: string) {
   const row = db.select({ text: triggers.instructions, file: triggers.file, agent: triggers.to, project: triggers.project, member: triggers.member, conversation: triggers.conversation }).from(triggers)
-    .where(and(visibleLane(viewer), eq(triggers.id, id), viewer.kind === 'agent' ? eq(triggers.to, viewer.id) : undefined)).get();
+    .where(and(visibleLane(viewer), eq(triggers.id, id), agent ? eq(triggers.to, agent) : undefined, viewer.kind === 'agent' ? eq(triggers.to, viewer.id) : undefined)).get();
   if (!row) return null;
   // A file reference has no stored copy of its words.
   if (row.file) return { file: row.file };
