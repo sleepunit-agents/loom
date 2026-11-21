@@ -347,6 +347,22 @@ it('refuses identity files escaping the declared agent directory without leaking
  const f=await fixture(),outside=join(f.home,'outside-identity.md');writeFileSync(outside,'ESCAPED_IDENTITY_WORDS');symlinkSync(outside,join(dirname(f.path),'IDENTITY.md'));
  const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),payload=await response.json();expect(payload.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(payload)).not.toContain('ESCAPED_IDENTITY_WORDS');expect(JSON.stringify(payload)).not.toContain(outside);
 });
+it('lists a memory in Archive at its deadline and restores it without a prior sweep',async()=>{
+ const f=await fixture(),created=f.clock.now(),hour=3_600_000,deadline=new Date(created+hour).toISOString();
+ const id=(await f.call('remember',{...input,ttl:'1h'},'remember-with-deadline',raw.agent)).result.value.ids[0];
+ const read=()=>f.query(`{memoryArchive(agent:"art"){entries{id note archivedAt content}} memoryProjectMemory(id:"${id}"){content}}`,raw.agent);
+ f.clock.advance(hour-1);vi.setSystemTime(f.clock.now());
+ expect(await read()).toEqual({memoryArchive:{entries:[]},memoryProjectMemory:{content:words}});
+ f.clock.advance(1);vi.setSystemTime(f.clock.now());
+ const before=f.source.serialize();
+ expect(await read()).toEqual({memoryArchive:{entries:[{id,note:'TTL elapsed',archivedAt:deadline,content:words}]},memoryProjectMemory:null});
+ expect(f.source.serialize()).toEqual(before);
+ expect((await f.call('restore',{id},'restore-without-sweep',raw.agent)).result.value).toEqual({ids:[id]});
+ expect(await read()).toEqual({memoryArchive:{entries:[]},memoryProjectMemory:{content:words}});
+ expect(f.source.prepare('SELECT expires_at, authored_at FROM memories WHERE uuid=?').get(id.slice(4))).toEqual({
+  expires_at:new Date(created+2*hour).toISOString(),authored_at:new Date(created).toISOString()});
+ expect((await f.call('restore',{id},'restore-live',raw.agent)).result.value).toEqual({ids:[]});
+});
 it('does not publish top-of-mind words that expire during GraphQL serialization',async()=>{
  const f=await fixture(),creed='CONTEXT_BOUNDARY_CREED';writeFileSync(join(dirname(f.path),'IDENTITY.md'),creed);expect((await f.call('remember',input,'context-boundary')).status).toBe(200);
  f.source.prepare('UPDATE memories SET expires_at=?').run(new Date(f.clock.now()+1).toISOString());let crossed=false;const serialize=GraphQLString.serialize;

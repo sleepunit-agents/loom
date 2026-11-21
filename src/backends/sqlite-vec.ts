@@ -618,14 +618,12 @@ export class SqliteVecBackend implements MemoryBackend {
       created: string;
     }[];
 
-    const expired: string[] = [];
+    const expiredRows: {id:number;ref:string;expiresAt:string}[] = [];
     const stale: string[] = [];
-    const expiredIds: number[] = [];
 
     for (const r of rows) {
       if (r.expires_at && isExpired(r.expires_at, now)) {
-        expired.push(r.ref);
-        expiredIds.push(r.id);
+        expiredRows.push({id:r.id,ref:r.ref,expiresAt:r.expires_at});
         continue;
       }
       if (r.ttl === 'permanent') continue;
@@ -635,26 +633,29 @@ export class SqliteVecBackend implements MemoryBackend {
       }
     }
 
-    if (!dryRun && expiredIds.length > 0) {
+    if (!dryRun && expiredRows.length > 0) {
       // Archive instead of hard-delete: content is preserved for recovery,
       // the embedding is dropped (no KNN slots wasted), archived = 1 hides
       // the row from recall/list/audit — matching the contract in t-332.
       const now = new Date().toISOString();
-      const tombstone = JSON.stringify({ note: 'TTL elapsed', archived_at: now });
       const archiveStmt = this.db.prepare(
-        'UPDATE memories SET archived = 1, archive_note = ?, updated = ? WHERE id = ?',
+        'UPDATE memories SET archived = 1, archive_note = ?, updated = ? WHERE id = ? AND archived = 0 AND expires_at = ?',
       );
       const delVec = this.db.prepare('DELETE FROM vec_memories WHERE rowid = ?');
       const tx = this.db.transaction(() => {
-        for (const id of expiredIds) {
-          archiveStmt.run(tombstone, now, id);
+        const archived:string[]=[];
+        for (const {id,ref,expiresAt} of expiredRows) {
+          const tombstone = JSON.stringify({ note: 'TTL elapsed', archived_at: expiresAt });
+          if (!archiveStmt.run(tombstone, now, id, expiresAt).changes) continue;
           delVec.run(BigInt(id));
+          archived.push(ref);
         }
+        return archived;
       });
-      retryWrite(() => tx());
+      return { expired: retryWrite(() => tx.immediate()), stale };
     }
 
-    return { expired, stale };
+    return { expired:expiredRows.map(row=>row.ref), stale };
   }
 
   async list(input: ListInput): Promise<MemoryEntry[]> {
@@ -804,17 +805,14 @@ export class SqliteVecBackend implements MemoryBackend {
       ttl: string | null;
       expires_at: string | null;
     };
-    let rows: RestoreRow[] = [];
-
+    const eligible = '(archived = 1 OR julianday(expires_at) <= julianday(?))';
+    const fields = 'id, ref, title, content, category, project, scope, ttl, expires_at';
+    const selectedAt = new Date().toISOString();
+    let rows: RestoreRow[];
     if (input.ref) {
-      const row = this.db
-        .prepare('SELECT id, ref, title, content, category, project, scope, ttl, expires_at FROM memories WHERE ref = ? AND archived = 1')
-        .get(input.ref) as RestoreRow | undefined;
-      if (row) rows = [row];
+      rows = this.db.prepare(`SELECT ${fields} FROM memories WHERE ref = ? AND ${eligible}`).all(input.ref, selectedAt) as RestoreRow[];
     } else if (input.category && input.title) {
-      rows = this.db
-        .prepare('SELECT id, ref, title, content, category, project, scope, ttl, expires_at FROM memories WHERE category = ? AND title = ? AND archived = 1')
-        .all(input.category, input.title) as RestoreRow[];
+      rows = this.db.prepare(`SELECT ${fields} FROM memories WHERE category = ? AND title = ? AND ${eligible}`).all(input.category, input.title, selectedAt) as RestoreRow[];
     } else {
       return { restored: [] };
     }
@@ -827,6 +825,7 @@ export class SqliteVecBackend implements MemoryBackend {
     );
 
     const now = new Date().toISOString();
+    const currentRow = this.db.prepare(`SELECT ${fields} FROM memories WHERE id = ? AND ${eligible}`);
     const stmt = this.db.prepare(
       'UPDATE memories SET archived = 0, archive_note = NULL, uniq = ?, updated = ?, expires_at = ? WHERE id = ?',
     );
@@ -837,7 +836,12 @@ export class SqliteVecBackend implements MemoryBackend {
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
     );
     const tx = this.db.transaction(() => {
-      rows.forEach((row, i) => {
+      const restored:string[]=[];
+      rows.forEach((selected, i) => {
+        // A sweep may have archived this same expired fact during embedding.
+        // A renewal makes it ineligible; changed words require their own embedding.
+        const row = currentRow.get(selected.id, now) as RestoreRow | undefined;
+        if (!row || row.ref !== selected.ref || row.title !== selected.title || row.content !== selected.content) return;
         // Re-derive the key: the row may carry a stale or pre-rekey one, and
         // while it sat archived the same body may have been remembered again
         // — that active row keeps the key (PR120 review).
@@ -846,13 +850,13 @@ export class SqliteVecBackend implements MemoryBackend {
         const elapsed=row.expires_at&&(!Number.isFinite(Date.parse(row.expires_at))||isExpired(row.expires_at,new Date(now)));
         const expires=elapsed?computeExpiresAt(now,row.ttl??undefined):row.expires_at;
         stmt.run(this.claimableUniq(row.id, row), now, expires, row.id);
+        restored.push(row.ref);
         delVec.run(BigInt(row.id));
         insVec.run(BigInt(row.id), toVecBuffer(vectors[i]));
       });
+      return restored;
     });
-    retryWrite(() => tx.immediate());
-
-    return { restored: rows.map((r) => r.ref) };
+    return { restored: retryWrite(() => tx.immediate()) };
   }
 
   listRevisions(ref: string): Promise<MemoryRevisionMeta[]> {
