@@ -60,7 +60,7 @@ export function importThreads(source:Database.Database, db:DataDatabase, recover
       const conversation = {id:row.conversation, agent:row.agent, member:row.member, project:row.project,
         venue:'loom' as const, place:row.id, label:title, startedAt:row.opened, lastAt:row.last};
       const thread = {id:row.id, conversation:row.conversation, title, titledBy:row.titled_by ?? 'agent',
-        pinned:row.pinned===1, archivedAt:row.archived, openedAt:row.opened, lastAt:row.last, readSeq:row.read_seq};
+        sourceChannel:row.channel, pinned:row.pinned===1, archivedAt:row.archived, openedAt:row.opened, lastAt:row.last, readSeq:row.read_seq};
       const prior = db.select().from(threads).where(eq(threads.id,row.id)).get();
       if (prior) {
         const cv = db.select().from(conversations).where(eq(conversations.id,prior.conversation)).get();

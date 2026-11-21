@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
 import { Threads } from './threads.js';
+import { importArchivedQuestions } from './archived-question-store.js';
 import { importTextHistory } from './import-text-history.js';
 
 it('validates scope before opening an envelope, rolls back conflicts and keeps purged words erased',async()=>{
@@ -162,6 +163,9 @@ it('skips revoked words and references only when the pending deletion has a tomb
     await expect(run()).rejects.toThrow(/Pending thread deletion/);
     writer.exec('DELETE FROM comms_threads');
     expect(await run()).toEqual({total:0,inserted:0});
+    writer.exec("CREATE TABLE comms_asks(thread,ref,approval,raised,seen,words,answer_json); INSERT INTO comms_asks(thread,ref,words) VALUES ('gone','revoked',X'FF')");
+    expect(await importArchivedQuestions({archive,household:archive,destination,sourceDays:2,now,key:{open:badKey,seal:badKey,hash:badKey}})).toEqual({total:0,inserted:0});
+    expect(client.prepare('SELECT count(*) AS n FROM archived_questions').get()).toEqual({n:0});
     expect(client.prepare('SELECT * FROM thread_refs').all()).toEqual([]);
     expect(client.prepare('SELECT * FROM messages').all()).toEqual([]);
   } finally { archive.close();writer.close();client.close();rmSync(dir,{recursive:true,force:true}); }

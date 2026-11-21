@@ -587,6 +587,7 @@ export const threads = sqliteTable('threads', {
   workingSince: text('working_since'),
   workingBeat: text('working_beat'),
   stopRequested: integer('stop_requested', { mode: 'boolean' }).notNull(),
+  sourceChannel: integer('source_channel'),
 }, t => [
   check('threads_archived_at_utc', utc(t.archivedAt)),
   check('threads_opened_at_utc', utc(t.openedAt)),

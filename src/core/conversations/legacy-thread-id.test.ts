@@ -81,10 +81,13 @@ it('restores a job-backed private thread only under its recorded backing convers
         return 'cv-0b37adc83353';
       };
       expect(importThreads(source,db,recover)).toEqual({inserted:1,total:1,tombstones:1});
-      expect(destination.prepare('SELECT read_seq FROM threads').get()).toEqual({read_seq:7});
+      expect(destination.prepare('SELECT read_seq,source_channel FROM threads').get()).toEqual({read_seq:7,source_channel:1});
       expect(destination.prepare('SELECT conversation,source_member,source_agent,source_channel FROM deleted_threads').all()).toEqual([{conversation:'cv-removed',source_member:'alex',source_agent:'fern',source_channel:4}]);
       for(const table of ['jobs','messages','inbox']) expect(destination.prepare('SELECT count(*) AS n FROM '+table).get()).toEqual({n:0});
       expect(importThreads(source,db,recover).inserted).toBe(0);
+      writer.exec('UPDATE comms_threads SET channel=7');
+      expect(()=>importThreads(source,db,recover)).toThrow(/differs/);
+      writer.exec('UPDATE comms_threads SET channel=1');
       const started='2026-11-18T00:00:00.000Z';
       destination.prepare('UPDATE conversations SET started_at=?,turn_count=3').run(started);
       const recorded=(agent:string,cv:string)=>{

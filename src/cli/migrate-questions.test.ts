@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -59,5 +61,16 @@ it('opens completed archive backups only while the destination is stopped', asyn
     expect(await run()).toBe(0);
     expect(stdout).toBe('Imported 0 of 1 archived questions.\n');
     expect(readFileSync(path)).toEqual(original);
+    const metadata=new Database(join(source,'household.db')), words=new Database(path);
+    try {
+      metadata.exec('DELETE FROM comms_threads; ALTER TABLE comms_threads ADD COLUMN project text; CREATE TABLE comms_deleted(id)');
+      words.exec('CREATE TABLE comms_messages(thread,seq,kind,sender,id,at,run,text,delivered)');
+    } finally {metadata.close();words.close();}
+    for (const [phase,report] of [['comms-threads','Comms threads'],['comms-text','Comms text messages']]) {
+      const entry=fileURLToPath(new URL('../index.ts',import.meta.url));
+      const result=spawnSync(process.execPath,['--import','tsx',entry,'migrate',phase,'--home',home,'--source',source],{encoding:'utf8'});
+      expect(result.status,result.stderr).toBe(0);
+      expect(result.stdout).toContain('Imported 0 of 0 '+report);
+    }
   } finally { rmSync(temp, { recursive: true, force: true }); }
-});
+}, 30_000);

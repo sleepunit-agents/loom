@@ -41,6 +41,7 @@ describe('the approved data model', () => {
     actual.inbox = actual.inbox.filter(n => !['taken_volume','first_accepted_at'].includes(n));
     // The provider read outcome is internal bookkeeping for handoff diagnostics.
     actual.model_accounts = actual.model_accounts.filter(n => n !== 'usage_read_succeeded');
+    expect(actual.threads.pop()).toBe('source_channel');
     // Retained v1 card and delivery details are importer bookkeeping on native messages.
     expect(actual.messages.filter(n=>n.startsWith('archived_'))).toEqual(['archived_step_meta','archived_step_words','archived_notice']);
     actual.messages=actual.messages.filter(n=>!n.startsWith('archived_'));
