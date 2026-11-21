@@ -27,7 +27,9 @@ function Popup({ notice, dismiss }: { notice: Notice; dismiss: (id: string) => v
     onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
     onFocus={() => setFocused(true)} onBlur={event => setFocused(event.currentTarget.contains(event.relatedTarget))}>
     <a href={inboxApp.path}><strong>Inbox</strong><span>{counts}</span></a>
-    <button type="button" aria-label="Dismiss Inbox notification" onClick={() => setClosing(true)}>Dismiss</button>
+    <button type="button" className="next-win" data-act="close" aria-label="Dismiss Inbox notification" title="Close" onClick={() => setClosing(true)}>
+      <i aria-hidden="true" />
+    </button>
   </aside>;
 }
 

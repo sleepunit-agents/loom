@@ -24,7 +24,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   console.info('[Tempo fixture] ready');
  });
  afterAll(async()=>{await browser?.close();});
- it('Tempo reads household time, follows real commands across windows and withdraws revoked data',async()=>{
+ it.each(['Inbox alert layout and close animation','Tempo commands across windows and revoked data'])('%s',async scenario=>{
  const client=new Database(':memory:'),clock=new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -61,6 +61,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
    page.on('websocket',socket=>socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify(value));}catch{}}));
   }
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
+  if(scenario==='Tempo commands across windows and revoked data'){
   await Promise.all([a,b].map(async page=>{
    mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(1);
@@ -69,6 +70,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
    expect((await page.getByText(/^Due:/).textContent())?.replace(/\s+/g,' ')).toBe(`Due: ${due} · America/Chicago`.replace(/\s+/g,' '));
    expect(await page.getByText('Check the pump shipment',{exact:true}).count()).toBe(1);
   }));
+  }
   mark('settled notice');app.writes.run(()=>{
    for(const words of ['PRIVATE FIRST NOTICE','PRIVATE SECOND NOTICE'])app.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',fromKind:'agent',words});
   });
@@ -79,6 +81,34 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
    expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).toContain('2 FYIs');
    expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).not.toContain('PRIVATE');
+  }
+  if(scenario==='Inbox alert layout and close animation'){
+  // The alert stays clear of the status bar and uses the window close icon on both desk sizes.
+  await a.bringToFront();
+  const page=a;
+  for(const size of [page.viewportSize()!,{width:375,height:667}]){
+   await page.setViewportSize(size);
+   const notice=page.getByRole('status',{name:'Inbox notification'});
+   const rect=await notice.boundingBox(), viewport=page.viewportSize()!;
+   expect(rect).not.toBeNull();
+   expect(rect!.y).toBeGreaterThanOrEqual(32);
+   expect(rect!.y).toBeLessThan(80);
+   expect(viewport.width-rect!.x-rect!.width).toBeCloseTo(16,0);
+   expect(rect!.x).toBeGreaterThan(0);
+   const close=notice.getByRole('button',{name:'Dismiss Inbox notification'});
+   expect(await close.textContent()).toBe('');
+   expect(await close.locator('i').evaluate(icon=>getComputedStyle(icon).backgroundImage)).toContain('gradient');
+  }
+  await a.emulateMedia({reducedMotion:'no-preference'});
+  const close=a.getByRole('button',{name:'Dismiss Inbox notification',exact:true});
+  await close.focus();
+  await close.evaluate(button=>button.parentElement!.addEventListener('animationstart',event=>{
+   if((event as AnimationEvent).animationName==='tempo-crt-out')document.body.dataset.inboxExit='played';
+  }));
+  await close.press('Enter');
+  await expect.poll(()=>a.locator('body').getAttribute('data-inbox-exit')).toBe('played');
+  await expect.poll(()=>a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  return;
   }
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
   await expect.poll(()=>a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);

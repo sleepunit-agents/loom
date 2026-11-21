@@ -1,9 +1,9 @@
 .tempo-inbox-notice {
   position: fixed;
   z-index: 50;
-  right: 1rem;
-  bottom: 3rem;
-  max-width: calc(100vw - 2rem);
+  top: calc(env(safe-area-inset-top, 0px) + 2.75rem);
+  right: calc(env(safe-area-inset-right, 0px) + 1rem);
+  max-width: calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   display: flex;
   align-items: center;
   gap: 1.5rem;
@@ -17,7 +17,17 @@
 }
 .tempo-inbox-notice a { display: grid; gap: .15rem; }
 .tempo-inbox-notice strong { color: #95ead1; font: bold .75rem monospace; letter-spacing: .12em; text-transform: uppercase; }
-.tempo-inbox-notice button { font-size: .8rem; text-decoration: underline; }
+.tempo-inbox-notice .next-win {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  color: #95ead1;
+  cursor: pointer;
+}
+.tempo-inbox-notice .next-win:hover { background: #183530; }
+.tempo-inbox-notice .next-win:focus-visible { outline: 2px solid currentColor; }
 .tempo-inbox-notice[data-closing="true"] { animation: tempo-crt-out 160ms ease-in both; }
 @keyframes tempo-crt-in {
   0% { transform: scale(.04, .035); opacity: 0; }
