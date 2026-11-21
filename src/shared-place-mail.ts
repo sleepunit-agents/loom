@@ -193,6 +193,17 @@ export function heldRefusal(db: DataDatabase, work: { job: { id: string; agent: 
  * Nothing for a job on owners' word or the agent's own work: its question is its own words alone.
  * Given the question, it also refuses one such a job may not ask (throws an OperationError). */
 export const outsideAccount = z.tuple([z.enum(['slack','discord']),z.string(),z.string()]);
+/** A private bridge question can leave the source room only for the agent's current directors. */
+export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:{direct:boolean;member:string|null;venue:string;place:string}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
+  const {cv}=work;
+  if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue)||q.answers!=='yes-no'||q.refs?.length||q.link!==undefined||q.waitsOnKind!==undefined)return;
+  const word=jobWord(db,work.job);
+  if(word.woke!=='others'||word.person?.kind!=='outside'||!tellOwners(db,work.job.agent).includes(q.to))return;
+  try{
+    const account=outsideAccount.parse(JSON.parse(word.person.id)),place:unknown=JSON.parse(cv.place);
+    if(Array.isArray(place)&&place.length===4&&place[0]===account[1]&&cv.venue===account[0]&&Array.isArray(place[3])&&place[3].length===2&&place[3][0]==='member'&&place[3][1]===null)return word.person.id;
+  }catch{/* Unknown legacy addresses cannot route a private decision. */}
+}
 export function askedOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } }, question?: { to: string; link?: string; waitsOnKind?: string }) {
   const word = jobWord(db, work.job);
   if (word.woke !== 'others') return undefined;

@@ -1,3 +1,6 @@
+import type {inbox as inboxTable} from './core/data/schema.js';
+import {privateInboxDeadline} from './core/conversations/private-inbox-words.js';
+import {commsKeepDays} from './core/data/comms-days.js';
 import { readInboxVolume } from './core/data/inbox-volume.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 /** Conversations at the shared outside boundary. Current household facts and
@@ -15,7 +18,7 @@ import { CommsQueries, commsQueryFields } from './core/conversations/comms-query
 import { InboxQueries, inboxQueryFields, type QuestionAsker } from './core/conversations/inbox-query.js';
 import { ConversationSummaries, conversationSummaryFields } from './core/conversations/summaries.js';
 import { registerConversationOperations } from './core/conversations/operations.js';
-import { lateMailJoins } from './shared-place-mail.js';
+import { lateMailJoins, tellOwners } from './shared-place-mail.js';
 import type { WordsKey } from './core/conversations/words.js';
 
 export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey, questionAsker?:QuestionAsker) {
@@ -28,7 +31,13 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   const questionPolicy=conversationQuestionPolicy(db);
   // Who may answer an item is the household's rule (policy.ts, answers), asked here for the read side's
   // "can answer" and for the write alike.
-  const answers = (viewer: Viewer) => { const sharing = sharedSharing(db); return (item: { toKind: string; to: string }) => holds(rules.answers, viewer, item, sharing); };
+  const answers = (viewer: Viewer) => { const sharing = sharedSharing(db); return (item: typeof inboxTable.$inferSelect) => {
+    if(item.source==='thread'&&item.sourceId?.startsWith('guest-decision:')){
+      if(!item.agent||viewer.kind!=='member'||viewer.id!==item.to||!tellOwners(db,item.agent).includes(viewer.id))return false;
+      if(privateInboxDeadline(item,commsKeepDays(db))<=clock.now())return false;
+    }
+    return holds(rules.answers, viewer, item, sharing);
+  }; };
   const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)), answers, questionAsker);
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({

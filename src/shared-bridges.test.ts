@@ -2044,3 +2044,75 @@ it('delivers a held progress message promoted to the final answer once after the
  expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{send:input.id,part:0,postedId:'1794432000.000009'}]);
  expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed',run:'body'}]);
 });
+
+it.each(['yes', 'no'] as const)('returns only the %s decision to an outside Slack DM', async verdict => {
+ const f = fixture(() => true, true);
+ const daemon = f.root.services.bridges.daemon!;
+ await daemon.ready();
+ await daemon.idle();
+ const provider = f.request.getMockImplementation()!;
+ f.request.mockImplementation(async (url, options) => String(url).endsWith('conversations.info')
+  ? Response.json({ok:true, channel:{id:'DGUEST', context_team_id:'TWORK', is_im:true}})
+  : provider(url, options));
+ const event = {type:'message', channel:'DGUEST', channel_type:'im', user:'UUSER', text:'Private guest message', ts:'1794432000.000007'};
+ await f.transports.at(-1)!.receive({}, Buffer.from(JSON.stringify({type:'events_api', envelope_id:'guest-dm',
+  payload:{type:'event_callback', event_id:'guest-dm', team_id:'TWORK', event}})));
+ f.clock.advance(0);
+ await daemon.idle();
+ const incoming = f.db.select().from(bridgeIncoming).get()!;
+ expect(incoming).toMatchObject({state:'delivered', isDm:true});
+ const conversation = incoming.conversation!;
+ f.root.writes.run(() => {
+  f.db.update(jobs).set({conversation}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(conversation,'body');
+ });
+ const initialMail = new Set(f.db.select().from(inbox).all().map(row => row.id));
+ const scheduler = runnable(f);
+ const question = {to:'owner', answers:'yes-no', words:'May I prepare a quote?', ifYes:'Prepare a quote.', ifNo:'Wait.'};
+ const file = (q:Record<string,unknown>) => f.call('conversation','digest',{summary:'Asked for a quote decision.',question:q});
+ for(const extra of [{answers:'words'},{to:'stranger'},{refs:['private-ref']},{link:'https://example.invalid'},{waitsOnKind:'task',waitsOnId:'t-fixture'}]){
+  expect((await file({...question,...extra})).status).toBe(403);
+ }
+ const prior = await file(question);
+ expect(prior.status).toBe(200);
+ const ask = await file(question);
+ expect(ask.status).toBe(200);
+ const item = ask.body.value.item;
+ const ownerQuestion = f.db.select().from(inbox).where(eq(inbox.id,item)).get()!;
+ expect(ownerQuestion.to).toBe('owner');
+ expect(ownerQuestion.conversation).not.toBe(conversation);
+ f.root.writes.run(() => {
+  f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+ });
+ const answer = {item, answer:verdict, words:'Private owner explanation'};
+ expect(f.root.services.conversations.item(prior.body.value.item).state).toBe('resolved');
+ expect((await f.call('inbox','answer',{...answer,item:prior.body.value.item},token.owner)).status).not.toBe(200);
+ f.db.insert(members).values({id:'new-director',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.insert(memberAgents).values({member:'new-director',agent:'art'}).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'new-director')).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(200);
+ const mail = f.db.select().from(inbox).where(eq(inbox.conversation,conversation)).all();
+ const returned = mail.filter(row => row.toKind==='agent' && !initialMail.has(row.id));
+ expect(returned).toHaveLength(1);
+ expect(returned[0].words).toBe('Owner decision for digest '+ask.body.value.digest+' revision '+ask.body.value.revision+': '+verdict+'.');
+ expect(JSON.stringify(returned)).not.toContain(answer.words);
+ expect(f.db.$client.serialize().includes(Buffer.from(answer.words))).toBe(false);
+ expect(f.db.select().from(inbox).where(eq(inbox.conversation,ownerQuestion.conversation!)).all().filter(row => row.toKind==='agent' && row.state==='waiting')).toHaveLength(0);
+ const next = scheduler.admission(conversation);
+ expect(next.started).toBe(true);
+ expect(jobWord(f.db,next.job!)).toMatchObject({woke:'others',person:{kind:'outside',id:GUEST}});
+ f.root.writes.run(() => {
+  f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();
+  f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();
+ });
+ const delivery = await f.root.http.request('/api/conversation/take',{method:'POST',
+  headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const payload = await delivery.json();
+ expect(delivery.status).toBe(200);
+ expect(payload.value.items).toMatchObject([{id:returned[0].id,words:returned[0].words}]);
+ expect(JSON.stringify(payload)).not.toContain(answer.words);
+ expect((await f.call('conversation','confirm',{items:[returned[0].id]})).status).toBe(200);
+ expect(f.db.select().from(bridgeSends).all()).toHaveLength(0);
+});
