@@ -420,3 +420,34 @@ it('only admits programs for time schedules addressed to an agent', () => {
   expect(() => engine.set({ ...base, sourceKind: 'job', watches: 'job:one', program })).toThrow(/time/i);
   expect(() => engine.set({ ...base, toKind: 'person', to: 'jonathan', program })).toThrow(/agent/i);
 });
+
+it('cancels only the named occurrence, even when a second request arrives after the wake fired', () => {
+  const { engine, clock, base, row, items } = fixture();
+  const lane = engine.set({ ...base, times: '12:01,12:02,12:03', lifespan: 'until-stopped' });
+  const first = { agent: 'art', at: lane.nextDueAt! };
+  expect(() => engine.stop(lane.id, { agent: 'art' })).toThrow();
+  expect(() => engine.stop(lane.id, { ...first, agent: 'other' })).toThrow();
+  engine.pause('art');
+  engine.stop(lane.id, first);
+  expect(row(lane.id)).toMatchObject({ enabled:true, state:'held', nextDueAt:'2026-11-14T18:02:00.000Z' });
+  expect(() => engine.stop(lane.id, first)).toThrow();
+  const second = { agent: 'art', at: row(lane.id).nextDueAt! };
+  engine.resume('art');
+  clock.advance(120000);
+  expect(items()).toHaveLength(1);
+  expect(() => engine.stop(lane.id, second)).toThrow();
+  expect(row(lane.id)).toMatchObject({ enabled:true, nextDueAt:'2026-11-14T18:03:00.000Z' });
+  clock.advance(60000);
+  expect(items()).toHaveLength(2);
+});
+
+it('ends the last occurrence of a today schedule and a pending one-off', () => {
+  const { engine, base, row, clock, items } = fixture();
+  const today = engine.set({ ...base, times:'12:01', lifespan:'today' });
+  const once = engine.set(base);
+  engine.stop(today.id, { agent:'art', at:today.nextDueAt! });
+  engine.stop(once.id, { agent:'art' });
+  clock.advance(60001);
+  expect(items()).toEqual([]);
+  for (const id of [today.id, once.id]) expect(row(id)).toMatchObject({enabled:false,state:'stopped',nextDueAt:null});
+});

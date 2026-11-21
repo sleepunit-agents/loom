@@ -122,6 +122,24 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(output).toContain("Resumed fern's clock.");
     expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, request)).toBe(0);
     expect(db.select().from(triggers).all().at(-1)).toMatchObject({ file:'routines/check.md', note:'routines/check.md', instructions:null });
+    const fileWake = db.select().from(triggers).all().find(row => row.file === 'routines/check.md')!;
+    expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);
+    expect(await runTempoClient(['cancel',fileWake.id], io, request)).toBe(0);
+    const standing = app.services.tempo.triggers.set({ id:'cadence@fern', ownerKind:'agent', owner:'fern',
+      sourceKind:'time', times:'09:00', lifespan:'until-stopped', targetKind:'inbox', toKind:'agent', to:'fern', note:'Standing' });
+    output = '';
+    expect(await runTempoClient(['list'], io, request)).toBe(0);
+    const occurrence = output.split('\n').find(line => line.includes('Standing'))!.split(' ')[0];
+    expect(occurrence).toBe('cadence%40fern@' + standing.nextDueAt);
+    expect(await runTempoClient(['cancel','cadence%40fern'], io, request)).toBe(1);
+    attempts.length = 0;
+    expect(await runTempoClient(['cancel',occurrence], io, request)).toBe(0);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    const next = db.select().from(triggers).all().find(row => row.id === standing.id)!.nextDueAt;
+    expect(Date.parse(next!)).toBeGreaterThan(Date.parse(standing.nextDueAt!));
+    expect(await runTempoClient(['cancel',occurrence], io, request)).toBe(1);
+    expect(db.select().from(triggers).all().find(row => row.id === standing.id)?.nextDueAt).toBe(next);
     const beforeHost = db.select().from(triggers).all().length;
     expect(await runTempoClient(['in','1h','-p','<!-- house: local --> do work','--note','Fixture'], io, request)).toBe(1);
     expect(db.select().from(triggers).all()).toHaveLength(beforeHost);

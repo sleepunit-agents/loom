@@ -45,6 +45,7 @@ export interface TempoOperationOptions {
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }
 const id = z.object({ id: z.string().min(1) }).strict();
+const occurrence = z.object({ agent: z.string().min(1), at: z.string().datetime().optional() }).strict();
 const saved = z.object({ saved: z.literal(true) }).strict();
 /** `waits`: nothing was set or changed, and why, in words for the caller (an owner is asked first). */
 const waits = z.string().optional();
@@ -73,7 +74,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
-    name: `tempo.${action}`, input: id, output: saved,
+    name: `tempo.${action}`, input: id.extend({ occurrence: action === 'stop' ? occurrence.optional() : z.never().optional() }), output: saved,
     may: (viewer, input) => triggerAccess(viewer, input.id, action),
     run(ctx, input) {
       // On whose word the caller works matters for these as for setting: a body working for anybody but owners starts,
@@ -81,7 +82,9 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const held = options.heldRefusal?.(ctx.viewer, action); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
-      tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
+      if (action === 'stop') tempo.triggers.stop(input.id, input.occurrence);
+      else tempo.triggers[action](input.id);
+      if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));

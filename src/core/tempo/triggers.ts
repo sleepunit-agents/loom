@@ -175,9 +175,29 @@ export class TriggerEngine {
     });
     this.tick(); return this.get(id);
   }
-  stop(id: string): void {
+  stop(id: string, occurrence?: { agent: string; at?: string }): void {
     this.open();
-    this.db.transaction(() => { this.get(id); this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, id)).run(); this.log(id, 'stopped'); });
+    this.db.transaction(() => {
+      const trigger = this.get(id);
+      if (occurrence) {
+        if (!trigger.enabled || trigger.state === 'firing' || this.agent(trigger) !== occurrence.agent ||
+          (occurrence.at !== undefined && trigger.nextDueAt !== occurrence.at))
+          throw Error('This wake is no longer pending on that clock');
+        if (trigger.lifespan !== 'once') {
+          if (!occurrence.at || trigger.sourceKind !== 'time') throw Error('Select a pending occurrence of the schedule');
+          const after = Math.max(this.clock.now(), Date.parse(occurrence.at));
+          const next = this.expired(trigger) ? undefined : this.following(trigger, after);
+          this.log(id, 'cancelled', 'time:' + occurrence.at);
+          if (next !== undefined) {
+            this.db.update(triggers).set({ nextDueAt: new Date(next).toISOString(), changedAt: this.now() })
+              .where(eq(triggers.id, id)).run();
+            return;
+          }
+        }
+      }
+      this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      this.log(id, 'stopped');
+    });
     this.tick();
   }
   /** Turn a stopped trigger back on. Its next time is worked out from now: while it was off it had no times. */

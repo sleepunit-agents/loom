@@ -13,14 +13,14 @@ import type { IOStreams } from './io.js';
 const pageSize = 100;
 class DoorRefusal extends Error {}
 const pending = z.object({
-  id: z.string(), nextDueAt: z.string().datetime().nullable(), sourceKind: z.string(),
+  id: z.string(), nextDueAt: z.string().datetime().nullable(), sourceKind: z.string(), lifespan: z.string(),
   note: z.string(), state: z.string(), watches: z.string().nullable(),
 });
 const reply = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z.array(pending) }) });
 // Select through the daemon's visibility rules first. The agent argument selects a clock.
 function triggersQuery(pendingOnly: boolean) {
   const enabled = pendingOnly ? 'enabled:{eq:true},' : '';
-  const fields = pendingOnly ? 'id nextDueAt sourceKind note state watches' : 'id';
+  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : 'id';
   return `query WakeTriggers($agent:String!, $after:String!, $limit:Int!) {
     tempoTimezone
     triggers(where:{OR:[
@@ -154,15 +154,21 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
+  let cancel: { id: string; occurrence: { agent: string; at?: string } } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
   try {
     if (!agent) throw Error();
-    if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1), agent);
+    if (verb === 'cancel') {
+      if (argv.length !== 2) throw Error();
+      const [encoded, at, extra] = argv[1].split('@');
+      if (!encoded || extra !== undefined || (at !== undefined && !z.string().datetime().safeParse(at).success)) throw Error();
+      cancel = { id: decodeURIComponent(encoded), occurrence: { agent, at } };
+    } else if (verb === 'in' || verb === 'at') wake = wakeOptions(verb, argv.slice(1), agent);
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake --agent AGENT list | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake --agent AGENT list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -190,6 +196,12 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         await delay(100 * attempt);
       }
     };
+    if (cancel) {
+      const answer = await post('/api/tempo/stop', { id: randomUUID(), input: cancel });
+      z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
+      io.stdout('Cancelled ' + onOneLine(argv[1]) + '.\n');
+      return 0;
+    }
     if (changesClock) {
       const answer = await post('/api/tempo/' + verb, { id: randomUUID(), input: { agent } });
       z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
@@ -211,7 +223,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       }
       const result = await post('/api/tempo/set', { id: randomUUID(), input: { ...wake.input, times } });
       const { value } = z.object({ ok: z.literal(true), value: z.object({ id: z.string(), waits: z.string().optional() }) }).parse(result);
-      io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : value.id + ' will wake at ' + times) + '\n');
+      io.stdout(onOneLine(value.waits ? 'Awaiting approval: ' + value.waits : encodeURIComponent(value.id) + ' will wake at ' + times) + '\n');
       return 0;
     }
     if (options) { io.stdout(await readLog(read, agent, options)); return 0; }
@@ -233,13 +245,15 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     for (const row of rows) {
       const when = row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';
-      const line = `${row.id}  ${when}  [${row.state}]  ${row.note}`;
+      const key = encodeURIComponent(row.id) + (row.lifespan !== 'once' && row.nextDueAt ? '@' + row.nextDueAt : '');
+      const line = `${key}  ${when}  [${row.state}]  ${row.note}`;
       io.stdout(onOneLine(line) + '\n');
     }
     if (!rows.length) io.stdout('No pending wakes.\n');
     return 0;
   } catch (error) {
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
+    else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
     else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');
     else io.stderr('Could not read ' + (verb === 'log' ? 'wake history' : 'pending wakes') + ' from Loom.\n');
