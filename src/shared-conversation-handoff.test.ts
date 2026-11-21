@@ -12,6 +12,7 @@ import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conve
 import * as s from './core/data/schema.js';
 import {harnesses} from './runtime/body-harnesses.js';
 import {roleRevision,eligibleModels} from './runtime/work-roles.js';
+import {Jobs} from './runtime/jobs.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
@@ -275,9 +276,9 @@ it('keeps equivalent role selectors stable and supports registered native harnes
  expect(eligibleModels(role,[native,{...native,harness:'custom'}],new Set(Object.keys(harnesses)))).toEqual([native]);
 });
 
-it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','scope-changed','origin-changed','worker-loss'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
+it.each(['success','failure','archive','transient','occupied','work-role','mixed-native','role-changed','assignment-removed','agent-removed','scope-changed','origin-changed','worker-loss','parent-retry'] as const)('delivers an owner-requested Codex handoff through its originating thread (%s)',async(mode)=>{
  const mixed=mode==='mixed-native';
- const roleMode=mixed||mode==='work-role'||mode==='role-changed'||mode==='agent-removed'||mode==='worker-loss';
+ const roleMode=mode==='parent-retry'||mixed||mode==='work-role'||mode==='role-changed'||mode==='agent-removed'||mode==='worker-loss';
  const f=await bodyFixture(clean,{workRoles:[{agent:'art',id:'research',description:'Compare the cited documents.',models:['reviewer']},
   {agent:'mark',id:'editing',description:'Check prose.',providers:['openai']}],modelRoles:()=>[
   {model:'first',provider:roleMode?'openai':'claude',harness:'claude',series:'first'},
@@ -348,6 +349,21 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(roleMode){
   expect((await (await f.call('handoff',request,'retry-role')).json()).value.conversation).toBe(child);
   expect((await f.call('handoff',{...request,role:'editing'},'reuse-id')).status).toBe(409);
+ }
+ if(mode==='parent-retry'){
+  db.update(s.inbox).set({job:'job'}).where(eq(s.inbox.conversation,f.thread.conversation)).run();
+  const successor=new Jobs(db,now).finish('job','box',1).retry!;
+  expect(successor.retryOf).toBe('job');
+  db.update(s.jobs).set({state:'running',box:'box'}).where(eq(s.jobs.id,successor.id)).run();
+  const token='body_'+'e'.repeat(64);
+  db.insert(s.tokens).values({fingerprint:credentialHash(token),kind:'agent',agent:'art',job:successor.id,label:'Retry',createdAt:now()}).run();
+  db.update(s.modelAccounts).set({hasRoom:false}).run();
+  const replay=await f.call('handoff',request,'after-parent-failure',token);
+  expect(replay.status).toBe(200);
+  expect((await replay.json()).value.conversation).toBe(child);
+  expect((await f.call('handoff',{...request,role:undefined,harness:'codex'},'different-selector',token)).status).toBe(409);
+  expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(1);
+  return;
  }
  const status=(conversation:string,token=bodyCredentials.body)=>f.call('handoffStatus',{conversation},'status',token);
  if(mode==='success'){
