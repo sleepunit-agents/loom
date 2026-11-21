@@ -90,11 +90,19 @@ it('keeps tool state after expiry and cannot restore erased private details on r
     writer.prepare("INSERT INTO comms_messages VALUES(?,1,'card','fern','step-edit',?,'run',?,null,?,?)")
       .run(thread.id, current, summary, JSON.stringify({ tool:'Edit', state:'done', exit:0 }), step);
     let opens = 0;
-    const run = () => importTextHistory({ archive, household:archive, destination, kind:'cards', sourceDays:2, now:() => current,
+    const run = (beforeCommit?: (check:(at:string)=>void)=>void) => importTextHistory({ archive, household:archive, destination, kind:'cards', beforeCommit, sourceDays:2, now:() => current,
       key:{ async open(bytes){ opens++; return bytes.toString(); }, async seal(){ throw Error('unexpected'); }, hash(){ throw Error('unexpected'); } } });
     expect(await run()).toEqual({inserted:1,total:1});
     const read = () => client.prepare('SELECT words, archived_step_words detail, card_state state FROM messages').get();
     expect(read()).toEqual({ words:summary, detail:step, state:'done' });
+    client.exec('SAVEPOINT combined');
+    const checks:Array<(at:string)=>void>=[];
+    await run(check=>checks.push(check));
+    expect(checks).toHaveLength(1);
+    expect(read()).toEqual({words:summary,detail:step,state:'done'});
+    checks[0]('2026-11-22T00:00:00.000Z');
+    expect(read()).toEqual({words:null,detail:null,state:'done'});
+    client.exec('ROLLBACK TO combined; RELEASE combined');
     client.exec('UPDATE messages SET archived_step_words=NULL');
     expect(await run()).toEqual({inserted:0,total:1});
     expect(read()).toEqual({ words:summary, detail:null, state:'done' });

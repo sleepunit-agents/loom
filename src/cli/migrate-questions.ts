@@ -93,6 +93,7 @@ export async function migrateComms(phase:'comms'|'archived-questions'|'comms-thr
         return 1;
       }
     }
+    const retentionChecks:Array<(at:string)=>void>=[];
     const phases = phase === 'comms' ? ['comms-text', 'comms-cards', 'comms-notices', 'archived-questions'] as const : [phase];
     const history = {
       'comms-text': {kind:'text', label:'Comms text messages'},
@@ -107,10 +108,12 @@ export async function migrateComms(phase:'comms'|'archived-questions'|'comms-thr
       for (const part of phases) {
         const result = part === 'archived-questions'
           ? await importArchivedQuestions(input)
-          : await importTextHistory({ ...input, kind: history[part].kind });
+          : await importTextHistory({ ...input, kind: history[part].kind, beforeCommit:check=>retentionChecks.push(check) });
         const label=part === 'archived-questions' ? 'archived questions' : history[part].label;
         reports.push(`Imported ${result.inserted} of ${result.total} ${label}.\n`);
       }
+      const commitTime=input.now();
+      for(const check of retentionChecks)check(commitTime);
       client.exec('COMMIT');
     } catch (error) {
       if(client.inTransaction) client.exec('ROLLBACK');

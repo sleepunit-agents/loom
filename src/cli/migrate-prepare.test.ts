@@ -31,6 +31,11 @@ it('builds an empty home with the original ownership and settings and refuses to
       expect(db.prepare('SELECT face_shape FROM agents WHERE id=?').pluck().get('fern')).toBe('drop');
       expect(db.prepare('SELECT count(*) FROM jobs').pluck().get()).toBe(0);
     }finally{db.close();}
+    save({...doc,github:null});
+    const noGithub=join(dir,'no-github');
+    expect(await run(noGithub)).toBe(0);
+    const blank=new Database(join(noGithub,'loom.db'),{readonly:true});
+    try {expect(blank.prepare('SELECT github_owner FROM household').pluck().get()).toBe('');} finally {blank.close();}
     const original=readFileSync(join(home,'comms.key'));
     expect(await run()).toBe(1);expect(readFileSync(join(home,'comms.key'))).toEqual(original);
   }finally{rmSync(dir,{recursive:true,force:true});}

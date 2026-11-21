@@ -26,6 +26,7 @@ const oldThread=z.object({id,conversation:id,agent:id,member:id,project:id.nulla
 
 interface HistoryInput {
   archive:ArchiveReader; household:ArchiveReader; destination:DataDatabase;
+  beforeCommit?: (check: (at:string)=>void)=>void;
   key:WordsKey; sourceDays:number; github?:string; kind?:'text'|'cards'|'notices'; now:()=>string;
 }
 
@@ -184,13 +185,17 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
         }
       }
     }
-    const finished=now();
-    if (firstDeadline<=Date.parse(finished)) for (const raw of text.iterate()) {
-      if (deleted.has((raw as {thread:string}).thread)) continue;
-      const row=oldText.parse(raw);
-      if (!kept(row,days,finished)) db.update(messages).set({words:null,archivedStepWords:null}).where(
-        and(eq(messages.thread,row.thread),eq(messages.seq,row.seq))).run();
-    }
+    const expireImportedWords=(finished:string)=>{
+      if(firstDeadline>Date.parse(finished))return;
+      for (const raw of text.iterate()) {
+        if (deleted.has((raw as {thread:string}).thread)) continue;
+        const row=oldText.parse(raw);
+        if (!kept(row,days,finished)) db.update(messages).set({words:null,archivedStepWords:null}).where(
+          and(eq(messages.thread,row.thread),eq(messages.seq,row.seq))).run();
+      }
+    };
+    if(input.beforeCommit)input.beforeCommit(expireImportedWords);
+    else expireImportedWords(now());
     return {inserted,total};
   });
 }

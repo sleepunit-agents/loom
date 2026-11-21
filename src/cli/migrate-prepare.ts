@@ -13,7 +13,7 @@ const member = z.object({person:householdId,role:z.enum(['owner','member']),agen
 const doc = z.object({
   v:z.literal(1), agents:z.array(householdId.regex(/^[a-z][a-z0-9-]{0,39}$/)).nonempty(), default:householdId.optional(),
   members:z.array(member).nonempty().optional(), owner:z.string().optional(), tz:z.string().default('UTC'),
-  github:z.string().optional(), comms_days:z.number().default(14), about:z.record(z.string(),z.string()).default({}),
+  github:z.string().nullish(), comms_days:z.number().default(14), about:z.record(z.string(),z.string()).default({}),
   marks:z.record(z.string(),z.object({bg:z.string(),fg:z.string()})).default({}),
   faces:z.record(z.string(),z.object({shape:agentInput.shape.faceShape.optional(),eyes:agentInput.shape.faceEyes.optional()})).default({}),
 });

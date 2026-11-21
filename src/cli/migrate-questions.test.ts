@@ -79,6 +79,12 @@ it('opens completed archive backups only while the destination is stopped', asyn
         .run('retired-fixture','old-conversation',thread.agent,thread.member,new Date().toISOString());
       late.pragma('journal_mode = WAL');
     } finally { late.close(); }
+    const seeded=new Database(join(home,'app.db'));
+    const checkpoint=Buffer.from('existing checkpoint fixture');
+    try {
+      seeded.prepare("INSERT INTO conversation_sessions(conversation,harness,session,files,bytes,started_at) VALUES(?,'codex','existing',?,?,?)")
+        .run(thread.conversation,checkpoint,checkpoint.length,'2026-01-01T00:00:00.000Z');
+    } finally { seeded.close(); }
     const combined = () => migrateComms('comms',['--source',source,'--home',home],{
       stdout:value=>{stdout+=value;},stderr:()=>{},
     });
@@ -93,6 +99,8 @@ it('opens completed archive backups only while the destination is stopped', asyn
       try {fixed.exec('DELETE FROM comms_asks');} finally {fixed.close();}
       expect(await combined()).toBe(0);
       expect(tombstone.get()).toBeDefined();
+      expect(inspect.prepare("SELECT session,files,bytes,started_at FROM conversation_sessions WHERE conversation=? AND harness='codex'").get(thread.conversation))
+        .toEqual({session:'existing',files:checkpoint,bytes:checkpoint.length,started_at:'2026-01-01T00:00:00.000Z'});
       expect(stdout).toContain('new deletion records: 1');
       expect(existsSync(join(source,'household.db-shm'))).toBe(false);
       expect(existsSync(join(source,'household.db-wal'))).toBe(false);
