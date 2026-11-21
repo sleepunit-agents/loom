@@ -44,9 +44,18 @@ export async function migrateComms(phase:'comms'|'archived-questions'|'comms-thr
     if(recogniseDataSchema(client)!==dataSchemaNumber)throw Error('upgrade the staged database first');
     client.pragma('foreign_keys = ON');
     const restoreThreads=()=>{
-      const recover=legacyThreadLookup(agent=>copySnapshot(join('agents',householdId.parse(agent),'memories.db')),
+      const agents=new Map<string,Database.Database>();
+      const agentSnapshot=(agent:string)=>{
+        const held=agents.get(agent);
+        if(held)return held;
+        const snapshot=copySnapshot(join('agents',householdId.parse(agent),'memories.db'));
+        agents.set(agent,snapshot);
+        return snapshot;
+      };
+      const recover=legacyThreadLookup(agentSnapshot,
         ()=>privateBytes(join(source,'comms.salt'),32));
-      const result=importThreads(household,dataDatabase(client),recover);
+      const result=importThreads(household,dataDatabase(client),recover,(agent,id)=>agentSnapshot(agent)
+        .prepare('SELECT started,last FROM conversations WHERE agent=? AND id=?').get(agent,id) as {started:string;last:string}|undefined);
       io.stdout(`Imported ${result.inserted} of ${result.total} Comms threads (new deletion records: ${result.tombstones}).\n`);
     }
     if(phase==='comms-threads'){restoreThreads();return 0;}
