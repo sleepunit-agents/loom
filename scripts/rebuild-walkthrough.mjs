@@ -235,7 +235,7 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-caution',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await approvalPreparedChanges({page,tile,app,example:report.example,out,clock}));}
   save();yield {phase:'prepared-changes',actions:safeReport(report.actions)};
-  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}
+  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out,open:openApp}));}
   save();yield {phase:'change-references',actions:safeReport(report.actions)};
   for await(const step of inboxActionSteps({page,tile:await openApp('Inbox'),app,example:report.example,out})){
    Object.assign(report.actions,step.actions);save();yield {phase:step.phase,answer:step.answer,actions:safeReport(report.actions)};

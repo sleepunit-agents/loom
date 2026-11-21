@@ -1,3 +1,5 @@
+import {browserRead} from './rebuild-conversation-visibility.mjs';
+import {selectExampleConversation} from './rebuild-conversation-actions.mjs';
 import {responseForAction} from './rebuild-response-capture.mjs';
 /** Fictitious source facts travel through the actual Changes sync/cache and UI.
  * There is no network call to GitHub and no merge of an external pull request. */
@@ -50,7 +52,7 @@ export async function changeActions({page,tile,app,example,out}){
 }
 
 /** The real composer creates a PR reference; the card opens the current tile. */
-export async function changeInline({page,tile,app,example,out}){
+export async function changeInline({page,tile,app,example,out,open}){
  const screenshot='action-changeInline.png';
  try{
   const words=`Review this fictitious pull request: ${example.change}.`;
@@ -59,6 +61,15 @@ export async function changeInline({page,tile,app,example,out}){
   if(await editor.inputValue()!==words)throw Error('Reference draft changed before Send');
   const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/comms/send'&&r.method()==='POST',()=>send.press('Enter'));
   const body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Reference message refused');
+  const sent=body.value;
+  if(sent.thread!==example.thread||!Number.isSafeInteger(sent.seq))throw Error('The send receipt did not identify a message in the example thread');
+  await page.reload();
+  await page.locator('.next-shell').waitFor();
+  tile=await open('Comms');
+  await selectExampleConversation(page,tile);
+  const {commsRefs}=await browserRead(page,'{commsRefs(thread:'+JSON.stringify(example.thread)+'){ref messageSeq}}');
+  const matching=commsRefs.filter(row=>row.ref===example.change);
+  if(matching.length!==1||matching[0].messageSeq!==sent.seq)throw Error('The reopened thread did not retain the mentioned change against the sent message');
   const title=app.services.changes.get(example.change).title;
   const work=tile.getByRole('region',{name:'Work in this conversation',exact:true});
   const toggle=work.getByRole('button',{name:/^Work ·/,expanded:false});
@@ -66,6 +77,8 @@ export async function changeInline({page,tile,app,example,out}){
   const card=work.getByRole('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   await card.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
   if(await card.getByRole('button',{name:'Yes, merge it',exact:true}).count())throw Error('Inline PR reference offers a merge action');
+  const cardScreenshot='action-conversationChangeCard.png';
+  await card.screenshot({path:join(out,cardScreenshot)});
   await card.getByRole('button',{name:'Open',exact:true}).click();
   const change=page.getByRole('region',{name:'Changes tile',exact:true});
   await change.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
@@ -75,6 +88,6 @@ export async function changeInline({page,tile,app,example,out}){
   await tasks.getByRole('heading',{name:'Compare garden pumps',exact:true}).waitFor({timeout:4000});
   await tasks.getByText('Pull requests',{exact:true}).waitFor();
   await tasks.getByRole('link',{name:'example-house/garden#12',exact:true}).waitFor();
-  await page.screenshot({path:join(out,screenshot),fullPage:true});return {changeInline:{ok:true,screenshot}};
- }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {changeInline:{ok:false,error:String(error),screenshot}};}
+  await page.screenshot({path:join(out,screenshot),fullPage:true});return {changeInline:{ok:true,screenshot},conversationChangeCard:{ok:true,screenshot:cardScreenshot,ref:example.change,messageSeq:sent.seq,reason:'After reload, the thread still linked the pull request to the sent message. Its card opened the matching Changes reader.'}};
+ }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {changeInline:{ok:false,error:String(error),screenshot},conversationChangeCard:{ok:false,error:String(error),screenshot}};}
 }
