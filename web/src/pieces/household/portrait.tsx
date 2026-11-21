@@ -1,3 +1,4 @@
+import { newId } from '../../data/id';
 import {useState,useRef,type FormEvent} from 'react';
 import {DOOR_REQUEST_BYTES} from '../../../../src/core/data/door-limit';
 import {manifestFromPixelLab} from '../../../../src/pixellab-manifest';
@@ -40,7 +41,7 @@ export function Portrait({agent,version,enabled}:{agent:string;version:string|nu
           reset();throw Error('The portrait changed while you were choosing files. Review it and choose the files again.');
         }
         const portrait=action==='remove'?null:await readPortrait(form);
-        request={id:crypto.randomUUID(),input:{agent,version,portrait}};
+        request={id:newId(),input:{agent,version,portrait}};
       }
       await memberOperation('household.setPortrait',request.input,request.id);
       reset();setMessage(request.input.portrait?'Animated portrait saved.':'Generated face restored.');
