@@ -490,6 +490,12 @@ export class TriggerEngine {
           stage = 'inbox';
           // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
           const did = this.effects.inbox(t, delivery, verdict ? verdict + '\n\n' + words : words);
+          if (did === 'stop' && t.parked) {
+            this.db.update(triggers).set({enabled:false,state:'stopped',nextDueAt:null,changedAt:this.now()})
+              .where(eq(triggers.id,t.id)).run();
+            this.log(t.id,'stopped',eventId);
+            return;
+          }
           if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;

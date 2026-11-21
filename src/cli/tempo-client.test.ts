@@ -148,6 +148,9 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     });
     const resumed = db.select().from(inbox).all().filter(row => row.sourceId?.endsWith(':park:resume'));
     expect(resumed.map(row => [row.to,row.words])).toEqual([['fern','Request a-report is denied.\n\nCheck the result']]);
+    const revoked = db.select().from(triggers).all().find(row=>row.watches==='park-approval:a-restricted')!;
+    expect(revoked).toMatchObject({state:'stopped',lastFiredAt:null,nextDueAt:null});
+    expect(db.select().from(triggerLog).all().filter(row=>row.trigger===revoked.id).map(row=>row.event)).not.toContain('fired');
     const insert = sql.prepare("INSERT INTO trigger_log(trigger,event,at,note) VALUES ('fern','held',?,?)");
     sql.transaction(()=>{for (let i=0;i<2001;i++) insert.run(at,'bulk event '+i);})();
     for (const all of [false,true]) {
@@ -224,6 +227,14 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, request)).toBe(0);
     expect(db.select().from(triggers).all().at(-1)).toMatchObject({ file:'routines/check.md', note:'routines/check.md', instructions:null });
     const fileWake = db.select().from(triggers).all().find(row => row.file === 'routines/check.md')!;
+    output = '';
+    expect(await runTempoClient(['list'], io, request)).toBe(0);
+    const timedKey = output.split('\n').find(line=>line.startsWith(fileWake.id+'@'))!.split(' ')[0];
+    expect(timedKey).toBe(fileWake.id+'@'+fileWake.nextDueAt);
+    app.services.tempo.triggers.edit(fileWake.id,{times:new Date(Date.parse(fileWake.nextDueAt!)+60000).toISOString()},
+      {kind:'member',id:'director'});
+    expect(await runTempoClient(['cancel',timedKey], io, request)).toBe(1);
+    expect(db.select().from(triggers).all().find(row=>row.id===fileWake.id)?.enabled).toBe(true);
     expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);
     expect(await runTempoClient(['cancel',fileWake.id], io, request)).toBe(0);
     const standing = app.services.tempo.triggers.set({ id:'cadence@fern', ownerKind:'agent', owner:'fern',
@@ -241,6 +252,9 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(Date.parse(next!)).toBeGreaterThan(Date.parse(standing.nextDueAt!));
     expect(await runTempoClient(['cancel',occurrence], io, request)).toBe(1);
     expect(db.select().from(triggers).all().find(row => row.id === standing.id)?.nextDueAt).toBe(next);
+    expect(await runTempoClient(['schedule','set','cadence%40fern','--at','08:30','-p','Check'], io, request)).toBe(0);
+    expect(db.select().from(triggers).all().find(row=>row.id===standing.id)?.times).toBe('08:30');
+    expect(await runTempoClient(['schedule','set','missing%40fern','--at','08:30','-p','Check'], io, request)).toBe(2);
     const automatic = { ...io, env: { LOOM_URL: io.env.LOOM_URL, LOOM_TOKEN_FILE: file } };
     const beforeDefault = db.select().from(triggers).all().length;
     expect(await runTempoClient(['in','1h','-p','Work on it','--note','Auto'], automatic, request)).toBe(2);

@@ -127,7 +127,7 @@ async function listLanes(read: Read, displayId: (id:string) => string, agent?: s
       const size = row.file ? 'file ' + row.file : row.characters + ' chars';
       lines.push(onOneLine(`${displayId(row.id).padEnd(22)} ${row.agent.padEnd(8)} ${row.times} ${row.days || 'daily'}  ${size}  — ${row.note}`));
     }
-    if (rows.length < pageSize) break;
+    if (!rows.length) break;
   }
   return (lines.join('\n') || 'no loom lanes') + '\n';
 }
@@ -153,8 +153,8 @@ function scheduleOptions(args: string[]) {
     at: {type:'string'}, days: {type:'string'}, prompt: {type:'string', short:'p'},
     'prompt-file': {type:'string', short:'f'}, note: {type:'string'}, model: {type:'string'},
   } });
-  const [name] = positionals;
-  if (positionals.length !== 1 || !/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw Error();
+  if (positionals.length !== 1 || !positionals[0]) throw Error();
+  const name = decodeURIComponent(positionals[0]);
   const times = values.at?.split(',').map(t => t.trim());
   if (!times || times.some(t => !HH_MM.test(t))) throw Error();
   const days = values.days?.toLowerCase() || null;
@@ -407,6 +407,10 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
           if (!value.saved && !value.waits) throw Error();
           waits = value.waits;
         } else {
+          if (!/^[a-z][a-z0-9-]{0,39}$/.test(scheduleSet.name)) {
+            io.stderr('A new schedule name needs 1–40 lowercase letters, digits or hyphens, starting with a letter.\n');
+            return 2;
+          }
           const result = await post('/api/tempo/set', {id:key, input:{scheduleName, ownerKind:'agent', owner:agent,
             toKind:'agent', to:agent, sourceKind:'time', targetKind:'inbox', lifespan:'until-stopped', ...change}});
           waits = z.object({ok:z.literal(true), value:z.object({id:z.string(),waits:z.string().optional()})}).parse(result).value.waits;
@@ -477,7 +481,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const when = parked && row.nextDueAt ? 'waiting for ' + parked[1] + ' until ' + format.format(new Date(row.nextDueAt))
         : row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';
-      const key = displayId(row.id) + (row.lifespan !== 'once' && row.nextDueAt ? '@' + row.nextDueAt : '');
+      const key = displayId(row.id) + (row.nextDueAt ? '@' + row.nextDueAt : '');
       const line = `${key}  ${when}  [${row.state}]  ${row.note}`;
       io.stdout(onOneLine(line) + '\n');
     }
