@@ -296,6 +296,10 @@ export async function* walkthroughSteps(output) {
   } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
   save();yield {phase:'migrations',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
+  try {
+   const {writeReceiptEvidence}=await import('./rebuild-write-receipt.mjs');
+   report.actions.dataWriteReceipt=await writeReceiptEvidence();
+  } catch(error) { report.actions.dataWriteReceipt={ok:false,error:String(error)}; }
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await homeReadGrowth({page,app,subscriptions,out,sharing:report.actions.dataSharingSQL}));
   save();yield {phase:'home-read-growth',actions:safeReport(report.actions)};
