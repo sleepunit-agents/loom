@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { datedWake, HH_MM } from '../core/tempo/calendar.js';
 import { laneFile } from '../core/tempo/lane-file.js';
@@ -46,6 +46,39 @@ const deliveryReply = z.object({ data: z.object({ tempoDeliveries: z.array(z.obj
   event: z.number().int(), kind: z.enum(['program','mail']), conversation: z.string().nullable(), job: z.string().nullable(),
 })) }) }).strict();
 type Read = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+
+const lanePage = z.object({ data: z.object({ tempoLanes: z.array(z.object({
+  id: z.string(), agent: z.string(), times: z.string(), days: z.string().nullable(), note: z.string(),
+  file: z.string().nullable(), characters: z.number().int(),
+})) }) }).strict();
+const laneText = z.object({ data: z.object({ tempoLaneText: z.union([
+  z.object({ text: z.string(), digest: z.string() }), z.object({ file: z.string() }),
+]).nullable() }) }).strict();
+
+async function readLane(read: Read, name?: string): Promise<string> {
+  if (name !== undefined) {
+    const answer = await read('query($id:String!){tempoLaneText(id:$id)}', { id: name });
+    const row = laneText.parse(answer).data.tempoLaneText;
+    if (!row) throw new DoorRefusal('No readable stored lane with that name.');
+    if ('file' in row) throw new DoorRefusal('This lane reads its instructions at firing from ' + onOneLine(row.file) + '.');
+    if (createHash('sha256').update(row.text).digest('hex') !== row.digest) throw new DoorRefusal('Could not return the exact lane text.');
+    return row.text.endsWith('\n') ? row.text : row.text + '\n';
+  }
+  const lines: string[] = [];
+  let after = '';
+  for (;;) {
+    const answer = await read('query($after:String!){tempoLanes(after:$after)}', { after });
+    const rows = lanePage.parse(answer).data.tempoLanes;
+    for (const row of rows) {
+      if (row.id <= after) throw Error();
+      after = row.id;
+      const size = row.file ? 'file ' + row.file : row.characters + ' chars';
+      lines.push(onOneLine(`${encodeURIComponent(row.id).padEnd(22)} ${row.agent.padEnd(8)} ${row.times} ${row.days || 'daily'}  ${size}  — ${row.note}`));
+    }
+    if (rows.length < pageSize) break;
+  }
+  return (lines.join('\n') || 'no loom lanes') + '\n';
+}
 
 function logOptions(args: string[]) {
   const { values } = parseArgs({ args, options: {
@@ -159,7 +192,9 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   let options: ReturnType<typeof logOptions> | undefined;
   try {
     if (agent === '') throw Error();
-    if (verb === 'cancel') {
+    if (verb === 'lane') {
+      if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
+    } else if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
       const [encoded, at, extra] = argv[1].split('@');
       if (!encoded || extra !== undefined || (at !== undefined && !z.string().datetime().safeParse(at).success)) throw Error();
@@ -168,7 +203,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -196,6 +231,11 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         await delay(100 * attempt);
       }
     };
+    const read: Read = (query, variables) => post('/graphql', { query, variables });
+    if (verb === 'lane') {
+      io.stdout(await readLane(read, argv[1] === 'text' ? decodeURIComponent(argv[2]) : undefined));
+      return 0;
+    }
     if (!agent) {
       const result = await post('/graphql', { query: '{tempoDefaultAgent}' });
       const choice = z.object({ data: z.object({ tempoDefaultAgent: z.string().min(1).nullable() }) }).strict().parse(result);
@@ -217,7 +257,6 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       io.stdout((verb === 'pause' ? 'Paused ' : 'Resumed ') + onOneLine(agent) + "'s clock.\n");
       return 0;
     }
-    const read: Read = (query, variables) => post('/graphql', { query, variables });
     if (wake) {
       let times = wake.times;
       if (times === undefined) {
@@ -262,6 +301,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     return 0;
   } catch (error) {
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
+    else if (verb === 'lane') io.stderr('Could not read the household lane.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');
     else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');

@@ -178,3 +178,48 @@ it('uses household calendar days across DST for dated and tomorrow wakes', () =>
   expect(() => datedWake('2026-02-30','10:30',before,zone)).toThrow();
   expect(new Date(datedWake('2026-11-01','01:30:45',before,zone)).toISOString()).toBe('2026-11-01T06:30:45.000Z');
 });
+
+it('lists named household lanes across pages and returns stored UTF-8 instructions with legacy newline handling', async () => {
+  const sql = new Database(':memory:'), db = createDataSchema(sql), clock = new FakeClock();
+  const at = new Date(clock.now()).toISOString(), folder = mkdtempSync(join(tmpdir(), 'loom-lanes-'));
+  const file = join(folder, 'token'), owner = randomUUID(), agent = randomUUID();
+  for (const id of ['fern', 'birch']) {
+    db.insert(agents).values({id,about:'',markFg:'#fff',markBg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+  }
+  db.insert(members).values({ id:'director', role:'owner', joinedAt:at }).run();
+  db.insert(tokens).values([
+    {fingerprint:createHash('sha256').update(owner).digest('hex'),kind:'owner',label:'fixture',member:'director',createdAt:at},
+    {fingerprint:createHash('sha256').update(agent).digest('hex'),kind:'agent',label:'agent fixture',agent:'fern',createdAt:at},
+  ]).run();
+  const words = '  Make a note 🎛️\r\n'.repeat(1024) + '\n';
+  const lane = {ownerKind:'household',sourceKind:'time',times:'03:13',lifespan:'until-stopped',targetKind:'inbox',
+    toKind:'agent',to:'fern',instructions:words,note:'Watch',enabled:true,state:'standing',createdAt:at,changedAt:at} as const;
+  for (let i = 0; i < 103; i++) db.insert(triggers).values({...lane,id:'lane-'+i}).run();
+  db.insert(triggers).values({...lane,id:'other',to:'birch',instructions:'No final newline'}).run();
+  db.insert(triggers).values({...lane,id:'private-token',instructions:agent}).run();
+  db.insert(triggers).values({...lane,id:'off',enabled:false,state:'stopped'}).run();
+  const app = sharedRoot({db,clock,originAllowed:()=>true});
+  try {
+    const run = async (credential:string, ...args:string[]) => {
+      writeFileSync(file,credential,{mode:0o600});
+      let out = '', err = '';
+      const code = await runTempoClient(args, {env:{LOOM_URL:'http://localhost',LOOM_TOKEN_FILE:file},
+        stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>{out+=s;},stderr:s=>{err+=s;}},
+        (url,init)=>Promise.resolve(app.http.request(String(url),init)));
+      return {code,out,err};
+    };
+    const listed = await run(owner,'lane','list');
+    expect(listed.code,listed.err).toBe(0);
+    const names = listed.out.trimEnd().split('\n').map(line=>line.split(' ')[0]);
+    expect(names).toHaveLength(105);
+    expect(new Set(names).size).toBe(105);
+    expect(names).toContain('other');
+    expect(names).not.toContain('off');
+    expect(await run(owner,'lane','text','other')).toMatchObject({code:0,out:'No final newline\n'});
+    expect(await run(agent,'lane','text','lane-102')).toMatchObject({code:0,out:words});
+    expect(await run(agent,'--agent=birch','lane','text','other')).toMatchObject({code:1,out:''});
+    expect(await run(agent,'lane','text','private-token')).toMatchObject({code:1,out:''});
+  } finally {
+    await app.close(); sql.close(); rmSync(folder,{recursive:true,force:true});
+  }
+});
