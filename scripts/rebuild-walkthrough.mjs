@@ -45,6 +45,7 @@ import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth}
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskJobs} from './rebuild-desk-jobs.mjs';
 import {deskTicker} from './rebuild-desk-ticker.mjs';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
@@ -242,6 +243,8 @@ export async function* walkthroughSteps(output) {
   }
   report.actions.deskWaiting=await deskWaiting({page,tile:await openApp('Inbox'),app,example:report.example,out});
   save();yield {phase:'desk-waiting',actions:safeReport(report.actions)};
+  report.actions.deskJobs=await deskJobs({page,app,example:report.example,out});
+  save();yield {phase:'desk-jobs',actions:safeReport(report.actions)};
   report.actions.deskTicker=await deskTicker({page,app,out});
   save();yield {phase:'desk-ticker',actions:safeReport(report.actions)};
   phase='conversation actions';

@@ -91,6 +91,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-waiting');
   expect(step.value.actions.deskWaiting,JSON.stringify(step.value.actions.deskWaiting)).toMatchObject({ok:true});
  });
+ it('shows a live Codex session on its agent’s rail card until it ends',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-jobs');
+  expect(step.value.actions.deskJobs,JSON.stringify(step.value.actions.deskJobs)).toMatchObject({ok:true});
+ });
  it('tracks the counts on the desktop ticker as work moves',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-ticker');
   expect(step.value.actions.deskTicker,JSON.stringify(step.value.actions.deskTicker)).toMatchObject({ok:true});
