@@ -85,7 +85,11 @@
     {
       "id": "desk-011",
       "promise": "Each member keeps their own look and switches.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "memberAppearance"
+      }
     },
     {
       "id": "desk-012",
@@ -127,7 +131,11 @@
     {
       "id": "desk-017",
       "promise": "b Your own look. The look, the desk background and the switches belong to each member.",
-      "source": "docs/how-it-works/site/desk.html#see-h"
+      "source": "docs/how-it-works/site/desk.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "memberAppearance"
+      }
     },
     {
       "id": "desk-018",
