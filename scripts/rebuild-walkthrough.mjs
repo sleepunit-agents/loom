@@ -39,7 +39,7 @@ import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
-import {prepareRetention} from './rebuild-retention.mjs';
+import {prepareRetention,shortRetention} from './rebuild-retention.mjs';
 import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
@@ -134,6 +134,8 @@ export async function* walkthroughSteps(output) {
   yield {phase:'ready',report:safeReport(report)};
   report.actions={...report.actions,conversationRetention:await retention({page,clock,out})};
   save();yield {phase:'retention',actions:safeReport(report.actions)};
+  report.actions.conversationShortRetention=await shortRetention({browser,home:join(parent,'short-retention'),out});
+  save();yield {phase:'short-retention',actions:safeReport(report.actions)};
   {const tile=await openApp('Sharing');await tile.getByText('Example garden',{exact:true}).first().waitFor();report.actions.dataSharingSQL=await sharingGrowth({page,app,subscriptions,out});await tile.getByRole('button',{name:'Close Sharing',exact:true}).click();await tile.waitFor({state:'detached'});}
   save();yield {phase:'data-growth',actions:safeReport(report.actions)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
