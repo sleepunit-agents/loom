@@ -14,7 +14,7 @@ import { secretImportOptions } from '../pieces/secrets/import-source.js';
 import { parseHouseholdDocument } from '../household.js';
 import { readRuntimeInventory, runtimeImportOptions } from '../pieces/runtime/import-source.js';
 import { runtimeMigrationSources } from './migration-runtime.js';
-import { readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
+import { noteAttachmentPath, readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
 import { createMigrationRegistry, snapshotPath } from './migration-registry.js';
 
 const slug = z.string().max(80).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -83,7 +83,8 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
     const fd = openSync(join(root, file.path), 'r');
     const header = Buffer.alloc(16);
     try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
-    const kind = !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
+    const attachment = file.path.startsWith('home/') && noteAttachmentPath(file.path.slice(5));
+    const kind = !attachment && !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
     if (kind !== file.kind) throw Error('Snapshot kind disagrees with file contents');
   }
 }

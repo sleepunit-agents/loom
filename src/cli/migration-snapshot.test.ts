@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, renameSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -486,4 +487,26 @@ test('refuses aggregate document growth after inventory before completion',async
  });
  await expect(createSnapshot(f.home,f.to,undefined,{approvals,'bridges-document':documents})).rejects.toThrow('data copy failed');
  expect(existsSync(join(f.to,'manifest.json'))).toBe(false);
+});
+
+test('captures authored memory pages and byte-exact SQLite attachments for a rebuilt home', async () => {
+  const { home, root, to } = fixture(), agent = join(home, 'agents', 'fern');
+  mkdirSync(join(agent, 'roles'), {recursive:true});
+  writeFileSync(join(agent, 'roles', 'garden.md'), 'Garden');
+  symlinkSync('roles/garden.md', join(agent, 'IDENTITY.md'));
+  const sqlite = join(root, 'source.db'), db = new Database(sqlite);
+  db.exec('create table plants(id integer)'); db.close();
+  const bytes = readFileSync(sqlite), hash = createHash('sha256').update(bytes).digest('hex');
+  const prefix = join(agent, 'note-files', hash.slice(0,2));
+  mkdirSync(prefix, {recursive:true}); writeFileSync(join(prefix, hash), bytes);
+  const messages: string[] = [];
+  expect(await migrateSnapshot(['--from',home,'--to',to,'--household-memory'], {
+    stdin: Readable.from([]), stdinIsTTY: false, env: {}, stdout: text => messages.push(text), stderr: text => messages.push(text)
+  })).toBe(0);
+  const manifest = readSnapshot(to);
+  expect(readFileSync(join(to,'home/agents/fern/IDENTITY.md'),'utf8')).toBe('Garden');
+  expect(manifest.files.find(row => row.path.endsWith(hash))).toMatchObject({kind:'file', sha256:hash});
+  expect(manifest.followed).toContainEqual({path:'agents/fern/IDENTITY.md', realPath:'agents/fern/roles/garden.md'});
+  rmSync(join(agent, 'IDENTITY.md')); symlinkSync('../../comms.key', join(agent,'IDENTITY.md'));
+  await expect(createSnapshot(home,join(root,'refused'),undefined,{},true)).rejects.toThrow(/identity pages/);
 });

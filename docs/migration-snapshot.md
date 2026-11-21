@@ -127,3 +127,10 @@ SIGKILL can leave a private temporary image; the coordinator may remove such
 images only after confirming no migration process owns them and under the same
 backup-retention authorization as other migration artifacts. Structured JSON
 records still require parsing; opaque archives are never parsed as JSON.
+
+
+For a stopped household being staged into the rebuilt home, add
+`--household-memory` to `loom migrate snapshot` or its dry run. It captures
+agent identity and reference pages, Notes databases and attachment bytes, and
+shared Knowledge and People databases. Content-addressed attachments retain
+their exact bytes, including attachments that contain a SQLite database.
