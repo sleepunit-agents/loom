@@ -242,8 +242,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // returns to current query facts; navigation alone is not a successful send.
   clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
-  const compose=b.getByRole('region',{name:`Message ${displayName}`,exact:true}),draftWords='Disposable shared desk composer message';
-  await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
+  const compose=b.getByRole('region',{name:`${displayName} card`,exact:true}),draftWords='Disposable shared desk composer message';
+  await compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).fill(draftWords);
   const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
   const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
   await compose.getByRole('button',{name:'Send',exact:true}).click();
@@ -252,8 +252,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread.replace(/^th:/,'')));
   const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
   expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
-  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
-  await expect.poll(()=>b.getByRole('region',{name:`${displayName} conversations`,exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
+  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).inputValue()).toBe('');
+  await expect.poll(()=>b.getByRole('navigation',{name:`${displayName} conversations`,exact:true}).locator(`a[href="/p/comms-preview/thread/${encodeURIComponent(openResult.value.thread.replace(/^th:/,''))}"]`).count()).toBe(1);
   // A supporting touch browser gets navigation feedback only when enabled.
   const vibrations=()=>b.evaluate(()=>(window as typeof window&{__deskVibrations:number}).__deskVibrations);
   await set({haptics:false},'haptics-off');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('off');
