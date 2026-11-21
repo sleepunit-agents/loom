@@ -1,3 +1,4 @@
+import {evidenceExpiry,personEvidenceRows} from '../../backends/people.js';
 import {accountColumns,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
@@ -20,6 +21,7 @@ export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
  outsideAccount(viewer:Viewer,slug:string,platform:AccountPlatform):{workspace:string;user:string}|undefined;
  outsideName(viewer:Viewer, platform:AccountPlatform, workspace:string, user:string):string|undefined;
+ ownEvidence(viewer:Viewer,slug:string,since:string|null):PersonEvidence[]|null;
  nextDeadline():number|undefined;
  read(id:string,viewer:Viewer):PersonRecord|undefined;
  ids(scope?:string):string[];
@@ -210,7 +212,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       }}catch{complete=false;}
       try{if(has(db,'memories'))for(const raw of db.prepare("SELECT expires_at,metadata FROM memories WHERE archived=0 AND category IN ('user','feedback') AND expires_at IS NOT NULL").iterate()){
         const row=raw as {expires_at:string;metadata:string|null};
-        try{if(typeof JSON.parse(row.metadata??'{}').person==='string')add(Date.parse(row.expires_at));}catch{/* Invalid metadata has no person link. */}
+        try{if(typeof JSON.parse(row.metadata??'{}').person==='string')add(evidenceExpiry(row.expires_at));}catch{/* Invalid metadata has no person link. */}
       }}catch{complete=false;}
       if(complete&&version!==undefined)deadlines.set(db,{version,measuredAt:now,next:sourceNext});
       else deadlines.delete(db);
@@ -247,6 +249,12 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
         const matches=accountHolders(db,platform,workspace,user);
         return matches.length===1 ? matches[0]?.name : undefined;
       } catch { return undefined; } // An unavailable directory cannot supply a held name.
+    },
+    ownEvidence(viewer,slug,since) {
+      if (viewer.kind !== 'agent' || viewer.id === 'commons' || !maySee(viewer,{type:'memory',agent:viewer.id},sharing())) return null;
+      const db = sources.get(viewer.id);
+      available(viewer.id);
+      return db ? personEvidenceRows(db,slug,since,options.now()) : null;
     },
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer,given?:Sharing) {

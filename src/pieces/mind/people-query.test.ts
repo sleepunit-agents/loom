@@ -265,3 +265,37 @@ it('reuses the deadline of each unchanged read-only file until its next boundary
  now=start+1001;expect(reader.nextDeadline()).toBeUndefined();
  now=start;expect(reader.nextDeadline()).toBe(start+501);
 });
+
+it('reads every current tagged memory in the calling agent’s source before a card exists',async()=>{
+ const dir=home(),a=store(join(dir,'private.db')),other=store(join(dir,'other.db'));
+ for(const source of [a,other])source.database.exec('CREATE TABLE memories(created TEXT,category TEXT,title TEXT,content TEXT,metadata TEXT,archived INTEGER,expires_at TEXT)');
+ const insert=a.database.prepare('INSERT INTO memories VALUES(?,?,?,?,?,?,?)');
+ for(let i=45;i>=1;i--)insert.run(new Date(Date.UTC(2026,10,1,0,i)).toISOString(),i%2?'feedback':'user','row '+i,'example','{"person":"friend"}',0,null);
+ const when='2026-11-02T00:00:00Z';
+ for(const [category,meta,archived,expiry] of [['episode','{"person":"friend"}',0,null],['user','{"person":"else"}',0,null],['feedback','{"person":"friend"}',1,null],['user','{"person":"friend"}',0,when]]){
+  insert.run(when,category,'excluded','example',meta,archived,expiry);
+ }
+ const f=fixture(join(dir,'directory.db'),[{agent:'fiction',memories:a.database.name},{agent:'other',memories:other.database.name}]);
+ const viewer={kind:'agent',id:'fiction'} as const,query='{memoryOwnPersonEvidence(slug:"friend"){title}}';
+ const titles=Array.from({length:45},(_,i)=>({title:'row '+(i+1)}));
+ expect(await f.query(query,viewer)).toEqual({data:{memoryOwnPersonEvidence:titles}});
+ expect(await f.query('{memoryOwnPersonEvidence(slug:"friend",since:"2026-11-01T00:43:00Z"){title}}',viewer)).toEqual({data:{memoryOwnPersonEvidence:titles.slice(43)}});
+ expect(await f.query(query,{kind:'agent',id:'other'})).toEqual({data:{memoryOwnPersonEvidence:[]}});
+ expect(await f.query(query,{kind:'member',id:'owner'})).toEqual({data:{memoryOwnPersonEvidence:null}});
+ for(const times of ['2026-11-01T00:00:00.0004Z','2026-11-01T01:00:00.0002+01:00'])insert.run(times,'user',times,'example','{"person":"early"}',0,null);
+ expect(await f.query('{memoryOwnPersonEvidence(slug:"early",since:"2026-11-01T00:00:00.0001Z"){title}}',viewer)).toEqual({data:{memoryOwnPersonEvidence:[
+  {title:'2026-11-01T01:00:00.0002+01:00'},{title:'2026-11-01T00:00:00.0004Z'}
+ ]}});
+ const expires='2026-11-14T18:00:00.0004Z';
+ insert.run(when,'user','fractional expiry','example','{"person":"expiry"}',0,expires);
+ const expiring='{memoryOwnPersonEvidence(slug:"expiry"){title}}';
+ expect(await f.query(expiring,viewer)).toEqual({data:{memoryOwnPersonEvidence:[{title:'fractional expiry'}]}});
+ f.at(Date.parse(expires)+1);
+ expect(await f.query(expiring,viewer)).toEqual({data:{memoryOwnPersonEvidence:[]}});
+ const working={...viewer,workingFor:'member'};
+ expect(await f.query(query,working)).toEqual({data:{memoryOwnPersonEvidence:titles}});
+ f.sharing.members.member.agents=[];
+ expect(await f.query(query,working)).toEqual({data:{memoryOwnPersonEvidence:null}});
+ other.database.exec('DROP TABLE memories');
+ expect((await f.query(query,{kind:'agent',id:'other'})).errors?.[0].message).toBe('People are unavailable');
+});

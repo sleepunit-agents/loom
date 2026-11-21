@@ -151,6 +151,39 @@ export interface PersonEvidence {
   content: string;
 }
 
+/** Date.parse truncates fractional seconds to milliseconds. Imported ISO times may carry more digits. */
+function evidenceTime(value: string) {
+  const millis = Date.parse(value);
+  const fraction = /[T ]\d{2}:\d{2}:\d{2}\.(\d+)/.exec(value)?.[1] ?? '';
+  return {millis, remainder: fraction.slice(3).replace(/0+$/, '')};
+}
+function compareEvidenceTime(a: ReturnType<typeof evidenceTime>, b: ReturnType<typeof evidenceTime>) {
+  return a.millis - b.millis || (a.remainder < b.remainder ? -1 : a.remainder > b.remainder ? 1 : 0);
+}
+
+/** The first millisecond on the household clock when an imported timestamp has passed. */
+export function evidenceExpiry(value: string) {
+  const {millis, remainder} = evidenceTime(value);
+  return millis + (remainder ? 1 : 0);
+}
+
+/** Read the tagged memories themselves, including evidence collected before a card exists. */
+export function personEvidenceRows(db: Database, slug: string, since: string | null, now: number): PersonEvidence[] {
+  const cutoff = since === null ? undefined : evidenceTime(since);
+  const rows = db.prepare(`
+    SELECT created, category, title, content, expires_at FROM memories
+    WHERE json_valid(metadata) AND json_extract(metadata, '$.person') = ?
+      AND category IN ('user', 'feedback') AND archived = 0
+      AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))
+    ORDER BY rowid
+  `).all(slug, new Date(now - 1).toISOString()) as Array<PersonEvidence & {expires_at:string|null}>;
+  return rows.filter(row => row.expires_at === null || evidenceExpiry(row.expires_at) > now)
+    .map(({expires_at, ...row}) => ({row, time: evidenceTime(row.created)}))
+    .filter(({time}) => !cutoff || compareEvidenceTime(time, cutoff) > 0)
+    .sort((a,b) => compareEvidenceTime(a.time, b.time))
+    .map(({row}) => row);
+}
+
 export interface PersonListEntry {
   slug: string;
   name: string;
@@ -680,13 +713,7 @@ export class PeopleStore {
    */
   evidence(slug: string, since: string | null): PersonEvidence[] {
     if (!hasTable(this.db, 'memories')) return [];
-    const nowIso = new Date(this.now()).toISOString();
-    return this.db.prepare(
-      `SELECT created, category, title, content FROM memories
-       WHERE json_extract(metadata, '$.person') = ? AND category IN ('user', 'feedback') AND archived = 0
-         AND (expires_at IS NULL OR expires_at > ?) AND (? IS NULL OR created > ?)
-       ORDER BY created`,
-    ).all(slug, nowIso, since, since) as PersonEvidence[];
+    return personEvidenceRows(this.db, slug, since, this.now());
   }
 
   /** This database's `user` memories about a person, newer than `since` (all of them when null). */
