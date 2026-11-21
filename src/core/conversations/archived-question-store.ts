@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { archivedQuestions, conversations, threads } from '../data/schema.js';
 import type { DataDatabase } from '../data/database.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import type { WordsKey } from './words.js';
 import { archivedQuestionBody } from './archived-questions.js';
 
@@ -61,6 +61,8 @@ export async function importArchivedQuestions(input:{
       if(prior.words&&!words)db.update(archivedQuestions).set({words:null}).where(
         and(eq(archivedQuestions.thread,row.thread),eq(archivedQuestions.ref,row.ref))).run();
     }
+    const finished=now();
+    expireArchivedQuestions(db,finished,ageCutoff(finished,days));
     return {total:prepared.length,inserted};
   });
 }
