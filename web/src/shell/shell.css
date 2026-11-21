@@ -58,6 +58,7 @@
 .next-strip>button.next-win{display:grid;place-items:center;flex:none;width:26px;padding:0;color:var(--v-text-3);background:none;cursor:pointer}
 .next-strip>button.next-win:hover,.next-strip>button.next-win:focus-visible{color:var(--v-text)}
 .next-win>i{display:block;width:10px;height:10px;box-sizing:border-box;border:1.5px solid currentColor}
+.next-win[data-act=restore]>i{width:8px;height:8px;box-shadow:2px -2px 0 -1px var(--v-structure),2px -2px currentColor}
 .next-win[data-act=dock]>i{border-width:0 0 1.5px}
 .next-win[data-act=close]>i{border:0;background:linear-gradient(45deg,transparent 44%,currentColor 44% 56%,transparent 56%),linear-gradient(-45deg,transparent 44%,currentColor 44% 56%,transparent 56%)}
 .next-page{margin:0 1px 1px;scrollbar-gutter:stable}
