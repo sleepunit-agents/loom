@@ -10,7 +10,7 @@ import { privateBytes } from '../pieces/secrets/local-holder.js';
 import { readKey, wordsKey } from '../pieces/comms/crypto.js';
 import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
 import { householdId } from '../slug.js';
-import { deletedThreadLookup } from '../core/conversations/legacy-thread-id.js';
+import { legacyThreadLookup } from '../core/conversations/legacy-thread-id.js';
 import { importThreads, UnresolvedArchiveThread } from '../core/conversations/import-threads.js';
 export async function migrateComms(phase:'archived-questions'|'comms-threads', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
   const usage=`loom migrate ${phase} --source STOPPED_ARCHIVE --home PREPARED_HOME`;
@@ -42,7 +42,7 @@ export async function migrateComms(phase:'archived-questions'|'comms-threads', a
     if(recogniseDataSchema(client)!==dataSchemaNumber)throw Error('upgrade the staged database first');
     client.pragma('foreign_keys = ON');
     if(phase==='comms-threads'){
-      const recover=deletedThreadLookup(agent=>copySnapshot(join('agents',householdId.parse(agent),'memories.db')),
+      const recover=legacyThreadLookup(agent=>copySnapshot(join('agents',householdId.parse(agent),'memories.db')),
         ()=>privateBytes(join(source,'comms.salt'),32));
       const result=importThreads(household,dataDatabase(client),recover);
       io.stdout(`Imported ${result.inserted} of ${result.total} Comms threads (new deletion records: ${result.tombstones}).\n`);return 0;

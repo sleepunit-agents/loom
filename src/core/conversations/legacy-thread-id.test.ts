@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
 import { importThreads } from './import-threads.js';
-import { deletedThreadLookup } from './legacy-thread-id.js';
+import { legacyThreadLookup } from './legacy-thread-id.js';
 
 it('matches the original creator and requires one recorded parent for an old thread deletion', () => {
   const dir=mkdtempSync(join(tmpdir(),'legacy-thread-'));
@@ -18,7 +18,7 @@ it('matches the original creator and requires one recorded parent for an old thr
         ('cv-d19bd80169d4','fern','loom','th:ordinary'),
         ('cv-0b37adc83353','fern','spawn','fixture-job')`);
     const salt=Buffer.from(Array.from({length:32},(_,i)=>i));
-    const reader=()=>deletedThreadLookup(()=>source,()=>salt);
+    const reader=()=>legacyThreadLookup(()=>source,()=>salt);
     const lookup=reader();
     expect(lookup('fern','alex','th:ordinary')).toBe('cv-d19bd80169d4');
     expect(lookup('fern','alex','th:oi7jknf4hi')).toBe('cv-0b37adc83353');
@@ -50,6 +50,40 @@ it('releases the archive connection when a deletion cannot be resolved before li
     } finally {
       source.close();
     }
+  } finally {
+    writer.close();
+    destination.close();
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+it('restores a job-backed private thread only under its recorded backing conversation', () => {
+  const dir=mkdtempSync(join(tmpdir(),'spawn-thread-'));
+  const path=join(dir,'household.db');
+  const writer=new Database(path);
+  const destination=new Database(':memory:');
+  const at='2026-11-20T00:00:00.000Z';
+  try {
+    writer.exec(`CREATE TABLE comms_deleted(id);
+      CREATE TABLE comms_threads(id, conversation, member, agent, title, titled_by, channel, project, pinned, archived, opened, last, read_seq)`);
+    writer.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('th:oi7jknf4hi','cv-0b37adc83353','alex','fern','Garden job','agent',1,null,0,null,at,at,0);
+    const source=new Database(path,{readonly:true});
+    try {
+      const db=createDataSchema(destination);
+      destination.prepare("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('fern','','','','drop','dot')").run();
+      destination.prepare("INSERT INTO members (id,role,joined_at) VALUES ('alex','member',?)").run(at);
+      expect(()=>importThreads(source,db,()=>'cv-other')).toThrow(/backing conversation/);
+      const recover=(agent:string,member:string,thread:string)=>{
+        expect([agent,member,thread]).toEqual(['fern','alex','th:oi7jknf4hi']);
+        return 'cv-0b37adc83353';
+      };
+      expect(importThreads(source,db,recover).inserted).toBe(1);
+      expect(importThreads(source,db,recover).inserted).toBe(0);
+      expect(destination.prepare('SELECT id,member,venue,place FROM conversations').all()).toEqual([
+        {id:'cv-0b37adc83353',member:'alex',venue:'loom',place:'th:oi7jknf4hi'},
+      ]);
+    } finally { source.close(); }
   } finally {
     writer.close();
     destination.close();

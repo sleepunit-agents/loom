@@ -46,9 +46,10 @@ export function importThreads(source:Database.Database, db:DataDatabase, recover
     for (const raw of rows.iterate()) {
       const row = sourceThread.parse(raw);
       total++;
-      // The v1 writer assigned this ID to ordinary private threads. Spawned threads
-      // replaced it with the backing job conversation, which needs its own mapping.
-      if (row.conversation !== legacyConversationId(row.agent,'loom',row.id))
+      // A v1 job had a private Comms thread too. Preserve its backing conversation
+      // ID only when the agent archive and the member's keyed thread ID agree.
+      if (row.conversation !== legacyConversationId(row.agent,'loom',row.id) &&
+          recover(row.agent,row.member,row.id) !== row.conversation)
         throw new UnresolvedArchiveThread('A thread needs its original backing conversation mapped before import.');
       if (db.select({id:deletedThreads.id}).from(deletedThreads).where(eq(deletedThreads.id,row.id)).get())
         throw Error('Cannot restore a deleted thread');

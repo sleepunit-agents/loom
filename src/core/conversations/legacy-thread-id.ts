@@ -20,7 +20,7 @@ function prefix(bytes:Buffer, length:number) {
   throw Error('Incomplete thread prefix');
 }
 
-export function deletedThreadLookup(open:(agent:string)=>Database.Database, readSalt:()=>Buffer) {
+export function legacyThreadLookup(open:(agent:string)=>Database.Database, readSalt:()=>Buffer) {
   const agents=new Map<string,{ordinary:Map<string,string>; spawned:string[]}>();
   const memberships=new Map<string,Map<string,Set<string>>>();
   return (agent:string, member:string, thread:string):string|undefined => {
