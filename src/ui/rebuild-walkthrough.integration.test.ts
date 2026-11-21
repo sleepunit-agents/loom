@@ -53,11 +53,15 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(['Your account','Household setup','Sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inboxCopies:1,persistedAfterReload:true});}
   if(title==='Subscriptions')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
-  if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
+  if(title==='Knowledge'){
+   expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
+   const source=step.value.report.actions.knowledgeSourceCheck;
+   expect(source,JSON.stringify(source)).toMatchObject({ok:true});
+  }
   if(title==='Tempo')expect(app.actions.resumed.facts).toMatchObject({sourceKind:'answer',watches:'approval:'+step.value.report.example.approval,lifespan:'once',enabled:false,stillOnceAfterLaterDeadline:true});
   if(title==='Tempo'){expect(app.error).toBeUndefined();expect(app.actions).toMatchObject({held:{ok:true},resumed:{ok:true},settled:{ok:true},cancelled:{ok:true}});for(const name of ['held','resumed','settled','cancelled'])expect(readFileSync(join(out,app.actions[name].screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));}
  });
- it('refreshes an owner advisory and rechecks a stale proposal',{retry:0,timeout:100_000},async()=>{
+ it('refreshes an owner advisory and rechecks a stale proposal',{retry:0,timeout:150_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('approval-caution');
   const result=step.value.actions?.approvalCaution;expect(result,JSON.stringify(result)).toMatchObject({ok:true});
  });
@@ -94,6 +98,26 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('appearance');
   for(const name of ['deskLooks','deskAppearance'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
+ it('keeps each agent’s memories in its own file across a restart',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('agent-memory-files');
+  expect(step.value.actions.agentMemoryFiles,JSON.stringify(step.value.actions.agentMemoryFiles)).toMatchObject({ok:true});
+ });
+ it('recalls paraphrases by meaning and retains the most-used fact at the top of mind',{retry:0,timeout:120_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('semantic-recall');
+  expect(step.value.actions.semanticRecall,JSON.stringify(step.value.actions.semanticRecall)).toMatchObject({ok:true,paraphrases:3});
+ });
+ it('delivers due Knowledge checks to the configured agents on the household clock',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
+  expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
+ });
+ it('keeps three linked worker start retries across coordinator restarts',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('worker-start-retries');
+  expect(step.value.actions.workerRetries,JSON.stringify(step.value.actions.workerRetries)).toMatchObject({ok:true,attempts:4});
+ });
+ it('writes and reads notes and shared Knowledge through the named MCP tools',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('named-agent-tools');
+  for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
   expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});
@@ -102,13 +126,13 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('memory-revisions');
   expect(step.value.actions.memoryRevisions,JSON.stringify(step.value.actions.memoryRevisions)).toMatchObject({ok:true,originalVersionsRestoredPerType:10,restoreCallsPerType:11});
  });
- it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:180_000},async()=>{
+ it('upgrades every shipped database and checks its migration ledger on reopen',{retry:0,timeout:300_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('migrations');
   expect(step.value.actions.dataMigrations,JSON.stringify(step.value.actions.dataMigrations)).toMatchObject({ok:true,from:1});
  });
  it('measures the data door, fact queries and live changes',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data');
-  for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+  for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange','dataWriteReceipt'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.dataTaskPatches).toMatchObject({ok:true,inconclusive:true,initialRevision:1,requests:1});
   expect(step.value.actions.dataSharingSQL.statements.length).toBeGreaterThan(0);
   expect(step.value.actions.dataSharingSQL.samples.map(sample=>sample.projects)).toEqual([2,10]);

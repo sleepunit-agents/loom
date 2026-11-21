@@ -26,7 +26,7 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
   const applied = new WeakSet<object>();
   const bases = new Map<string, { basis: string; snapshot: string; completion: object | undefined }>();
   const snapshot = (account: string) => createHash('sha256').update(JSON.stringify({
-    account: db.select({ owner: modelAccounts.owner, provider: modelAccounts.provider, usage: modelAccounts.usage, usageReadAt: modelAccounts.usageReadAt, resetsAt: modelAccounts.resetsAt, hasRoom: modelAccounts.hasRoom }).from(modelAccounts).where(eq(modelAccounts.id, account)).get(),
+    account: db.select({ owner: modelAccounts.owner, provider: modelAccounts.provider, usage: modelAccounts.usage, usageReadAt: modelAccounts.usageReadAt, resetsAt: modelAccounts.resetsAt, hasRoom: modelAccounts.hasRoom, usageReadSucceeded:modelAccounts.usageReadSucceeded }).from(modelAccounts).where(eq(modelAccounts.id, account)).get(),
     windows: readAccountWindows(db, account).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
   })).digest('hex');
   const canReport = (viewer: Viewer, input: z.infer<typeof identity>) => {

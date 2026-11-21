@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { approvals, agents, secretRequests, secrets, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
 import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
@@ -36,6 +36,13 @@ it('fires a one-off time to an inbox without starting a body, once across restar
   engine.close(); const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
   reopened.tick(); clock.advance(60_000); expect(items()).toHaveLength(1);
 });
+it('preserves time triggers that happen to carry a parked-looking watch name', () => {
+  const {engine,base,items,row} = fixture();
+  const created = engine.set({...base,watches:'park-approval:historical'});
+  expect(row(created.id).parked).toBe(false);
+  engine.runNow(created.id);
+  expect(items()).toMatchObject([{words:base.instructions}]);
+});
 it('holds a due trigger while paused and fires once on resume', () => {
   const { engine, clock, base, items, row } = fixture();
   const t = engine.set(base); engine.pause('art');
@@ -53,6 +60,52 @@ it('retains an answer received while paused and deduplicates source events after
   expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().filter(l => l.event === 'fired')).toHaveLength(1);
 });
 function andTrigger(id: string) { return eq(triggerLog.trigger, id); }
+it('recovers a parked approval and times out only an unanswered wait, once each', () => {
+  const { db, clock, engine, effects, base, items } = fixture();
+  for (const id of ['a-decided','a-pending']) {
+    db.insert(approvals).values({ id, agent:'art', kind:'command', target:'fixture', what:'Fixture', why:'Private reason',
+      askedFrom:'fixture', actingFor:'art', state:'pending', minutes:5, ask:'Fixture', ifYes:'Yes', ifNo:'No',
+      details:'Private details', askedAt:new Date(clock.now()).toISOString() }).run();
+    engine.set({ ...base, id:'wait-' + id, sourceKind:'answer', times:null, parked:true,watches:'park-approval:' + id });
+  }
+  expect(() => engine.runNow('wait-a-decided')).toThrow(/parked wait/);
+  engine.pause('art');
+  engine.close();
+  clock.advance(25 * 3_600_000);
+  db.update(approvals).set({state:'denied',decidedAt:new Date(clock.now()).toISOString()}).where(eq(approvals.id,'a-decided')).run();
+  const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
+  reopened.tick();
+  expect(items()).toEqual([]);
+  reopened.resume('art');
+  reopened.tick();
+  expect(items().map(i => i.words).sort()).toEqual([
+    'No answer to a-pending after 24 hours.\n\nDo the work',
+    'Request a-decided is denied.\n\nDo the work',
+  ]);
+  expect(items().every(i => i.sourceId?.endsWith(':park:resume'))).toBe(true);
+  db.update(approvals).set({state:'allowed'}).where(eq(approvals.id,'a-pending')).run();
+  reopened.tick(); clock.advance(24 * 3_600_000);
+  expect(items()).toHaveLength(2);
+});
+
+it('arms a parked secret request for exactly 24 hours and reports a revoked request without its details', () => {
+  const { db, clock, engine, base, items } = fixture();
+  const at = new Date(clock.now()).toISOString();
+  db.insert(secrets).values({name:'private-name',description:'private',changedBy:'jonathan',changedAt:at}).run();
+  for (const id of ['q-revoked','q-pending']) {
+    db.insert(secretRequests).values({id,secret:'private-name',agent:'art',why:'private reason',minutes:5,
+      always:false,askedAt:at,state:'pending'}).run();
+    engine.set({...base,id:'wait-' + id,times:null,sourceKind:'answer',parked:true,watches:'park-secret:' + id});
+  }
+  db.update(secretRequests).set({state:'revoked',answeredAt:at}).where(eq(secretRequests.id,'q-revoked')).run();
+  engine.tick();
+  clock.advance(24 * 3_600_000 - 1);
+  expect(items().map(i => i.words)).toEqual(['Request q-revoked is revoked.\n\nDo the work']);
+  clock.advance(1);
+  expect(items().map(i => i.words)).toContain('No answer to q-pending after 24 hours.\n\nDo the work');
+  expect(items()).toHaveLength(2);
+});
+
 it('runs a named operation without an inbox, repeats standing PR/job events only when new', () => {
   const { engine, base, items, operations } = fixture();
   for (const kind of ['pull-request', 'job'] as const) {
@@ -419,4 +472,35 @@ it('only admits programs for time schedules addressed to an agent', () => {
   const program = { ...testProgramPin, name: 'forecast', args: [], secrets:{}, timeoutMs: 1000 };
   expect(() => engine.set({ ...base, sourceKind: 'job', watches: 'job:one', program })).toThrow(/time/i);
   expect(() => engine.set({ ...base, toKind: 'person', to: 'jonathan', program })).toThrow(/agent/i);
+});
+
+it('cancels only the named occurrence, even when a second request arrives after the wake fired', () => {
+  const { engine, clock, base, row, items } = fixture();
+  const lane = engine.set({ ...base, times: '12:01,12:02,12:03', lifespan: 'until-stopped' });
+  const first = { agent: 'art', at: lane.nextDueAt! };
+  expect(() => engine.stop(lane.id, { agent: 'art' })).toThrow();
+  expect(() => engine.stop(lane.id, { ...first, agent: 'other' })).toThrow();
+  engine.pause('art');
+  clock.advance(150000);
+  engine.stop(lane.id, first);
+  expect(row(lane.id)).toMatchObject({ enabled:true, state:'held', nextDueAt:'2026-11-14T18:02:00.000Z' });
+  expect(() => engine.stop(lane.id, first)).toThrow();
+  const second = { agent: 'art', at: row(lane.id).nextDueAt! };
+  engine.resume('art');
+  expect(items()).toHaveLength(1);
+  expect(() => engine.stop(lane.id, second)).toThrow();
+  expect(row(lane.id)).toMatchObject({ enabled:true, nextDueAt:'2026-11-14T18:03:00.000Z' });
+  clock.advance(60000);
+  expect(items()).toHaveLength(2);
+});
+
+it('ends the last occurrence of a today schedule and a pending one-off', () => {
+  const { engine, base, row, clock, items } = fixture();
+  const today = engine.set({ ...base, times:'12:01', lifespan:'today' });
+  const once = engine.set(base);
+  engine.stop(today.id, { agent:'art', at:today.nextDueAt! });
+  engine.stop(once.id, { agent:'art' });
+  clock.advance(60001);
+  expect(items()).toEqual([]);
+  for (const id of [today.id, once.id]) expect(row(id)).toMatchObject({enabled:false,state:'stopped',nextDueAt:null});
 });

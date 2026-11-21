@@ -1,3 +1,4 @@
+import { newId } from '../../data/id';
 import { NativeSelect } from '../../kit/native-select';
 import {useRef,useState,type FormEvent} from 'react';
 import {Button,Field,Fields,Input} from '../../kit';
@@ -17,7 +18,7 @@ function CreateForm({setup}:{setup:Setup}){
   const input={provider:String(values.get('provider')),label:String(values.get('label')??'').trim(),machines:values.getAll('machines').map(String).sort()};
   if(!input.label){setMessage('Give the subscription a label.');return;}
   const key=JSON.stringify(input);
-  if(attempt.current?.key!==key)attempt.current={key,id:crypto.randomUUID()};
+  if(attempt.current?.key!==key)attempt.current={key,id:newId()};
   setBusy(true);setMessage('');
   try{
    await memberOperation('runtime.accountCreate',input,attempt.current.id);

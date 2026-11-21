@@ -36,7 +36,11 @@ async function program(){
 it('lists the names a terminal session already calls',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
-  expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
+  const {tools}=await art.client.listTools();
+  const write=tools.find(tool=>tool.name==='knowledge_write');
+  expect(write?.description).toContain('Household owners and agents read this');
+  expect(write?.description).toContain('private thoughts');
+  expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
     'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
@@ -289,7 +293,11 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
  try{
   expect((await art.call('knowledge_write',{title:'Fictional hose',domain:'pond',body:'FICTIONAL_FIRST_FACT'})).text).toBe('Wrote knowledge page fictional-hose');
   expect((await art.call('knowledge_edit',{slug:'fictional-hose',body:'FICTIONAL_SECOND_FACT'})).error).toBe(false);
-  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true'})).text).toBe('Marked fictional-hose still true');
+  const read=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
+  const expectedRevision=/^Check revision: ([0-9a-f]{64})$/m.exec(read)?.[1];
+  expect(expectedRevision).toBeTruthy();
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expectedRevision:'0'.repeat(64)})).error).toBe(true);
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',expectedRevision})).text).toBe('Marked fictional-hose still true');
   const page=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
   expect(page).toContain('# Fictional hose');expect(page).toContain('FICTIONAL_SECOND_FACT');expect(page).toContain('## Earlier versions');
   // A check without a note leaves the words alone; one with a note appends it.
@@ -440,4 +448,18 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-pond',agent:'art'},why:'x'})).text).toBe('art is already on project fictional-pond (invalid)');
   expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});
  }finally{await art.client.close();await p.close();}
+});
+
+it('lets an agent review potentially misfiled shared Knowledge through loom_query',async()=>{
+ const {p,connect}=await program(),writer=await connect('art'),reader=await connect('mark');
+ try{
+  const draft=await writer.call('knowledge_write',{title:'Fictional notes from today',domain:'fictional',body:'Fictional unverified text.'});
+  expect(draft.error,draft.text).toBe(false);
+  const slug=draft.text.replace(/^Wrote knowledge page /,'');
+  const sourced=await writer.call('knowledge_write',{title:'Fictional material guide',domain:'fictional',body:'Fictional sourced text.',source:'https://example.org/guide'});
+  expect(sourced.error,sourced.text).toBe(false);
+  const result=await reader.call('loom_query',{query:'{memoryKnowledgeFilingReview{slug reason}}'});
+  expect(result.error,result.text).toBe(false);
+  expect(JSON.parse(result.text)).toEqual({data:{memoryKnowledgeFilingReview:[{slug,reason:'Provisional sourcing'}]}});
+ }finally{await reader.client.close();await writer.client.close();await p.close();}
 });

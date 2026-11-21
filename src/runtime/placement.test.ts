@@ -205,3 +205,31 @@ it('passes over a machine whose houses were last found signed out of the account
   db.update(modelAccountLogins).set({ state: 'signed-in' }).run();
   expect(selectPlacement(db, input)?.box).toBe('local');
 });
+
+it('explains quota only for an eligible container sign-in and a usable window reading',()=>{
+  const {db,input}=fixture();
+  const quotaLimited=()=>decidePlacement(db,input).quotaLimited;
+  db.update(modelAccountWindows).set({usage:1}).run();
+  const login={account:'shared',box:'local',harness:'runner',state:'signed-in',checkedAt:input.now,since:input.now,learnedFrom:'check'} as const;
+  db.insert(modelAccountLogins).values({...login,place:'host'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.insert(modelAccountLogins).values({...login,place:'containers'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.delete(modelAccountLogins).run();
+  db.update(modelAccounts).set({usageReadSucceeded:true}).run();
+  db.insert(modelAccountLogins).values({...login,place:'host'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.insert(modelAccounts).values({id:'unbound',owner:'owner',provider:'provider',label:'Other',hasRoom:false}).run();
+  db.insert(modelAccountLogins).values({...login,place:'containers',account:'unbound'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.insert(modelAccountLogins).values({...login,place:'containers',harness:'wrong'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.insert(modelAccountLogins).values({...login,place:'containers'}).run();
+  expect(quotaLimited()).toBe(true);
+  expect(decidePlacement(db,{...input,eligibleBoxes:new Set(['remote'])}).quotaLimited).toBe(false);
+  db.update(modelAccountLogins).set({expiresAt:input.now}).run();
+  expect(quotaLimited()).toBe(false);
+  db.update(modelAccountLogins).set({expiresAt:null}).run();
+  db.update(modelAccountWindows).set({resetsAt:input.now,usageReadAt:'2026-11-14T19:00:00.000Z'}).run();
+  expect(quotaLimited()).toBe(false);
+});

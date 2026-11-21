@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import {eq} from 'drizzle-orm';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {bodyCredentials,bodyFixture,credentialHash} from '../test/fixtures/conversation-body.js';
 import {FakeClock} from './core/clock.js';
 import {dataDatabase} from './core/data/database.js';
@@ -57,6 +57,12 @@ it.each(['codex','role','expired'] as const)('rechecks an overnight %s handoff a
   db.update(s.modelAccounts).set({hasRoom:true}).where(eq(s.modelAccounts.id,'paid')).run();
   expect(await poll('capacity-after-expiry')).toBeNull();
   expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()?.endedNote).toBe('The scheduled handoff brief expired.');
+  const message=await vi.waitFor(()=>{
+   const result=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
+   expect(result).toBeDefined();return result!;
+  });
+  expect(message.thread).toBe(f.thread.id);
+  expect(await f.key.open(message.words!)).toContain('The scheduled handoff brief expired.');
   return;
  }
  const assignment=await poll('due');

@@ -12,7 +12,7 @@ const member = db => db.prepare('SELECT id, role, joined_at FROM members').all()
 const schemaVersion = db => db.pragma('schema_version', {simple: true});
 
 // Exercise the installed upgrade routine against disposable copies of every shipped shape.
-export function migrationEvidence() {
+function migrationEvidence() {
   const shapes = new URL('../src/core/data/shipped-shapes/', import.meta.url);
   const versions = Array.from({length: dataSchemaNumber}, (_, i) => i + 1);
   assert.ok(versions.length > 0);
@@ -31,10 +31,13 @@ export function migrationEvidence() {
       const retained = [{id: 'walk-member', role: 'member', joined_at: installedAt}];
       let version;
       try {
-        fixture.exec(readFileSync(new URL(from + '.sql', shapes), 'utf8'));
-        const insert = fixture.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
-        for (let n = 1; n <= from; n++) insert.run(n, installedAt);
-        fixture.prepare('INSERT INTO members (id, role, joined_at) VALUES (?, ?, ?)').run('walk-member', 'member', installedAt);
+        // Build one committed historical database before exercising the real upgrade.
+        fixture.transaction(() => {
+          fixture.exec(readFileSync(new URL(from + '.sql', shapes), 'utf8'));
+          const insert = fixture.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
+          for (let n = 1; n <= from; n++) insert.run(n, installedAt);
+          fixture.prepare('INSERT INTO members (id, role, joined_at) VALUES (?, ?, ?)').run('walk-member', 'member', installedAt);
+        })();
         upgradeDataSchema(fixture, () => upgradedAt);
         assert.deepEqual(ledger(fixture), expected);
         assert.deepEqual(dataSchemaShape(fixture), shape);
@@ -58,3 +61,5 @@ export function migrationEvidence() {
     rmSync(dir, {recursive: true, force: true});
   }
 }
+
+console.log(JSON.stringify(migrationEvidence()));

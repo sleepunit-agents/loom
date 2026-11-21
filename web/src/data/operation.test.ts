@@ -16,3 +16,12 @@ it('rejects an HTTP denial even when its body claims success',async()=>{
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({ok:true,value:{}},{status:403})));
  await expect(memberOperation('household.setPreferences',{look:'daylight'})).rejects.toThrow('Could not save');
 });
+it('submits an Inbox answer on plain HTTP when only getRandomValues is available',async()=>{
+ const source=crypto;
+ vi.stubGlobal('crypto',{getRandomValues:source.getRandomValues.bind(source)});
+ const fetch=vi.fn().mockResolvedValue(Response.json({ok:true,value:{}}));vi.stubGlobal('fetch',fetch);
+ await memberOperation('inbox.answer',{item:'fixture',answer:'yes'});
+ const [path,request]=fetch.mock.calls[0];
+ expect(path).toBe('/api/inbox/answer');
+ expect(JSON.parse(request.body).id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});

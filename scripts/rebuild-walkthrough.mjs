@@ -1,3 +1,6 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
@@ -238,6 +241,40 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  phase='agent memory files';
+  try {
+   const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
+   report.actions.agentMemoryFiles=await agentMemoryFiles();
+  } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
+  save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
+  phase='semantic recall';
+  try {
+   // Run the real embedding model and advance its wall clock in a separate process.
+   const script=fileURLToPath(new URL('./rebuild-semantic-recall.mjs',import.meta.url));
+   const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:110_000});
+   report.actions.semanticRecall=JSON.parse(stdout);
+  } catch(error) { report.actions.semanticRecall={ok:false,error:String(error)}; }
+  save();yield {phase:'semantic-recall',actions:safeReport(report.actions)};
+  phase='knowledge due delivery';
+  try {
+   const {dueKnowledgeDelivery}=await import('./rebuild-knowledge-due.mjs');
+   report.actions.knowledgeDue=await dueKnowledgeDelivery();
+  } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
+  save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
+  phase='worker start retries';
+  try {
+   const {workerRetryEvidence}=await import('./rebuild-worker-retries.mjs');
+   report.actions.workerRetries=await workerRetryEvidence();
+  } catch(error) { report.actions.workerRetries={ok:false,error:String(error)}; }
+  save();yield {phase:'worker-start-retries',actions:safeReport(report.actions)};
+  phase='named agent tools';
+  try {
+   const {agentToolsEvidence}=await import('./rebuild-agent-tools.mjs');
+   Object.assign(report.actions,await agentToolsEvidence());
+  } catch(error) {
+   for(const name of ['namedNotes','namedKnowledge','sharedKnowledgeAudience'])report.actions[name]={ok:false,error:String(error)};
+  }
+  save();yield {phase:'named-agent-tools',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
    const {noteLifetimeEvidence}=await import('./rebuild-note-lifetimes.mjs');
@@ -252,11 +289,17 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'memory-revisions',actions:safeReport(report.actions)};
   phase='migration measurements';
   try {
-   const {migrationEvidence}=await import('./rebuild-migration-evidence.mjs');
-   report.actions.dataMigrations=migrationEvidence();
+   // SQLite upgrades are synchronous. Keep the coordinator available for desk heartbeats.
+   const script=fileURLToPath(new URL('./rebuild-migration-evidence.mjs',import.meta.url));
+   const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:290_000});
+   report.actions.dataMigrations=JSON.parse(stdout);
   } catch(error) { report.actions.dataMigrations={ok:false,error:String(error)}; }
   save();yield {phase:'migrations',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
+  try {
+   const {writeReceiptEvidence}=await import('./rebuild-write-receipt.mjs');
+   report.actions.dataWriteReceipt=await writeReceiptEvidence();
+  } catch(error) { report.actions.dataWriteReceipt={ok:false,error:String(error)}; }
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await homeReadGrowth({page,app,subscriptions,out,sharing:report.actions.dataSharingSQL}));
   save();yield {phase:'home-read-growth',actions:safeReport(report.actions)};

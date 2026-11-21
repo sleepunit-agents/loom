@@ -12,12 +12,20 @@
     {
       "id": "memory-002",
       "promise": "Keeps each agent's memories in that agent's own files.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-003",
       "promise": "Recalls by meaning, and keeps what is used most at the top of mind.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "semanticRecall"
+      }
     },
     {
       "id": "memory-004",
@@ -45,7 +53,11 @@
     {
       "id": "memory-007",
       "promise": "A memory belongs to one agent. The agent, its owners and household owners see it.",
-      "source": "docs/how-it-works/site/memory.html#con-h"
+      "source": "docs/how-it-works/site/memory.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-008",
@@ -88,17 +100,29 @@
     {
       "id": "memory-014",
       "promise": "A knowledge page is a fact about the world that says where it came from. Without a source it stays provisional. Pages are re-checked every 30 days.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "knowledgeDue"
+      }
     },
     {
       "id": "memory-015",
       "promise": "a Memories, notes and cards. The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories or notes.",
-      "source": "docs/how-it-works/site/memory.html#see-h"
+      "source": "docs/how-it-works/site/memory.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-016",
       "promise": "b Knowledge. Knowledge pages are shared by the household. Household owners and household agents can read and write them, including agents in terminal sessions without a job. Non-owner members cannot.",
-      "source": "docs/how-it-works/site/memory.html#see-h"
+      "source": "docs/how-it-works/site/memory.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "sharedKnowledgeAudience"
+      }
     },
     {
       "id": "memory-017",

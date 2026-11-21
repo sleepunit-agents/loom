@@ -36,7 +36,7 @@ function fixture(){
  return{client,db,root,now,post,create,basis,report,errors};
 }
 it.each(['alice','bob']as const)('creates metadata owned by %s, closed to admission until a fresh quota report',async who=>{
- const f=fixture(),id=await f.create(who);expect(f.db.select().from(s.modelAccounts).get()).toEqual({id,owner:who,provider:'provider',label:'Subscription',usage:0,usageReadAt:null,resetsAt:null,hasRoom:false});
+ const f=fixture(),id=await f.create(who);expect(f.db.select().from(s.modelAccounts).get()).toEqual({id,owner:who,provider:'provider',label:'Subscription',usage:0,usageReadAt:null,resetsAt:null,hasRoom:false,usageReadSucceeded:false});
  expect(f.db.select().from(s.modelAccountBoxes).all()).toEqual([]);expect(f.db.select().from(s.modelAccountWindows).all()).toEqual([]);
  expect((await f.post('accountRename',{account:id,label:'Renamed'},who)).status).toBe(200);expect(f.db.select().from(s.modelAccounts).get()?.label).toBe('Renamed');
 });

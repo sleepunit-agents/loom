@@ -1,4 +1,6 @@
 /** Real Root and receiving SDK; all bodies/people/words are fictional. */
+import * as accountWindows from './runtime/account-windows.js';
+import {accountUsageUnavailable} from './runtime/account-usage.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {fileURLToPath} from 'node:url';
 import {dirname} from 'node:path';
@@ -294,12 +296,39 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  const next=async(id:string,capable:boolean,runner=bodyCredentials.runner)=>root.http.request('/api/runtime/next',{method:'POST',headers:{authorization:'Bearer '+runner,'content-type':'application/json'},body:JSON.stringify({id,input:{execution:'container',...(capable&&{reviewResults:true}),slots:3}})});
  await next('advertise',true);
  if(mixed){
-  db.update(s.modelAccountWindows).set({usage:1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  const identity={account:'paid',owner:'alice',provider:'openai'};
+  const window={name:'week',usage:1,readAt:now(),resetsAt:new Date(f.clock.now()+86400000).toISOString(),durationMs:604800000};
+  accountWindows.recordAccountWindows(db,identity,[window],now());
+  db.insert(s.modelAccountLogins).values({account:'paid',box:'box',harness:'codex',place:'containers',state:'signed-in',checkedAt:now(),since:now(),learnedFrom:'check'}).run();
+  const refresh=vi.spyOn(accountWindows,'refreshAccountWindows');
+  const outgoing=vi.spyOn(globalThis,'fetch').mockRejectedValue(Error('Unexpected outbound request'));
+  clean.push(()=>{outgoing.mockRestore();refresh.mockRestore();});
   const unavailable=await f.call('handoffOptions',{},'exhausted');
-  expect((await unavailable.json()).value.roles).toMatchObject([{id:'research',available:false}]);
-  expect((await f.call('handoff',request,'exhausted-launch')).status).toBe(503);
+  const details=(await unavailable.json()).value;
+  expect(details.codexUnavailableReason).toBe('An eligible worker reported a signed-in account. Its quota window leaves too little room to start this job.');
+  expect(details.roles).toMatchObject([{id:'research',available:false,reason:details.codexUnavailableReason}]);
+  for(const selector of [{role:'research'},{harness:'codex'}]){
+   const blocked=await f.call('handoff',{...selector,label:request.label,words:request.words,clientId:request.clientId},'exhausted-'+Object.keys(selector)[0]);
+   expect(blocked.status).toBe(503);
+   expect(await blocked.json()).toEqual({ok:false,code:'unavailable',message:details.codexUnavailableReason});
+  }
   expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'handoff')).all()).toHaveLength(0);
-  db.update(s.modelAccountWindows).set({usage:0.1}).where(eq(s.modelAccountWindows.account,'paid')).run();
+  accountUsageUnavailable(db,identity);
+  const failed=(await (await f.call('handoffOptions',{},'failed-read')).json()).value;
+  expect(failed.codexAvailable).toBe(false);
+  expect(failed).not.toHaveProperty('codexUnavailableReason');
+  expect(failed.roles[0]).not.toHaveProperty('reason');
+  for(const selector of [{role:'research'},{harness:'codex'}]){
+   const blocked=await f.call('handoff',{...request,role:undefined,harness:undefined,...selector},'failed-read-'+Object.keys(selector)[0]);
+   expect(blocked.status).toBe(503);
+   const message=selector.role?'No eligible worker is available for this work role':'No eligible Codex worker with a signed-in account and free capacity is available for this job.';
+   expect(await blocked.json()).toEqual({ok:false,code:'unavailable',message});
+  }
+  expect(refresh).not.toHaveBeenCalled();
+  expect(outgoing).not.toHaveBeenCalled();
+  outgoing.mockRestore();
+  refresh.mockRestore();
+  accountWindows.recordAccountWindows(db,identity,[{...window,usage:0.1}],now());
  }
  if(mode==='success'){
   const tools=bodyProgramTools({url:'https://loom.invalid',token:bodyCredentials.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>root.http.request(new Request(String(url),init)),onStop:()=>{},onStatus:()=>{}});
@@ -348,6 +377,12 @@ it.each(['success','failure','archive','transient','occupied','work-role','mixed
  if(mode==='role-changed'){
   db.update(s.conversations).set({place:reviewPlace('job','review-one',{id:'research',revision:'0'.repeat(64)})}).where(eq(s.conversations.id,child)).run();
   await next('changed-role',true);
+  const failure = await vi.waitFor(()=>{
+   const result=db.select().from(s.messages).where(eq(s.messages.clientId,'review:'+child)).get();
+   expect(result).toBeDefined();return result!;
+  });
+  expect(failure.thread).toBe(f.thread.id);
+  expect(await f.key.open(failure.words!)).toContain('The requested work role changed or was removed.');
   expect(db.select().from(s.jobs).where(eq(s.jobs.conversation,child)).get()).toMatchObject({state:'failed'});
   return;
  }

@@ -1,7 +1,7 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
-import { jobMatchesConversation, reviewThread, reviewRequest } from '../core/conversations/review-place.js';
+import { jobMatchesConversation, reviewThread, reviewRequest, REVIEW_BRIEF_EXPIRED, REVIEW_ROLE_CHANGED } from '../core/conversations/review-place.js';
 import { handoffDeadline } from '../core/conversations/handoff-words.js';
 import { commsKeepDays } from '../core/data/comms-days.js';
 import {eligibleModels,roleRevision,type WorkRole} from './work-roles.js';
@@ -16,7 +16,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agentHousePorts, boxes, programFirings, changes, changeReviewRounds, jobNeeds, jobs, inbox, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
-import { decidePlacement, type ModelRole } from './placement.js';
+import { QUOTA_WAIT_REASON, decidePlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
 import type { WorkerExitBy } from './job-exit.js';
 import { SILENCE_MS } from './silence.js';
@@ -40,13 +40,16 @@ export class Dispatcher {
   availableWorkRoles(agent:string,id?:string) {
     return this.workRoles.filter(role=>role.agent===agent && (id===undefined || role.id===id)).map(role=>({
       id:role.id,description:role.description,revision:roleRevision(role),
-      available:this.canStartReview(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
+      ...this.reviewAvailability(agent,eligibleModels(role,this.roles(),this.nativeHarnesses)),
     }));
   }
-  canStartReview(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
+  reviewAvailability(agent:string, models=this.roles().filter(role=>role.harness==='codex')) {
     const settings=this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get();
-    return !!settings && !!decidePlacement(this.db,{agent,now:this.now(),roles:models,
-      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]}).placement;
+    if (!settings) return {available:false};
+    const decision=decidePlacement(this.db,{agent,now:this.now(),roles:models,
+      eligibleBoxes:this.reviewBoxes,needs:settings.gpu?['gpu']:[]});
+    if (decision.placement) return {available:true};
+    return decision.quotaLimited ? {available:false,reason:QUOTA_WAIT_REASON} : {available:false};
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;
@@ -107,14 +110,14 @@ export class Dispatcher {
           const brief = this.db.select({at:inbox.at,words:inbox.words}).from(inbox).where(and(
             eq(inbox.conversation,cv.id),eq(inbox.source,'handoff'),eq(inbox.sourceId,JSON.stringify([review.parent,review.clientId])))).get();
           if (!brief || handoffDeadline(brief,commsKeepDays(this.db)) <= Date.parse(at)) {
-            if (this.jobs.unplaceable(job.id,'The scheduled handoff brief expired.')) ended?.push(job.id);
+            if (this.jobs.unplaceable(job.id,REVIEW_BRIEF_EXPIRED)) ended?.push(job.id);
             continue;
           }
         }
         const selected=review?.role;
         const workRole=selected && this.workRoles.find(role=>role.agent===job.agent && role.id===selected.id && roleRevision(role)===selected.revision);
         if(selected && !workRole){
-          if(this.jobs.unplaceable(job.id,'The requested work role changed or was removed.'))ended?.push(job.id);
+          if(this.jobs.unplaceable(job.id,REVIEW_ROLE_CHANGED))ended?.push(job.id);
           continue;
         }
         if(review && !reviewThread(this.db,cv!)){

@@ -708,6 +708,9 @@ CREATE TABLE `triggers` (
 	`program_period` text,
 	`read_state_from` text,
 	`program_state` text,
+	`parked` integer DEFAULT false NOT NULL,
+	`schedule_name` text,
+	`schedule_removed_at` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`read_state_from`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
@@ -726,7 +729,10 @@ CREATE TABLE `triggers` (
 	CONSTRAINT "triggers_target_kind_choice" CHECK("triggers"."target_kind" in ('operation', 'inbox')),
 	CONSTRAINT "triggers_to_kind_choice" CHECK("triggers"."to_kind" in ('person', 'agent')),
 	CONSTRAINT "triggers_enabled_boolean" CHECK("triggers"."enabled" in (0, 1)),
-	CONSTRAINT "triggers_state_choice" CHECK("triggers"."state" in ('standing', 'due', 'firing', 'held', 'fired', 'stopped', 'failed'))
+	CONSTRAINT "triggers_state_choice" CHECK("triggers"."state" in ('standing', 'due', 'firing', 'held', 'fired', 'stopped', 'failed')),
+	CONSTRAINT "triggers_parked_boolean" CHECK("triggers"."parked" in (0, 1)),
+	CONSTRAINT "triggers_schedule_removed_at_utc" CHECK("triggers"."schedule_removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."schedule_removed_at") = "triggers"."schedule_removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."schedule_removed_at") = "triggers"."schedule_removed_at", 0)),
+	CONSTRAINT "triggers_removed_schedule_stopped" CHECK("triggers"."schedule_removed_at" is null or ("triggers"."enabled" = 0 and "triggers"."state" = 'stopped' and "triggers"."next_due_at" is null))
 );
 
 CREATE INDEX `triggers_enabled_next_due_at_idx` ON `triggers` (`enabled`,`next_due_at`);
@@ -1362,17 +1368,6 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
-CREATE TABLE `job_session_limits` (
-	`job` text PRIMARY KEY NOT NULL,
-	`since` text NOT NULL,
-	`keep_until` text NOT NULL,
-	`invalidated` integer DEFAULT false NOT NULL,
-	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
-	CONSTRAINT "job_session_limits_valid_flag" CHECK("job_session_limits"."invalidated" in (0, 1)),
-	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
-	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
-);
-
 CREATE TABLE `account_week_readings` (
 	`account` text NOT NULL,
 	`window` text NOT NULL,
@@ -1726,7 +1721,6 @@ CREATE TABLE `conversation_sessions` (
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
 	`started_at` text NOT NULL,
-	`keep_until` text,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))
@@ -1750,6 +1744,9 @@ CREATE TABLE `secret_write_journal` (
 	CONSTRAINT "secret_write_journal_input_hash_required" CHECK(length(trim("secret_write_journal"."input_hash", char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0)
 );
 
+CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers
+  ("to", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'
+  AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';
 CREATE TRIGGER "tasks_owner_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "tasks_owner_member_update" BEFORE UPDATE ON "tasks" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "tasks_owner_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "owner" = OLD.id AND "owner_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;

@@ -1,5 +1,7 @@
 /** Knowledge's page actions; source effects and retry receipts commit together. */
 import type { Viewer } from '../../policy.js';
+import { knowledgeCheckRevision } from './knowledge.js';
+import { SHA256_HEX } from '../../core/sha256-hex.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
@@ -43,7 +45,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     ['knowledgeRecheck', 'stale'],
   ] as const) {
     const name = `mind.${verb}`;
-    operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
+    operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, expectedRevision:z.string().regex(SHA256_HEX).optional(), note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
       recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, input) {
@@ -57,9 +59,12 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
           // Another daemon sharing this source may have committed since lookup.
           const replay = recover(ctx);
           if (replay) return replay;
-          const page = db.prepare('SELECT status FROM pages WHERE slug = ?').get(input.slug) as { status: string } | undefined;
+          const page = db.prepare('SELECT status, body, freshness_anchor FROM pages WHERE slug = ?').get(input.slug) as
+            { status:string; body:string; freshness_anchor:string|null } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before checking it');
+          if (input.expectedRevision && knowledgeCheckRevision(page) !== input.expectedRevision)
+            throw new OperationError('conflict', 'The knowledge page changed. Read it again before recording a check');
           const answer = options.verify(db, { slug: input.slug, outcome, ...(input.note ? { note: input.note } : {}), ...(input.freshnessAnchor ? { freshness_anchor: input.freshnessAnchor } : {}), verifier: ctx.viewer.id }, ctx.now);
           mindReceipts.save(db, receipt, answer, receipt.expires);
           return answer;

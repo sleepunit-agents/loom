@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -32,6 +32,22 @@ describe('entry point — invoked through a symlinked bin', () => {
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   });
+
+  it.skipIf(!existsSync(dist))('installs loom-wake from the npm tarball', async () => {
+    const repo = resolve(__dirname,'..');
+    const {stdout} = await run('npm',['pack','--offline','--ignore-scripts','--json','--pack-destination',dir],
+      {cwd:repo,maxBuffer:8*1024*1024});
+    const [{filename}] = JSON.parse(stdout);
+    const target = join(dir,'node_modules','@jbarket','loomai');
+    await mkdir(target,{recursive:true});
+    await run('tar',['-xzf',join(dir,filename),'--strip-components=1','-C',target]);
+    await symlink(await realpath(join(repo,'node_modules')),join(target,'node_modules'));
+    const manifest = JSON.parse(await readFile(join(target,'package.json'),'utf8'));
+    await writeFile(join(dir,'package.json'),JSON.stringify({private:true,dependencies:{[manifest.name]:manifest.version}}));
+    await run('npm',['rebuild',manifest.name,'--offline','--ignore-scripts','--no-audit','--no-fund'],{cwd:dir});
+    const command = join(dir,'node_modules','.bin','loom-wake');
+    expect((await run(command,['--help'])).stdout).toContain('usage: loom-wake');
+  },60_000);
 
   it.skipIf(!existsSync(dist))('dispatches --version through the symlink', async () => {
     const { stdout } = await run(process.execPath, [bin, '--version']);

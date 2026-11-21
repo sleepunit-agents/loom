@@ -2,6 +2,10 @@
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
  */
+import { clockLaneText, clockScheduleRevision } from './lanes.js';
+import { rules } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
+import { SHA256_HEX } from '../sha256-hex.js';
 import {createHash} from 'node:crypto';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
@@ -11,7 +15,7 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { OperationError, Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { HOST_SCHEDULE_REFUSAL, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
+import { HOST_SCHEDULE_REFUSAL, matchesClockSchedule, triggerEdit, triggerInput, type NewTrigger, type Trigger, type TriggerAsked, type TriggerEdit } from './triggers.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
@@ -45,6 +49,7 @@ export interface TempoOperationOptions {
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }
 const id = z.object({ id: z.string().min(1) }).strict();
+const occurrence = z.object({ agent: z.string().min(1), at: z.string().datetime().optional() }).strict();
 const saved = z.object({ saved: z.literal(true) }).strict();
 /** `waits`: nothing was set or changed, and why, in words for the caller (an owner is asked first). */
 const waits = z.string().optional();
@@ -73,25 +78,40 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const row = tempo.triggers.set(as.trigger, as.member, as.asked); options.stood?.(ctx.viewer, 'set', row); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
-    name: `tempo.${action}`, input: id, output: saved,
-    may: (viewer, input) => triggerAccess(viewer, input.id, action),
+    name: `tempo.${action}`, input: id.extend({ occurrence: action === 'stop' ? occurrence.optional() : z.never().optional(),
+      scheduleAgent: action !== 'start' ? z.string().min(1).optional() : z.never().optional() }), output: saved,
+    may: (viewer, input) => triggerAccess(viewer, input.id, action) &&
+      (!(action === 'stop' && input.scheduleAgent) || triggerAccess(viewer, input.id, 'edit')),
     run(ctx, input) {
       // On whose word the caller works matters for these as for setting: a body working for anybody but owners starts,
       // runs and stops nothing of its agent's that fires outside its own conversation (policy.ts, maySchedule).
       const held = options.heldRefusal?.(ctx.viewer, action); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, input.id)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, action, stored);
       if (refused) throw new OperationError('denied', refused);
-      tempo.triggers[action](input.id); if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
+      if (input.scheduleAgent && (input.occurrence || !matchesClockSchedule(stored, input.scheduleAgent)))
+        throw new OperationError('conflict', 'This is not a recurring wake for the selected clock');
+      if (action === 'stop' && input.scheduleAgent) tempo.triggers.removeSchedule(input.id);
+      else if (action === 'stop') tempo.triggers.stop(input.id, input.occurrence);
+      else tempo.triggers[action](input.id);
+      if (action === 'start' && stored) options.stood?.(ctx.viewer, 'start', stored);
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
-    may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
-    run(ctx, { id: target, execution, ...change }) {
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ scheduleRevision:z.string().regex(SHA256_HEX).optional(), scheduleAgent:z.string().min(1).optional(), laneRevision: z.string().regex(SHA256_HEX).optional(), id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
+    may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && (!input.laneRevision || (viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer))) && triggerAccess(viewer, input.id, 'edit'),
+    run(ctx, { id: target, execution, laneRevision, scheduleRevision, scheduleAgent, ...change }) {
+      if (laneRevision) {
+        const lane = clockLaneText(db, ctx.viewer, target);
+        if (lane?.revision !== laneRevision) throw new OperationError('conflict', 'The stored lane changed; read it again');
+      }
       if (execution === 'host') throw new OperationError('denied', HOST_SCHEDULE_REFUSAL);
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);
+      if (scheduleAgent && stored?.ownerKind === 'household' && (!scheduleRevision || clockScheduleRevision(db, ctx.viewer, target) !== scheduleRevision))
+        throw new OperationError('conflict', 'The household schedule changed or requires an owner to read it again');
+      if (scheduleAgent && !matchesClockSchedule(stored, scheduleAgent))
+        throw new OperationError('conflict', 'The schedule changed on the selected clock');
       if (refused) throw new OperationError('denied', refused);
       const first = stored && options.ownersFirst?.(ctx.viewer, { action: 'edit', trigger: stored, change });
       if (first) { ctx.changed('approvals', first.card); ctx.changed('inbox', first.card); return { saved: false, waits: first.waits }; }

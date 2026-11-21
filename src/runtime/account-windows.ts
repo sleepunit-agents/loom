@@ -40,7 +40,7 @@ function recordSummary(db: DataDatabase, input: {
     // An older asynchronous refresh must not replace a more recent reading.
     if (usageReadAt !== null && before.usageReadAt !== null && Date.parse(usageReadAt) < Date.parse(before.usageReadAt))
       return { recorded: false as const, account: before };
-    const account = db.update(modelAccounts).set({ usage, usageReadAt, resetsAt, hasRoom: capacity.hasRoom })
+    const account = db.update(modelAccounts).set({ usage, usageReadAt, resetsAt, hasRoom: capacity.hasRoom, usageReadSucceeded: true })
       .where(eq(modelAccounts.id, input.account)).returning().get()!;
     return { recorded: true as const, account };
   }, { behavior: 'immediate' });

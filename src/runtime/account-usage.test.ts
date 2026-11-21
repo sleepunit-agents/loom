@@ -48,7 +48,7 @@ it('unknown or expired usage cannot establish capacity or invent a reset', () =>
 it('a failed provider refresh closes admission and preserves the last known observation', () => {
   const f = fixture(); f.record(); const before = f.read();
   expect(accountUsageUnavailable(f.db, identity)).toBe(true);
-  expect(f.read()).toEqual({ ...before, hasRoom: false });
+  expect(f.read()).toEqual({ ...before, hasRoom: false, usageReadSucceeded: false });
 });
 it('late observations and failures cannot change another provider or owner', () => {
   const f = fixture(); f.record();

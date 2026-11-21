@@ -3,6 +3,7 @@
 // the left and quiet, a tool step as one dashed line, a question as a small card where it was asked; the message
 // bar pinned under it; and the conversation's work in a column on its right where there is room. Built on the kit;
 // what the kit has no part for is in comms.css. This file owns no store and no transport.
+import { newId } from '../../data/id';
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Split, Row, Empty, Error, Loading, Button, Input, Actions, Search, Pager, Head, Title, Meta, Chip, Menu } from '../../kit';
 import { useCommsDraft } from '../comms/drafts';
@@ -224,7 +225,7 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
     if (openingLock.current || !live || !actions) return;
     openingLock.current = true; setOpening(true); setFailed(false);
     const request = openingRetry.current?.agent === agent && openingRetry.current.member === snapshot.member
-      ? openingRetry.current : { agent, member: snapshot.member, id: `th:${crypto.randomUUID()}` };
+      ? openingRetry.current : { agent, member: snapshot.member, id: `th:${newId()}` };
     openingRetry.current = request;
     try {
       await actions.open(agent, request.id);
