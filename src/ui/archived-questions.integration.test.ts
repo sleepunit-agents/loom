@@ -10,7 +10,7 @@ import {FakeClock} from '../core/clock.js';
 import {dataDatabase} from '../core/data/database.js';
 import {CommsMessages} from '../core/conversations/messages.js';
 import {loadKey} from '../pieces/comms/crypto.js';
-import {importArchivedQuestions} from '../cli/import-archived-questions.js';
+import {importArchivedQuestions} from '../core/conversations/archived-question-store.js';
 
 it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open private thread and retains its recorded outcome after restart',async()=>{
   const temp=await mkdtemp(join(tmpdir(),'loom-archived-questions-')),home=join(temp,'home');

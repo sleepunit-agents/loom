@@ -7,7 +7,7 @@ import { and, eq } from 'drizzle-orm';
 import { generateX25519Identity } from 'age-encryption';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, conversations, household, inbox, inboxRefs, inboxReads, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
+import { archivedQuestions, agents, conversations, household, inbox, inboxRefs, inboxReads, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
 import { DataLive } from './core/data/live.js';
 import { DataWrites } from './core/data/writes.js';
 import { sharedRoot } from './shared-root.js';
@@ -17,7 +17,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initialTime=Date.parse('2026-11-14T18:00:00Z')) {
   const statements:string[]=[];
-  const client = new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/InboxQueries|readInboxSet|readInboxVolume|CommsQueries|readCommsPage|readCommsSet/.test(new Error().stack??''))statements.push(s);}}); cleanup.push(() => { if (client.open) client.close(); });
+  const client = new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/InboxQueries|readInboxSet|readInboxVolume|CommsQueries|readCommsPage|readCommsSet|archived-questions\.ts/.test(new Error().stack??''))statements.push(s);}}); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(initialTime), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   for (const [id, role] of [['alice','member'],['bob','member'],['owner','owner']] as const) db.insert(members).values({ id, role, joinedAt: now() }).run();
@@ -41,7 +41,7 @@ async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initi
     const response = await root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `loom_ui=${credentials[person].cookie}` }, body: JSON.stringify({ query: source,variables }) });
     return { response, body: await response.json() as { data?: Record<string, unknown>; errors?: unknown[] } };
   };
-  return { client, db, clock, root, errors, credentials, post, query, statements, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
+  return { client, db, clock, root, errors, sealFixtureWords:key.seal, credentials, post, query, statements, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
 }
 it('mounts actual shared private reads and cookie writes with metadata-only receipts and current ownership', async () => {
   const f = await fixture();
@@ -320,12 +320,34 @@ it('bounds SQL for the full actual Comms selection with two and ten retained mes
   }
   const large=await read();expect(large.rows).toHaveLength(10);
   // Home's part asks policy.ts who the member may give work to, which reads the household's sharing (comms-home.ts).
-  expect(large.count).toBe(small);expect(large.count).toBe(19);
+  // The open thread also checks for saved questions once, regardless of message count.
+  expect(large.count).toBe(small);expect(large.count).toBe(20);
   expect(large.rows.map(row=>row.words)).toEqual(Array.from({length:10},(_,n)=>'PRIVATE MESSAGE '+n));
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
   const revoked=await f.query(commsThreadQuery,'alice',variables);
   expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE MESSAGE');
+});
+
+it('keeps the open thread selection bounded as its retained archived questions grow',async()=>{
+  const f=await fixture();
+  const thread=f.root.services.comms!.threads.open({member:'alice',agent:'art',title:'Archived questions'});
+  const read=async(count:number)=>{
+    f.statements.length=0;
+    const result=await f.query(commsThreadQuery,'alice',{id:thread.id,before:null});
+    expect(result.body.errors).toBeUndefined();
+    expect(result.body.data?.commsArchivedQuestions).toHaveLength(count);
+    expect(f.statements.some(s=>s.includes('archived_questions'))).toBe(true);
+    return f.statements.length;
+  };
+  let small=0;
+  for(let n=0;n<10;n++){
+    const at=new Date(f.clock.now()).toISOString();
+    f.db.insert(archivedQuestions).values({thread:thread.id,ref:'digest:'+n,raisedAt:at,seenAt:at,
+      keepUntil:new Date(f.clock.now()+86_400_000).toISOString(),words:await f.sealFixtureWords(JSON.stringify({text:'Historical question '+n}))}).run();
+    if(n===1)small=await read(2);
+  }
+  expect(await read(10)).toBe(small);
 });
 
 it('keeps every started private decrypt alive until shutdown can safely close SQLite', async () => {

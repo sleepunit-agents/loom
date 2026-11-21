@@ -26,7 +26,7 @@ export function commsSelection(archived: boolean, search: string, offset: number
 }
 /** The open thread, alone: its row, a page of its messages and what they mention. Opening a thread or paging its
  * messages changes this request and nothing the list of threads reads. */
-export const commsThreadQuery = `query CommsThread($id:String!,$before:Int,$earlier:Boolean!){
+export const commsThreadQuery = `query CommsThread($id:String!,$before:Int,$earlier:Boolean!=false){
  commsArchivedQuestions(thread:$id,limit:51) @skip(if:$earlier){${archivedQuestionFields}}
  commsThread(id:$id){${threadFields}}
  commsMessages(thread:$id,beforeSeq:$before,limit:51){${messageFields}}

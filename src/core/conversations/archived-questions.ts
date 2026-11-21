@@ -3,6 +3,7 @@ import { GraphQLString, GraphQLInt, GraphQLBoolean, GraphQLObjectType, GraphQLLi
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import { archivedQuestions as q, conversations, threads } from '../data/schema.js';
+import { readAll } from '../data/execution.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -35,8 +36,10 @@ export function archivedQuestionsField(db:DataDatabase,key:WordsKey,allowed:(vie
       const read=()=>db.select({...metadata,words:wantsBody?words:sql<null>`null`}).from(q)
         .innerJoin(threads,eq(threads.id,q.thread)).innerJoin(conversations,eq(conversations.id,threads.conversation))
         .where(and(eq(q.thread,thread),allowed(ctx.viewer))).orderBy(desc(q.raisedAt),desc(q.ref)).limit(limit).offset(offset).all();
-      const rows=read(), days=commsKeepDays(db), deadlines:number[]=[];
-      const result=await Promise.all(rows.map(async row=>{
+      const rows=read();
+      if (!rows.length) return [];
+      const days=commsKeepDays(db), deadlines:number[]=[];
+      const result=await readAll(rows.map(async row=>{
         const until=wordsDeadline({at:row.seenAt,keepUntil:row.keepUntil},days);
         const {words,...entry}=row;
         let contents=null;

@@ -1,13 +1,13 @@
 /** Offline phase of a household move. Thread identities and the old Comms key must already be staged. */
 import type Database from 'better-sqlite3';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { archivedQuestions, conversations, threads } from '../core/data/schema.js';
-import type { DataDatabase } from '../core/data/database.js';
-import { commsKeepDays } from '../core/data/comms-days.js';
-import { keepUntilFor, validKeepDays, wordsKept } from '../core/conversations/retention.js';
-import type { WordsKey } from '../core/conversations/words.js';
-import { archivedQuestionBody } from '../core/conversations/archived-questions.js';
+import { archivedQuestions, conversations, threads } from '../data/schema.js';
+import type { DataDatabase } from '../data/database.js';
+import { commsKeepDays } from '../data/comms-days.js';
+import { keepUntilFor, validKeepDays, wordsKept } from './retention.js';
+import type { WordsKey } from './words.js';
+import { archivedQuestionBody } from './archived-questions.js';
 
 const id=z.string().min(1);
 const timestamp=z.iso.datetime({offset:true}).transform(date=>new Date(date).toISOString());
@@ -62,4 +62,11 @@ export async function importArchivedQuestions(input:{
     }
     return {total:prepared.length,inserted};
   });
+}
+
+/** Erase private envelopes on the earlier of the original and current household deadlines. */
+export function expireArchivedQuestions(db:DataDatabase,at:string,cutoff:string) {
+  return db.update(archivedQuestions).set({words:null}).where(and(isNotNull(archivedQuestions.words),
+    or(sql`julianday(${archivedQuestions.keepUntil}) <= julianday(${at})`,
+       sql`julianday(${archivedQuestions.seenAt}) <= julianday(${cutoff})`))).run().changes;
 }

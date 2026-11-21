@@ -8,7 +8,7 @@ import { ownHome } from '../core/daemon-home.js';
 import { dataDatabase, dataSchemaNumber, recogniseDataSchema } from '../core/data/database.js';
 import { privateBytes } from '../pieces/secrets/local-holder.js';
 import { readKey, wordsKey } from '../pieces/comms/crypto.js';
-import { importArchivedQuestions } from './import-archived-questions.js';
+import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
 
 const usage='loom migrate archived-questions --source STOPPED_ARCHIVE --home PREPARED_HOME';
 export async function migrateQuestions(args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {

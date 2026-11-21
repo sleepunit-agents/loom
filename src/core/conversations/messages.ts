@@ -1,3 +1,4 @@
+import { expireArchivedQuestions } from './archived-question-store.js';
 import {isBridgeVenue} from './channel-target.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
@@ -8,7 +9,7 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { archivedQuestions, conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
@@ -281,9 +282,7 @@ export class CommsMessages {
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);
-    expired += this.db.update(archivedQuestions).set({words:null}).where(and(isNotNull(archivedQuestions.words),
-      or(sql`julianday(${archivedQuestions.keepUntil}) <= julianday(${at})`,
-         sql`julianday(${archivedQuestions.seenAt}) <= julianday(${cutoff})`))).run().changes;
+    expired += expireArchivedQuestions(this.db,at,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
