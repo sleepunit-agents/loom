@@ -55,7 +55,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
   const accounts = input.programBoxes ? [] : db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
     .filter(account => namesCurrent('member', account.owner, sharing))
     .map(account => ({ ...account, capacity:currentAccountCapacity(db, account.id, input.now) }));
-  const signedIn = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
+  const bindings = input.programBoxes ? [] : db.select().from(modelAccountBoxes).all();
   // Host and container logins can differ. Placement uses only reports from the houses.
   const logins = input.programBoxes ? [] : db.select().from(modelAccountLogins).where(eq(modelAccountLogins.place, 'containers')).all();
   const roles = models.flatMap(model => {
@@ -85,7 +85,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
     let signedOut = false;
     let quotaLimited = false;
     for (const role of roles) {
-      const enabled = accounts.filter(account => account.provider === role.provider && signedIn.some(binding => binding.account === account.id && binding.box === id));
+      const enabled = accounts.filter(account => account.provider === role.provider && bindings.some(binding => binding.account === account.id && binding.box === id));
       for (const account of enabled) {
         const login = logins.find(row => row.account === account.id && row.box === id && row.harness === role.harness);
         if (!account.capacity.hasRoom) {
@@ -98,8 +98,7 @@ export function decidePlacement(db: DataDatabase, input: PlacementInput): { plac
           missingPreferred: (input.prefers ?? []).filter(fact => !meetsNeed(facts, fact)) };
       }
     }
-    if (quotaLimited) return { box: id, reason: QUOTA_WAIT_REASON, quotaLimited: true };
-    return { box: id, reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
+    return { box: id, ...(quotaLimited ? {quotaLimited:true} : {}), reason: signedOut ? 'An account for an allowed model is signed out on this machine.' : 'No signed-in account with room for an allowed model.' };
   });
   const eligible = candidates.filter(candidate => 'placement' in candidate);
   const winner = eligible.find(candidate => !candidate.missingPreferred.length) ?? eligible[0];

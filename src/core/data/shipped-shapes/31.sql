@@ -1076,10 +1076,10 @@ CREATE TABLE `model_accounts` (
 	`has_room` integer NOT NULL,
 	`usage_read_succeeded` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "model_accounts_usage_read_succeeded_boolean" CHECK("model_accounts"."usage_read_succeeded" in (0, 1)),
 	CONSTRAINT "model_accounts_usage_read_at_utc" CHECK("model_accounts"."usage_read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_accounts"."usage_read_at") = "model_accounts"."usage_read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_accounts"."usage_read_at") = "model_accounts"."usage_read_at", 0)),
 	CONSTRAINT "model_accounts_resets_at_utc" CHECK("model_accounts"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_accounts"."resets_at") = "model_accounts"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_accounts"."resets_at") = "model_accounts"."resets_at", 0)),
 	CONSTRAINT "model_accounts_has_room_boolean" CHECK("model_accounts"."has_room" in (0, 1)),
-	CONSTRAINT "model_accounts_usage_read_succeeded_boolean" CHECK("model_accounts"."usage_read_succeeded" in (0, 1)),
 	CONSTRAINT "model_accounts_usage_range" CHECK("model_accounts"."usage" is null or "model_accounts"."usage" between 0 and 1)
 );
 

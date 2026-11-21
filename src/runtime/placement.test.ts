@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes, modelAccountLogins } from '../core/data/schema.js';
-import { decidePlacement, selectPlacement, QUOTA_WAIT_REASON } from './placement.js';
+import { decidePlacement, selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
 function fixture() {
@@ -208,23 +208,26 @@ it('passes over a machine whose houses were last found signed out of the account
 
 it('explains quota only for an eligible container sign-in and a usable window reading',()=>{
   const {db,input}=fixture();
-  const reason=()=>decidePlacement(db,input).decision.find(row=>row.box==='local')?.reason;
+  const quotaLimited=()=>decidePlacement(db,input).quotaLimited;
   db.update(modelAccountWindows).set({usage:1}).run();
   const login={account:'shared',box:'local',harness:'runner',state:'signed-in',checkedAt:input.now,since:input.now,learnedFrom:'check'} as const;
   db.insert(modelAccountLogins).values({...login,place:'host'}).run();
-  expect(reason()).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(false);
+  db.insert(modelAccountLogins).values({...login,place:'containers'}).run();
+  expect(quotaLimited()).toBe(false);
+  db.delete(modelAccountLogins).run();
   db.update(modelAccounts).set({usageReadSucceeded:true}).run();
   db.insert(modelAccounts).values({id:'unbound',owner:'owner',provider:'provider',label:'Other',hasRoom:false}).run();
   db.insert(modelAccountLogins).values({...login,place:'containers',account:'unbound'}).run();
-  expect(reason()).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(false);
   db.insert(modelAccountLogins).values({...login,place:'containers',harness:'wrong'}).run();
-  expect(reason()).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(false);
   db.insert(modelAccountLogins).values({...login,place:'containers'}).run();
-  expect(reason()).toBe(QUOTA_WAIT_REASON);
-  expect(decidePlacement(db,{...input,eligibleBoxes:new Set(['remote'])}).decision[0].reason).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(true);
+  expect(decidePlacement(db,{...input,eligibleBoxes:new Set(['remote'])}).quotaLimited).toBe(false);
   db.update(modelAccountLogins).set({expiresAt:input.now}).run();
-  expect(reason()).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(false);
   db.update(modelAccountLogins).set({expiresAt:null}).run();
   db.update(modelAccountWindows).set({resetsAt:input.now,usageReadAt:'2026-11-14T19:00:00.000Z'}).run();
-  expect(reason()).not.toBe(QUOTA_WAIT_REASON);
+  expect(quotaLimited()).toBe(false);
 });
