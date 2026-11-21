@@ -386,6 +386,16 @@ const upgrades: readonly (readonly string[])[] = [
    "CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers\n  (\"to\", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'\n  AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';"],
   // 31: earlier homes know the retained windows but not whether the last provider read succeeded.
   ['ALTER TABLE model_accounts ADD COLUMN usage_read_succeeded integer DEFAULT false NOT NULL CONSTRAINT "model_accounts_usage_read_succeeded_boolean" CHECK("model_accounts"."usage_read_succeeded" in (0, 1))'],
+  // 32: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
+  ['ALTER TABLE conversation_sessions ADD COLUMN keep_until text',
+    "DELETE FROM conversation_sessions WHERE conversation IN (SELECT id FROM conversations WHERE venue IN ('slack','discord'))",
+    "UPDATE conversation_sessions SET keep_until = strftime('%Y-%m-%dT%H:%M:%fZ', started_at, '+' || coalesce((select comms_days from household limit 1), 14) || ' days')",
+    "CREATE TABLE `job_session_limits` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`since` text NOT NULL,\n\t`keep_until` text NOT NULL,\n\t`invalidated` integer DEFAULT false NOT NULL,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT \"job_session_limits_valid_flag\" CHECK(\"job_session_limits\".\"invalidated\" in (0, 1)),\n\tCONSTRAINT \"job_session_limits_since_utc\" CHECK(\"job_session_limits\".\"since\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"job_session_limits\".\"since\") = \"job_session_limits\".\"since\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"job_session_limits\".\"since\") = \"job_session_limits\".\"since\", 0)),\n\tCONSTRAINT \"job_session_limits_until_utc\" CHECK(\"job_session_limits\".\"keep_until\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"job_session_limits\".\"keep_until\") = \"job_session_limits\".\"keep_until\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"job_session_limits\".\"keep_until\") = \"job_session_limits\".\"keep_until\", 0))\n);",
+    // An already running body may have read words before this coordinator could reserve their deadlines.
+    `INSERT INTO job_session_limits (job,since,keep_until,invalidated)
+      SELECT jobs.id,jobs.queued_at,jobs.queued_at,1 FROM jobs JOIN conversations ON conversations.id=jobs.conversation
+      WHERE jobs.state='running' AND (conversations.venue IN ('slack','discord')
+        OR (conversations.venue='loom' AND conversations.member IS NOT NULL))`],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

@@ -4,9 +4,9 @@ import { createDataSchema } from '../data/database.js';
 import { agents, conversationSessions, household, members, deletedThreads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { Conversations } from './index.js';
-import { ConversationSessions, expireConversationSessions, oldestConversationSession } from './sessions.js';
+import { ConversationSessions, expireConversationSessions, nextConversationSessionExpiry } from './sessions.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
-import { ageCutoff } from './retention.js';
+import { keepUntilFor } from './retention.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -21,7 +21,7 @@ function fixture() {
   const key = { seal: async (words: string) => Buffer.from('SEALED:' + Buffer.from(words).toString('hex')), open: async (blob: Uint8Array) => Buffer.from(Buffer.from(blob).toString().slice(7), 'hex').toString(), hash: (words: string) => words };
   const sessions = new ConversationSessions(db, now, key);
   const files = Buffer.from('record').toString('base64');
-  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
+  const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string; keepUntil: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
   return { db, cv, key, sessions, save, files, now, later: (ms: number) => { at += ms; } };
 }
 
@@ -59,7 +59,7 @@ it('keeps nothing too large, empty or with an id that could be a path, and then 
 it('keeps a session for the household\'s keep time counted from when it was started, however often it is saved since', async () => {
   const f = fixture(); await f.save();
   const started = Date.parse(f.now());
-  expect(oldestConversationSession(f.db)).toBe(started);
+  expect(nextConversationSessionExpiry(f.db,3)).toBe(Date.parse(keepUntilFor(new Date(started).toISOString(), 3)));
   // The conversation goes on: the session is saved again each day, and its start does not move.
   for (let day = 1; day <= 2; day++) {
     f.later(86_400_000); await f.save({ files: Buffer.from('record, day ' + day).toString('base64') });
@@ -68,7 +68,7 @@ it('keeps a session for the household\'s keep time counted from when it was star
   }
   f.later(86_400_000 - 1000);
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).not.toBeNull();
-  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(0);
+  expect(expireConversationSessions(f.db, f.now())).toBe(0);
   f.later(1000);
   // Three days after it was started it is not handed on, though it was saved a day ago, whether or not the sweep has run.
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
@@ -76,8 +76,8 @@ it('keeps a session for the household\'s keep time counted from when it was star
   await f.save({ session: 'fresh-0001' });
   expect(f.db.select().from(conversationSessions).get()).toMatchObject({ session: 'fresh-0001', startedAt: f.now() });
   f.later(3 * 86_400_000);
-  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
-  expect(oldestConversationSession(f.db)).toBeUndefined();
+  expect(expireConversationSessions(f.db, f.now())).toBe(1);
+  expect(nextConversationSessionExpiry(f.db,3)).toBeUndefined();
 });
 
 it('counts a session started with older erasable words handed in from the oldest of them, so none outlives the keep time', async () => {
@@ -89,7 +89,7 @@ it('counts a session started with older erasable words handed in from the oldest
   // A day later that word is erased (the keep time is three days), and the session that holds it is not handed on.
   f.later(86_400_000 - 1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).not.toBeNull();
   f.later(1000); expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
-  expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
+  expect(expireConversationSessions(f.db, f.now())).toBe(1);
   // Handed words already past the keep time, a session is not kept at all, and takes the one kept with it.
   await f.save();
   expect(await f.save({ since: new Date(Date.parse(f.now()) - 3 * 86_400_000).toISOString() })).toBe(false);
@@ -148,4 +148,34 @@ it.each(['startup sweep','repeat deletion'])('removes legacy checkpoints for alr
   if(cleanup==='startup sweep') expect(comms.expire()).toBe(2);
   else comms.delete('th:former');
   expect(f.db.select({id:conversationSessions.conversation}).from(conversationSessions).all()).toEqual([{id:f.cv}]);
+});
+
+it('preserves the earliest input deadline across replacement and a longer household retention', async () => {
+  const f = fixture();
+  const limit = new Date(Date.parse(f.now()) + 5000).toISOString();
+  expect(await f.save({keepUntil:limit})).toBe(true);
+  f.later(1000);
+  f.db.update(household).set({commsDays:14}).run();
+  expect(await f.save({keepUntil:keepUntilFor(f.now(),14)})).toBe(true);
+  expect(nextConversationSessionExpiry(f.db,14)).toBe(Date.parse(limit));
+  f.later(3999);
+  expect(await f.sessions.open(f.cv,'claude','claude-opus-5-5')).not.toBeNull();
+  f.later(1);
+  expect(await f.sessions.open(f.cv,'claude','claude-opus-5-5')).toBeNull();
+  expect(expireConversationSessions(f.db,f.now())).toBe(1);
+  expect(await f.save({keepUntil:limit})).toBe(false);
+});
+
+it('pins the deadline before sealing completes and honors a subsequently shorter household setting',async()=>{
+  const f=fixture();
+  const prepared=await f.sessions.seal({conversation:f.cv,harness:'claude',model:'fixture',session:'abcd-1234',files:f.files});
+  const initial=f.now();
+  f.db.update(household).set({commsDays:14}).run();
+  expect(f.sessions.store(prepared)).toBe(true);
+  expect(nextConversationSessionExpiry(f.db,14)).toBe(Date.parse(keepUntilFor(initial,3)));
+  f.db.update(household).set({commsDays:1}).run();
+  expect(nextConversationSessionExpiry(f.db,1)).toBe(Date.parse(keepUntilFor(initial,1)));
+  f.later(Date.parse(keepUntilFor(initial,1))-Date.parse(initial));
+  expect(await f.sessions.open(f.cv,'claude','fixture')).toBeNull();
+  expect(expireConversationSessions(f.db,f.now())).toBe(1);
 });

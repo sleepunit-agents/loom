@@ -282,7 +282,7 @@ export class CommsMessages {
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
-    expired+=expireConversationSessions(this.db,cutoff);
+    expired+=expireConversationSessions(this.db,at);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;

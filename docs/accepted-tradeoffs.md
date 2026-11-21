@@ -1084,13 +1084,12 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   class. Or owners being held up behind guests often enough to want two jobs of one conversation at once.
 
 ### A harness session is kept between bodies, sealed, for the next body alone
-- What: a bridge conversation's body continues the session the last body of that conversation left. When
+- What: an eligible bridge or private Comms body continues the last completed session for its conversation. When
   it has answered, the body packs the harness's own files for the session (for Claude Code, the transcript
   `projects/<directory>/<session>.jsonl` and the tool results beside it), gzipped, and hands them to loom;
   loom keeps one for a conversation and harness (`conversation_sessions`), sealed with the household's
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
-  continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
-  agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+  continue (`claude --resume`). It receives new mail and retained history missing from the checkpoint. Only Claude Code keeps sessions so far; another harness starts fresh.
 - Not for a job on anybody else's word. A session holds what the bodies before read and used, tool
   results included, and a guest's job that continued it would be handed all of that with nothing to
   check its answer against. Both doors refuse such a job on loom's own reading of its word (`jobHeld`),
@@ -1122,6 +1121,11 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
   of a direct conversation, each of which has an erase time. A room's words are kept without limit, have
   no erase time, and do not move the start, however old the history handed in. So no erasable word in a
   session outlives its keep time, and a room's session is counted from its first save.
+- In private Comms, Loom binds a checkpoint to the thread, member, agent and project. A direct bridge
+  conversation also binds its venue and place. After an upgrade from schema 31, each bridge worker
+  starts from retained messages on its first turn because older checkpoints lack trusted input deadlines. Loom records
+  delivered input deadlines itself, passes them to the next worker and tightens active job limits when
+  the household shortens retention. The replacement checks the deadline again before launching its harness.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also
   removes the one kept before); a conversation answered after the session was last saved (its body died
@@ -1132,7 +1136,7 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
 - Who can read it: nobody but the body holding the conversation's job. The table is not served by the
   query door and no page shows it, to an owner either: a session is the model's own record of the
   conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
-  that body, of a bridge conversation, and the body program keeps both from the model's own tools, so a
+  that body, and the body program keeps both from the model's own tools, so a
   model cannot store a session of its own making for the next body to continue. A session's files are
   found, read, put back and removed without following a link at any step (`src/runtime/unfollowed.ts`);
   a pack that is refused leaves no file or directory it made. Where a harness keeps a session is said
