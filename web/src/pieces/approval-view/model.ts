@@ -15,6 +15,8 @@ export interface Approval {
    * the names it holds and what the change would replace (household.proposalPreview). Not on the card itself. */
   exactRequest?: string;
   card?: { title: string; nothing: boolean; facts: readonly CardFact[]; exact: string; ifYes?: string; ifNo?: string } | null;
+  /** The version of the current effects shown to the deciding owner. */
+  review?: string;
   /** For the same owner: the plain line saying this cannot be allowed and what would fix it. The answer operation still decides. */
   blocked?: string | null;
 }

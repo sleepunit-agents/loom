@@ -37,6 +37,7 @@
  *
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
+import { SHA256_HEX } from './core/sha256-hex.js';
 import {parseOutsidePersonKey} from './pieces/bridges/keys.js';
 import {createHash,randomBytes} from 'node:crypto';
 import {and,asc,desc,eq,inArray,isNull,like,sql} from 'drizzle-orm';
@@ -47,7 +48,7 @@ import {holds,householdChangePrincipal,rules as policyRules,type Viewer} from '.
 import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agentKitProjects,agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,memberAgents,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
+import {agentKitProjects,projectOutsidePeople,agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,memberAgents,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings,applyMachineReader} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
@@ -67,7 +68,7 @@ import {OperationError,type Operations} from './core/operations/index.js';
 import {ASKED_FROM_TERMINAL,type approvalService,type Approval} from './apps/approvals.js';
 import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
-import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
+import {alreadyOnProject,projectMergeRecords,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
 import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWords,type PlaceScheduleAsk} from './shared-place-triggers.js';
@@ -223,16 +224,15 @@ const kitBlocked=(value:KitProposal,refused:KitRefusal,names?:CardNames):string=
  const who=account?names?.person(account.platform,account.workspace,account.user)?.name??'this account':'';
  const agent='agent' in value.input?cap(value.input.agent):'';
  // Restoring a target or changing a link changes who or what the card affects, so it needs a fresh card.
- const again=' Deny this card, and ask for it again once that is done.';
  switch(refused.cause){
-  case 'agent':return 'This cannot be allowed: '+agent+' is not an agent in the household now. The agent would have to be restored first.'+again;
-  case 'project':return 'This cannot be allowed: the project '+(value.change==='colleague'||value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.'+again;
-  case 'member':return 'This cannot be allowed: '+(value.change==='kitGrant'&&'member' in value.input.to?cap(value.input.to.member):'that person')+' is not a member of the household now. They would have to be restored first.'+again;
+  case 'agent':return 'This cannot be allowed: '+agent+' is not an agent in the household now. The agent would have to be restored first.';
+  case 'project':return 'This cannot be allowed: the project '+(value.change==='colleague'||value.change==='projectOutsidePerson'?value.input.project:value.change==='kitGrant'&&'project' in value.input.to?value.input.to.project:'')+' is not in use (it is retired, removed, or was never made). It would have to be revived or restored first.';
+  case 'member':return 'This cannot be allowed: '+(value.change==='kitGrant'&&'member' in value.input.to?cap(value.input.to.member):'that person')+' is not a member of the household now. They would have to be restored first.';
   case 'full':return 'The agent has reached its outside contact limit. An owner can update its outside contacts before asking again.';
   case 'linked':if(value.change==='colleague')return 'This Slack account belongs to the household member '+refused.member+'. Outside contact tiers apply only to unlinked accounts.';
    return 'This cannot be allowed: this account is linked to the household member '+refused.member+'. Deny this card, and ask for '+(value.change==='projectOutsidePerson'?refused.member+' to be put on the project as a member':'the kit to be granted to the member '+refused.member)+' instead.';
   case 'unplaced':return 'This cannot be allowed yet: '+(value.change==='projectOutsidePerson'?'no agent in the household knows ':agent+' does not know ')+who+' as an outside contact. An owner can add the account to the outside people '+(value.change==='projectOutsidePerson'?'an agent can talk to':agent+' can talk to')+'.';
-  case 'no-kit':return 'This cannot be allowed: '+agent+' has no kit called '+('kit' in value.input?value.input.kit:'')+'. The kit would have to be defined first.'+again;
+  case 'no-kit':return 'This cannot be allowed: '+agent+' has no kit called '+('kit' in value.input?value.input.kit:'')+'. The kit would have to be defined first.';
   case 'same':return 'This cannot be allowed: it is already so, and nothing would change. Deny it.';
  }
 };
@@ -377,7 +377,29 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')
   :value.change==='rule'&&was===null&&value.input.tier===null?new OperationError('invalid','There is no such rule to remove')
   :JSON.stringify(was)===JSON.stringify(sorted(value.input))?new OperationError('invalid','That is how it already is'):undefined;
- const seal=(value:Proposal,nonce:string,was:unknown)=>parts.digest(JSON.stringify([nonce,target(value),was]));
+ const fullOwnerRoster=(value:Proposal)=>value.change==='member'&&value.input.fullOwner
+  ?db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id):undefined;
+ const accessEffects=(value:Proposal)=>{
+  const allAgents=fullOwnerRoster(value);
+  if(allAgents)return {allAgents};
+  if(value.change==='remove'&&value.input.of==='agent'){
+   return {disconnect:db.select({id:bridgeConnections.id,platform:bridgeConnections.platform,workspace:bridgeConnections.workspace}).from(bridgeConnections)
+    .where(and(eq(bridgeConnections.agent,value.input.id),eq(bridgeConnections.enabled,true))).orderBy(asc(bridgeConnections.id)).all()};
+  }
+  const project=isState(value)?value.input.project:
+   (value.change==='restore'||value.change==='remove')&&value.input.of==='project'?value.input.id:undefined;
+  if(!project)return;
+  const kits=projectKitDefinitions(db,project);
+  if(!kits.length)return;
+  const outside=projectOutsidePeople;
+  return {projectKitAccess:{project,roster:projects.describe(project),kits,outside:
+   db.select({platform:outside.platform,workspace:outside.workspace,user:outside.user}).from(outside)
+    .where(eq(outside.project,project)).orderBy(asc(outside.platform),asc(outside.workspace),asc(outside.user)).all()}};
+ };
+ const seal=(value:Proposal,nonce:string,was:unknown)=>{
+  const access=accessEffects(value);
+  return parts.digest(JSON.stringify(access?[nonce,target(value),was,access]:[nonce,target(value),was]));
+ };
  const read=(card:Approval)=>{
   if(card.operation!==operation)throw new OperationError('conflict','Wrong household card');
   const kept=details.parse(JSON.parse(card.details)),value=proposal.parse({change:kept.change,input:kept.after});
@@ -387,13 +409,26 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Everything an Allow must find true before the change is made, on what is there now.
  const check=(value:Proposal,kept:z.infer<typeof details>)=>{
   const was=before(value);
-  if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
+  if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)throw new OperationError('conflict','This has changed since the card was filed. Open the updated card to review it.');
   const refused=refusal(value,was);if(refused)throw refused;
  };
- const apply=(card:Approval)=>{
+ // Only an owner viewing this card receives this revision. Reading a refreshed card leaves
+ // the filing agent's original snapshot, inbox item and audit record intact.
+ const reviewOf=(card:Approval,owner:string,value:Proposal,was:unknown)=>{
+  const physical=value.change==='tokenRevoke'?liveToken(value.input.label)?.fingerprint:
+   value.change==='boxRevoke'?liveBox(value.input.name)?.id:
+   value.change==='browserSignOut'?browsers(value.input).map(row=>row.id).sort():null;
+  return parts.digest(JSON.stringify(['owner-review-v1',card.id,card.details,owner,was,physical,accessEffects(value),
+   value.change==='projectMerge'?projectMergeRecords(db,value.input.from,value.input.into):null]));
+ };
+ const apply=(card:Approval,review?:string)=>{
   const {kept,value}=read(card);
   if(!card.decidedBy)throw new OperationError('conflict','Wrong household card');
-  check(value,kept);
+  if(review){
+   const was=before(value);
+   if(review!==reviewOf(card,card.decidedBy,value,was))throw new OperationError('conflict','The reviewed settings changed. Review the updated card before allowing it.');
+   const refused=refusal(value,was);if(refused)throw refused;
+  }else check(value,kept);
   change(value,card.decidedBy);
   appliedCards.add(card.id);
  };
@@ -465,7 +500,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const context:CardContext={
       ...(value.change==='colleague'?{name:(id:string)=>id.charAt(0).toUpperCase()+id.slice(1)}:{}),
       ...(was!==undefined?{before:{value:was}}:{}),
-      ...(value.change==='member'&&value.input.fullOwner?{allAgents:db.select({id:agents.id}).from(agents).orderBy(asc(agents.id)).all().map(row=>row.id)}:{}),...(names?{names}:{}),
+      allAgents:fullOwnerRoster(value),...(names?{names}:{}),
       projectName:id=>db.select({name:projectRows.name}).from(projectRows).where(eq(projectRows.id,id)).get()?.name,
       machineName:id=>machines.get(id),
      };
@@ -501,7 +536,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
   /** `held` answers why this caller proposes nothing, in words for the caller: the body of a job on anybody else's
    * word (shared-place-mail.ts, heldRefusal). loom's own card for such a job's repeating schedule is filed by `file`. */
-  register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>,held:(viewer:Viewer)=>string|undefined=()=>undefined){
+  register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>,held:(viewer:Viewer)=>string|undefined=()=>undefined,isProgram:(viewer:Viewer)=>boolean=()=>false){
    // An agent in the household now may propose for itself. Proposing changes nothing: see the file header.
    // One change may also be asked for by a household owner, and by an agent only about itself: letting an
    // agent onto a project (policy.ts, rule `asksToJoin`).
@@ -561,16 +596,18 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    const ownedMachine=(viewer:Viewer,id:string)=>viewer.kind==='member'&&!!db.select({id:boxes.id}).from(boxes)
     .where(and(eq(boxes.id,id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt))).get();
    const cardId=z.string().min(1).max(200);
-   const readerCard=(id:string)=>{
+   const readerCard=(id:string,owner?:string)=>{
     const card=db.select().from(approvals).where(eq(approvals.id,id)).get();
     if(!card||card.operation!==operation)return;
-    const {value}=read(card);
-    if(value.change==='machineReader')return {machine:value.input.box,words:readerWords(value.input)};
+    const {kept,value}=read(card);
+    const readerReview=(was:unknown)=>owner&&seal(value,kept.seal.nonce,was)!==kept.seal.digest
+     ?{review:reviewOf(card,owner,value,was)}:{};
+    if(value.change==='machineReader')return {machine:value.input.box,words:readerWords(value.input),...readerReview(before(value))};
     if(value.change!=='boxSettings'||value.input.readers===undefined)return;
     const prior=before(value) as typeof value.input|null;
     // Through this door an ordinary machine owner decides read grants alone.
     if(!prior||JSON.stringify(sorted({...prior,readers:[]}))!==JSON.stringify(sorted({...value.input,readers:[]})))return;
-    return {machine:value.input.box,words:readerChanges(prior.readers??[],value.input.readers)||card.ask};
+    return {machine:value.input.box,words:readerChanges(prior.readers??[],value.input.readers)||card.ask,...readerReview(prior)};
    };
    operations.register({name:'machine.proposeReader',doors:['http'],write:true,recheckPolicy:true,
     input:kinds.machineReader,output:z.object({id:z.string(),state:z.string()}),
@@ -584,20 +621,20 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return {id:card.id,state:card.state};
     },
    });
-   operations.register({name:'machine.readerCards',doors:['http'],input:z.object({machine:cardId}).strict(),output:z.array(z.object({id:z.string(),ask:z.string()})),
+   operations.register({name:'machine.readerCards',doors:['http'],input:z.object({machine:cardId}).strict(),output:z.array(z.object({id:z.string(),ask:z.string(),review:z.string().optional()})),
     may:(viewer,input)=>ownedMachine(viewer,input.machine),
-    run(_ctx,input){
+    run(ctx,input){
      const prefix='household:machineReader:'+input.machine+':';
      const rows=db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.state,'pending'),
       sql`(substr(${approvals.target},1,length(${prefix})) = ${prefix} or ${approvals.target} = ${'household:boxSettings:'+input.machine})`)).all();
-     return rows.flatMap(({id})=>{const card=readerCard(id);return card?.machine===input.machine?[{id,ask:card.words}]:[];});
+     return rows.flatMap(({id})=>{const card=readerCard(id,isProgram(ctx.viewer)?undefined:ctx.viewer.id);return card?.machine===input.machine?[{id,ask:card.words,...(card.review?{review:card.review}:{})}]:[];});
     },
    });
    operations.register({name:'machine.answerReader',doors:['http'],write:true,recheckPolicy:true,
-    input:z.object({id:cardId,answer:z.enum(['allow','deny'])}).strict(),output:z.object({id:z.string()}),
-    may:(viewer,input)=>{const card=readerCard(input.id);return !!card&&ownedMachine(viewer,card.machine);},
+    input:z.object({id:cardId,answer:z.enum(['allow','deny']),review:z.string().regex(SHA256_HEX).optional()}).strict(),output:z.object({id:z.string()}),
+    may:(viewer,input)=>{const card=readerCard(input.id);return !!card&&ownedMachine(viewer,card.machine)&&(!input.review||!isProgram(viewer));},
     run(ctx,input){
-     if(input.answer==='allow')service.allow(input.id,ctx.viewer.id);
+     if(input.answer==='allow')service.allow(input.id,ctx.viewer.id,undefined,input.review);
      else service.deny(input.id,ctx.viewer.id);
      ctx.changed('approvals',input.id);ctx.changed('boxes',readerCard(input.id)!.machine);return {id:input.id};
     },
@@ -606,10 +643,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // the names loom holds and with what the change would replace, and one plain line when it cannot be allowed.
    const agentExists=(id:string)=>!!db.select({id:agents.id}).from(agents).where(eq(agents.id,id)).get();
    const secretExists=(name:string)=>!!db.select({name:secrets.name}).from(secrets).where(eq(secrets.name,name)).get();
-   const blockedWords=(value:Proposal,kept:z.infer<typeof details>,was:unknown,viewer:Extract<Viewer,{kind:'member'}>,names?:CardNames):string|null=>{
+   const blockedWords=(value:Proposal,was:unknown,viewer:Extract<Viewer,{kind:'member'}>,names?:CardNames):string|null=>{
     const kit=kitChange(value)?kitRefusal(value,was as ReturnType<typeof kitBefore>):undefined;
     if(kit&&kitChange(value))return kitBlocked(value,kit,names);
-    if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)return 'This cannot be allowed: what it would change has changed since the card was filed. Deny it, and ask for a fresh card.';
     let refused:OperationError|undefined=refusal(value,was);
     // What Allow would refuse this owner for, where it can be found out by reading alone. One owner may be able
     // to make a change another may not, so this is the reader's own answer; Allow still checks for itself.
@@ -684,7 +720,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // and only shared conversation labels may supply channel names. Exact input is also shown here.
    const cardOutput=z.object({title:z.string(),nothing:z.boolean(),facts:z.array(z.object({label:z.string(),value:z.string(),small:z.boolean().optional()}).strict()),exact:z.string(),ifYes:z.string().optional(),ifNo:z.string().optional()}).strict();
    operations.register({name:'household.proposalPreview',doors:['http'],input:z.object({id:z.string().min(1).max(200)}).strict(),
-    output:z.object({summary:z.string(),problem:z.string().nullable(),card:cardOutput.nullable(),blocked:z.string().nullable(),exact:z.string().optional()}).strict(),
+    output:z.object({summary:z.string(),problem:z.string().nullable(),card:cardOutput.nullable(),blocked:z.string().nullable(),review:z.string().optional(),exact:z.string().optional()}).strict(),
     may:(viewer,input)=>householdOwner(db,viewer)&&!!stored(input.id),
     run(ctx,input){
      const card=stored(input.id);if(!card||!householdOwner(db,ctx.viewer))throw new OperationError('not-found','No such household card');
@@ -700,7 +736,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const {kept,value}=parsed,was=before(value);
      const names=parts.names?.(ctx.viewer),told=ownerCard(value,was,names);
      if(!told)return unknown();
-     let blocked=blockedWords(value,kept,was,ctx.viewer,names);
+     const stale=seal(value,kept.seal.nonce,was)!==kept.seal.digest;
+     let blocked=blockedWords(value,was,ctx.viewer,names);
      if(blocked&&value.change==='placeSchedule'&&value.input.asker.kind==='outside'){
       const askedBy=told.facts.find(fact=>fact.label==='Asked by')?.value??'The outside account';
       blocked=blocked.replace('the outside account '+value.input.asker.id,()=>askedBy);
@@ -708,14 +745,17 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      // Only an owner can open this preview. The stored card holds a digest of the
      // effects. Show the definitions read here in full; Allow compares that digest again.
      let exact:string;
-     if(value.change==='colleague'){
+     const effects=accessEffects(value);
+     if(stale||effects){
+      exact=JSON.stringify({request:kept.after,current:was,...effects,
+       ...(value.change==='projectMerge'?{records:'Every record currently filed under the source project moves to the destination. Private records keep their member scope.'}:{})},null,2);
+     }else if(value.change==='colleague'){
       const state=was as ReturnType<typeof kitBefore>;
-      const matches=seal(value,kept.seal.nonce,was)===kept.seal.digest;
-      exact=JSON.stringify({request:kept.after,effects:matches?'Match the state sealed when filed':'Current definitions. The sealed state has changed and this card cannot be allowed.',
+      exact=JSON.stringify({request:kept.after,effects:'Match the state sealed when filed',
        ...('grants' in state && value.input.project?{projectKitRoster:{project:value.input.project,kits:state.grants}}:{}),
        ...('returning' in state && state.returning?{reactivatedKitGrants:{agent:value.input.agent,...state.returning}}:{})},null,2);
      }else exact=exactRequest(kept.after);
-     return{summary:factLines(told.facts),problem:null,blocked:blocked&&clipProposalText(blocked,1500),
+     return{summary:factLines(told.facts),problem:null,...(stale&&!blocked?{review:reviewOf(card,ctx.viewer.id,value,was)}:{}),blocked:blocked&&clipProposalText(blocked,1500),
       card:{title:told.title,nothing:told.nothing,facts:told.facts,exact,
        ifYes:told.ifYes,ifNo:told.ifNo}};
     },

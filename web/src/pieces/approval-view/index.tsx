@@ -18,7 +18,7 @@ export interface ApprovalActions {
   refreshProposal?(id: string): void;
   supports?(approval: Approval): boolean;
   /** confirm is the second, explicit yes a dangerous action needs. */
-  allow(id: string, confirm?: boolean): Promise<void>;
+  allow(id: string, confirm?: boolean, review?: string): Promise<void>;
   deny(id: string): Promise<void>;
   always?: { label: string; approval: string; run(id: string): Promise<void> };
 }
@@ -52,6 +52,8 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
     }
     finally { active.current = false; setBusy(false); }
   }
+  const allow=(confirm?:boolean)=>approval.review?actions!.allow(approval.id,confirm,approval.review):
+    confirm?actions!.allow(approval.id,true):actions!.allow(approval.id);
   // One filled button: Allow, or (a dangerous request, asked a second time) Yes, allow it. Always and Deny stay quiet.
   return <>
     {!allowed && caution}
@@ -59,9 +61,9 @@ function Answer({ approval, actions, caution }: { approval: Approval; actions?: 
       {dangerous && confirming && <Body>This cannot be undone.</Body>}
       <Actions label="Answer approval">
         {dangerous && confirming
-          ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true), true)}>Yes, allow it</Button>
+          ? <><Button variant="primary" disabled={busy} onClick={() => void send(() => allow(true), true)}>Yes, allow it</Button>
             <Button disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
-          : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id), true)}>Allow</Button>}
+          : <Button variant="primary" disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => allow(), true)}>Allow</Button>}
         {actions.always?.approval === approval.id && <Button disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
         <Button disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
       </Actions></>}
@@ -85,7 +87,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
   const exactRequest = exact && <Disclosure label="Exact request"><pre className="whitespace-pre-wrap break-words">{exact}</pre></Disclosure>;
   const storedSummary = !household && !change && a.changeSummary;
   const ifYes = card?.ifYes ?? a.ifYes, ifNo = card?.ifNo ?? a.ifNo;
-  const caution = card && a.state === 'pending' && a.blocked
+  const caution = a.review ? <Body role="note">The request has been refreshed. Review the current settings before allowing it.</Body> : card && a.state === 'pending' && a.blocked
     ? <Body role="note">loom will refuse this as things stand: {a.blocked.replace(/^This cannot be allowed(?: yet| as it stands)?: /, '')}</Body>
     : !household && a.problem ? <Body role="note">This cannot be allowed as it stands: {a.problem}</Body> : null;
   const showStored = !household || !!card;
@@ -101,7 +103,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
     {storedSummary && <Body>{storedSummary}</Body>}
     {change}
     {!household && <Meta>Allows {kindWord[a.kind] ?? a.kind}: {a.target}</Meta>}
-    <Answer key={a.id} approval={a} actions={actions} caution={caution} />
+    <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {exactRequest}
     {showStored && <>{answered}{ends}</>}
   </Reader>;
@@ -119,7 +121,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false,
       {!household && <Fact label="Exactly what this allows">{`${kindWord[a.kind] ?? a.kind}: ${a.target}`}</Fact>}
     </Facts>
     {change}
-    <Answer key={a.id} approval={a} actions={actions} caution={caution} />
+    <Answer key={a.review ?? a.id} approval={a} actions={actions} caution={caution} />
     {showStored && <>{!decision && answered}{ends}</>}
     {exactRequest}
     {!household && !change && a.details && <Section label="Details"><Body>{a.details}</Body></Section>}

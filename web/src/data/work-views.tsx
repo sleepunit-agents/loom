@@ -24,7 +24,7 @@ function useWorkAccess() {
     members:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true ? snapshot.data?.members ?? [] : []};
 }
 function ownerApprovalActions(owner: boolean, standing?:WorkAlwaysInput): ApprovalActions | undefined {
-  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+  return owner ? {...(standing?{always:{approval:standing.approval,label:alwaysLabel(standing),run:async(id:string)=>{if(id!==standing.approval)throw Error('Approval changed');await sendWorkAlways(standing);}}}:{}),allow:(id,confirm,review)=>sendWorkAnswer({piece:'approvals',id,answer:'allow',...(review?{review}:{}),...(confirm?{confirm:true as const}:{})}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
 /** Read the owner preview for the open card and discard results when it closes or changes. */
@@ -33,12 +33,11 @@ function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owne
     row.id === id && row.operation === 'household.change') : undefined;
   const opened = row?.id, state = row?.state;
   const [revision, setRevision] = useState(0);
-  const [preview, setPreview] = useState<{ id: string; revision: number; state: typeof state; value: ProposalNow }>();
+  const [preview, setPreview] = useState<{ id: string; state: typeof state; value: ProposalNow }>();
   useEffect(() => {
-    setPreview(undefined);
-    if (!opened) return;
+    if (!opened) {setPreview(undefined);return;}
     let current = true;
-    void readProposal(opened).then(value => { if (current && value) setPreview({ id: opened, revision, state, value }); });
+    void readProposal(opened).then(value => { if (current) setPreview(value ? { id: opened, state, value } : undefined); });
     return () => { current = false; };
   }, [opened, revision, state]);
   useEffect(() => {
@@ -54,10 +53,10 @@ function useProposalNow(snapshot: ApprovalSnapshot, id: string | undefined, owne
       window.clearInterval(interval);
     };
   }, [opened]);
-  const held = preview?.id === opened && preview?.revision === revision && preview?.state === state ? preview?.value : undefined;
+  const held = preview?.id === opened && preview?.state === state ? preview?.value : undefined;
   const refresh = (id: string) => { if (id === opened) setRevision(value => value + 1); };
   return { snapshot: held ? { ...snapshot, approvals: snapshot.approvals.map(row => row.id === opened
-    ? { ...row, card: held.card, blocked: held.blocked, exactRequest: held.exact } : row) } : snapshot, refresh };
+    ? { ...row, card: held.card, review: held.review, blocked: held.blocked, exactRequest: held.exact } : row) } : snapshot, refresh };
 }
 
 // Times are said in the household's zone (the desk's own clock reading, data/zone.ts) unless the root supplies
