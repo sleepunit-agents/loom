@@ -138,6 +138,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
    if row['promise'].startswith('The desk is loom on a desktop screen.'):row['probe']={'kind':'action','action':'deskShell'}
+   if row['promise'].startswith('The count comes from the items waiting in your inbox.'):row['probe']={'kind':'action','action':'deskWaiting'}
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
    if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
