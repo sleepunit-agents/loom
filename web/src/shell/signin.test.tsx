@@ -31,14 +31,14 @@ it('gates the desk until the session arrives, then leaves account actions to You
   await act(async()=>{tree=create(h(Signin,null,h('section',{'aria-label':'Desk'},'Desk content')));});
   expect(tree.root.findAllByType('section')).toHaveLength(0);
   expect(JSON.stringify(tree.toJSON())).toContain('Connecting to loom');
-  await act(async()=>finish({json:async()=>({viewer:{id:'jonathan'},csrf:'fixture-csrf'})}));
+  await act(async()=>finish({ok:true,json:async()=>({viewer:{id:'jonathan'},csrf:'fixture-csrf'})}));
   expect(tree.root.findByType('section').props['aria-label']).toBe('Desk');
   expect(tree.root.findAllByType('button')).toHaveLength(0);
   expect(append).toHaveBeenCalledWith({name:'loom-csrf',content:'fixture-csrf'});
-  expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session');
+  expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session',expect.objectContaining({signal:expect.any(AbortSignal)}));
 });
 it('keeps signed-out visitors at the passkey sign-in gate',async()=>{
-  const {fetch}=environment();fetch.mockResolvedValue({json:async()=>({viewer:null})});
+  const {fetch}=environment();fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   expect(tree.root.findAllByType('section')).toHaveLength(0);
   expect(tree.root.findByType('button').props.children).toBe('Sign in with a passkey');
@@ -54,7 +54,7 @@ it('sends the passkey assertion and reloads only after successful sign-in',async
   const bytes=Uint8Array.of(1,2,3).buffer;
   const get=vi.fn().mockResolvedValue({rawId:bytes,response:{clientDataJSON:bytes,authenticatorData:bytes,signature:bytes}});
   vi.stubGlobal('navigator',{credentials:{get}});vi.stubGlobal('location',{reload});
-  fetch.mockResolvedValueOnce({json:async()=>({viewer:null})})
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:null})})
     .mockResolvedValueOnce({ok:true,json:async()=>({challenge:'AQID',rpId:'loom.test',timeout:60000})})
     .mockResolvedValueOnce({ok:true,json:async()=>({ok:true})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
@@ -68,7 +68,7 @@ it('sends the passkey assertion and reloads only after successful sign-in',async
 it('keeps the gate and reports a cancelled passkey attempt without submitting or reloading',async()=>{
   const {fetch}=environment(),reload=vi.fn();
   vi.stubGlobal('navigator',{credentials:{get:vi.fn().mockRejectedValue(Error('Device cancelled'))}});vi.stubGlobal('location',{reload});
-  fetch.mockResolvedValueOnce({json:async()=>({viewer:null})})
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:null})})
     .mockResolvedValueOnce({ok:true,json:async()=>({challenge:'AQID',rpId:'loom.test',timeout:60000})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   await act(async()=>{await tree.root.findByType('button').props.onClick();});
@@ -86,7 +86,7 @@ it('is one page in its three states: the same wordmark and ground, one status li
   expect([gate().props['data-state'],mark(),status().props['data-tone'],words(status().props.children)]).toEqual(['connecting','LOOM//OS','calm','Connecting to loom…']);
   expect(tree.root.findAllByType('button')).toHaveLength(0);
   const first=status(),ground=tree.root.findByType('svg');
-  await act(async()=>finish({json:async()=>({viewer:null})}));
+  await act(async()=>finish({ok:true,json:async()=>({viewer:null})}));
   expect([gate().props['data-state'],mark(),status().props['data-tone'],words(status().props.children)]).toEqual(['out','LOOM//OS',undefined,'']);
   expect(status()).toBe(first);expect(tree.root.findByType('svg')).toBe(ground);
   expect(tree.root.findByType('button').props.autoFocus).toBe(true);
@@ -97,33 +97,33 @@ it('says only that loom could not be reached when it cannot, as an error, and of
   const {fetch}=environment(),reload=vi.fn();vi.stubGlobal('location',{reload});fetch.mockRejectedValue(Error('offline'));
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   const status=tree.root.findByProps({role:'status'});
-  expect([gate().props['data-state'],status.props['data-tone'],words(status.props.children)]).toEqual(['down','error','Could not reach loom. Reload to try again.']);
+  expect([gate().props['data-state'],status.props['data-tone'],words(status.props.children)]).toEqual(['down','error','Could not reach loom. Reconnecting…']);
   expect(words(tree.toJSON())).not.toContain('Connecting');
   const button=tree.root.findByType('button');expect([button.props.children,button.props.autoFocus]).toEqual(['Reload',true]);
-  await act(async()=>button.props.onClick());expect(reload).toHaveBeenCalledOnce();expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session');
+  await act(async()=>button.props.onClick());expect(reload).toHaveBeenCalledOnce();expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session',expect.objectContaining({signal:expect.any(AbortSignal)}));
 });
 it('shows a failed passkey attempt as an error in the same status line',async()=>{
   const {fetch}=environment();
   vi.stubGlobal('navigator',{credentials:{get:vi.fn().mockRejectedValue(Error('Device cancelled'))}});vi.stubGlobal('location',{reload:vi.fn()});
-  fetch.mockResolvedValueOnce({json:async()=>({viewer:null})}).mockResolvedValueOnce({ok:true,json:async()=>({challenge:'AQID',rpId:'loom.test',timeout:60000})});
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:null})}).mockResolvedValueOnce({ok:true,json:async()=>({challenge:'AQID',rpId:'loom.test',timeout:60000})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   await act(async()=>{await tree.root.findByType('button').props.onClick();});
   const status=tree.root.findByProps({role:'status'});
   expect([gate().props['data-state'],status.props['data-tone'],words(status.props.children)]).toEqual(['out','error','Device cancelled']);
 });
 it('before sign-in says nothing of the household: its words are fixed, and it asks loom only for the session',async()=>{
-  const {fetch}=environment();fetch.mockResolvedValue({json:async()=>({viewer:null,household:'The Fixture Family',members:['Fixture Person']})});
+  const {fetch}=environment();fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null,household:'The Fixture Family',members:['Fixture Person']})});
   vi.useFakeTimers({toFake:['Date'],now:new Date(2026,10,19,11,59,59)});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   expect(words(tree.toJSON())).toBe('Good morningLOOM//OSSign in to loomSign in with a passkeyHave a one-time sign-in link? Open it and press Sign in.');
-  expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session');
+  expect(fetch).toHaveBeenCalledExactlyOnceWith('/auth/session',expect.objectContaining({signal:expect.any(AbortSignal)}));
 });
 it('greets by the time of day on this device',()=>{
   expect([0,4,5,11,12,17,18,23].map(greetingAt)).toEqual(['Good evening','Good evening','Good morning','Good morning','Good afternoon','Good afternoon','Good evening','Good evening']);
 });
 it('puts the error after the button for someone moving on from it, and shows hostile words as words',async()=>{
   const {fetch}=environment(),hostile='<img src=x onerror=1>';vi.stubGlobal('location',{reload:vi.fn()});
-  fetch.mockResolvedValueOnce({json:async()=>({viewer:null})}).mockResolvedValueOnce({ok:false,json:async()=>({error:hostile})});
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:null})}).mockResolvedValueOnce({ok:false,json:async()=>({error:hostile})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   await act(async()=>{await tree.root.findByType('button').props.onClick();});
   const status=tree.root.findByProps({role:'status'}),order=tree.root.findAll(node=>node.type==='button'||node.props.role==='status').map(node=>node.type);
@@ -137,14 +137,14 @@ it('never touches the look of someone who is signed in, while it waits or after'
   fetch.mockReturnValue(new Promise(resolve=>{finish=resolve;}));
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Desk')));});
   expect(gate().props['data-state']).toBe('connecting');expect(touched).toEqual([]);
-  await act(async()=>finish({json:async()=>({viewer:{id:'fixture'},csrf:''})}));
+  await act(async()=>finish({ok:true,json:async()=>({viewer:{id:'fixture'},csrf:''})}));
   expect(tree.root.findAllByType('section')).toHaveLength(1);
   expect(touched).toEqual([]);expect(worn()).toEqual({look:'neon',mode:'dark',bar:['#f8f6f1','#15171a']});
 });
 it('wears the device\'s light on the gate when no look is kept, and puts back what was there when the gate goes',async()=>{
   for(const answer of ['out','down']){
     const {fetch,worn}=environment(light);
-    if(answer==='out')fetch.mockResolvedValue({json:async()=>({viewer:null})});else fetch.mockRejectedValue(Error('offline'));
+    if(answer==='out')fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null})});else fetch.mockRejectedValue(Error('offline'));
     await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
     expect([gate().props['data-state'],worn()]).toEqual([answer,{look:'daylight',mode:'light',bar:['#F5F3EE','#F5F3EE']}]);
     await act(async()=>tree.unmount());
@@ -152,12 +152,12 @@ it('wears the device\'s light on the gate when no look is kept, and puts back wh
   }
 });
 it('puts back a page that had no look at all, and takes the gate\'s look off when a signed-in page replaces it',async()=>{
-  const bare=environment({light:true});bare.fetch.mockResolvedValue({json:async()=>({viewer:null})});
+  const bare=environment({light:true});bare.fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   expect(bare.worn().look).toBe('daylight');
   await act(async()=>tree.unmount());
   expect(bare.worn()).toEqual({look:undefined,mode:undefined,bar:['#f8f6f1','#15171a']});
-  const {fetch,worn}=environment(light);fetch.mockResolvedValueOnce({json:async()=>({viewer:null})}).mockResolvedValueOnce({json:async()=>({viewer:{id:'fixture'}})});
+  const {fetch,worn}=environment(light);fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:null})}).mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'fixture'}})});
   const Twice=({again}:{again:boolean})=>h(Signin,{key:String(again),children:h('section',null,'Desk')});
   await act(async()=>{tree=create(h(Twice,{again:false}));});
   expect(worn().look).toBe('daylight');
@@ -165,11 +165,41 @@ it('puts back a page that had no look at all, and takes the gate\'s look off whe
   expect(tree.root.findAllByType('section')).toHaveLength(1);expect(worn()).toEqual({look:'neon',mode:'dark',bar:['#f8f6f1','#15171a']});
 });
 it('keeps a kept look over the device\'s light or dark, and leaves a page already wearing it alone',async()=>{
-  const kept=environment({look:'lowlight',mode:'dark',kept:{'loom-look':'lowlight','loom-mode':'dark'},light:true});kept.fetch.mockResolvedValue({json:async()=>({viewer:null})});
+  const kept=environment({look:'lowlight',mode:'dark',kept:{'loom-look':'lowlight','loom-mode':'dark'},light:true});kept.fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   expect(kept.touched).toEqual([]);expect(kept.worn().look).toBe('lowlight');
   await act(async()=>tree.unmount());
-  const dev=environment({kept:{'loom-look':'daylight','loom-mode':'light'}});dev.fetch.mockResolvedValue({json:async()=>({viewer:null})});
+  const dev=environment({kept:{'loom-look':'daylight','loom-mode':'light'}});dev.fetch.mockResolvedValue({ok:true,json:async()=>({viewer:null})});
   await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
   expect(dev.worn()).toMatchObject({look:'daylight',mode:'light'});
+});
+
+it('opens the desk automatically when the initial session read recovers',async()=>{
+  vi.useFakeTimers();
+  const {fetch}=environment();
+  fetch.mockRejectedValueOnce(Error('offline')).mockResolvedValueOnce({ok:false}).mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'fixture'}})});
+  await act(async()=>{tree=create(h(Signin,null,h('section',null,'Desk content')));});
+  expect(gate().props['data-state']).toBe('down');
+  await act(async()=>{await vi.advanceTimersByTimeAsync(1_000);});
+  expect(gate().props['data-state']).toBe('down');
+  await act(async()=>{await vi.advanceTimersByTimeAsync(2_000);});
+  expect(tree.root.findByType('section').props.children).toBe('Desk content');
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it.each(['focus','poll'])('withdraws the previous desk before reloading a changed account on %s',async trigger=>{
+  vi.useFakeTimers();
+  const {fetch,append}=environment(),window=new EventTarget();
+  vi.stubGlobal('window',window);
+  Object.assign(document,{visibilityState:'visible'});
+  fetch.mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'first'},csrf:'old'})})
+    .mockResolvedValueOnce({ok:true,json:async()=>({viewer:{id:'other'},csrf:'other'})});
+  const reload=vi.fn(()=>expect(tree.root.findAllByType('section')).toHaveLength(0));
+  vi.stubGlobal('location',{reload});
+  await act(async()=>{tree=create(h(Signin,null,h('section',null,'Private desk')));});
+  expect(tree.root.findByType('section').props.children).toBe('Private desk');
+  await act(async()=>{if(trigger==='focus')window.dispatchEvent(new Event('focus'));else await vi.advanceTimersByTimeAsync(60_000);});
+  expect(reload).toHaveBeenCalledOnce();expect(tree.root.findAllByType('section')).toHaveLength(0);
+  expect(append.mock.calls[0][0].content).toBe('');
+  expect(words(tree.toJSON())).toContain('Your account changed');
 });

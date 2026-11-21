@@ -39,7 +39,14 @@ export function dataSocket(options: {
   const protocol = useServer({
     isProd: true,
     connectionInitWaitTimeout: 0, // the owned clock below bounds admission
-    onConnect(ctx) { return !stopping && admitted.get(ctx.extra.socket)?.valid() === true && !stopping; },
+    onConnect(ctx) {
+      const auth=admitted.get(ctx.extra.socket);
+      if(stopping||!auth?.valid()||stopping)return false;
+      // A mounted desk can require its existing member. Only the upgrade
+      // credential supplies authority, including on a reconnect from another tab.
+      const expected=ctx.connectionParams?.expectedMember;
+      return expected===undefined||(auth.viewer.kind==='member'&&auth.viewer.id===expected);
+    },
     schema(ctx) {
       if (stopping) throw new Error('Data access ended');
       const auth = admitted.get(ctx.extra.socket);
