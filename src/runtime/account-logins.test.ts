@@ -201,4 +201,12 @@ it('warns again when a renewal is rolled back without signing out', () => {
   mail.resolveItem(third.id, 'Dismissed');
   expect(f.service.sweep()[0].id).toBe(third.id);
   expect(f.mail()).toHaveLength(3);
+  report(f.at(30 * DAY));
+  // An older installation kept this dismissed warning under its original key.
+  expect(f.mail().find(item => item.id === third.id)?.sourceId).toBe(third.sourceId);
+  report(end);
+  const [fourth] = f.service.sweep();
+  expect(fourth.state).toBe('waiting');
+  expect(fourth.id).not.toBe(third.id);
+  expect(f.mail().find(item => item.id === third.id)?.resolution).toBe('Dismissed');
 });

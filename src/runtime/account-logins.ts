@@ -29,6 +29,7 @@ export interface LoginCheck { account: string; harness: string; place: Login['pl
 /** The only reasons a sign-in is recorded as gone, as the sentence its owner reads. A worker sends the word, never the sentence. */
 const REASONS: Record<LoginReason, string> = { 'no-file': 'There is no sign-in file.', 'no-sign-in': 'The sign-in file holds no sign-in.', ended: 'The sign-in has ended.' };
 
+const RENEWED = 'Signed in again';
 /** The last instant of the year 9999: the latest time the household database keeps. */
 const LAST_MS = 253_402_300_799_999;
 export function loginMachineReporting(lastSeenAt:string|null,now:number,silenceMs=SILENCE_MS){
@@ -59,11 +60,10 @@ export class AccountLogins {
   private settle(before: Login, after: Login | undefined, at: string): void {
     const notices = new Conversations(this.db, () => at, lateMailWaits);
     if (before.state === 'signed-out' && (!after || after.state === 'signed-in' || after.since !== before.since))
-      notices.resolveSource('notice', goneId(before), after ? 'Signed in again' : 'No longer watched');
+      notices.resolveSource('notice', goneId(before), after ? RENEWED : 'No longer watched');
     if (before.expiresAt !== null && (!after || after.expiresAt !== before.expiresAt || after.state !== 'signed-in' || after.since !== before.since)) {
       const id = endingId(before);
-      notices.resolveSource('notice', id, !after ? 'No longer watched' : after.state === 'signed-in' ? 'Signed in again' : 'Signed out');
-      this.retireEnding(id);
+      notices.resolveSource('notice', id, !after ? 'No longer watched' : after.state === 'signed-in' ? RENEWED : 'Signed out');
     }
   }
 
@@ -82,6 +82,9 @@ export class AccountLogins {
       ? this.db.update(modelAccountLogins).set(values).where(where(key)).returning().get()!
       : this.db.insert(modelAccountLogins).values({ ...key, ...values }).returning().get();
     if (before) this.settle(before, after, at);
+    // A newly observed end starts a new occasion even if an older release left
+    // an acknowledged notice for that same end under the destination key.
+    if (after.expiresAt !== null && after.expiresAt !== before?.expiresAt) this.retireEnding(endingId(after));
     return after;
   }
 
@@ -170,7 +173,7 @@ export class AccountLogins {
         // Releases before occasion retirement left a resolved warning under the active key.
         const words = `The ${account.label} sign-in on ${box.name} (${placeWords(login)}) ${when}, on ${login.expiresAt!.slice(0, 10)}.`;
         const notice = send(row, id, words);
-        if (notice.state !== 'resolved' || notice.resolution !== 'Signed in again') return [notice];
+        if (notice.state !== 'resolved' || notice.resolution !== RENEWED) return [notice];
         this.retireEnding(id);
         return [send(row, id, words)];
       });
