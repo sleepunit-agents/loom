@@ -1,3 +1,5 @@
+import { DAY_MS } from '../day.js';
+import { parkedSource, parkedVerdict } from './parked.js';
 import { houseProgramSchema, type HouseProgram } from '../../runtime/house-program.js';
 import { machineFacts } from '../../runtime/machine-facts.js';
 import type { Asker } from '../../policy.js';
@@ -169,7 +171,10 @@ export class TriggerEngine {
         if (!producer.program || producer.to !== v.to || producer.project !== (v.project ?? null)) throw new Error('State must come from a program for the same agent and project');
       }
     }
-    const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
+    const park = parkedSource(v.watches);
+    if (park && (v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
+      || v.times || v.days || v.program)) throw Error('A parked wait resumes an agent once on an answer');
+    const due = park ? new Date(this.clock.now() + DAY_MS).toISOString() : this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
       this.db.insert(triggers).values({ ...v, id, member: member ?? null, conversation: v.conversation ?? null, ...(asked ? { askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() } : {}), enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
@@ -221,6 +226,7 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => {
       const t = this.get(id);
+      if (parkedSource(t.watches)) throw new Error('Set a new parked wait');
       if (t.scheduleRemovedAt) throw new Error('Schedule was removed');
       if (t.enabled) throw new Error('Trigger is already on');
       if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
@@ -303,6 +309,7 @@ export class TriggerEngine {
   runNow(id: string): void {
     this.open();
     const t = this.get(id);
+    if (parkedSource(t.watches)) throw new Error('A parked wait resumes on its answer or deadline');
     if (!t.enabled || this.paused(t)) throw new Error('Trigger is stopped or held');
     this.fire(t, `manual:${randomUUID()}`); this.tick();
   }
@@ -357,7 +364,19 @@ export class TriggerEngine {
         next = Math.min(next ?? Infinity, end);
       }
       if (this.paused(t)) continue;
-      if (t.sourceKind === 'time') {
+      const park = parkedSource(t.watches);
+      if (park && t.sourceKind === 'answer') {
+        this.db.transaction(() => {
+          const current = this.get(t.id);
+          if (!current.enabled || this.paused(current)) return;
+          const now = this.clock.now();
+          const verdict = parkedVerdict(this.db, park, now);
+          if (verdict === 'pending' && current.nextDueAt && Date.parse(current.nextDueAt) > now) return;
+          const message = verdict === 'pending' ? 'No answer to ' + park.id + ' after 24 hours.'
+            : 'Request ' + park.id + ' is ' + verdict + '.';
+          this.fire(current, 'park:resume', null, message);
+        });
+      } else if (t.sourceKind === 'time') {
         const late = t.nextDueAt ? this.clock.now() - Date.parse(t.nextDueAt) : -1;
         // The missed-time rule on the class: only a standing trigger's time can be too late to fire.
         if (late >= 0 && (late <= MISSED_GRACE_MS || t.lifespan === 'once')) this.fire(t, `time:${t.nextDueAt}`, Date.parse(t.nextDueAt!));
@@ -444,7 +463,7 @@ export class TriggerEngine {
     return 'fired';
   }
   /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
-  private fire(t: Trigger, eventId: string, spent: number | null = null) {
+  private fire(t: Trigger, eventId: string, spent: number | null = null, verdict?: string) {
     // What the firing was doing, for the log if it fails.
     let stage: 'operation' | 'instructions' | 'inbox' | 'program' = 'operation';
     try {
@@ -466,7 +485,7 @@ export class TriggerEngine {
           if (words === undefined) throw new Error('No repository instructions reader');
           stage = 'inbox';
           // The delivery may find the trigger can no longer fire at all (tempo.ts): it is stopped here, with its firing.
-          const did = this.effects.inbox(t, delivery, words);
+          const did = this.effects.inbox(t, delivery, verdict ? verdict + '\n\n' + words : words);
           if (did === 'stop') { this.db.update(triggers).set({ enabled: false }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped'); }
         }
         const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;

@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { approvals, agents, secretRequests, secrets, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
 import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
@@ -53,6 +53,52 @@ it('retains an answer received while paused and deduplicates source events after
   expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().filter(l => l.event === 'fired')).toHaveLength(1);
 });
 function andTrigger(id: string) { return eq(triggerLog.trigger, id); }
+it('recovers a parked approval and times out only an unanswered wait, once each', () => {
+  const { db, clock, engine, effects, base, items } = fixture();
+  for (const id of ['a-decided','a-pending']) {
+    db.insert(approvals).values({ id, agent:'art', kind:'command', target:'fixture', what:'Fixture', why:'Private reason',
+      askedFrom:'fixture', actingFor:'art', state:'pending', minutes:5, ask:'Fixture', ifYes:'Yes', ifNo:'No',
+      details:'Private details', askedAt:new Date(clock.now()).toISOString() }).run();
+    engine.set({ ...base, id:'wait-' + id, sourceKind:'answer', times:null, watches:'park-approval:' + id });
+  }
+  expect(() => engine.runNow('wait-a-decided')).toThrow(/parked wait/);
+  engine.pause('art');
+  engine.close();
+  clock.advance(25 * 3_600_000);
+  db.update(approvals).set({state:'denied',decidedAt:new Date(clock.now()).toISOString()}).where(eq(approvals.id,'a-decided')).run();
+  const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
+  reopened.tick();
+  expect(items()).toEqual([]);
+  reopened.resume('art');
+  reopened.tick();
+  expect(items().map(i => i.words).sort()).toEqual([
+    'No answer to a-pending after 24 hours.\n\nDo the work',
+    'Request a-decided is denied.\n\nDo the work',
+  ]);
+  expect(items().every(i => i.sourceId?.endsWith(':park:resume'))).toBe(true);
+  db.update(approvals).set({state:'allowed'}).where(eq(approvals.id,'a-pending')).run();
+  reopened.tick(); clock.advance(24 * 3_600_000);
+  expect(items()).toHaveLength(2);
+});
+
+it('arms a parked secret request for exactly 24 hours and reports a revoked request without its details', () => {
+  const { db, clock, engine, base, items } = fixture();
+  const at = new Date(clock.now()).toISOString();
+  db.insert(secrets).values({name:'private-name',description:'private',changedBy:'jonathan',changedAt:at}).run();
+  for (const id of ['q-revoked','q-pending']) {
+    db.insert(secretRequests).values({id,secret:'private-name',agent:'art',why:'private reason',minutes:5,
+      always:false,askedAt:at,state:'pending'}).run();
+    engine.set({...base,id:'wait-' + id,times:null,sourceKind:'answer',watches:'park-secret:' + id});
+  }
+  db.update(secretRequests).set({state:'revoked',answeredAt:at}).where(eq(secretRequests.id,'q-revoked')).run();
+  engine.tick();
+  clock.advance(24 * 3_600_000 - 1);
+  expect(items().map(i => i.words)).toEqual(['Request q-revoked is revoked.\n\nDo the work']);
+  clock.advance(1);
+  expect(items().map(i => i.words)).toContain('No answer to q-pending after 24 hours.\n\nDo the work');
+  expect(items()).toHaveLength(2);
+});
+
 it('runs a named operation without an inbox, repeats standing PR/job events only when new', () => {
   const { engine, base, items, operations } = fixture();
   for (const kind of ['pull-request', 'job'] as const) {
