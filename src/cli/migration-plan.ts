@@ -14,7 +14,7 @@ import { secretImportOptions } from '../pieces/secrets/import-source.js';
 import { parseHouseholdDocument } from '../household.js';
 import { readRuntimeInventory, runtimeImportOptions } from '../pieces/runtime/import-source.js';
 import { runtimeMigrationSources } from './migration-runtime.js';
-import { readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
+import { householdMemoryFile, noteAttachmentPath, readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
 import { createMigrationRegistry, snapshotPath } from './migration-registry.js';
 
 const slug = z.string().max(80).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -83,7 +83,11 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
     const fd = openSync(join(root, file.path), 'r');
     const header = Buffer.alloc(16);
     try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
-    const kind = !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
+    // Older snapshots backed up a SQLite attachment reached via a registered
+    // database alias. Raw content-addressed copies retain the digest in their name.
+    const attachment = file.kind === 'file' && file.path.startsWith('home/') &&
+      noteAttachmentPath(file.path.slice(5)) && file.sha256 === basename(file.path);
+    const kind = !attachment && !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
     if (kind !== file.kind) throw Error('Snapshot kind disagrees with file contents');
   }
 }
@@ -104,6 +108,9 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   // Discover through their importer-visible path once, rather than twice.
   const aliased = new Set((manifest.followed ?? []).flatMap(alias => {
     const prefix = physical.has(`home/${alias.path}`) ? 'home/' : '';
+    // Rebuilt-only memory files aren't alternatives to a legacy importer.
+    // An alias such as notes.db -> memories.db still needs Attention discovery.
+    if (prefix === 'home/' && householdMemoryFile(alias.path)) return [];
     return physical.has(prefix + alias.path) && physical.has(prefix + alias.realPath) ? [prefix + alias.realPath] : [];
   }));
   // Runtime archives intentionally preserve arbitrary filenames; they are never

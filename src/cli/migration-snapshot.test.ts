@@ -1,11 +1,13 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, renameSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, renameSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { Readable } from 'node:stream';
 import { run } from './migrate.js';
 import { canonicalSnapshotPath, migrateSnapshot, createSnapshot, readSnapshot } from './migration-snapshot.js';
+import { prepareMigrationPlan } from './migration-plan.js';
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -486,4 +488,95 @@ test('refuses aggregate document growth after inventory before completion',async
  });
  await expect(createSnapshot(f.home,f.to,undefined,{approvals,'bridges-document':documents})).rejects.toThrow('data copy failed');
  expect(existsSync(join(f.to,'manifest.json'))).toBe(false);
+});
+
+test('captures authored memory pages and byte-exact SQLite attachments for a rebuilt home', async () => {
+  const { home, root, to } = fixture(), agent = join(home, 'agents', 'fern');
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['fern'],default:'fern',owner:'alex'}));
+  mkdirSync(join(agent, 'roles'), {recursive:true});
+  symlinkSync('roles', join(agent, 'projects'));
+  writeFileSync(join(agent, 'roles', 'garden.md'), 'Garden');
+  symlinkSync('roles/garden.md', join(agent, 'IDENTITY.md'));
+  const sqlite = join(root, 'source.db'), db = new Database(sqlite);
+  db.exec('create table plants(id integer)'); db.close();
+  const bytes = readFileSync(sqlite), hash = createHash('sha256').update(bytes).digest('hex');
+  const prefix = join(agent, 'note-files', hash.slice(0,2));
+  mkdirSync(prefix, {recursive:true}); writeFileSync(join(prefix, hash), bytes);
+  mkdirSync(join(home,'commons'));
+  const databases = ['agents/fern/notes.db','commons/knowledge.db','commons/people.db'];
+  for (const name of databases) writeFileSync(join(home,name),bytes);
+  for (const name of databases) {
+    renameSync(join(home,name),join(home,name+'.retired'));
+    symlinkSync(name.split('/').at(-1)+'.retired',join(home,name));
+  }
+  symlinkSync(join('note-files',hash.slice(0,2),hash),join(agent,'memories.db'));
+  const legacy = join(root,'legacy');
+  const legacyManifest = await createSnapshot(home,legacy);
+  expect(legacyManifest.files.find(f=>f.path.endsWith(hash))?.kind).toBe('sqlite');
+  expect(legacyManifest.files.some(f=>f.path.endsWith('/notes.db'))).toBe(false);
+  expect(()=>prepareMigrationPlan(legacy)).not.toThrow();
+  const dry: string[] = [];
+  expect(await migrateSnapshot(['--dry-run','--household-memory','--from',home,'--to',to], {
+    stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:s=>dry.push(s),stderr:s=>dry.push(s)
+  })).toBe(0);
+  expect(JSON.parse(dry.join('')).copies.map((f:{path:string})=>f.path)).toEqual(expect.arrayContaining(databases.map(p=>'home/'+p)));
+  expect(existsSync(to)).toBe(false);
+  const messages: string[] = [];
+  expect(await migrateSnapshot(['--from',home,'--to',to,'--household-memory'], {
+    stdin: Readable.from([]), stdinIsTTY: false, env: {}, stdout: text => messages.push(text), stderr: text => messages.push(text)
+  })).toBe(0);
+  const manifest = readSnapshot(to);
+  expect(readFileSync(join(to,'home/agents/fern/IDENTITY.md'),'utf8')).toBe('Garden');
+  expect(manifest.files.find(row => row.path.endsWith(hash))).toMatchObject({kind:'file', sha256:hash});
+  expect(readFileSync(join(to,'home/agents/fern/projects/garden.md'),'utf8')).toBe('Garden');
+  for (const name of databases) expect(manifest.files.find(f=>f.path==='home/'+name)?.kind).toBe('sqlite');
+  expect(()=>prepareMigrationPlan(to)).not.toThrow();
+  expect(manifest.followed).toContainEqual({path:'agents/fern/IDENTITY.md', realPath:'agents/fern/roles/garden.md'});
+  const shared = join(home,'commons/people.db');
+  rmSync(shared); symlinkSync('../agents/fern/notes.db',shared);
+  const escaped = join(root,'commons-escaped');
+  await expect(createSnapshot(home,escaped,undefined,{},true)).rejects.toThrow(/within their owner/);
+  expect(existsSync(escaped)).toBe(false);
+  rmSync(shared); symlinkSync('people.db.retired',shared);
+  rmSync(join(agent, 'IDENTITY.md')); symlinkSync('../../comms.key', join(agent,'IDENTITY.md'));
+  await expect(createSnapshot(home,join(root,'refused'),undefined,{},true)).rejects.toThrow(/identity pages/);
+  mkdirSync(join(home,'agents','other')); writeFileSync(join(home,'agents/other/IDENTITY.md'),'Other');
+  rmSync(join(agent,'IDENTITY.md')); symlinkSync('../other/IDENTITY.md',join(agent,'IDENTITY.md'));
+  await expect(createSnapshot(home,join(root,'cross-agent'),undefined,{},true)).rejects.toThrow(/identity pages/);
+});
+
+test('restores a confined attachment alias and refuses a changed digest before publication',async()=>{
+  const {home,to,root}=fixture(), agent=join(home,'agents/fern');
+  const bytes=Buffer.from('archive fixture'), hash=createHash('sha256').update(bytes).digest('hex');
+  const prefix=join(agent,'note-files',hash.slice(0,2));
+  mkdirSync(prefix,{recursive:true});writeFileSync(join(agent,'backing'),bytes);
+  symlinkSync('../../backing',join(prefix,hash));
+  await createSnapshot(home,to,undefined,{},true);
+  expect(readFileSync(join(to,'home/agents/fern/note-files',hash.slice(0,2),hash))).toEqual(bytes);
+  writeFileSync(join(agent,'backing'),'other content');
+  const bad=join(root,'bad');
+  await expect(createSnapshot(home,bad,undefined,{},true)).rejects.toThrow();
+  expect(existsSync(bad)).toBe(false);
+});
+
+test.each([0o444,0o644])('captures a retired checkpointed WAL task store (mode %i) inside a read-only directory', async mode => {
+  const { root, home, to } = fixture();
+  const dir = join(root,'retired');
+  mkdirSync(dir);
+  const path = join(dir,'store.db'), db = new Database(path);
+  db.pragma('journal_mode=WAL');
+  db.exec("CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('t-1')");
+  db.function('legacy_sort', {deterministic:true}, value=>value);
+  db.exec('CREATE INDEX by_legacy_sort ON tasks(legacy_sort(id))');
+  db.close();
+  const original = readFileSync(path);
+  chmodSync(path,mode); chmodSync(dir,0o555);
+  try {
+    await createSnapshot(home,to,path);
+    const copy = new Database(join(to,'tasks/store.db'),{readonly:true});
+    try { expect(copy.prepare('SELECT id FROM tasks').pluck().all()).toEqual(['t-1']); }
+    finally { copy.close(); }
+    expect(readdirSync(dir)).toEqual(['store.db']);
+    expect(readFileSync(path)).toEqual(original);
+  } finally { chmodSync(dir,0o700); }
 });

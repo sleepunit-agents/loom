@@ -2,7 +2,7 @@ import {bridgeDocumentLimits,bridgeDocumentPath,readBridgeDocuments} from '../pi
 import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
 import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
@@ -36,6 +36,34 @@ const refusal = (path: string, rule: string): never => { throw new SnapshotFailu
 function guarded<T>(path: string, rule: string, fn: () => T): T {
   try { return fn(); } catch (error) { if (error instanceof SnapshotFailure) throw error; return refusal(path, rule); }
 }
+/** A retired WAL database in a sealed directory cannot create read-coordination
+ * files. Only a checkpointed main file with no sidecars may take this path. */
+async function backupDatabase(source: string, temporary: string): Promise<void> {
+  const sealed = () => {
+    const parent = dirname(source);
+    if ((lstatSync(parent).mode & 0o222) !== 0) {
+      try { accessSync(parent, constants.W_OK); return false; }
+      catch (error) {
+        if (!['EACCES','EPERM','EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+    }
+    return ['-wal','-shm','-journal'].every(suffix => !lstatSync(source + suffix, {throwIfNoEntry:false}));
+  };
+  if (!sealed()) {
+    const db = new Database(source, { readonly: true, fileMustExist: true });
+    try { await db.backup(temporary); } finally { db.close(); }
+    return;
+  }
+  const image = temporary + '.source';
+  try {
+    copyMigrationFile(source, image);
+    if (!sealed() || fileDigest(source).sha256 !== fileDigest(image).sha256 || !sealed()) {
+      throw Error('Retired database changed during capture');
+    }
+    const db = new Database(image, {fileMustExist:true});
+    try { await db.backup(temporary); } finally { db.close(); }
+  } finally { rmSync(image, {force:true}); }
+}
 export function canonicalSnapshotPath(path: string): string {
   if (existsSync(path)) return realpathSync(path);
   return join(canonicalSnapshotPath(dirname(path)), basename(path));
@@ -68,6 +96,17 @@ function matches(path: string, pattern: string): boolean {
   };
   return match(0, 0);
 }
+/** Files the rebuilt household's offline Memory reader consumes. */
+function identityPage(path: string): boolean {
+  return /^agents\/[^/]+\/(?:IDENTITY\.md|preferences\.md|self-model\.md|(?:harnesses|models|roles|projects|clients|capabilities|procedures)\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md)$/.test(path);
+}
+export const noteAttachmentPath = (path: string): boolean =>
+  /^agents\/[^/]+\/note-files\/([a-f0-9]{2})\/\1[a-f0-9]{62}$/.test(path);
+
+export function householdMemoryFile(path: string): boolean {
+  return identityPage(path) || noteAttachmentPath(path) || /^commons\/(knowledge|people)\.db$/.test(path) ||
+    /^agents\/[^/]+\/notes\.db$/.test(path);
+}
 export interface SnapshotInventory {
   consistency: 'per-database';
   copies: { path: string; bytes: number; source: string }[];
@@ -76,7 +115,7 @@ export interface SnapshotInventory {
 }
 /** Inventory only: no SQLite connection, destination creation or source writes. */
 export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string; secrets?: string; runtime?: string; 'runtime-data'?: string; bridges?: string[]; 'bridges-document'?: string[] }
-export function inventorySnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): SnapshotInventory {
+export function inventorySnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}, householdMemory = false): SnapshotInventory {
   let source = guarded('.', 'source home must exist', () => realpathSync(from));
   let prefix = 'home';
   const target = destinationPath(to);
@@ -110,7 +149,8 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   const label = (path: string) => prefix === 'home' ? path : `${prefix}/${path}`;
   const visit = (input: string, logical = relative(source, input).split(sep).join('/') || '.', ancestors = new Set<string>()): void => {
     let path = relative(source, input).split(sep).join('/') || '.';
-    const declaredAlias = patterns.some(pattern => matches(logical, pattern));
+    const memoryFile = householdMemory && prefix === 'home' && householdMemoryFile(logical);
+    const declaredAlias = memoryFile || patterns.some(pattern => matches(logical, pattern));
     let stat = guarded(path, 'cannot inspect source entry', () => lstatSync(input));
     const fileAlias = stat.isSymbolicLink();
     const excludedRule = !stat.isSymbolicLink() && (skipRule(logical, stat.isDirectory(), input) ?? skipRule(path, stat.isDirectory(), input));
@@ -134,10 +174,22 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
       for (const name of guarded(path, 'cannot list data directory', () => readdirSync(input).sort())) visit(join(input, name), logical === '.' ? name : `${logical}/${name}`, parents);
     } else if (!stat.isFile()) inventory.skipped.push({ path: label(path), rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
-      addCopy(`${prefix}/${path}`, input, stat.size);
+      const memoryAlias = memoryFile && logical !== path;
+      if (memoryAlias) {
+        const scope = logical.startsWith('commons/') ? 'commons/' : logical.split('/').slice(0,2).join('/') + '/';
+        if (!path.startsWith(scope) || (identityPage(logical) && !identityPage(path))) {
+          refusal(logical, 'memory aliases must stay within their owner and authored identity pages');
+        }
+      }
+      // A memory-only alias names the selected archive input. Its backing
+      // file may have another format or an unrelated importer-visible name.
+      // Canonical files selected in their own right are captured on their visit.
+      if (!memoryAlias || householdMemoryFile(path)) {
+        addCopy(`${prefix}/${path}`, input, stat.size);
+      }
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
-      const preserveAlias = prefix === 'home' ? fileAlias && importerPatterns.some(pattern => matches(logical, pattern)) : declaredAlias;
+      const preserveAlias = prefix === 'home' ? memoryFile || (fileAlias && importerPatterns.some(pattern => matches(logical, pattern))) : declaredAlias;
       if (logical !== path && preserveAlias) {
         addCopy(`${prefix}/${logical}`, input, stat.size);
         if (!inventory.followed.some(alias => alias.path === label(logical) && alias.realPath === label(path))) inventory.followed.push({path: label(logical), realPath: label(path)});
@@ -191,8 +243,8 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
 /** SQLite backup gives each database a committed view while writers run.
  * JSON files are copied individually: a rehearsal can be seconds stale across stores.
  * Cross-store consistency requires stopping old services for the final move. */
-export async function createSnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): Promise<SnapshotManifest> {
-  const inventory = inventorySnapshot(from, to, tasks, roots), target = destinationPath(to);
+export async function createSnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}, householdMemory = false): Promise<SnapshotManifest> {
+  const inventory = inventorySnapshot(from, to, tasks, roots, householdMemory), target = destinationPath(to);
   guarded('<destination>', 'cannot create destination parent', () => mkdirSync(dirname(target), { recursive: true }));
   guarded('<destination>', 'cannot reserve fresh private destination', () => mkdirSync(target, { mode: 0o700 }));
   const reserved = lstatSync(target);
@@ -225,9 +277,11 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
       destinationPath(output);
       if (existsSync(output)) refusal(path, 'destination entry already exists');
       const selectedDocument=bridgeDocumentPath(file.path);
-      const sqlite = !selectedDocument&&guarded(path, 'cannot read data header', () => isSqlite(file.source));
+      const attachment = householdMemory && file.path.startsWith('home/') && noteAttachmentPath(file.path.slice(5));
+      const sqlite = !attachment && !selectedDocument&&guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
-        const previous = copied.get(file.source);
+        const copyKey = JSON.stringify([file.source, sqlite]);
+        const previous = copied.get(copyKey);
         if(selectedDocument){
           const document=readBridgeDocuments([{name:file.path,path:file.source}])[0];
           capturedDocumentBytes+=document.bytes;
@@ -236,23 +290,20 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
         }
         else if (previous) copyMigrationFile(previous, output);
         else if (sqlite) {
-          const db = new Database(file.source, { readonly: true, fileMustExist: true });
-          // Linux descriptor-relative path keeps the backup in our reserved inode
-          // even if a path ancestor is replaced while better-sqlite3 awaits I/O.
+          // Keep both the private input and output within the reserved snapshot.
           const temporary = `/proc/self/fd/${rootFd}/.backup-${randomUUID()}`;
-          try {
-            await db.backup(temporary);
-            checkTarget();
-            destinationPath(output);
-            renameSync(temporary, output);
-          } finally { db.close(); }
+          await backupDatabase(file.source, temporary);
+          checkTarget();
+          destinationPath(output);
+          renameSync(temporary, output);
           checkTarget();
           destinationPath(output);
           const out = openSync(output, 'r');
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
         } else copyMigrationFile(file.source, output);
         const digest = fileDigest(output);
-        if(!selectedDocument)copied.set(file.source, output);
+        if (attachment && digest.sha256 !== basename(file.path)) refusal(path, 'attachment digest differs from its name');
+        if(!selectedDocument)copied.set(copyKey, output);
         manifest.files.push({ path: file.path, ...digest, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }
     }
@@ -283,20 +334,20 @@ export function readSnapshot(dir: string): SnapshotManifest {
   }
   return manifest;
 }
-const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] [--bridges <instance-root> ...] [--bridges-document <file> ...] [--runtime <LOOM_BOX_HOME>] [--runtime-data <LOOM_BOX_DATA>] --to <new-directory> [--dry-run]\n';
+const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] [--bridges <instance-root> ...] [--bridges-document <file> ...] [--runtime <LOOM_BOX_HOME>] [--runtime-data <LOOM_BOX_DATA>] --to <new-directory> [--dry-run] [--household-memory]\n';
 export async function migrateSnapshot(argv: string[], io: IOStreams): Promise<number> {
   let values;
-  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, bridges: { type: 'string', multiple: true }, 'bridges-document': {type:'string',multiple:true}, runtime: { type: 'string' }, 'runtime-data': { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
+  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, bridges: { type: 'string', multiple: true }, 'bridges-document': {type:'string',multiple:true}, runtime: { type: 'string' }, 'runtime-data': { type: 'string' }, 'dry-run': { type: 'boolean' }, 'household-memory': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
   catch { io.stderr(usage); return 2; }
   if (!values.from || !values.to) { io.stderr(usage); return 2; }
   try {
     const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes, secrets: values.secrets, bridges:values.bridges,'bridges-document':values['bridges-document'],runtime:values.runtime,'runtime-data':values['runtime-data'] };
     if (values['dry-run']) {
-      const inventory = inventorySnapshot(values.from, values.to, values.tasks, roots);
+      const inventory = inventorySnapshot(values.from, values.to, values.tasks, roots, values['household-memory']);
       io.stdout(JSON.stringify({ status: 'dry-run', consistency: inventory.consistency, sizes: 'source main-file bytes; SQLite backup size may differ', copies: inventory.copies.map(({ path, bytes }) => ({ path, bytes })), skipped: inventory.skipped, followed: inventory.followed }, null, 2) + '\n');
       return 0;
     }
-    const manifest = await createSnapshot(values.from, values.to, values.tasks, roots);
+    const manifest = await createSnapshot(values.from, values.to, values.tasks, roots, values['household-memory']);
     io.stdout(JSON.stringify({ status: 'ok', files: manifest.files.length, consistency: manifest.consistency }) + '\n');
     return 0;
   } catch (error) { io.stderr((error instanceof SnapshotFailure ? error.message : 'Snapshot refused: \".\": unexpected snapshot failure') + '\n'); return 1; }
