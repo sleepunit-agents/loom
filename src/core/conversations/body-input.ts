@@ -17,7 +17,7 @@ import type { DataWrites } from '../data/writes.js';
 import { guardedResponse } from '../data/guarded-response.js';
 import { bridgeIncoming, inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import {constrainJobSession} from './sessions.js';
-import { ageLimit, wordsDeadline } from './retention.js';
+import { ageCutoff, ageLimit, wordsDeadline } from './retention.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
 import type { conversationBodyScope } from './body-scope.js';
@@ -97,7 +97,13 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
     if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
     if(keepUntil!==null)since=Math.min(since,Date.parse(item.at));
     if(answerContext){since=Math.min(since,Date.parse(answerContext.at));if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
-    for(const line of history??[])if(line.keepUntil!==null){until=Math.min(until,Date.parse(line.keepUntil));since=Math.min(since,Date.parse(line.at));}
+    for(const line of history??[])if(line.keepUntil!==null){
+     until=Math.min(until,Date.parse(line.keepUntil));
+     // Bridge history displays the provider's posted time. Its deadline is dated
+     // by Loom's receipt (or send) and the keep period in this same transaction.
+     const dated=privateBridge?ageCutoff(line.keepUntil,days):line.at;
+     since=Math.min(since,Date.parse(dated));
+    }
     return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:itemRefs};
    });
    if(Number.isFinite(until))constrainJobSession(db,before.job.id,since,until);

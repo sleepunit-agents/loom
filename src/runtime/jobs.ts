@@ -1,4 +1,4 @@
-import {inheritJobSessionLimit, releaseJobSessionLimit} from '../core/conversations/sessions.js';
+import {inheritJobSessionLimit, invalidateRefiledJobSessions, releaseJobSessionLimit} from '../core/conversations/sessions.js';
 import { closePendingReview, hasChangeReview } from '../apps/change-reviews.js';
 import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
@@ -578,5 +578,6 @@ export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox 
 /** Every job filed under one project is filed under another: for a merge of the two (shared-projects.ts).
  * A job keeps the labels of its conversation, which is refiled in the same write. */
 export function refileJobs(db: DataDatabase, from: string, into: string): void {
+  invalidateRefiledJobSessions(db, from);
   db.update(jobs).set({ project: into }).where(eq(jobs.project, from)).run();
 }

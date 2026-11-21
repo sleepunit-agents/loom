@@ -248,7 +248,7 @@ it('retains the issued input deadline after reopening the database and discards 
  const copy=new Database(f.db.$client.serialize());
  clean.push(()=>copy.close());
  const reopened=dataDatabase(copy,now);
- expect(reopened.select().from(s.jobSessionLimits).get()).toEqual({job:'job',since:start,keepUntil:deadline});
+ expect(reopened.select().from(s.jobSessionLimits).get()).toEqual({job:'job',since:start,keepUntil:deadline,invalidated:false});
  const sessions=new ConversationSessions(reopened,now,f.key);
  const prepared=await sessions.seal({conversation:f.thread.conversation,harness:'claude',model:'fixture',session:'abcd-1234',
   files:Buffer.from('fictional checkpoint').toString('base64')});
@@ -257,6 +257,25 @@ it('retains the issued input deadline after reopening the database and discards 
  f.clock.advance(4000);
  expect(await sessions.open(f.thread.conversation,'claude','fixture')).toBeNull();
  expect(sessions.store(prepared,'job')).toBe(false);
+});
+
+it('preserves a shortened household deadline after a sweep and later increase while a worker holds private words',async()=>{
+ const f=await bodyFixture(clean), now=()=>new Date(f.clock.now()).toISOString();
+ await f.send('Fictional private mail','private');
+ await sdk(f).takeAndAccept(async()=>{});
+ const sessions=new ConversationSessions(f.db,now,f.key);
+ const input={conversation:f.thread.conversation,harness:'claude',model:'fixture',session:'abcd-1234',files:Buffer.from('fictional record').toString('base64')};
+ expect(sessions.store(await sessions.seal(input),'job')).toBe(true);
+ const deadline=new Date(f.clock.now()+86400000).toISOString();
+ f.root.services.household.setSettings({commsDays:1});
+ expect(f.db.select().from(s.conversationSessions).get()?.keepUntil).toBe(deadline);
+ expect(f.db.select().from(s.jobSessionLimits).get()?.keepUntil).toBe(deadline);
+ const clock=vi.spyOn(f.clock,'now').mockReturnValue(Date.parse(deadline));
+ clean.push(()=>{clock.mockRestore();});
+ f.root.services.comms!.expire();
+ expect(f.db.select().from(s.conversationSessions).get()).toBeUndefined();
+ f.root.services.household.setSettings({commsDays:14});
+ expect(sessions.store(await sessions.seal(input),'job')).toBe(false);
 });
 
 it('keeps a replacement job bound by the checkpoint it could restore even after the source is erased',async()=>{

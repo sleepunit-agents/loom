@@ -27,13 +27,19 @@ export function registerConversationSessions(operations: Operations, db: DataDat
     const found=current(viewer);
     if(!found?.job.harness || jobHeld(db,found.job))return;
     const {cv,job}=found;
+    if (db.select({invalidated:jobSessionLimits.invalidated}).from(jobSessionLimits).where(eq(jobSessionLimits.job,job.id)).get()?.invalidated) return;
     let scope:string|undefined;
     if(cv.venue==='loom'){
       const thread=db.select({id:threads.id}).from(threads).where(eq(threads.conversation,cv.id)).get();
       if(!cv.member || !thread || thread.id!==cv.place)return;
       scope=JSON.stringify([thread.id,cv.member,cv.agent,cv.project]);
-    }else if(!(bridgeConnections.platform.enumValues as readonly string[]).includes(cv.venue))return;
-    return {job:job.id,conversation:cv.id,harness:found.job.harness,model:job.model,scope,agent:cv.agent,thread:scope ? cv.place : undefined};
+    }else{
+      if(!(bridgeConnections.platform.enumValues as readonly string[]).includes(cv.venue))return;
+      // Older DM checkpoints lack an authoritative input deadline. Their workers
+      // can still start from retained bridge history on the first run after upgrade.
+      if(cv.member || cv.direct)scope=JSON.stringify([cv.venue,cv.place,cv.member,cv.agent,cv.project]);
+    }
+    return {job:job.id,conversation:cv.id,harness:found.job.harness,model:job.model,scope,agent:cv.agent,thread:cv.venue==='loom' ? cv.place : undefined};
   };
   /** A session last saved before the conversation's last answer does not hold that answer: its body died after
    * replying, or a body of another harness answered since. Resuming it would lose what was said, so it is

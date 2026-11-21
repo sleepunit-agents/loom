@@ -4,7 +4,7 @@ import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodySecretTools} from './runtime/body-secret-tools.js';
 import {houseRuntimeCli} from './house-runtime-cli.js';
 import { kitAccess } from './shared-kit-access.js';
-import { agentKitMembers, agentKits } from './core/data/schema.js';
+import { agentKitMembers, agentKits, household } from './core/data/schema.js';
 import Database from 'better-sqlite3';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -88,19 +88,43 @@ it('admits a linked owner’s Slack DM once and bounds its first checkpoint by w
   f.db.update(jobs).set({state:'running',box:'box',harness:'claude'}).where(eq(jobs.id,job.id)).run();
   f.db.update(tokens).set({job:job.id}).where(eq(tokens.label,'body')).run();
  });
- const take=()=>f.root.http.request('http://loom/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const take=(credential=token.body)=>f.root.http.request('http://loom/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({input:{}})});
  expect(await (await take()).json()).toMatchObject({value:{items:[{words:'Fictional private question',keepUntil:deadline}]}});
  const checkpoint={session:randomUUID(),files:Buffer.from('Fictional private question').toString('base64')};
  expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({status:200,body:{value:{saved:true}}});
  expect(f.db.select().from(conversationSessions).get()).toMatchObject({startedAt:receivedAt,keepUntil:deadline});
+ expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:{session:checkpoint.session}}}});
+ expect((await f.call('conversation','session',{})).status).toBe(403);
+ const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
+ const oldPack=await key.seal(JSON.stringify({model:job.model,files:checkpoint.files,at:receivedAt}));
+ f.root.writes.run(()=>f.db.update(conversationSessions).set({files:oldPack}).where(eq(conversationSessions.conversation,cv)).run());
+ expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:null}}});
+ expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({body:{value:{saved:true}}});
  // Even before the next sweep erases the underlying row, neither door releases its expired words.
  const now=vi.spyOn(f.clock,'now').mockReturnValue(Date.parse(deadline));
  try {
   expect(await (await take()).json()).toMatchObject({value:{items:[{words:null}]}});
-  expect(await f.call('conversation','session',{})).toMatchObject({body:{value:{session:null}}});
+  expect(await f.call('conversation','session',{retention:true})).toMatchObject({body:{value:{session:null}}});
   expect(await f.call('conversation','sessionSave',checkpoint)).toMatchObject({body:{value:{saved:false}}});
  } finally {now.mockRestore();}
 
+ // A fresh worker now reads the first DM only from retained history. Slack's
+ // posted time is newer than Loom's receipt; only the receipt dates retention.
+ f.root.writes.run(()=>{
+  const mail=f.db.select().from(inbox).where(eq(inbox.conversation,cv)).get()!;
+  f.root.services.conversations.confirm(mail.id,job.id);
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,job.id)).run();
+  f.db.update(jobs).set({conversation:cv,member:'owner',harness:'claude'}).where(eq(jobs.id,'other')).run();
+ });
+ const followup=JSON.parse(payload.toString());
+ followup.envelope_id='dm-followup';followup.payload.event_id='dm-followup';
+ followup.payload.event.ts='1794432001.000008';followup.payload.event.text='Fictional follow-up';
+ await socket.receive({},Buffer.from(JSON.stringify(followup)));f.clock.advance(0);await daemon.idle();
+ expect(await (await take(token.other)).json()).toMatchObject({value:{items:[{words:'Fictional follow-up',
+  history:[{words:'Fictional private question',at:incoming[0].postedAt,keepUntil:deadline}]}]}});
+ expect(await f.call('conversation','sessionSave',checkpoint,token.other)).toMatchObject({body:{value:{saved:true}}});
+ f.root.writes.run(()=>f.db.insert(household).values({commsDays:12}).onConflictDoUpdate({target:household.singleton,set:{commsDays:12}}).run());
+ expect(await f.call('conversation','session',{retention:true},token.other)).toMatchObject({body:{value:{session:null}}});
 });
 it('mounts actual intake, committed Tempo admission, body reply door and current-credential network send',async()=>{
  const f=fixture();f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();expect(f.db.select().from(inbox).get()?.conversation).toBe(incoming.conversation);expect(f.db.select().from(conversations).get()?.venue).toBe('slack');expect(f.admitted).toHaveBeenCalledOnce();

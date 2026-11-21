@@ -1366,7 +1366,9 @@ CREATE TABLE `job_session_limits` (
 	`job` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,
 	`keep_until` text NOT NULL,
+	`invalidated` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "job_session_limits_valid_flag" CHECK("job_session_limits"."invalidated" in (0, 1)),
 	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
 	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
 );

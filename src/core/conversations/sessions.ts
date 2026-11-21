@@ -27,7 +27,7 @@
  */
 import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversationSessions, deletedThreads, jobSessionLimits, turns } from '../data/schema.js';
+import { conversations, conversationSessions, deletedThreads, jobs, jobSessionLimits, turns } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { ageCutoff, ageLimit, keepUntilFor, wordsDeadline } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
@@ -60,8 +60,35 @@ export function inheritJobSessionLimit(db:DataDatabase, job:string, conversation
   if (deadline>Date.parse(now)) constrainJobSession(db,job,Date.parse(row.at),deadline);
 }
 
+/** A running private body can still hold the old project's transcript after its job is refiled.
+ * Keep this refusal on the job until it ends, including across later takes and coordinator restarts. */
+export function invalidateRefiledJobSessions(db: DataDatabase, project: string) {
+  const running = db.select({
+    job: jobs.id, since: jobs.queuedAt, keepUntil: jobs.queuedAt, invalidated: sql<boolean>`1`,
+  }).from(jobs).innerJoin(conversations, eq(jobs.conversation, conversations.id)).where(and(
+    eq(jobs.project, project), eq(jobs.state, 'running'),
+    or(and(eq(conversations.venue, 'loom'), sql`${conversations.member} is not null`),
+       and(inArray(conversations.venue, ['discord', 'slack']), or(eq(conversations.direct, true), sql`${conversations.member} is not null`))),
+  ));
+  db.insert(jobSessionLimits).select(running).onConflictDoUpdate({
+    target: jobSessionLimits.job, set: {invalidated: true},
+  }).run();
+}
+
 export function releaseJobSessionLimit(db:DataDatabase, job:string) {
   db.delete(jobSessionLimits).where(eq(jobSessionLimits.job,job)).run();
+}
+
+// Tighten both copies in the settings transaction, including reservations held by
+// running jobs whose source checkpoint may already have been erased.
+export function tightenSessionDeadlines(db: DataDatabase, days: number) {
+  const offset = '+' + days + ' days';
+  const checkpoint = sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${conversationSessions.startedAt}, ${offset})`;
+  const running = sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${jobSessionLimits.since}, ${offset})`;
+  db.update(conversationSessions).set({keepUntil: checkpoint})
+    .where(sql`julianday(${conversationSessions.keepUntil}) > julianday(${checkpoint})`).run();
+  db.update(jobSessionLimits).set({keepUntil: running})
+    .where(sql`julianday(${jobSessionLimits.keepUntil}) > julianday(${running})`).run();
 }
 
 export class ConversationSessions {
@@ -93,11 +120,12 @@ export class ConversationSessions {
       if (this.db.select({id:deletedThreads.id}).from(deletedThreads)
         .where(eq(deletedThreads.conversation,sealed.conversation)).limit(1).get()) return false;
       const where = and(eq(conversationSessions.conversation, sealed.conversation), eq(conversationSessions.harness, sealed.harness));
+      const delivered = job ? this.db.select().from(jobSessionLimits).where(eq(jobSessionLimits.job,job)).get() : undefined;
+      if (delivered?.invalidated) return false;
       if (!sealed.sealed) { this.db.delete(conversationSessions).where(where).run(); return false; }
       // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
       // session kept here, if one is still within the keep time (this save continues or replaces it); the
       // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
-      const delivered = job ? this.db.select().from(jobSessionLimits).where(eq(jobSessionLimits.job,job)).get() : undefined;
       if (sealed.scope && !delivered) return false;
       const previous = this.kept(sealed.conversation, sealed.harness);
       const now = this.now(), times = [previous?.startedAt, delivered?.since, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));

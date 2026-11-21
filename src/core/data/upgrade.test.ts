@@ -536,3 +536,19 @@ it('pins the existing household checkpoint deadline during upgrade and preserves
   expect(old.prepare('SELECT files,started_at,keep_until FROM conversation_sessions').get())
     .toEqual({files,started_at:at,keep_until:'2026-11-17T00:00:00.000Z'});
 });
+
+it('fences pre-upgrade workers with unrecorded inputs until their jobs end', () => {
+  const old = household(29);
+  old.prepare("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('agent','','','','drop','dot')").run();
+  old.prepare("INSERT INTO members (id,role,joined_at) VALUES ('alice','member',?)").run(at);
+  const room = old.prepare("INSERT INTO conversations (id,agent,venue,place,label,member,started_at,last_at,turn_count) VALUES (?,'agent',?,?,'Fixture',?,?,?,0)");
+  const job = old.prepare("INSERT INTO jobs (id,agent,conversation,title,state,brief,model,started_by_kind,started_by,house_repository,house_file,house_branch,queued_at) VALUES (?,'agent',?,'Job',?,'','fixture','agent','agent','','','',?)");
+  for (const [venue, state] of [['slack','running'], ['discord','running'], ['loom','running'], ['slack','done'], ['discord','queued'], ['loom','starting']]) {
+    const id = venue + '-' + state;
+    room.run(id,venue,id,venue === 'loom' ? 'alice' : null,at,at);
+    job.run(id,id,state,at);
+  }
+  upgradeDataSchema(old, () => at);
+  expect(old.prepare('SELECT job FROM job_session_limits WHERE invalidated=1 ORDER BY job').all())
+    .toEqual(['discord-running','loom-running','slack-running'].map(job => ({job})));
+});

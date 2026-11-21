@@ -2307,7 +2307,8 @@ export const jobSessionLimits = sqliteTable('job_session_limits', {
   job: text('job').primaryKey().notNull().references(() => jobs.id, {onDelete:'cascade'}),
   since: text('since').notNull(),
   keepUntil: text('keep_until').notNull(),
-}, t => [check('job_session_limits_since_utc',utc(t.since)),check('job_session_limits_until_utc',utc(t.keepUntil))]);
+  invalidated: integer('invalidated', {mode:'boolean'}).notNull().default(false),
+}, t => [check('job_session_limits_valid_flag',sql`${t.invalidated} in (0, 1)`),check('job_session_limits_since_utc',utc(t.since)),check('job_session_limits_until_utc',utc(t.keepUntil))]);
 
 export const plumbing = {
   jobSessionLimits,
