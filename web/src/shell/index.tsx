@@ -16,6 +16,7 @@ import { buzz, HapticLabel, useHaptics } from '../haptic';
 import { oneWindowKept } from '../look';
 import { recency, useShortcuts } from './shortcuts';
 import Switcher from './switcher';
+import { WindowLoad } from './loading';
 import { WindowExits } from './window-motion';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
@@ -148,7 +149,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
             <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => router.remove(tile.id,true)}><i aria-hidden="true" /></button>
             <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => router.remove(tile.id)}><i aria-hidden="true" /></button>
           </header>
-          <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
+          <WindowLoad app={app.id} icon={app.icon} title={app.title} visible={shown}><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></WindowLoad>
         </section>;
       })}
       <WindowExits boxes={boxes} phone={phone} tiles={route.tiles} maximized={route.maximized} />

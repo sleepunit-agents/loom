@@ -1,3 +1,4 @@
+import { expireArchivedQuestions } from './archived-question-store.js';
 import {isBridgeVenue} from './channel-target.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
@@ -8,10 +9,11 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
+import { recordThreadRef } from './thread-ref-store.js';
 import { refsIn } from './refs.js';
-import { Threads } from './threads.js';
+import { recordThreadDeletion, Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
 import { eraseConversationSessions, expireConversationSessions } from './sessions.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
@@ -62,8 +64,7 @@ export class CommsMessages {
       fromKind: person ? 'person' : 'agent', fromId: input.sender,
       run: person ? null : input.run, ...detail,
     }, at);
-    for (const ref of new Set(refs)) this.db.insert(threadRefs).values({ thread: thread.id, ref, messageSeq: seq })
-      .onConflictDoUpdate({ target: [threadRefs.thread, threadRefs.ref], set: { messageSeq: seq } }).run();
+    for (const ref of new Set(refs)) recordThreadRef(this.db,thread.id,ref,seq);
     return row;
   }
 
@@ -281,6 +282,7 @@ export class CommsMessages {
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);
+    expired += expireArchivedQuestions(this.db,at,cutoff);
     // A kept harness session holds its conversation's words: it goes at the same keep time.
     expired+=expireConversationSessions(this.db,at);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
@@ -298,7 +300,7 @@ export class CommsMessages {
         return;
       }
       const { thread } = this.context(threadId), at = this.now();
-      this.db.insert(deletedThreads).values({ id: threadId, conversation: thread.conversation, at }).run();
+      recordThreadDeletion(this.db, { id: threadId, conversation: thread.conversation, at });
       this.db.delete(inboxRefs).where(inArray(inboxRefs.item, this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.thread, threadId)))).run();
       this.db.update(inbox).set({ thread: null, messageSeq: null,
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,

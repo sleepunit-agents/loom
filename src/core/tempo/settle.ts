@@ -60,7 +60,11 @@ export class SettledInbox {
       // Words/state metadata belong to Inbox. Volume expiry can make an old item
       // eligible again, so include volume without changing content changed_at.
       const settleSeconds = this.volume.timings(who).settleSeconds;
-      const signature = JSON.stringify([settleSeconds, items]);
+      // A login warning keeps one source ID until renewal. Refresh its countdown
+      // and reason in Inbox without offering that same warning to the desktop again.
+      const signature = JSON.stringify([settleSeconds, items.map(item =>
+        item.toKind === 'person' && item.source === 'notice' && /^login-(ending|gone):/.test(item.sourceId ?? '')
+          ? { ...item, words: null, changedAt: item.at } : item)]);
       if (this.offered.get(key) === signature) continue;
       let pending = this.pending.get(key);
       if (!pending || pending.signature !== signature) {

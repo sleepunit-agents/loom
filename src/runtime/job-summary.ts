@@ -9,9 +9,8 @@ import { alias } from 'drizzle-orm/sqlite-core';
 import { boxes, conversations, jobs, tasks, terminalRuns, terminalSessions, triggers } from '../core/data/schema.js';
 import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { TASK_ID } from '../slug.js';
-import { jobClaimed, unendedJobStates } from '../core/data/job-states.js';
+import { claimedJobStates, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
-import { QUEUE_DEADLINE_MS } from './jobs.js';
 import { jobUsageFields } from './job-usage-queries.js';
 import { exitStage } from './job-exit.js';
 
@@ -51,7 +50,7 @@ export interface Doing {
   /** For a job paired with a task (the task was filed from the job's conversation): that task's title; its id is `ref`. */
   task: string | null;
   /** When a job was last heard from, where that is longer ago than the runtime lets a job go unheard
-   * (silence.ts, SILENCE_MS; for a queued one, jobs.ts, QUEUE_DEADLINE_MS) and nothing has ended it yet. */
+   * (silence.ts, SILENCE_MS) and nothing has ended it yet. */
   quietSince: string | null;
   since: string; state: string;
   /** The in-app path that opens it. */
@@ -125,7 +124,7 @@ export class JobSummaries {
     this.observed?.();
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     const rows = this.db.select({ id: jobs.id, title: jobs.title, state: jobs.state, startedByKind: jobs.startedByKind, startedBy: jobs.startedBy,
-      queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, retryAt: jobs.retryAt, inConversation: jobs.conversation,
+      queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, inConversation: jobs.conversation,
       conversation: conversations.id, venue: conversations.venue, place: conversations.place, label: conversations.label,
       direct: conversations.direct, member: conversations.member, machine: boxes.name, handedFrom: from.agent,
       harness: terminalSessions.harness, cwd: terminalSessions.cwd }).from(jobs)
@@ -134,7 +133,7 @@ export class JobSummaries {
       // A terminal session's own row, by its job: the harness and the folder it began in. Read only for a job whose conversation was joined above.
       .leftJoin(terminalSessions, and(eq(terminalSessions.job, jobs.id), eq(conversations.venue, 'terminal')))
       .leftJoin(from, and(eq(conversations.venue, 'handoff'), eq(from.id, conversations.place), fromRule))
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates),
+      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, claimedJobStates),
         or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
       .all();
     // The trigger a visible wake's place names (core/tempo/tempo.ts, wakePlace), or the one a program's job records.
@@ -167,8 +166,7 @@ export class JobSummaries {
       // A job the runtime's own sweep should have ended by now and has not (loom was not listening, or no sweep runs
       // here): still listed, with when it was last heard from. A terminal session is not listed at all once silent.
       const last = row.heardAt ?? row.claimedAt ?? row.queuedAt;
-      const quiet = row.startedByKind === 'terminal' ? false : jobClaimed(row.state) ? now - Date.parse(last) > SILENCE_MS
-        : now - Math.max(Date.parse(row.queuedAt), row.retryAt ? Date.parse(row.retryAt) : 0) > QUEUE_DEADLINE_MS;
+      const quiet = row.startedByKind !== 'terminal' && now - Date.parse(last) > SILENCE_MS;
       const about = row.conversation ? paired.get(row.conversation) : undefined;
       const base = { ...none, id: row.id, machine: row.machine, since: row.claimedAt ?? row.queuedAt, state: row.state,
         quietSince: quiet ? last : null, ...(about ? { ref: about.id, task: about.title } : {}) };

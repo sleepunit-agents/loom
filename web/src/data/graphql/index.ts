@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { usePendingRead } from '../loading';
 import { createRequest, type AnyVariables, type TypedDocumentNode } from '@urql/core';
 import type { DocumentNode } from 'graphql';
 import type { generatedDataClient } from './client';
@@ -61,7 +62,8 @@ export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document:
     }).catch(() => { if (!stopped) setState({ key, doc, snapshot: { status: 'offline' } }); });
     return () => { stopped = true; unsubscribe?.(); };
   }, [key, stable, doc, keep, pause]);
-  if (pause) return { status: 'loading' };
   const shown = state.key === key ? state.snapshot : between(state, doc, keep);
+  usePendingRead(!pause && (shown.status === 'loading' || !!shown.settling));
+  if (pause) return { status: 'loading' };
   return shown.settling && !keep ? { status: 'loading' } : shown;
 }

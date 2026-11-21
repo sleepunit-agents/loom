@@ -134,7 +134,7 @@ describe('upgrading a household database', () => {
       .map(table => old.prepare(`SELECT * FROM ${table}`).all());
     const before = privateHistory();
     upgradeDataSchema(old);
-    expect(privateHistory()).toEqual([before[0].map(row=>({...row as object,handoff_not_before:null})), ...before.slice(1)]);
+    expect(privateHistory()).toEqual([before[0].map(row=>({...row as object,handoff_not_before:null})), before[1].map(row=>({...row as object,source_channel:null})), ...before.slice(2)]);
     expect(old.pragma('foreign_key_check')).toEqual([]);
     expect(() => old.prepare("DELETE FROM conversations WHERE id = 'cv'").run()).toThrow('FOREIGN KEY');
   });
@@ -560,6 +560,23 @@ it('starts upgraded households with no machine readings and the default lines fo
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','load','','first','ok',?)").run(at)).toThrow(/box_readings_kind/);
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('legacy','memory','','first','worrying',?)").run(at)).toThrow(/box_readings_level/);
  expect(()=>db.prepare("insert into box_readings(box,kind,thing,generation,level,read_at) values('nobody','memory','','first','ok',?)").run(at)).toThrow(/FOREIGN KEY/);
+});
+
+it('keeps an archived question and its sealed words intact through the checkpoint upgrade', () => {
+  const old = household(33);
+  old.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam', 'member', '${at}');
+    INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+    INSERT INTO conversations (id, agent, member, venue, place, label, direct, started_at, last_at, turn_count)
+      VALUES ('cv', 'art', 'sam', 'loom', 'th', 'Private', 1, '${at}', '${at}', 0);
+    INSERT INTO threads (id, conversation, title, titled_by, pinned, opened_at, last_at, read_seq, working, stop_requested)
+      VALUES ('th', 'cv', 'Private', 'member', 0, '${at}', '${at}', 0, 0, 0);
+    INSERT INTO archived_questions (thread, source_member, source_agent, source_conversation, ref, raised_at, seen_at, keep_until, words, verdict, answered_by, answered_at)
+      VALUES ('th', 'sam', 'art', 'cv', 'card', '${at}', '${at}', '2026-11-29T00:00:00.000Z', X'0000FF', 'deny', 'sam', '${at}')`);
+  const archived = () => old.prepare('SELECT * FROM archived_questions').all();
+  const before = archived();
+  upgradeDataSchema(old, () => at);
+  expect(archived()).toEqual(before);
+  expect(old.pragma('foreign_key_check')).toEqual([]);
 });
 
 it('retires legacy bridge checkpoints from completed jobs whose private input bounds were never recorded',()=>{

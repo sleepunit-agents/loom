@@ -42,9 +42,18 @@ export interface WorkerHttpOptions {
 export class WorkerWatchedThingLimit extends Error {}
 
 class WorkerOperationFailure extends Error {
+  diagnostic?: string;
   constructor(name: string, readonly temporary: boolean, readonly beforeDelivery = false, readonly denied = false, readonly schemaRefusal = false) {
     super(`Worker ${name} failed; outcome may be uncertain`);
   }
+}
+const signInSteps = new Map([
+  ['signInNext', 'checking for a request'], ['signInPage', 'reporting the sign-in page'],
+  ['signInTake', 'claiming a code'], ['signInCode', 'checking for a code'], ['signInDone', 'reporting completion'],
+]);
+export function signInFailureLine(error: unknown): string {
+  const detail = error instanceof WorkerOperationFailure && error.diagnostic;
+  return detail ? `Worker sign-in check unavailable (${detail})\n` : 'Worker sign-in check unavailable\n';
 }
 function operationCaller(input: WorkerHttpOptions) {
   let base: URL;
@@ -109,9 +118,20 @@ function operationCaller(input: WorkerHttpOptions) {
       }
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
     } catch (error) {
-      if (error instanceof WorkerOperationFailure || error instanceof WorkerWatchedThingLimit) throw error;
-      // Never include upstream bodies, URLs, tokens or fetch diagnostics in logs.
-      throw new WorkerOperationFailure(name, deadline.signal.aborted);
+      if (error instanceof WorkerWatchedThingLimit) throw error;
+      const failure = error instanceof WorkerOperationFailure ? error : new WorkerOperationFailure(name, deadline.signal.aborted);
+      const step = signInSteps.get(name);
+      if (step) {
+        // Only the operation, HTTP status and local transport state may reach the journal.
+        let reason = 'request unavailable';
+        if (deadline.signal.aborted) reason = 'deadline exceeded';
+        else if (response && !response.ok) reason = `HTTP ${response.status}`;
+        else if (response) reason = failure.temporary ? 'response interrupted' : 'invalid response';
+        else if (failure.beforeDelivery) reason = 'connection refused';
+        else if (failure.temporary) reason = 'connection failed';
+        failure.diagnostic = `${step}, ${reason}`;
+      }
+      throw failure;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener('abort', rejectAbort);
