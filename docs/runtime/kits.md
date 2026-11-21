@@ -24,7 +24,7 @@ On a rootless Podman 5 worker with a short UID or GID map, set `container.podman
 
 ## Owner cards for Pond
 
-The examples below show the three inputs to `household.propose`. Each input also takes a `why` in the outer envelope. First build and review a house containing a read-only adapter and provision its dedicated read-only credential. Replace the repository, full commit, image digest, deployment id and account ids below with measured values from that installation. These examples do not approve the old multi-purpose helper.
+The examples below show inputs to `household.propose`. Each input also takes a `why` in the outer envelope. First build and review a house containing a read-only adapter and provision its dedicated read-only credential. Replace the repository, full commit, image digest, deployment id and account ids below with measured values from that installation. These examples do not approve the old multi-purpose helper.
 
 1. Define Art's kit by proposing `change: "kit"` with the following input. The example has no model-supplied arguments. The operator picks the Pond deployment during approval.
 
@@ -43,6 +43,8 @@ The examples below show the three inputs to `household.propose`. Each input also
 
 2. Grant the kit to the project. Propose `change: "kitGrant"` with `{"agent":"art","kit":"pond-field","to":{"project":"pond"},"grant":true}`.
 3. For an already known outside Slack account, propose `change: "projectOutsidePerson"` with `{"project":"pond","platform":"slack","workspace":"T02AYL3QM","user":"<user id>","on":true}`. If the account is linked to a household member, use the existing project member roster. Two accounts linked to the same member use that member's grants. Two unlinked outside accounts require separate approvals even if their labels match.
+
+To introduce a Slack colleague, an agent can file `change: "colleague"` with `{"agent":"art","platform":"slack","workspace":"TWORK","user":"UROBIN","tier":2,"project":"pond"}`. Omit `project` to set just the interaction tier. The owner reviews the exact Slack account, its tier with that agent, and any kit grants it gains. The optional project adds the account to the project’s kit roster. An Allow applies both changes together.
 
 Each proposal needs an owner's answer. The existing quoted-word path can carry that answer. A later change of image, commit, program, argument template or credential name requires a new definition. Replace the grant's `true` with `false` to withdraw it, the roster entry's `true` with `false` to remove that person, or set `tools` to `null` to withdraw the entire definition.
 

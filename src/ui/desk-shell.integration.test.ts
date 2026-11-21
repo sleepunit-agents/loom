@@ -83,7 +83,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>activityTile.getByRole('heading',{name:activityTitle,exact:true}).count()).toBe(1);
   await expect.poll(()=>activityTile.getByText(activitySummary,{exact:true}).count()).toBeGreaterThan(0);
   await b.goto(app.url);
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Needs you',exact:true}).getByText('Needs you · 1',{exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
   for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box',exact:true}).count()).toBe(1);
   app.writes.run(()=>db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'desk-box')).run());
@@ -94,7 +94,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await a.getByRole('button',{name:'All apps',exact:true}).first().click();
   await a.getByRole('dialog',{name:'Apps',exact:true}).getByRole('region',{name:'Look & feel',exact:true}).getByRole('button',{name:'Appearance',exact:true}).click();
   const appearance=a.getByRole('region',{name:'Appearance tile',exact:true});
-  await appearance.getByRole('group',{name:'Look',exact:true}).getByRole('radio',{name:'Daylight',exact:true}).click();
+  await appearance.getByText('Daylight',{exact:true}).press('Enter');
   for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
   await appearance.getByRole('button',{name:'Close Appearance',exact:true}).click();await expect.poll(()=>a.locator('[data-tile]').count()).toBe(0);
   // Saves travel through the real cookie HTTP command; displayed choices come
@@ -133,6 +133,59 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   }
   await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
   await set({pixel:true},'pixel-on');for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  // Use Setup in a separate window. The already-open desks must update without a reload.
+  const setup=await context.newPage();
+  await setup.goto(app.url+'/p/setup-preview');
+  const portrait=setup.getByRole('form',{name:'Animated portrait for fern'});
+  const assign=async(data:ReturnType<typeof sheet>,label:string)=>{
+    await portrait.locator('[name=png]').setInputFiles({name:'sheet.png',mimeType:'image/png',buffer:data.png});
+    await portrait.locator('[name=metadata]').setInputFiles({name:'export.json',mimeType:'application/json',buffer:data.json});
+    const reply=setup.waitForResponse(response=>response.url().endsWith('/api/household/setPortrait'));
+    await portrait.getByRole('button',{name:label}).click();
+    expect((await reply).status()).toBe(200);
+  };
+  const fernColor=(page:Page,red:number)=>page.locator('.desk-home-card[data-agent="fern"] canvas').evaluateAll((nodes,red)=>{
+    return nodes.some(node=>{
+      const canvas=node as HTMLCanvasElement;
+      const pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;
+      return pixels?.some((v,i)=>i%4===0&&v===red&&pixels[i+1]===0xe6&&pixels[i+2]===0xf0&&pixels[i+3]===255);
+    });
+  },red);
+  const faceCount=()=>b.locator('.desk-home-card .loom-pixel-face canvas').count();
+  const version=(id:string)=>db.select().from(agents).where(eq(agents.id,id)).get()?.spriteVersion;
+  const artVersion=version('art');
+  await assign(picture,'Add portrait');
+  await expect.poll(faceCount).toBe(2);
+  const first=version('fern');
+  for(const page of [a,b])await expect.poll(()=>fernColor(page,0x2e)).toBe(true);
+  const concurrent=await context.newPage();
+  await concurrent.goto(app.url+'/p/setup-preview');
+  const draft=concurrent.getByRole('form',{name:'Animated portrait for fern'});
+  await draft.locator('[name=png]').setInputFiles({name:'sheet.png',mimeType:'image/png',buffer:picture.png});
+  await draft.locator('[name=metadata]').setInputFiles({name:'export.json',mimeType:'application/json',buffer:picture.json});
+  await assign(sheet(['south'],0x99),'Replace portrait');
+  for(const page of [a,b])await expect.poll(()=>fernColor(page,0x99)).toBe(true);
+  expect(version('fern')).not.toBe(first);
+  await expect.poll(faceCount).toBe(2);
+  await draft.getByRole('button',{name:'Replace portrait'}).click();
+  await draft.getByText(/portrait changed/i).waitFor();
+  await concurrent.close();
+  let lostId='';
+  await setup.route('**/api/household/setPortrait',async route=>{
+    lostId=route.request().postDataJSON().id;
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  },{times:1});
+  await portrait.getByRole('button',{name:'Use generated face'}).click();
+  await expect.poll(faceCount).toBe(1);
+  const replay=setup.waitForResponse(response=>response.url().endsWith('/api/household/setPortrait'));
+  await portrait.getByRole('button',{name:'Retry portrait change'}).click();
+  const recovered=await replay;
+  expect(recovered.status()).toBe(200);
+  expect(recovered.request().postDataJSON().id).toBe(lostId);
+  expect(version('fern')).toBeNull();
+  expect(version('art')).toBe(artVersion);
+  await setup.close();
   // Validly stored but undecodable bytes use the drawn fallback; a later valid
   // version recovers through the same query connection, without an asset route.
   app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png.subarray(0,8)}));
@@ -154,7 +207,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await b.evaluate(()=>document.fonts.ready);await b.screenshot({path:join(shots,`new-home-${look}-${width}.png`),animations:'disabled'});
-    await b.getByRole('button',{name:'Open Appearance',exact:true}).click();await expect.poll(()=>b.getByRole('group',{name:'Look',exact:true}).isVisible()).toBe(true);
+    await b.getByRole('button',{name:'Open Appearance',exact:true}).click();await expect.poll(()=>b.getByText('Daylight',{exact:true}).isVisible()).toBe(true);
     await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.getByRole('button',{name:'Close Appearance',exact:true}).click();
     await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
     await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
@@ -164,10 +217,11 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});
     if(width>=1024){await expect.poll(()=>b.locator('.desk-rail-card').count()).toBe(1);await b.locator('.next-rail').screenshot({path:join(shots,`new-rail-${look}-${width}.png`),animations:'disabled'});}
     await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-    const screen=b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true});
+    const screen=width>=1280?b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true}):b.locator('.desk-comms-mini');
     await expect.poll(()=>screen.count()).toBe(1);
     await expect.poll(()=>screen.getAttribute('data-location')).toBe(width>=1280?'rail':'inline');
-    const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);
+    if(width>=1280){const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);}
+    else expect(await screen.getByRole('button',{name:`Open ${displayName}`}).count()).toBe(1);
     if(width>=1280){await expect.poll(()=>b.locator('.desk-agent-rail > [data-companion=true]').getAttribute('data-agent')).toBe('art');expect(await b.locator('.next-rail .desk-comms-screen').count()).toBe(1);}
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await b.screenshot({path:join(shots,`new-comms-${look}-${width}.png`),animations:'disabled'});
@@ -179,10 +233,10 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
    }
   }
-  // A narrow desktop keeps the full-size screen inline; minimizing clears
+  // A narrow desktop keeps the compact companion inline; minimizing clears
   // selection even though the reader component remains mounted in the tile.
   await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-  await expect.poll(()=>b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true}).getAttribute('data-location')).toBe('inline');
+  await expect.poll(()=>b.locator('.desk-comms-mini').getAttribute('data-location')).toBe('inline');
   await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
   await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);expect(await b.locator('[data-companion=true]').count()).toBe(0);
   // Shell behavior uses actual registered apps on the same shared program.
@@ -212,8 +266,28 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await set({oneWindow:false},'one-window-off');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
-  const makeBig=b.getByRole('button',{name:'Make Tasks big',exact:true});await makeBig.focus();
-  await expect.poll(()=>makeBig.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
+  const maximize=b.getByRole('button',{name:'Maximize Tasks',exact:true});
+  const strip=b.locator('[aria-label="Tasks tile"] .next-strip');
+  // A dialog in another tile is modal only to that app, whether visible or covered.
+  await b.locator('[aria-label="Agents tile"]').evaluate(tile=>{
+   const dialog=document.createElement('div');dialog.setAttribute('role','dialog');dialog.dataset.fixture='covered';tile.append(dialog);
+  });
+  await maximize.focus();await maximize.press('Alt+Shift+F');
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Restore Tasks',exact:true}).press('Alt+Shift+F');
+  await b.locator('[data-fixture=covered]').evaluate(el=>el.remove());
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Maximize',exact:true}).click();
+  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Restore size',exact:true}).click();
+  const otherStrip=b.locator('[data-tile] .next-strip').nth(1);
+  const promoted=await otherStrip.evaluate(el=>el.closest('[data-tile]')!.getAttribute('data-tile'));
+  await otherStrip.click({button:'right'});await b.getByRole('menuitem',{name:'Make this the big one',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe(promoted);
+  await b.setViewportSize({width:390,height:900});await expect.poll(()=>b.locator('.next-shell[data-shell=phone]').count()).toBe(1);
+  expect(await b.getByRole('button',{name:/^Maximize /}).count()).toBe(0);
+  await b.setViewportSize({width:1440,height:900});await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await maximize.focus();
+  await expect.poll(()=>maximize.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
   await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');
   await b.keyboard.press('Alt+h');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);
   await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
@@ -221,8 +295,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // returns to current query facts; navigation alone is not a successful send.
   clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
-  const compose=b.getByRole('region',{name:`Message ${displayName}`,exact:true}),draftWords='Disposable shared desk composer message';
-  await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
+  const compose=b.getByRole('region',{name:`${displayName} card`,exact:true}),draftWords='Disposable shared desk composer message';
+  await compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).fill(draftWords);
   const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
   const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
   await compose.getByRole('button',{name:'Send',exact:true}).click();
@@ -231,8 +305,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread.replace(/^th:/,'')));
   const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
   expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
-  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
-  await expect.poll(()=>b.getByRole('region',{name:`${displayName} conversations`,exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
+  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:`Message ${displayName}`,exact:true}).inputValue()).toBe('');
+  await expect.poll(()=>b.getByRole('navigation',{name:`${displayName} conversations`,exact:true}).locator(`a[href="/p/comms-preview/thread/${encodeURIComponent(openResult.value.thread.replace(/^th:/,''))}"]`).count()).toBe(1);
   // A supporting touch browser gets navigation feedback only when enabled.
   const vibrations=()=>b.evaluate(()=>(window as typeof window&{__deskVibrations:number}).__deskVibrations);
   await set({haptics:false},'haptics-off');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('off');

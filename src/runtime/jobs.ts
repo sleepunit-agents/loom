@@ -10,7 +10,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, bridgeIncoming, conversations, inbox, inboxRefs, jobNeeds, jobs, jobUsage, programFirings, messages, threads, triggers, turns } from '../core/data/schema.js';
 import { agentsPeople } from '../policy.js';
 import { sharedSharing } from '../shared-sharing.js';
-import { OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
+import { currentDecisionGuest, OWNERS_KEY, askers, named, privateRefusal, stillKnown } from '../shared-place-mail.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { finishProgramFiring, logTrigger } from '../core/tempo/triggers.js';
@@ -159,14 +159,16 @@ export class Jobs {
   private wordUnknown(agent: string, member: string | null, mail: readonly (typeof inbox.$inferSelect)[]): Set<string> {
     const gone = new Set<string>();
     for (const item of mail) {
-      if (!item.onWordKind || !item.onWord || !(item.source === 'trigger' || (item.source === 'handoff' && item.fromKind === 'agent' && item.fromId === agent))) continue;
+      const decision=item.source==='answer'&&item.sourceId?.startsWith('guest-decision:');
+      if (!item.onWordKind || !item.onWord || !(decision || item.source === 'trigger' || (item.source === 'handoff' && item.fromKind === 'agent' && item.fromId === agent))) continue;
       const who = { kind: item.onWordKind, id: item.onWord };
       // And into one member's private conversation only that member's word goes (the agent's own work has no word).
-      const why = stillKnown(this.db, agent, who) ? privateRefusal(member, who)?.replace('who asked for it', 'on whose word it was sent') : `${named(who)}, on whose word it was sent, is no longer known to ${agent}`;
+      const known = decision ? currentDecisionGuest(this.db,agent,who.id) : stillKnown(this.db,agent,who);
+      const why = known ? privateRefusal(member, who)?.replace('who asked for it', 'on whose word it was sent') : `${named(who)}, on whose word it was sent, is no longer known to ${agent}`;
       if (!why) continue;
       this.mail.resolveItem(item.id, why); gone.add(item.id);
       for (const member of agentsPeople(agent, sharedSharing(this.db))) this.mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `word-unknown:${item.id}`, fromKind: 'unknown',
-        words: `${item.source === 'trigger' ? 'A firing of a schedule' : `A note between bodies of ${agent}`} in conversation ${item.conversation} was dropped and started no work: ${why}.`, refs: [agent] });
+        words: `${decision ? 'A guest decision' : item.source === 'trigger' ? 'A firing of a schedule' : `A note between bodies of ${agent}`} in conversation ${item.conversation} was dropped and started no work: ${why}.`, refs: [agent] });
     }
     return gone;
   }

@@ -129,6 +129,19 @@ it('lets a body call every named tool it is offered, each answered as the door a
  expect(refused).toEqual([]);
 });
 
+it('files a colleague proposal through the named tool and leaves the decision with the owner',async()=>{
+ const b=await body();
+ b.fixture.root.writes.run(()=>b.fixture.db.update(schema.members).set({role:'owner'}).where(eq(schema.members.id,'bob')).run());
+ const proposal={agent:'art',platform:'slack',workspace:'TWORK',user:'UROBIN',tier:2,project:'pond'};
+ const reply=await b.call('propose',{change:'colleague',input:proposal,why:'Review field support access.'});
+ expect(reply.text).toMatch(/^Filed approval /);
+ const card=b.fixture.db.select().from(schema.approvals).get()!;
+ expect(card.state).toBe('pending');
+ expect(JSON.parse(card.details)).toMatchObject({change:'colleague',after:proposal});
+ expect(b.fixture.db.select().from(schema.agentPeople).where(eq(schema.agentPeople.person,JSON.stringify(['slack','TWORK','UROBIN']))).all()).toEqual([]);
+ expect(b.fixture.db.select().from(schema.projectOutsidePeople).where(eq(schema.projectOutsidePeople.user,'UROBIN')).all()).toEqual([]);
+});
+
 it('refuses a named tool exactly where the body\'s generic tool is refused, in the same words',async()=>{
  const b=await body();
  // A task in a project neither the body's agent nor the member it works for is on.

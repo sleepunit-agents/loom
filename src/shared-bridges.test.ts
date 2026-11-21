@@ -1,3 +1,5 @@
+import {bodyProgram} from './runtime/body-program.js';
+import {BridgeReceiver} from './pieces/bridges/receiver.js';
 import {reviewPlace} from './core/conversations/review-place.js';
 import {reviewReply} from './pieces/bridges/sends.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
@@ -2103,4 +2105,141 @@ it('delivers a held progress message promoted to the final answer once after the
  expect(f.db.select().from(bridgeSends).all()).toMatchObject([{id:input.id,state:'sent'}]);
  expect(f.db.select().from(bridgeSendParts).all()).toMatchObject([{send:input.id,part:0,postedId:'1794432000.000009'}]);
  expect(f.db.select().from(turns).where(eq(turns.kind,'reply')).all()).toMatchObject([{model:'observed',run:'body'}]);
+});
+
+it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as const)('returns a private %s DM decision (%s)', async (platform,verdict) => {
+ let allowEffects=true;
+ const f = fixture(() => allowEffects, true);
+ const daemon = f.root.services.bridges.daemon!;
+ await daemon.ready();
+ await daemon.idle();
+ const guest = JSON.stringify([platform,'TWORK','UUSER']);
+ if(platform==='slack'){
+ const provider = f.request.getMockImplementation()!;
+ f.request.mockImplementation(async (url, options) => String(url).endsWith('conversations.info')
+  ? Response.json({ok:true, channel:{id:'DGUEST', context_team_id:'TWORK', is_im:true}})
+  : provider(url, options));
+ const event = {type:'message', channel:'DGUEST', channel_type:'im', user:'UUSER', text:'Private guest message', ts:'1794432000.000007'};
+ await f.transports.at(-1)!.receive({}, Buffer.from(JSON.stringify({type:'events_api', envelope_id:'guest-dm',
+  payload:{type:'event_callback', event_id:'guest-dm', team_id:'TWORK', event}})));
+ f.clock.advance(0);
+ await daemon.idle();
+ }else{
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(bridgeConnections).values({id:'discord',platform,workspace:'TWORK',botUser:'UBOT',agent:'art',tokenSecret:'TOKEN',enabled:true,state:'connected',stateAt:at}).run();
+  f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+  const receiver = new BridgeReceiver(f.db,f.clock,{discord:()=>({id:'DGUEST',kind:'dm'}),slack:()=>undefined});
+  clean.push(()=>receiver.close());
+  receiver.discord('discord',Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:1,d:{
+   id:'guest-message',type:0,channel_id:'DGUEST',author:{id:'UUSER'},content:'Private guest message',timestamp:at,mentions:[]
+  }})),{session:'test-session',sequence:1,resumeUrl:'wss://gateway.discord.gg/',identity:'test-identity'});
+  expect(receiver.drain('discord')).toBe(1);
+ }
+ const incoming = f.db.select().from(bridgeIncoming).get()!;
+ expect(incoming).toMatchObject({state:'delivered', isDm:true});
+ const conversation = incoming.conversation!;
+ f.root.writes.run(() => {
+  f.db.update(jobs).set({conversation}).where(eq(jobs.id,'body')).run();
+  f.root.services.conversations.take(conversation,'body');
+ });
+ const initialMail = new Set(f.db.select().from(inbox).all().map(row => row.id));
+ const scheduler = runnable(f);
+ const question = {to:'owner', answers:'yes-no', words:'May I prepare a quote?', ifYes:'Prepare a quote.', ifNo:'Wait.'};
+ const file = (q:Record<string,unknown>) => f.call('conversation','digest',{summary:'Asked for a quote decision.',question:q});
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ for(const extra of [{answers:'words'},{to:'stranger'},{refs:['private-ref']},{link:'https://example.invalid'},{waitsOnKind:'task',waitsOnId:'t-fixture'}]){
+  expect((await file({...question,...extra})).status).toBe(403);
+ }
+ const otherReceipt={...incoming,id:'different-dm-participant',user:'another-guest'};
+ f.db.insert(bridgeIncoming).values(otherReceipt).run();
+ expect((await file(question)).status).toBe(403);
+ f.db.delete(bridgeIncoming).where(eq(bridgeIncoming.id,otherReceipt.id)).run();
+ const former='former-member',joinedAt=new Date(f.clock.now()).toISOString();
+ f.db.insert(members).values({id:former,role:'member',joinedAt,removedAt:joinedAt}).run();
+ f.db.insert(bridgePeople).values({platform,workspace:'TWORK',user:'UUSER',member:former}).run();
+ const prior = await file(question);
+ expect(prior.status).toBe(200);
+ const ask = await file(question);
+ expect(ask.status).toBe(200);
+ const item = ask.body.value.item;
+ const ownerQuestion = f.db.select().from(inbox).where(eq(inbox.id,item)).get()!;
+ expect(ownerQuestion.to).toBe('owner');
+ expect(ownerQuestion.conversation).not.toBe(conversation);
+ f.root.writes.run(() => {
+  f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+ });
+ const answer = {item, answer:verdict, words:'Private owner explanation'};
+ for(const reply of ['words','replied']){
+  expect((await f.call('inbox','answer',{...answer,answer:reply},token.owner)).status).not.toBe(200);
+  expect(f.root.services.conversations.item(item).state).toBe('waiting');
+ }
+ expect(f.root.services.conversations.item(prior.body.value.item).state).toBe('resolved');
+ expect((await f.call('inbox','answer',{...answer,item:prior.body.value.item},token.owner)).status).not.toBe(200);
+ f.db.insert(members).values({id:'new-director',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'owner')).run();
+ f.db.insert(memberAgents).values({member:'new-director',agent:'art'}).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'new-director')).run();
+ f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+ f.db.update(members).set({removedAt:null}).where(eq(members.id,former)).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(403);
+ f.db.update(members).set({removedAt:joinedAt}).where(eq(members.id,former)).run();
+ expect((await f.call('inbox','answer',answer,token.owner)).status).toBe(200);
+ const mail = f.db.select().from(inbox).where(eq(inbox.conversation,conversation)).all();
+ const returned = mail.filter(row => row.toKind==='agent' && !initialMail.has(row.id));
+ expect(returned).toHaveLength(1);
+ expect(returned[0].words).toBe('Owner decision for digest '+ask.body.value.digest+' revision '+ask.body.value.revision+': '+verdict+'.');
+ expect(JSON.stringify(returned)).not.toContain(answer.words);
+ expect(f.db.$client.serialize().includes(Buffer.from(answer.words))).toBe(false);
+ expect(f.db.select().from(inbox).where(eq(inbox.conversation,ownerQuestion.conversation!)).all().filter(row => row.toKind==='agent' && row.state==='waiting')).toHaveLength(0);
+ const next = scheduler.admission(conversation);
+ expect(next.started).toBe(true);
+ expect(jobWord(f.db,next.job!)).toMatchObject({woke:'others',person:{kind:'outside',id:guest}});
+ f.root.writes.run(() => {
+  f.db.update(jobs).set({state:'running',box:'box'}).where(eq(jobs.id,next.job!.id)).run();
+  f.db.update(tokens).set({job:next.job!.id}).where(eq(tokens.label,'body')).run();
+ });
+ const delivery = await f.root.http.request('/api/conversation/take',{method:'POST',
+  headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ const payload = await delivery.json();
+ expect(delivery.status).toBe(200);
+ expect(payload.value.items).toMatchObject([{id:returned[0].id,words:returned[0].words,question:{words:expect.stringContaining(question.words),ifYes:question.ifYes,ifNo:question.ifNo},questionKeepUntil:expect.any(String)}]);
+ expect(JSON.stringify(payload)).not.toContain(answer.words);
+ expect(f.db.select().from(bridgeSends).all()).toHaveLength(0);
+ const reply = {id:randomUUID(),text:'I received the decision.',model:'fixture'};
+ // An already held provider message must not authorize sending the stale decision.
+ const sourceMail=mail.find(row=>row.source===platform)!;
+ f.db.update(inbox).set({job:next.job!.id}).where(eq(inbox.id,sourceMail.id)).run();
+ f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
+ expect((await f.call('bridges','reply',{...reply,incoming:incoming.id})).status).toBe(403);
+ expect((await f.call('bridges','reply',reply)).status).toBe(403);
+ f.db.update(inbox).set({job:sourceMail.job}).where(eq(inbox.id,sourceMail.id)).run();
+ f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+ const workerToken='body_'+'e'.repeat(64),jobId=next.job!.id;
+ f.db.insert(tokens).values({fingerprint:createHash('sha256').update(workerToken).digest('hex'),label:'Decision worker',kind:'agent',agent:'art',job:jobId,createdAt:new Date(f.clock.now()).toISOString()}).run();
+ const native=vi.fn(async()=>({text:reply.text,model:'fixture',actions:[]}));
+ const job={id:jobId,agent:'art',box:'box',conversation,venue:platform,thread:null,model:'requested',account:'fixture',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'},
+  run:{nestedContainers:false,gpu:false,ports:[],policy:jobRoom(f.db,next.job!)}};
+ allowEffects=false;
+ const code=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fixture/claude',cwd:'/house'}),
+  stdin:async()=>Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:jobId,token:workerToken}})),
+  env:{ACCOUNT_PROFILE:'/fixture'},signal:new AbortController().signal,clock:f.clock,fetch:(url,init)=>f.root.http.request(String(url),init),
+  schedule:{every:()=>()=>{}},native,loadMemory:async()=>null,loadBrief:async()=>null,error:()=>{}});
+ expect(code).toBe(0);
+ expect(native).toHaveBeenCalledTimes(1);
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{channel:'DGUEST',conversation,text:reply.text}]);
+ expect(f.root.services.conversations.item(returned[0].id).state).toBe('done');
+ if(platform==='slack'){
+  const send=f.db.select().from(bridgeSends).get()!;
+  expect(send.state).toBe('held');
+  f.db.insert(bridgeChannelFilters).values({connection:send.connection,rule:'ignore',channel:'DGUEST'}).run();
+  reviewReply(f.db,send.id,'release');
+  allowEffects=true;
+  await daemon.reconcile();await daemon.idle();await daemon.sends.flush();
+  expect(f.db.select().from(bridgeSends).get()?.state).toBe('held');
+  expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(0);
+ }
 });

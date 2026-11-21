@@ -1,3 +1,4 @@
+import {sheet,manifestFromPixelLab} from './ui/pixel-sheet.fixture.js';
 import { createServer } from 'node:http';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import { once } from 'node:events';
@@ -7,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agentSprites, agents, members, memberAgents, tokens } from './core/data/schema.js';
+import { agentSprites, agents, members, memberAgents, tokens, sessions } from './core/data/schema.js';
 import { householdService } from './apps/household.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
@@ -203,4 +204,32 @@ it('lets an owner change the household settings as a patch and read them back; n
   expect((await (await f.call('setSettings', { defaultAgent: 'nobody' }, 'sam', 'unknown')).json() as { code?: string })).toMatchObject({ code: 'invalid' });
   expect(await read('sam')).toMatchObject({ defaultAgent: null, settings: { timezone: 'America/Chicago', commsDays: 7 } });
   expect(await read('lee')).toBeNull();
+});
+
+it('only lets an owner window replace the current portrait and refuses an outdated removal',async()=>{
+  const f=fixture(),at=new Date(f.clock.now()).toISOString(),picture=sheet(['south']);
+  const portrait={layout:manifestFromPixelLab(JSON.parse(picture.json.toString())),png:picture.png.toString('base64')};
+  const input={agent:'mark',version:null,portrait};
+  const call=(cookie:string,input:unknown,id:string)=>f.root.http.request('/api/household/setPortrait',{method:'POST',
+    headers:{cookie:'loom_ui='+cookie,'content-type':'application/json'},body:JSON.stringify({input,id})});
+  const owner='o'.repeat(48),member='m'.repeat(48);
+  for(const [cookie,actor] of [[owner,'sam'],[member,'lee']] as const)
+    f.db.insert(sessions).values({id:hash(cookie),token:hash(credentials[actor]),device:'Test browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
+  expect((await f.call('setPortrait',input)).status).toBe(403);
+  expect((await call(member,input,'member')).status).toBe(403);
+  const result=await call(owner,input,'add');
+  expect(result.status).toBe(200);
+  const {value:{version}}=await result.json();
+  expect((await call(owner,input,'add')).status).toBe(200);
+  expect((await f.call('setAgent',{id:'mark',...visual,faceEyes:'oval'},'sam','eyes')).status).toBe(200);
+  expect((await call(owner,{...input,portrait:null},'stale')).status).toBe(409);
+  expect((await call(owner,{...input,version,portrait:{...portrait,png:'broken'}},'invalid')).status).toBe(400);
+  expect((await call(owner,{...input,version,portrait:{...portrait,png:picture.png.subarray(0,33).toString('base64')}},'truncated')).status).toBe(400);
+  const narrow=Buffer.from(picture.png);narrow.writeUInt32BE(1,16);narrow.writeUInt32BE(1_000_000,20);
+  const refused=await call(owner,{...input,version,portrait:{...portrait,png:narrow.toString('base64')}},'narrow');
+  expect(refused.status).toBe(400);expect((await refused.json()).message).toMatch(/wider or taller/);
+  expect(f.db.select().from(agents).all().find(a=>a.id==='mark')?.spriteVersion).toBe(version);
+  expect(f.db.select().from(agentSprites).all().map(row=>row.agent)).toEqual(['mark']);
+  expect((await call(owner,{...input,version,portrait:null},'remove')).status).toBe(200);
+  expect(f.db.select().from(agentSprites).all()).toEqual([]);
 });

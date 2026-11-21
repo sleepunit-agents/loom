@@ -22,7 +22,12 @@ export async function secretValueAction({page,tile,out,home,app}){
   await tile.getByRole('button',{name:/^Secrets/}).click();
   await tile.getByText('Add a secret',{exact:true}).click();
   let form=tile.locator('form').filter({has:page.getByRole('button',{name:'Add secret',exact:true})});
-  await form.getByLabel('Name',{exact:true}).fill(name);await form.getByLabel('Description',{exact:true}).fill('Fictional browser credential');
+  const nameField=form.getByLabel('Name',{exact:true});
+  for(const [candidate,valid] of [['bad/name',false],['-leading',false],['Z_1.a-b',true]]){
+   await nameField.fill(candidate);
+   if(await nameField.evaluate(input=>input.checkValidity())!==valid)throw Error('Secret name validation disagrees with the allowed format');
+  }
+  await nameField.fill(name);await form.getByLabel('Description',{exact:true}).fill('Fictional browser credential');
   await form.getByLabel('Value',{exact:true}).fill(initial);await submit(form,'Add secret','set');
   if(await form.getByLabel('Value',{exact:true}).inputValue()!=='')throw Error('The added value remained in the form');
   if(await back.isVisible())await back.click();

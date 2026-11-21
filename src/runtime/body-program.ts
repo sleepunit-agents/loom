@@ -161,7 +161,9 @@ export async function bodyProgram(input: {
       // from another body of this agent. Its answer is a post in the conversation, answering no message.
       if(job.venue === 'wake' && item.source === 'trigger' && item.fromKind === 'schedule' && item.words !== null)
         journalDeliveries.push(item.id);
-      if(bridge&&(item.source==='trigger'||item.source==='handoff')&&item.words!==null)placed=true;
+      const decision=bridge&&item.source==='answer'&&item.sourceId?.startsWith('guest-decision:')&&item.fromKind==='agent';
+      if(decision&&!item.question)return;
+      if(bridge&&(item.source==='trigger'||item.source==='handoff'||decision)&&item.words!==null)placed=true;
       if(bridge&&(item.source==='discord'||item.source==='slack')){
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();

@@ -4,7 +4,8 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull,or,sql } from 'drizzle-orm';
-import { channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
+import {guestDecisionQuestion} from './core/conversations/answer-context.js';
+import {decisionJobScope, channelPlace,isBridgeVenue,jobHeld,jobWord,placeAddress,placeClosed,ruleChannel } from './shared-place-mail.js';
 import { channelTarget, type ChannelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
@@ -45,8 +46,12 @@ export function queueAgentPost(db: DataDatabase, conversations: Conversations, s
    changed('bridge-send',input.id);return {saved:true as const,conversation:cv.id};
 }
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,daemon:Pick<SharedBridges,'sends'|'prepareDiscordFile'|'files'>,
- conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean,maySendProgress:(viewer:Viewer)=>boolean){
+ conversations:Conversations,bodyScope:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean,maySendProgress:(viewer:Viewer)=>boolean){
  const sends=daemon.sends;
+ const current=(viewer:Viewer)=>{
+  const work=bodyScope(viewer);
+  return work&&decisionJobScope(db,work.job.id).allowed?work:undefined;
+ };
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
  /** The current body's own conversation holds this delivered message. */
  const inConversation=(viewer:Viewer,incoming:string)=>{
@@ -67,8 +72,9 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   * be posted there now from the rules a message arriving there is admitted by (placeClosed): `closed` says why not. */
  const placed=(viewer:Viewer)=>{
   const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||!isBridgeVenue(found.cv.venue))return;
-  const mail=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),inArray(inbox.source,['trigger','handoff']))).all();
-  const at=mail.length?placeAddress(db,found.cv):undefined;
+  const mail=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),inArray(inbox.source,['trigger','handoff','answer']))).all();
+  const eligible=mail.some(item=>item.source!=='answer'||(guestDecisionQuestion(db,item)));
+  const at=eligible?placeAddress(db,found.cv):undefined;
   return at?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,at:{conversation:found.cv.id,connection:at.connection,channel:at.channel,thread:at.thread},since:found.job.claimedAt??found.job.queuedAt,closed:placeClosed(db,found.cv)}:undefined;
  };
  /** Everything posted for what a job took: answers to its messages, and its posts in the conversation since it was claimed. */
@@ -83,7 +89,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const place=input.incoming?undefined:placed(ctx.viewer),bound=input.incoming?target(ctx.viewer,input.incoming):place;if(!bound)throw new OperationError('denied','Current bridge body required');
    if(place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${place.closed}`);
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-   try{sends.queue({id:input.id,text:input.text,author:{job:bound.job,intermediate:false},held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
+   try{sends.queue({id:input.id,text:input.text,author:{job:bound.job,intermediate:false,guestDecision:decisionJobScope(db,bound.job).present},held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
    // The reply is the answer to everything this job took in the conversation before it, as a thread reply
    // is (ConversationMail.settle). Settling that mail here, with the reply, means a body that dies before
    // its own confirmation cannot leave answered mail waiting for a second body. Mail that arrived since

@@ -25,7 +25,7 @@ export function recordActionResult(options:{db:DataDatabase;writes:DataWrites;op
  if(name==='inbox.read'||name==='inbox.dismissResult'||name==='comms.change'&&options.input&&typeof options.input==='object'&&'change' in options.input&&options.input.change==='read')return;
  if(!options.operations.offered('http').some(op=>op.name===name&&op.write))return;
  const prefix=name.split('.')[0];
- const [area,page]=Object.hasOwn(areas,prefix)?areas[prefix]:['Loom',''];
+ const [area,page]=name==='household.setPortrait'?['Household setup','/p/setup-preview']:Object.hasOwn(areas,prefix)?areas[prefix]:['Loom',''];
   // A failed/conflicting call must not borrow a prior success receipt's retry
   // generation. Replays leave an already-dismissed notice dismissed.
   const generation=result.ok?options.operations.completedWriteDeadline(result)??0:result.code;

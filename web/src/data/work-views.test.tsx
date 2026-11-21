@@ -415,6 +415,22 @@ it.each(['app','inline'])('shows a household owner what a waiting household card
 
 });
 
+it('sends the revision shown on an updated approval',async()=>{
+ fixture(); feed.owner=true;
+ const selected={...feed.approvals.approvals[0],kind:'setting' as const,operation:'household.change'};
+ feed.approvals.approvals=[selected];
+ const review='a'.repeat(64),card={title:'Update garden settings',facts:[],exact:'{}',nothing:false};
+ const request=vi.fn<typeof fetch>()
+  .mockResolvedValueOnce(Response.json({ok:true,value:{summary:'',problem:null,card,blocked:null,review}}))
+  .mockResolvedValueOnce(Response.json({ok:true,value:{id:selected.id}}));
+ vi.stubGlobal('fetch',request);
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+selected.id}));
+ expect(words()).toContain('The request has been refreshed.');
+ const allow=tree.root.findAllByType('Button' as never).find((entry:{props:{children:unknown}})=>entry.props.children==='Allow')!;
+ await act(async()=>allow.props.onClick());
+ expect(JSON.parse(String(request.mock.calls[1][1]?.body)).input).toEqual({id:selected.id,answer:'allow',review});
+});
+
 it('shows a quoted decision in approval notices while the card is visible', async () => {
  fixture();
  const card=feed.approvals.approvals[0], note='Denied by sam through art, on their words: “Leave it alone”';

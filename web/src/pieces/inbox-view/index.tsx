@@ -6,7 +6,7 @@ export { AnswerSection } from './answer';
 export type { InboxActionResult, InboxResultsSnapshot } from './outcomes';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, Row, Empty, Error, Loading, Actions, LinkButton, Search, Pager, Reader, Meta, Title, Facts, Fact, Section, Body, Foot, Chips, Chip, type SplitFolder } from '../../kit';
-import { managed, rows, from, stateWord, answerWord, sourceLabel, volumeWords, volumeNote, when, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
+import { approvalRequestId, managed, rows, from, stateWord, answerWord, sourceLabel, volumeWords, volumeNote, when, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
 export type { InboxActions, InboxItem, InboxSnapshot } from './model';
 const safeLink = (value?: string | null) => value && (/^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value)) ? value : undefined;
 
@@ -147,6 +147,6 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : entries.length ? entries.map(({ id, row, notice }) => notice ? <InboxNotice key={id} result={notice} dismiss={dismissResult} zone={zone} />
       : <Row key={id} title={words?.(row) ?? row.body?.words ?? `Item from ${from(row)}`} meta={row.volume === 'dim' ? undefined : row.body?.why ?? undefined}
         status={row.volume === 'dim' ? undefined : `${from(row)} · ${stateWord(row)} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : <Empty title="No items here" />}
-    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} words={words?.(item)} whole={item.waitsOnKind === 'approval' && !!sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} zone={zone} words={words?.(item)} whole={!!approvalRequestId(item) && !!sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }

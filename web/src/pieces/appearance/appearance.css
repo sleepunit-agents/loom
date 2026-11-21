@@ -1,5 +1,6 @@
+.loom-kit-frame:has(> .next-appearance) { padding:clamp(16px, 3cqi, 24px); }
 /* Appearance: one column of a person's own settings, in labelled sections. */
-.next-appearance { display:grid; gap:24px; max-width:640px; padding:4px 20px 24px; }
+.next-appearance { display:grid; gap:24px; max-width:640px; padding:0; }
 .next-appearance-section { display:grid; gap:4px; min-width:0; }
 .next-appearance-section > h2 { font:700 11px var(--font-display); text-transform:uppercase; letter-spacing:.14em; color:var(--v-text-3); padding-bottom:6px; border-bottom:1px solid var(--v-border); }
 .next-appearance-choice { display:grid; gap:6px; padding:12px 0; border-bottom:1px solid var(--v-border); min-width:0; }

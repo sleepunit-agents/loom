@@ -370,7 +370,7 @@ it('lists the kinds of household change once', () => {
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
   // The kinds no standing rule answers are named once, and filing asks that one list.
-  expect([...alwaysAsks].sort()).toEqual(['kit', 'kitGrant', 'placeSchedule', 'projectJoin', 'projectMerge', 'projectOutsidePerson', 'rule']);
+  expect([...alwaysAsks].sort()).toEqual(['colleague', 'kit', 'kitGrant', 'placeSchedule', 'projectJoin', 'projectMerge', 'projectOutsidePerson', 'rule']);
   expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
   expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin|projectMerge)'\)return card/);
   // What cannot be put back: three revocations, and a merge of two projects.
@@ -514,6 +514,7 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
       'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
     { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX', 'src/runtime/fixed-program.ts': 'PROGRAM_OUTPUT_BYTES', 'src/core/tempo/journal.ts': 'TRIGGER_JOURNAL_BYTES' }, others: {
+      'src/portrait-png.ts': 'the longest permitted image dimension in pixels before decoding a portrait',
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {

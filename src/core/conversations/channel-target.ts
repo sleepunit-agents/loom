@@ -5,3 +5,6 @@ import {bridgeConnections} from '../data/schema.js';
  * target (pieces/bridges/settings.ts) are all written this way. */
 export const channelTarget=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict();
 export type ChannelTarget=z.infer<typeof channelTarget>;
+
+export const isBridgeVenue = (venue:string): venue is ChannelTarget['platform'] =>
+  (bridgeConnections.platform.enumValues as readonly string[]).includes(venue);

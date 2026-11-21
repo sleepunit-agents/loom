@@ -1,3 +1,4 @@
+import {isBridgeVenue} from './channel-target.js';
 import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
@@ -142,7 +143,7 @@ export class CommsMessages {
   /** Body reports use this for private digests: prepare encryption outside the
    * caller's transaction, then commit question, digest and rewrite retirement
    * together after that caller rechecks its current authority. */
-  async prepareDigest(input: DigestInput & {ifAbsent?:boolean}): Promise<() => typeof digests.$inferSelect> {
+  async prepareDigest(input: DigestInput & {ifAbsent?:boolean}, outsideDecision?:string): Promise<() => typeof digests.$inferSelect> {
     input = { ...input, items: input.items?.map(item => ({ ...item })),
       question: input.question ? { ...input.question, refs: input.question.refs ? [...input.question.refs] : undefined } : undefined };
     const cvs = this.threads.conversations, cv = cvs.conversation(input.conversation);
@@ -161,6 +162,15 @@ export class CommsMessages {
       if(JSON.stringify(currentDigest)!==JSON.stringify(before))throw new Error('Digest changed during preparation');
       return undefined;
     };
+    if(outsideDecision&&input.question){
+      const q=input.question;
+      if(cv.member||!cv.direct||!isBridgeVenue(cv.venue)||q.answers!=='yes-no'||q.onWord!==outsideDecision||q.onWordKind!=='outside')throw Error('Private decision scope changed');
+      const words=await sealPrivateInbox(this.key,JSON.stringify({words:q.words,why:q.why,ifYes:q.ifYes,ifNo:q.ifNo}),this.now(),commsKeepDays(this.db));
+      return ()=>this.db.transaction(()=>{
+        const kept=validate();if(kept)return kept;
+        return cvs.guestDecisionDigest(input,q.to,outsideDecision,words);
+      });
+    }
     if(input.question&&cv.member&&!privateThread){
       const question=input.question;
       if(question.to!==cv.member)throw Error('Private question needs its member');
@@ -225,6 +235,7 @@ export class CommsMessages {
     const check=()=>{
       const item=cvs.item(itemId),cv=item.conversation?cvs.conversation(item.conversation):undefined;
       if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!hasPrivateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
+      if(item.sourceId?.startsWith('guest-decision:')&&(answer==='words'||answer==='replied'))throw Error('Choose yes or no for this decision');
       return {item,cv,verdict:acceptAnswer(item,member,answer,text,true)};
     };
     const before=check();if(before.verdict==='repeat')return()=>check().item;
@@ -233,7 +244,17 @@ export class CommsMessages {
       const live=check();if(live.verdict==='repeat')return live.item;
       if(JSON.stringify(live)!==JSON.stringify(before))throw Error('Question changed during preparation');
       const {item,cv}=live,at=this.now();
-      cvs.send({conversation:cv.id,toKind:'agent',to:cv.agent,source:'answer',sourceId:item.id,fromKind:'person',fromId:member,words,refs:[item.id,...refsIn(text??'')]});
+      const privateDecision=cv.venue==='wake'&&cv.place===JSON.stringify(['guest-decision',member])&&item.sourceId?.startsWith('guest-decision:');
+      const ownerCopy=cvs.send({conversation:cv.id,toKind:'agent',to:cv.agent,source:'answer',sourceId:item.id,fromKind:'person',fromId:member,words,refs:privateDecision?[item.id]:[item.id,...refsIn(text??'')]});
+      if(privateDecision){
+        const digest=this.db.select().from(digests).where(eq(digests.inboxItem,item.id)).get();
+        if(!digest||item.sourceId!=='guest-decision:'+digest.id+':'+digest.revision||item.onWordKind!=='outside'||!item.onWord)throw Error('Decision source changed');
+        const source=cvs.conversation(digest.conversation);
+        if(source.agent!==cv.agent||source.member||!source.direct||!isBridgeVenue(source.venue))throw Error('Decision recipient changed');
+        // Keep the optional explanation with the owner. Only the verdict is work for the guest.
+        this.db.update(inbox).set({state:'done',doneAt:at,changedAt:at}).where(eq(inbox.id,ownerCopy.id)).run();
+        if(answer==='yes'||answer==='no')cvs.send({conversation:source.id,toKind:'agent',to:source.agent,source:'answer',sourceId:'guest-decision:'+item.id,fromKind:'agent',fromId:source.agent,onWordKind:'outside',onWord:item.onWord,words:'Owner decision for digest '+digest.id+' revision '+digest.revision+': '+answer+'.'});
+      }
       cvs.turn({conversation:cv.id,kind:'message',fromKind:'person',fromId:member});
       inboxContentChanged(this.db,{kind:item.toKind,id:item.to},item.id);
       return this.db.update(inbox).set({state:'answered',answer,answerText:null,answeredBy:member,answeredAt:at,changedAt:at}).where(eq(inbox.id,item.id)).returning().get()!;

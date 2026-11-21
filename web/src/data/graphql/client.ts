@@ -1,3 +1,4 @@
+import {reconnectDelay,checkSessionEvent,deskConnectionParams} from '../connection';
 import { createClient, CombinedError, type Exchange, type OperationResult } from '@urql/core';
 import { cacheExchange, type KeyingConfig } from '@urql/exchange-graphcache';
 import { print, type FormattedExecutionResult } from 'graphql';
@@ -82,8 +83,54 @@ export function liveQueryExchange(transport: QueryTransport): Exchange {
 
 export function browserQueryTransport(url: string): QueryTransport {
   const listeners = new Set<() => void>();
-  const socket = createSocket({ url, lazy: true, retryAttempts: Infinity, on: { closed: () => { for (const listener of listeners) listener(); } } });
-  return { subscribe: (request, sink) => socket.subscribe(request, sink), disconnected(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; }, close() { listeners.clear(); void socket.dispose(); } };
+  let watchdog:ReturnType<typeof setTimeout>|undefined;
+  const subscriptions=new Set<()=>void>();
+  let disposed=false;
+  let wakeRetry:(()=>void)|undefined;
+  const clearWatchdog=()=>{clearTimeout(watchdog);watchdog=undefined;};
+  const armWatchdog=()=>{clearWatchdog();watchdog=setTimeout(()=>socket.terminate(),15_000);};
+  const offline=()=>{clearWatchdog();for(const listener of listeners)listener();};
+  const socket = createSocket({
+    url,lazy:true,retryAttempts:Infinity,keepAlive:20_000,connectionAckWaitTimeout:15_000,
+    connectionParams:deskConnectionParams,
+    // Browsers report a failed upgrade with an error Event before the close
+    // code. graphql-ws defaults to retrying only CloseEvent-shaped failures.
+    shouldRetry:event=>(event instanceof Event && event.type==='error') ||
+      (!!event && typeof event==='object' && 'code' in event && 'reason' in event),
+    retryWait:attempt=>new Promise<void>(resolve=>{
+      const finish=()=>{clearTimeout(timer);globalThis.window?.removeEventListener('online',finish);globalThis.document?.removeEventListener('visibilitychange',visible);wakeRetry=undefined;resolve();};
+      const visible=()=>{if(document.visibilityState==='visible')finish();};
+      const timer=setTimeout(finish,reconnectDelay(attempt));
+      wakeRetry=finish;
+      globalThis.window?.addEventListener('online',finish);
+      globalThis.document?.addEventListener('visibilitychange',visible);
+    }),
+    on:{connecting:armWatchdog,connected:clearWatchdog,
+      ping:received=>{if(!received)armWatchdog();},pong:received=>{if(received)clearWatchdog();},
+      closed:event=>{offline();if((event as CloseEvent|undefined)?.code===4403)globalThis.window?.dispatchEvent(new Event(checkSessionEvent));},
+      error:()=>{offline();globalThis.window?.dispatchEvent(new Event(checkSessionEvent));}},
+  });
+  return {subscribe(request,sink){
+      if(disposed){sink.complete();return ()=>{};}
+      const stop=socket.subscribe<Record<string,unknown>,Record<string,unknown>>(request,{
+        next:value=>sink.next(value),
+        error:error=>{subscriptions.delete(stop);sink.error(error);},
+        complete:()=>{subscriptions.delete(stop);sink.complete();},
+      });
+      subscriptions.add(stop);
+      return ()=>{subscriptions.delete(stop);stop();};
+    },
+    disconnected(listener){listeners.add(listener);return ()=>{listeners.delete(listener);};},
+    close(){
+      disposed=true;listeners.clear();clearWatchdog();
+      for(const stop of subscriptions)stop();
+      subscriptions.clear();
+      // dispose marks the client closed but waits for an unacknowledged handshake.
+      // terminate rejects that wait, and waking a backoff releases its timer.
+      void Promise.resolve(socket.dispose()).catch(()=>{});
+      socket.terminate();wakeRetry?.();
+    }};
+
 }
 export const dataCacheKeys: KeyingConfig = {
   // Sequence numbers are local to a thread. Encode the complete tuple so

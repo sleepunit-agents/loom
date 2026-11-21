@@ -406,3 +406,16 @@ it('never sends forbidden rows or their changes on the real live feed', async ()
   expect(frames).toHaveLength(4);
   expect(frames.join('\n')).not.toMatch(/FORBIDDEN|hidden/);
 });
+
+it('matches a reconnecting desk to the member authenticated on that socket before acknowledging',async()=>{
+  const f=await setup();
+  const ws=new WebSocket(f.url,'graphql-transport-ws',{headers:{authorization:'Bearer test'}});
+  clean.push(()=>ws.terminate());await once(ws,'open');
+  const messages:string[]=[];ws.on('message',raw=>messages.push(raw.toString()));
+  const closed=once(ws,'close');
+  ws.send(JSON.stringify({type:'connection_init',payload:{expectedMember:'different-member'}}));
+  expect((await closed)[0]).toBe(4403);
+  expect(messages).toEqual([]);
+  const correct=await f.open(undefined,{expectedMember:'sam'});
+  expect((await read(correct,()=>correct.send(JSON.stringify(selection)))).type).toBe('next');
+});

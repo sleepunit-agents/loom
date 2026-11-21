@@ -47,3 +47,12 @@ it('says the program\'s own refusal of an approval answer as it is, and nothing 
   const merge = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ok:false,code:'conflict',message:'The merge request changed. Open it again.'},{status:409}));
   await expect(sendWorkAnswer({piece:'changes',id:'github:house/pond#1',head:'a'.repeat(40),approval:'a-merge',answer:'yes'},merge)).rejects.toThrow('Could not confirm your answer. Try again.');
 });
+
+it('reuses a reviewed answer receipt only for the same revision',async()=>{
+ const request=vi.fn<typeof fetch>(success);
+ for(const review of ['a'.repeat(64),'a'.repeat(64),'b'.repeat(64)])await sendWorkAnswer({piece:'approvals',id:'a-1',answer:'allow',review},request);
+ const bodies=request.mock.calls.map(([,init])=>JSON.parse(String(init?.body)));
+ expect(bodies[0].input.review).toBe('a'.repeat(64));
+ expect(bodies[1]).toEqual(bodies[0]);
+ expect(bodies[2].id).not.toBe(bodies[0].id);
+});

@@ -1,3 +1,5 @@
+import {householdOwner} from './shared-sharing.js';
+import {PORTRAIT_REQUEST_BYTES} from './shared-agent-portrait.js';
 import {NOTE_UPLOAD_REQUEST_BYTES,noteUploadEnvelope} from './note-upload.js';
 import {deniedTools,hasGuest} from './runtime/harness-traits.js';
 import {mayUseHouseSend} from './runtime/house-send-request.js';
@@ -102,7 +104,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { HELD_REFUSALS, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
+import { HELD_REFUSALS, decisionJobScope, currentDecisionGuest, privateDecisionAccount, askedOnWord, heldRefusal, jobHeld, jobRoom, jobWord, outsideAccount, kitRoom, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -349,7 +351,7 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const direct=directTargets(db,(viewer,person,platform)=>memory.people.outsideAccount(viewer,person,platform));
-  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,jobAllowed:(job,send)=>decisionJobScope(db,job,send).allowed,directAllowed:direct.allowed,progressAllowed:direct.progressAllowed,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
     stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},
@@ -368,7 +370,7 @@ export function sharedRoot(options: {
   if (options.commsKey) registerTerminalSession(operations, db, options.commsKey, credentials.terminalMachine, now);
   registerJobUsage(operations, db, credentials.body, now);
   if(sessions)registerConversationSessions(operations,db,sessions,bodyScope,words=>options.commsKey!.hash(words));
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress});
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion,{...selfHandoff(db,comms.service.threads.conversations,()=>new Date(clock.now()).toISOString()),ownerWork:work=>jobWord(db,work.job).woke==='owners',codexAvailable:agent=>dispatcher.canStartReview(agent),workRoles:(agent,id)=>dispatcher.availableWorkRoles(agent,id)},{privateDecision:(work,q)=>privateDecisionAccount(db,work,q),question:(work,question)=>askedOnWord(db,work,question),summary:work=>writtenOnWord(db,work)?.line,quiet:work=>jobHeld(db,work.job),maySendProgress});
   // How machines and agents are set up. Installed code calls these directly, inside a write;
   // anything outside goes through household.propose and a household owner's Allow.
   const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
@@ -427,7 +429,7 @@ export function sharedRoot(options: {
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
-  householdProposals.register(operations, services.approvals, bodyScope, held('propose'));
+  householdProposals.register(operations, services.approvals, bodyScope, held('propose'), viewer=>!!credentials.program(viewer));
   const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => { tempo?.capacityChanged(); data.changed(); }));
   startupCleanups.push(stopHouseholdProposals);
   registerSharedTaskCommands(operations, db, services.tasks, held('task'));
@@ -513,7 +515,7 @@ export function sharedRoot(options: {
   // which of the two they came through.
   http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id,c.req.raw.signal):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
-  http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
+  http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,currentGuest:(agent,key)=>currentDecisionGuest(db,agent,key),authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/kits/private',kitBroker({db,credentials,source:options.secretInputs?.source,now,write:secretCommit,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
@@ -541,6 +543,9 @@ export function sharedRoot(options: {
       if(multipart){
         const data=await bodyRequest(request,{signal},true,NOTE_UPLOAD_REQUEST_BYTES).formData();
         body=await noteUploadEnvelope(data);
+      }else if(name==='household.setPortrait'){
+        if(!auth.window||!householdOwner(db,auth.viewer))return c.json(failure('denied','Sign in as a household owner to change a portrait'),403);
+        body=await bodyRequest(request,{signal},true,PORTRAIT_REQUEST_BYTES).json();
       }else body=await bodyRequest(request,{signal},true).json();
     }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);

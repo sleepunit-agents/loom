@@ -215,7 +215,32 @@ it('resolves a unique workspace account from the agent’s visible relationship 
  const viewer:Viewer={kind:'agent',id:'fiction'};
  expect(reader.outsideAccount(viewer,'friend','slack')).toEqual({workspace:'TWORK',user:'UFRIEND'});
  expect(reader.outsideAccount(viewer,'friend','discord')).toBeUndefined();
+ expect(reader.outsideAccount({kind:'runner',id:'box'},'friend','slack')).toBeUndefined();
+ // This viewer can read its own relationship store only. An unrelated card in
+ // the owner's directory cannot supply a name or influence its destination.
+ directory.write({slug:'other-holder',name:'Other holder',where:{slack:{value:['UFRIEND','UOTHER']},slack_workspace:{value:'TWORK'}}});
+ expect(reader.access(viewer).directory).toBe(false);
+ expect(reader.outsideName(viewer,'slack','TWORK','UFRIEND')).toBeUndefined();
+ expect(reader.outsideAccount(viewer,'friend','slack')).toEqual({workspace:'TWORK',user:'UFRIEND'});
  agent.write({slug:'other',name:'Other',where});
  expect(reader.outsideAccount(viewer,'friend','slack')).toBeUndefined();
  expect(reader.outsideAccount({kind:'runner',id:'box'},'friend','slack')).toBeUndefined();
+});
+
+it('labels each exact account in a workspace without selecting a destination from a list',()=>{
+ const h=home(),directory=store(join(h,'directory.db'));
+ const sharing:Sharing={members:{owner:{owner:true,agents:['fiction']}},agents:['fiction'],projects:{}};
+ const reader=peopleReader({directory:directory.database.name,agents:[],sharing:()=>sharing,now:()=>0});
+ closes.push(reader.close);
+ directory.write({slug:'friend',name:'Friend',where:{slack:{value:['UFIRST','USECOND']},slack_workspace:{value:'TWORK'}}});
+ const owner:Viewer={kind:'member',id:'owner'};
+ expect(reader.outsideName(owner,'slack','TWORK','UFIRST')).toBe('Friend');
+ expect(reader.outsideName(owner,'slack','TWORK','USECOND')).toBe('Friend');
+ expect(reader.outsideName(owner,'slack','TOTHER','UFIRST')).toBeUndefined();
+ expect(reader.outsideName(owner,'slack','TWORK','UFIR')).toBeUndefined();
+ expect(reader.outsideName({kind:'runner',id:'box'},'slack','TWORK','UFIRST')).toBeUndefined();
+ expect(reader.outsideAccount(owner,'friend','slack')).toBeUndefined();
+ directory.write({slug:'other',name:'Other',where:{slack:{value:'UFIRST'},slack_workspace:{value:'TWORK'}}});
+ expect(reader.outsideName(owner,'slack','TWORK','UFIRST')).toBeUndefined();
+ expect(reader.outsideAccount(owner,'other','slack')).toBeUndefined();
 });

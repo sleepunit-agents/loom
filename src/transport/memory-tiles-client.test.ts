@@ -8,7 +8,10 @@ import {act,create} from '../../web/node_modules/react-test-renderer/index.js';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {graphql,GraphQLSchema,GraphQLObjectType} from 'graphql/index.js';
+import { dataQueries } from '../core/data/queries.js';
+import { withQueryFields } from '../core/data/query-fields.js';
+import { taskVisibility } from '../core/data/visibility.js';
+import {graphql} from 'graphql/index.js';
 import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import Database from 'better-sqlite3';
 import {createDataSchema} from '../core/data/database.js';
@@ -51,7 +54,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
  const thread=conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'});
  const activity=createActivityReader({now:()=>now},{agents:sources.agents,sharing,conversations:sharedActivityConversations(db,{}),timezone:'America/Chicago'});
  const queries=memoryQueryFields(db,{sources,sharing,now:()=>now,projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
- const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:queries.fields})});
+ const schema=withQueryFields(dataQueries(dbClient,{tables:['agents'],visibility:taskVisibility({kind:'member',id:'sam'})}),queries.fields);
  vi.stubGlobal('location',{protocol:'https:',host:'memory.invalid'});
  const selections=new Map<string,{query:string;variables:Record<string,unknown>;revision:number;sink:{next(value:unknown):void};stop:ReturnType<typeof vi.fn>}>();
  wire.subscribe.mockImplementation((request:{variables:{query:string;variables:Record<string,unknown>}},sink:{next(value:unknown):void})=>{
@@ -71,7 +74,8 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
   await source.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Private pump words'});
   await source.writePage({slug:'clock',title:'Fictional clock',domain:'fiction',body:'Private clock words'});
   await act(async()=>{tree=create(render('pump'));});
-  await act(async()=>{await expect.poll(()=>selections.size).toBe(12);});expect(wire.create).toHaveBeenCalledTimes(1);
+  await act(async()=>{await expect.poll(()=>selections.size).toBe(13);});expect(wire.create).toHaveBeenCalledTimes(1);
+  expect([...selections.values()].filter(s=>s.query.includes('query DeskAgentDisplays'))).toHaveLength(1);
   expect(text()).toContain('Opening knowledge');expect(text()).not.toContain('Private pump words');
   await refresh();await act(async()=>{await expect.poll(()=>[...selections.values()].some(s=>s.variables?.id==='fiction:friend')&&[...selections.values()].some(s=>s.variables?.to==='2026-11-14')).toBe(true);});await refresh();expect(text()).toContain('Private fictional friend');expect(text()).toContain('Private fictional pond');expect(text()).toContain('Private fictional session');expect(text()).toContain('Fictional pump');expect(text()).toContain('Private pump words');expect(wire.call).not.toHaveBeenCalled();
   const projectText=()=>JSON.stringify(tree!.root.findAllByType('main').find(p=>p.props['data-tile']==='Projects')!.findAllByType('h3').map(p=>p.props.children));

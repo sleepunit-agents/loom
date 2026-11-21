@@ -68,7 +68,7 @@ export async function deskActions({page,out,inventory}) {
   const geometryShot='action-deskGeometry.png';await page.screenshot({path:join(out,geometryShot),fullPage:true});
   evidence.deskGeometry={ok:true,reason:'Wide and tall tile bounds filled the available desk without overlap.',wide,tall,screenshot:geometryShot};
   await page.setViewportSize({width:1920,height:900});
-  await tile('Inbox').getByRole('button',{name:'Make Inbox big',exact:true}).click();
+  await tile('Inbox').getByRole('button',{name:'Maximize Inbox',exact:true}).press('Alt+Shift+Enter');
   await page.waitForFunction(()=>document.querySelector('[aria-label="Inbox tile"]').getBoundingClientRect().left<document.querySelector('[aria-label="Tasks tile"]').getBoundingClientRect().left);
   const promoted=await snapshot();
   phase='minimize Inbox';await tile('Inbox').getByRole('button',{name:'Minimize Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'hidden'});

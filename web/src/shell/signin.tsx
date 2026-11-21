@@ -4,8 +4,10 @@
 // link (src/core/signin/page.ts) wears the same look with no script; the values the two share are listed there and
 // in signin.css, and are kept in step by hand.
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import {reconnectDelay,checkSessionEvent,setDeskMember} from '../data/connection';
 import { lookOf, wearLook } from '../look';
 import './signin.css';
+import { WovenCloth } from '../woven-cloth';
 const enc=(buf:ArrayBuffer)=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const dec=(s:string)=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((s.length+3)%4)),c=>c.charCodeAt(0));
 async function post(url:string,body:unknown){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error ?? 'Sign-in failed');return j;}
@@ -32,23 +34,10 @@ function wearGateLook():(()=>void)|undefined{
   };
 }
 
-// The ground: one tile of plain weave, eight warp and eight weft threads, each broken where it passes under.
-const TILE=192,GAP=5,AT=[12,36,60,76,108,132,156,172];
-const WARP=['border','edge','pink','border','border','blue','edge','border'],WEFT=['border','olive','border','edge','border','yellow','border','edge'];
-function threadPath(i:number,weft:boolean){
-  const line=(a:number,b:number)=>weft?`M${a} ${AT[i]}H${b}`:`M${AT[i]} ${a}V${b}`;
-  let d='',from=0;
-  for(const [j,at] of AT.entries())if((i+j)%2===(weft?0:1)){d+=line(from,at-GAP);from=at+GAP;}
-  return d+line(from,TILE);
-}
-const THREADS=[...WEFT.map((tint,i)=>({tint,d:threadPath(i,true)})),...WARP.map((tint,i)=>({tint,d:threadPath(i,false)}))];
 function Weave(){
   return <div className="loom-gate__ground" aria-hidden="true">
     <span className="loom-wash loom-gate__wash" />
-    <div className="loom-gate__cloth"><svg width="100%" height="100%" focusable="false">
-      <defs><pattern id="loom-gate-weave" width={TILE} height={TILE} patternUnits="userSpaceOnUse">{THREADS.map(t=><path key={t.d} className="loom-gate__ply" data-tint={t.tint} d={t.d} />)}</pattern></defs>
-      <rect width="100%" height="100%" fill="url(#loom-gate-weave)" />
-    </svg></div>
+    <WovenCloth />
     <i className="loom-gate__shuttle" data-tint="pink" /><i className="loom-gate__shuttle" data-tint="blue" /><i className="loom-gate__shuttle" data-tint="yellow" />
     <span className="loom-gate__veil" />
   </div>;
@@ -56,8 +45,55 @@ function Weave(){
 
 export default function Signin({children}:{children:ReactNode}){
   const [session,setSession]=useState<{viewer:{id:string}|null;csrf?:string}|undefined>(),[message,say]=useState('');
+  const [changedMember,setChangedMember]=useState(false);
+  useEffect(()=>{if(changedMember)location.reload();},[changedMember]);
   const [greeting]=useState(()=>greetingAt(new Date().getHours()));
-  useEffect(()=>{fetch('/auth/session').then(r=>r.json()).then(s=>{setSession(s);const m=document.createElement('meta');m.name='loom-csrf';m.content=s.csrf ?? '';document.head.append(m);}).catch(()=>say('Could not reach loom. Reload to try again.'));},[]);
+  useEffect(()=>{
+    const lifetime=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined,attempt=0,checking=false;
+    let member:string|null|undefined,deskOwner:string|undefined;
+    let meta:HTMLMetaElement|undefined;
+    async function check(){
+      if(lifetime.signal.aborted||checking||timer!==undefined)return;
+      checking=true;
+      try{
+        const response=await fetch('/auth/session',{signal:AbortSignal.any([lifetime.signal,AbortSignal.timeout(15_000)])});
+        if(!response.ok)throw Error();
+        const value=await response.json();
+        if(!value||!(value.viewer===null||typeof value.viewer?.id==='string'))throw Error();
+        if(lifetime.signal.aborted)return;
+        const id=value.viewer?.id??null;
+        if(deskOwner&&id!==null&&deskOwner!==id){
+          lifetime.abort();
+          if(meta)meta.content='';
+          setDeskMember(null);setSession(undefined);
+          say('Your account changed. Reload to open its desk.');setChangedMember(true);
+          return;
+        }
+        if(id!==null)deskOwner=id;
+        if(!meta){meta=document.createElement('meta');meta.name='loom-csrf';document.head.append(meta);}
+        meta.content=value.csrf??'';
+        attempt=0;if(member===id)return;
+        member=id;setDeskMember(id);setSession(value);say('');
+      }catch{
+        if(lifetime.signal.aborted)return;
+        if(member===undefined)say('Could not reach loom. Reconnecting…');
+        timer=setTimeout(()=>{timer=undefined;void check();},reconnectDelay(attempt++));
+      }finally{checking=false;}
+    }
+    const visible=()=>{if(document.visibilityState==='visible')void check();};
+    const poll=setInterval(visible,60_000);
+    globalThis.document?.addEventListener?.('visibilitychange',visible);
+    globalThis.window?.addEventListener('focus',check);
+    globalThis.window?.addEventListener(checkSessionEvent,check);
+    void check();
+    return ()=>{
+      lifetime.abort();clearTimeout(timer);clearInterval(poll);setDeskMember(null);meta?.remove?.();
+      globalThis.document?.removeEventListener?.('visibilitychange',visible);
+      globalThis.window?.removeEventListener('focus',check);
+      globalThis.window?.removeEventListener(checkSessionEvent,check);
+    };
+  },[]);
   const login=async()=>{try{const o=await post('/login/passkey/options',{});const c=await navigator.credentials.get({publicKey:{challenge:dec(o.challenge),rpId:o.rpId,userVerification:'required',timeout:o.timeout}}) as PublicKeyCredential;const r=c.response as AuthenticatorAssertionResponse;await post('/login/passkey',{id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.authenticatorData),signature:enc(r.signature)});location.reload();}catch(e){say(e instanceof Error?e.message:'Sign-in cancelled');}};
   const state=session?.viewer?'in':session?'out':message?'down':'connecting',shown=state==='out'||state==='down';
   useLayoutEffect(()=>shown?wearGateLook():undefined,[shown]);

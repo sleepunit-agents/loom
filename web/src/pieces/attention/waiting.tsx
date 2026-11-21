@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import { Button, Loading, Row } from '../../kit';
-import type { InboxItem } from '../inbox-view/model';
-import { retainedInboxItem } from './inbox-query';
+import { approvalRequestId, type InboxItem } from '../inbox-view/model';
+import { retainedInboxItem, useInboxProposalTitles } from './inbox-query';
 
 export const deskWaitingCountsQuery = `query DeskWaitingCounts {
   homeComms { member }
@@ -29,7 +29,7 @@ export function useDeskWaitingCounts():WaitingCounts {
   const query=useDataQuery<WaitingCountsData>(deskWaitingCountsQuery);
   return useMemo(()=>waitingCounts(query),[query]);
 }
-const fields='id toKind to source agent at state volume answers thread bodyKeepUntil body { words why } read refs';
+const fields='id toKind to source agent at state volume answers waitsOnKind waitsOnId thread bodyKeepUntil body { words why } read refs';
 export const deskWaitingFirstQuery=`query DeskWaitingFirst { homeComms { member } inboxItems(folder:"needs",limit:1) { ${fields} } }`;
 export const deskAgentWaitingQuery=`query DeskAgentWaiting($agent:String!) { homeComms { member } inboxItems(folder:"needs",agent:$agent,limit:1) { ${fields} } }`;
 export interface WaitingPreviewData {homeComms:{member:string}|null;inboxItems:WaitingWire[]}
@@ -53,6 +53,18 @@ export function waitingPreview(query:DataQuerySnapshot<WaitingPreviewData>,now:n
   if(!validWaiting(row,agent))return {status:'offline'};
   return {status:'live',item:retainedInboxItem(row,now)};
 }
+/** Resolve only the approvals whose retained bodies are on screen. While names load,
+ * the preview can still open the approval without flashing its stored account identifiers. */
+function useWaitingWording(items: InboxItem[]) {
+  const ids = [...new Set(items.flatMap(item => { const id = item.body && approvalRequestId(item); return id ? [id] : []; }))];
+  const {ready, named} = useInboxProposalTitles(ids);
+  return useMemo(() => items.map(item => {
+    const id = approvalRequestId(item);
+    if (!id || !item.body) return item;
+    const words = named.get(id) ?? (ready ? item.body.words : 'Review approval');
+    return {...item, body:{...item.body, words}};
+  }), [items, ready, named]);
+}
 export function useDeskWaitingPreview(agent?:string):WaitingPreview {
   const query=useDataQuery<WaitingPreviewData>(agent===undefined?deskWaitingFirstQuery:deskAgentWaitingQuery,agent===undefined?undefined:{agent});
   const [tick,setTick]=useState(0);
@@ -63,12 +75,14 @@ export function useDeskWaitingPreview(agent?:string):WaitingPreview {
     const timer=setTimeout(()=>setTick(value=>value+1),Math.min(2147483647,Math.max(1,deadline-Date.now())));
     return()=>clearTimeout(timer);
   },[deadline,tick]);
-  return preview;
+  const rows = useMemo(() => preview.item ? [preview.item] : [], [preview]);
+  const [item] = useWaitingWording(rows);
+  return useMemo(() => item && item !== preview.item ? {...preview, item} : preview, [item, preview]);
 }
 /** Home's band: the first three waiting asks in one small request, with what says whether a Yes or No can be
  * given where the ask stands (who may answer, what it waits on, and whether its buttons have lines of their own). */
 export const bandSize=3;
-export const deskWaitingBandQuery=`query DeskWaitingBand { homeComms { member } inboxItems(folder:"needs",limit:${bandSize}) { ${fields.replace('body { words why }','body { words why ifYes ifNo }')} canAnswer waitsOnKind } }`;
+export const deskWaitingBandQuery=`query DeskWaitingBand { homeComms { member } inboxItems(folder:"needs",limit:${bandSize}) { ${fields.replace('body { words why }','body { words why ifYes ifNo }')} canAnswer } }`;
 export interface WaitingBand {status:WaitingCounts['status'];items:InboxItem[]}
 export function waitingBand(query:DataQuerySnapshot<WaitingPreviewData>,now:number):WaitingBand {
   const none=(status:WaitingBand['status']):WaitingBand=>({status,items:[]});
@@ -92,7 +106,8 @@ export function useDeskWaitingBand():WaitingBand {
     const timer=setTimeout(()=>setTick(value=>value+1),Math.min(2147483647,Math.max(1,deadline-Date.now())));
     return()=>clearTimeout(timer);
   },[deadline,tick]);
-  return band;
+  const items = useWaitingWording(band.items);
+  return useMemo(() => ({...band, items}), [band, items]);
 }
 export const waitingPath=(id?:string)=>id?`/p/inbox-preview/ask/${encodeURIComponent(id)}`:'/p/inbox-preview';
 /** Only visible previews request words. Answers stay in the actual Inbox. */
