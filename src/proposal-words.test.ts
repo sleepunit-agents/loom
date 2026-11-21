@@ -124,6 +124,20 @@ it('resolves channel filters and distinguishes report destinations sharing a nam
   expect(preview.facts).toContainEqual({ label: 'Notes from guests’ work go to', value: '#reports on Discord (C1 in G1) → #reports on Discord (C2 in G2)' });
 });
 
+it('keeps Slack bot account identifiers secondary, including when both accounts have the same label', () => {
+  const input = { action: 'connection', id: 'pond', platform: 'slack', agent: 'fern', workspace: 'TNEW', botUser: 'UNEW' };
+  const prior = { ...input, workspace: 'TOLD', botUser: 'UOLD' };
+  const directory = { ...names, person: () => ({ name: 'Pond helper', source: 'Household link' }) };
+  const changed = proposalCard('bridge', input, { names: directory, before: { value: prior } })!;
+  expect(changed.nothing).toBe(false);
+  expect(changed.facts.filter(fact => !fact.small).map(fact => fact.value).join(' ')).not.toMatch(/UNEW|UOLD|TNEW|TOLD/);
+  expect(changed.facts).toContainEqual({ label: 'Bot account', value: 'Pond helper (Slack) → Another account with the same name' });
+  expect(changed.facts).toContainEqual({ label: 'Bot account identifiers', value: 'UOLD in TOLD → UNEW in TNEW', small: true });
+  const missing = proposalCard('bridge', input, { names, before: { value: null } })!;
+  expect(missing.facts).toContainEqual({ label: 'Bot account', value: 'An unnamed Slack account' });
+  expect(missing.facts).toContainEqual({ label: 'Bot account identifiers', value: 'UNEW in TNEW', small: true });
+});
+
 it('shows machine needs and preferences on a repeating schedule', () => {
   const input = { action: 'set', agent: 'art', conversation: 'cv-one',
     asker: { kind: 'outside', id: JSON.stringify([gage.platform, gage.workspace, gage.user]) },
