@@ -133,6 +133,59 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   }
   await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
   await set({pixel:true},'pixel-on');for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  // Use Setup in a separate window. The already-open desks must update without a reload.
+  const setup=await context.newPage();
+  await setup.goto(app.url+'/p/setup-preview');
+  const portrait=setup.getByRole('form',{name:'Animated portrait for fern'});
+  const assign=async(data:ReturnType<typeof sheet>,label:string)=>{
+    await portrait.locator('[name=png]').setInputFiles({name:'sheet.png',mimeType:'image/png',buffer:data.png});
+    await portrait.locator('[name=metadata]').setInputFiles({name:'export.json',mimeType:'application/json',buffer:data.json});
+    const reply=setup.waitForResponse(response=>response.url().endsWith('/api/household/setPortrait'));
+    await portrait.getByRole('button',{name:label}).click();
+    expect((await reply).status()).toBe(200);
+  };
+  const fernColor=(page:Page,red:number)=>page.locator('.desk-home-card[data-agent="fern"] canvas').evaluateAll((nodes,red)=>{
+    return nodes.some(node=>{
+      const canvas=node as HTMLCanvasElement;
+      const pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;
+      return pixels?.some((v,i)=>i%4===0&&v===red&&pixels[i+1]===0xe6&&pixels[i+2]===0xf0&&pixels[i+3]===255);
+    });
+  },red);
+  const faceCount=()=>b.locator('.desk-home-card .loom-pixel-face canvas').count();
+  const version=(id:string)=>db.select().from(agents).where(eq(agents.id,id)).get()?.spriteVersion;
+  const artVersion=version('art');
+  await assign(picture,'Add portrait');
+  await expect.poll(faceCount).toBe(2);
+  const first=version('fern');
+  for(const page of [a,b])await expect.poll(()=>fernColor(page,0x2e)).toBe(true);
+  const concurrent=await context.newPage();
+  await concurrent.goto(app.url+'/p/setup-preview');
+  const draft=concurrent.getByRole('form',{name:'Animated portrait for fern'});
+  await draft.locator('[name=png]').setInputFiles({name:'sheet.png',mimeType:'image/png',buffer:picture.png});
+  await draft.locator('[name=metadata]').setInputFiles({name:'export.json',mimeType:'application/json',buffer:picture.json});
+  await assign(sheet(['south'],0x99),'Replace portrait');
+  for(const page of [a,b])await expect.poll(()=>fernColor(page,0x99)).toBe(true);
+  expect(version('fern')).not.toBe(first);
+  await expect.poll(faceCount).toBe(2);
+  await draft.getByRole('button',{name:'Replace portrait'}).click();
+  await draft.getByText(/portrait changed/i).waitFor();
+  await concurrent.close();
+  let lostId='';
+  await setup.route('**/api/household/setPortrait',async route=>{
+    lostId=route.request().postDataJSON().id;
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  },{times:1});
+  await portrait.getByRole('button',{name:'Use generated face'}).click();
+  await expect.poll(faceCount).toBe(1);
+  const replay=setup.waitForResponse(response=>response.url().endsWith('/api/household/setPortrait'));
+  await portrait.getByRole('button',{name:'Retry portrait change'}).click();
+  const recovered=await replay;
+  expect(recovered.status()).toBe(200);
+  expect(recovered.request().postDataJSON().id).toBe(lostId);
+  expect(version('fern')).toBeNull();
+  expect(version('art')).toBe(artVersion);
+  await setup.close();
   // Validly stored but undecodable bytes use the drawn fallback; a later valid
   // version recovers through the same query connection, without an asset route.
   app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png.subarray(0,8)}));

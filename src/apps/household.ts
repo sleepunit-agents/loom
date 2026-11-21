@@ -1,9 +1,10 @@
 /** Trusted household membership and agent appearance over the shared schema. */
+import { deskSpriteVersion } from '../desk-sprites.js';
 import { HH_MM } from '../core/tempo/calendar.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
+import { agents, agentSprites, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
 import { householdId } from '../slug.js';
 import { COMMS_DAYS_MAX } from '../core/data/comms-days.js';
 import { BACKUP_KEEP_MAX, householdSettings } from '../core/data/household-settings.js';
@@ -95,9 +96,12 @@ export function householdService(db: DataDatabase, now: () => string) {
       return db.transaction(()=>{
       const old = db.select().from(agents).where(eq(agents.id, value.id)).get();
       const visualChanged = old && (['markBg', 'markFg', 'faceShape', 'faceEyes'] as const).some(key => old[key] !== value[key]);
+      const sprite = visualChanged && old.spriteVersion
+        ? db.select().from(agentSprites).where(eq(agentSprites.agent, value.id)).get() : undefined;
+      const clearPointer = visualChanged && (!sprite || deskSpriteVersion(sprite.layout, sprite.sheets) !== old.spriteVersion);
       db.insert(agents).values(value).onConflictDoUpdate({ target: agents.id, set: {
         about: value.about, markBg: value.markBg, markFg: value.markFg, faceShape: value.faceShape, faceEyes: value.faceEyes,
-        ...(visualChanged ? { spriteVersion: null } : {}),
+        ...(clearPointer ? { spriteVersion: null } : {}),
       } }).run();
       for(const owner of db.select({id:members.id}).from(members).where(eq(members.fullOwner,true)).all())db.insert(memberAgents).values({member:owner.id,agent:value.id}).onConflictDoNothing().run();
       return { id: value.id };

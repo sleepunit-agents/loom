@@ -1,3 +1,5 @@
+import {householdOwner} from './shared-sharing.js';
+import {PORTRAIT_REQUEST_BYTES} from './shared-agent-portrait.js';
 import {NOTE_UPLOAD_REQUEST_BYTES,noteUploadEnvelope} from './note-upload.js';
 import {deniedTools,hasGuest} from './runtime/harness-traits.js';
 import {mayUseHouseSend} from './runtime/house-send-request.js';
@@ -539,6 +541,9 @@ export function sharedRoot(options: {
       if(multipart){
         const data=await bodyRequest(request,{signal},true,NOTE_UPLOAD_REQUEST_BYTES).formData();
         body=await noteUploadEnvelope(data);
+      }else if(name==='household.setPortrait'){
+        if(!auth.window||!householdOwner(db,auth.viewer))return c.json(failure('denied','Sign in as a household owner to change a portrait'),403);
+        body=await bodyRequest(request,{signal},true,PORTRAIT_REQUEST_BYTES).json();
       }else body=await bodyRequest(request,{signal},true).json();
     }catch(error){return error instanceof BodyTooLarge?c.json(failure('invalid','Request body too large'),413):c.json(failure('invalid',multipart?'Invalid attachment':'Invalid JSON'),400);}
     const parsed = envelope.safeParse(body);
