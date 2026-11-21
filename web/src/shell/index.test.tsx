@@ -58,24 +58,35 @@ afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();})
 it('a tile’s bar is the app’s key, its title and three window controls, with no history controls',async()=>{
  await mount();await dock('tasks');
  const buttons=bar('tasks').findAll((n:Node)=>n.type==='button');
- expect(buttons.map(b=>b.props['aria-label']??b.props.children)).toEqual(['Go to Tasks','Tasks','Make Tasks big','Minimize Tasks','Close Tasks']);
+ expect(buttons.map(b=>b.props['aria-label']??b.props.children)).toEqual(['Go to Tasks','Tasks','Maximize Tasks','Minimize Tasks','Close Tasks']);
  // No arrows, no Trail, no fold-out of any kind in the bar.
  expect(bar('tasks').findAll((n:Node)=>n.type==='details'||n.type==='summary'||n.type==='ol')).toEqual([]);
  expect(buttons.some(b=>/back|forward|history|trail/i.test(String(b.props['aria-label']??b.props.children)))).toBe(false);
  // The controls are drawn shapes, named for a screen reader and on hover, never a font glyph.
- const drawn=['Make Tasks big','Minimize Tasks','Close Tasks'].map(name=>control('tasks',name));
- expect(drawn.map(b=>[b.props.className,b.props['data-act'],b.props.title,b.props.type])).toEqual([['next-win','big','Make big','button'],['next-win','dock','Send to the dock','button'],['next-win','close','Close','button']]);
+ const drawn=['Maximize Tasks','Minimize Tasks','Close Tasks'].map(name=>control('tasks',name));
+ expect(drawn.map(b=>[b.props.className,b.props['data-act'],b.props.title,b.props.type])).toEqual([['next-win','maximize','Maximize','button'],['next-win','dock','Send to the dock','button'],['next-win','close','Close','button']]);
  for(const b of drawn){expect(b.children).toHaveLength(1);expect((b.children[0] as Node).type).toBe('i');expect((b.children[0] as Node).props['aria-hidden']).toBe('true');expect((b.children[0] as Node).children).toEqual([]);}
  expect(JSON.stringify(tree.toJSON())).not.toMatch(/[←→↗−×]|Trail/);
 });
 it('the three window controls still make a tile big, send it to the dock and close it',async()=>{
  await mount();await dock('tasks');await dock('inbox');expect(shownTiles()).toEqual(['tasks','inbox']);
- await act(async()=>control('inbox','Make Inbox big').props.onClick());expect(shownTiles()).toEqual(['inbox','tasks']);
+ await act(async()=>control('inbox','Maximize Inbox').props.onClick());expect(shownTiles()).toEqual(['inbox']);
+ await act(async()=>control('inbox','Restore Inbox').props.onClick());expect(shownTiles()).toEqual(['tasks','inbox']);
+ await altKey('Enter',{shiftKey:true});expect(shownTiles()).toEqual(['inbox','tasks']);
  await act(async()=>control('inbox','Minimize Inbox').props.onClick());expect(shownTiles()).toEqual(['tasks']);
  // Sent to the dock, it is still an open app there; closed, it is gone.
  await dock('inbox');expect(shownTiles()).toContain('inbox');
  await act(async()=>control('inbox','Close Inbox').props.onClick());expect(shownTiles()).toEqual(['tasks']);
  expect(JSON.parse(new URL(location.href).searchParams.get('paths')!)).toEqual({tasks:'/tasks'});
+});
+it('keeps the maximized app and its trail across navigation, reload and keyboard restore',async()=>{
+ await mount();await dock('tasks');await dock('inbox');await altKey('f',{shiftKey:true});
+ await act(async()=>screen('inbox').props.go('/inbox/detail'));
+ await act(async()=>tree.unmount());await mount();
+ expect(shownTiles()).toEqual(['inbox']);expect(screen('inbox').props.path).toBe('/inbox/detail');
+ await altKey('f',{shiftKey:true});expect(shownTiles()).toEqual(['tasks','inbox']);
+ await browser(-1);expect(shownTiles()).toEqual(['inbox']);
+ await dock('tasks');expect(shownTiles()).toEqual(['tasks','inbox']);
 });
 it('double-clicking the bar outside a control still sends the tile to the dock',async()=>{
  await mount();await dock('tasks');

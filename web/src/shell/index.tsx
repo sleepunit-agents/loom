@@ -62,7 +62,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const { Home, Rail, Bar, Signals } = surfaces;
   const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railWidth(width)>100&&(railAs==='always'||hiding.peek.rail));
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
-  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,router]);
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,route.maximized,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
   // Open apps are the route's tiles, shown or minimized: what the dock marks as open. Most recently in front first;
   // kept here for this visit only, and seeded from the router's own use order for apps not yet seen in front.
@@ -102,6 +102,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       if(!e.shiftKey&&key==='h') router.home();
       else if(!e.shiftKey&&key==='arrowleft'&&tile.at>0) router.travel(tile.id,-1);
       else if(!e.shiftKey&&key==='arrowright'&&tile.at<tile.trail.length-1) router.travel(tile.id,1);
+      else if(!phone&&e.shiftKey&&key==='f') router.maximize(tile.id);
       else if(e.shiftKey&&key==='enter') router.big(tile.id);
       else if(e.shiftKey&&key==='m') router.remove(tile.id,true);
       else if(e.shiftKey&&key==='w') router.remove(tile.id);
@@ -115,7 +116,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       if(acted)e.preventDefault();
     };
     window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
-  },[visible,route.focused,router,boxes]);
+  },[visible,route.focused,router,boxes,phone]);
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
       if(path === '/') {router.home();return;}
@@ -138,19 +139,19 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}
           style={!shown?{display:'none'}:phone?undefined:{left:box.x,top:box.y,width:box.w,height:box.h}} onFocusCapture={e => { if(e.target!==e.currentTarget) carets.current.set(tile.id,e.target as HTMLElement); if(route.focused!==tile.id) router.focus(tile.id); }} onPointerDown={() => { if(route.focused!==tile.id) router.focus(tile.id); }}>
-          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
+          <header className="next-strip" draggable={!phone} onDragStart={()=>{drag.current=tile.id;}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(drag.current)router.swap(drag.current,tile.id);drag.current=undefined;}} onDoubleClick={e=>{if(!(e.target as HTMLElement).closest('button'))router.remove(tile.id,true);}} onContextMenu={e=>{e.preventDefault();setMenu({x:e.clientX,y:e.clientY,title:app.title,back:e.currentTarget,items:[{id:'min',label:'Minimize',run:()=>router.remove(tile.id,true)},...(!phone?[{id:'maximize',label:route.maximized===tile.id?'Restore size':'Maximize',run:()=>router.maximize(tile.id)}]:[]),{id:'big',label:'Make this the big one',run:()=>router.big(tile.id)},{id:'close',label:'Close',run:()=>router.remove(tile.id)}]});}}>
             <button className="next-app-key" aria-label={`Go to ${app.title}`} onClick={() => router.go(tile.id,app.path)}><AppIcon app={app.id} name={app.icon} size="sm" house={24} /></button>
             <Button variant="ghost" size="sm" onClick={() => router.go(tile.id,app.path)} className="next-strip-title" onDoubleClick={() => router.remove(tile.id,true)}>{app.title}</Button>
             <span className="next-spacer" />
             {/* The three window controls, drawn as the how-it-works site draws them: a square, a line, a cross. */}
-            {!phone && <button type="button" className="next-win" data-act="big" aria-label={`Make ${app.title} big`} title="Make big" onClick={() => router.big(tile.id)}><i aria-hidden="true" /></button>}
+            {!phone && <button type="button" className="next-win" data-act={route.maximized===tile.id?'restore':'maximize'} aria-label={`${route.maximized===tile.id?'Restore':'Maximize'} ${app.title}`} title={route.maximized===tile.id?'Restore size':'Maximize'} onClick={() => router.maximize(tile.id)}><i aria-hidden="true" /></button>}
             <button type="button" className="next-win" data-act="dock" aria-label={`Minimize ${app.title}`} title="Send to the dock" onClick={() => router.remove(tile.id,true)}><i aria-hidden="true" /></button>
             <button type="button" className="next-win" data-act="close" aria-label={`Close ${app.title}`} title="Close" onClick={() => router.remove(tile.id)}><i aria-hidden="true" /></button>
           </header>
           <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
         </section>;
       })}
-      <WindowExits boxes={boxes} phone={phone} tiles={route.tiles} />
+      <WindowExits boxes={boxes} phone={phone} tiles={route.tiles} maximized={route.maximized} />
     </div>
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />

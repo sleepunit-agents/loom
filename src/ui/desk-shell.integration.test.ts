@@ -212,8 +212,12 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await set({oneWindow:false},'one-window-off');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
-  const makeBig=b.getByRole('button',{name:'Make Tasks big',exact:true});await makeBig.focus();
-  await expect.poll(()=>makeBig.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
+  const maximize=b.getByRole('button',{name:'Maximize Tasks',exact:true});await maximize.click();
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Restore Tasks',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await maximize.focus();
+  await expect.poll(()=>maximize.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
   await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');
   await b.keyboard.press('Alt+h');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);
   await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);

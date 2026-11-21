@@ -391,7 +391,7 @@ Narrower than a desktop, a screen keeps two (loom's status bar over the phone's)
 - **Focus** goes to a tile when you press anywhere in it (click to focus; hover never moves focus). The focused tile's
   frame is lit in its app's colour.
 - **Swap:** drag a title strip onto another tile of the same kind, or use Alt+Shift+, and Alt+Shift+. to swap with the
-  tile before or after. **Make this the big one:** the strip's ⤢ or Alt+Shift+Enter. A double-click on the strip
+  tile before or after. **Make this the big one:** the strip menu or Alt+Shift+Enter. The desktop strip's square or Alt+Shift+F maximizes the focused tile into the app area. Restore on the same control returns the tiled layout and each app's navigation trail. The size change follows the desk motion preference. A double-click on the strip
   minimizes the tile, as it minimized the old window.
 - **Resizable gutters:** not built (decided 2026-11-06). The split ratios come from fit, and a dragged ratio would need
   saving per pair of apps per screen width. If the owner misses it after use, it's a phase of its own.
@@ -402,7 +402,7 @@ Short, and only where they help (t-1925 E; `web/src/tiling/menu.tsx`, `tiles.tsx
 button, or the Menu key or Shift+F10 on what has focus, opens one at it:
 
 - **The desktop's ground:** Add a widget (above).
-- **A tile's strip:** Minimize, Make it the big one (not the big one already), Pin its card / Take its card off the
+- **A tile's strip:** Minimize, Maximize or Restore size on desktop, Make it the big one (not the big one already), Pin its card / Take its card off the
   desktop (an agent's tile), Close. A tile has no window of its own to open it in, so no such item.
 - **A widget:** an agent's card has Chat, Expand and Unpin from the desktop; Needs you Expand and Remove from the
   desktop; another widget Open and Remove from the desktop. An agent's tile and the Inbox's have Shrink to widget.

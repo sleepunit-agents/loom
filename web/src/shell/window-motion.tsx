@@ -7,7 +7,7 @@ import './window-motion.css';
 const effects = ['matrix', 'hexagon', 'glitch', 'tv'] as const;
 
 /** Draw the departing frame separately so a closed screen releases its data and focus immediately. */
-export function WindowExits({ boxes, phone, tiles }: { boxes: Record<string, Rect>; phone: boolean; tiles: Tile[] }) {
+export function WindowExits({ boxes, phone, tiles, maximized }: { boxes: Record<string, Rect>; phone: boolean; tiles: Tile[]; maximized?: string }) {
   const layer = useRef<HTMLDivElement>(null);
   const previous = useRef(boxes);
   const sequence = useRef(0);
@@ -21,6 +21,8 @@ export function WindowExits({ boxes, phone, tiles }: { boxes: Record<string, Rec
     }
     for (const [id, box] of Object.entries(before)) {
       if (boxes[id]) continue;
+      // A desktop window covered by a maximized neighbour is still open.
+      if (maximized && tiles.some(tile => tile.id === id && !tile.minimized)) continue;
       const frame = document.createElement('div');
       frame.className = 'desk-window-exit';
       frame.dataset.departed = id;
@@ -43,6 +45,6 @@ export function WindowExits({ boxes, phone, tiles }: { boxes: Record<string, Rec
       frame.addEventListener('animationend', event => { if (!event.pseudoElement) remove(); });
       frame.addEventListener('animationcancel', remove);
     }
-  }, [boxes, phone, tiles]);
+  }, [boxes, phone, tiles, maximized]);
   return <div ref={layer} className="desk-window-exits" aria-hidden="true" inert />;
 }

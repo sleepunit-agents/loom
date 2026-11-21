@@ -3,12 +3,12 @@ import { admit, promote, underMinimum, capFor, swap, type AppTile, type Rect } f
 import type { Fit } from '../tiling/fit';
 export interface AppRegistration { id: string; title: string; path: string; fit: Fit }
 export interface Tile { id: string; trail: string[]; at: number; minimized?: boolean; pinned?: boolean; used: number }
-export interface DeskRoute { tiles: Tile[]; focused?: string; home?: string[] }
+export interface DeskRoute { tiles: Tile[]; focused?: string; maximized?: string; home?: string[] }
 /** One-window presentation preserves the other tiles and their navigation trails. */
 export function presentedTiles(route: DeskRoute, oneWindow: boolean): Tile[] {
   const visible = route.tiles.filter(t => !t.minimized);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
-  return oneWindow ? visible.filter(t => t.id === focused?.id) : visible;
+  return oneWindow || (focused && route.maximized === focused.id) ? visible.filter(t => t.id === focused?.id) : visible;
 }
 export const currentPath = (tile: Tile) => tile.trail[tile.at];
 export function readRoute(href: string, apps: readonly AppRegistration[]): DeskRoute {
@@ -29,7 +29,8 @@ export function readRoute(href: string, apps: readonly AppRegistration[]): DeskR
     if (!min && raw.startsWith('*') && !focused) focused = id;
     tiles.push({ id, trail: [path], at: 0, used: 0, minimized: min, pinned: !min && tiles.length === 0 && raw.endsWith('!') });
   }
-  return { tiles, focused: focused ?? tiles.find(t => !t.minimized)?.id, ...(url.searchParams.has('h') ? {home:(url.searchParams.get('h')??'').split(',').filter(id=>tiles.some(t=>t.id===id))}: {}) };
+  focused ??= tiles.find(t => !t.minimized)?.id;
+  return { tiles, focused, ...(focused && url.searchParams.get('maxTile') === focused ? {maximized:focused} : {}), ...(url.searchParams.has('h') ? {home:(url.searchParams.get('h')??'').split(',').filter(id=>tiles.some(t=>t.id===id))}: {}) };
 }
 export function writeRoute(route: DeskRoute): string {
   const focused = route.tiles.find(t => t.id === route.focused && !t.minimized);
@@ -38,6 +39,7 @@ export function writeRoute(route: DeskRoute): string {
   url.searchParams.set('t', visible.map(t => `${t.id === route.focused ? '*' : ''}${t.id}${t.pinned ? '!' : ''}`).join(','));
   const min = route.tiles.filter(t => t.minimized);
   if (min.length) url.searchParams.set('m', min.map(t => t.id).join(',')); else url.searchParams.delete('m');
+  if(focused && route.maximized === focused.id) url.searchParams.set('maxTile',focused.id); else url.searchParams.delete('maxTile');
   if(route.home) url.searchParams.set('h',route.home.join(',')); else url.searchParams.delete('h');
   url.searchParams.set('paths', JSON.stringify(Object.fromEntries(route.tiles.map(t => [t.id,currentPath(t)]))));
   return url.pathname + url.search;
@@ -83,26 +85,30 @@ export class DeskRouter {
     this.save({ tiles: [...order, ...others.filter(t => !live.has(t.id)).map(t => ({ ...t,minimized:true,pinned:false }))], focused: id });
     return result.docked;
   }
-  focus(id: string) { if (this.route.tiles.some(t => t.id === id && !t.minimized)) this.save({ ...this.route, focused: id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial } : t) },true); }
+  focus(id: string) { if (this.route.tiles.some(t => t.id === id && !t.minimized)) this.save({ ...this.route, maximized:this.route.maximized===id?id:undefined, focused: id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial } : t) },true); }
   go(id: string, path: string) {
     const app = this.apps.find(a => a.id === id);
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
       const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,undefined,id); this.go(other.id,path); } return;
     }
-    this.save({ focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
+    this.save({ maximized:this.route.maximized===id?id:undefined, focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
   }
   travel(id: string, step: number) { this.save({ ...this.route, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, at: Math.max(0,Math.min(t.trail.length-1,t.at+step)) } : t) }); }
   remove(id: string, minimize = false) {
     const tiles = minimize ? this.route.tiles.map(t => t.id === id ? { ...t, minimized:true,pinned:false } : t) : this.route.tiles.filter(t => t.id !== id);
     this.save({ tiles, focused: this.route.focused === id ? tiles.find(t => !t.minimized)?.id : this.route.focused });
   }
+  maximize(id: string) {
+    if (!this.route.tiles.some(tile => tile.id === id && !tile.minimized)) return;
+    this.save({ ...this.route, focused:id, maximized:this.route.maximized===id?undefined:id });
+  }
   big(id: string) {
     const order = promote(this.asTiles(),id);
-    this.save({ ...this.route, tiles: [...order.map(t => ({ ...this.route.tiles.find(o => o.id === t.id)!,pinned:t.pinned })), ...this.route.tiles.filter(t => t.minimized)] });
+    this.save({ ...this.route, maximized:undefined, tiles: [...order.map(t => ({ ...this.route.tiles.find(o => o.id === t.id)!,pinned:t.pinned })), ...this.route.tiles.filter(t => t.minimized)] });
   }
   fit(area: Rect, screen: number, oneWindow = false) {
     this.area=area;this.screen=screen;this.oneWindow=oneWindow;
-    if(oneWindow) return [];
+    if(oneWindow || this.route.maximized) return [];
     const tiles = this.route.tiles.map(t => ({...t})); const notices: string[]=[];
     for (;;) {
       const active = this.asTiles(tiles); const under = underMinimum(active,area,screen);
