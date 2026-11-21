@@ -22,7 +22,11 @@
     {
       "id": "machines-004",
       "promise": "Retries a job that fails to start, up to three times.",
-      "source": "docs/how-it-works/site/machines.html"
+      "source": "docs/how-it-works/site/machines.html",
+      "probe": {
+        "kind": "action",
+        "action": "workerRetries"
+      }
     },
     {
       "id": "machines-005",
@@ -62,7 +66,11 @@
     {
       "id": "machines-012",
       "promise": "A job that fails to start is tried again, up to three times. Each retry is a new job that points back at the one before.",
-      "source": "docs/how-it-works/site/machines.html#how-h"
+      "source": "docs/how-it-works/site/machines.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "workerRetries"
+      }
     },
     {
       "id": "machines-013",

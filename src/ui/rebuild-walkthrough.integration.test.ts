@@ -110,6 +110,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
   expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
  });
+ it('keeps three linked worker start retries across coordinator restarts',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('worker-start-retries');
+  expect(step.value.actions.workerRetries,JSON.stringify(step.value.actions.workerRetries)).toMatchObject({ok:true,attempts:4});
+ });
  it('writes and reads notes and shared Knowledge through the named MCP tools',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('named-agent-tools');
   for(const name of ['namedNotes','namedKnowledge'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
