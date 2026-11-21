@@ -10,7 +10,7 @@ Open **Job usage** in the launcher to see conversations ranked by reported token
 
 GraphQL bounds are timestamps with a time zone. They select jobs by queue time, including the lower bound and excluding the upper. Day keys use UTC. A retry is a separate attempt even when it starts on a later day.
 
-Each attempt can report `tokensIn`, `tokensOut`, `cacheRead`, `cacheWritten`, `modelCalls`, `toolCalls`, `firstContext`, `largestContext`, elapsed milliseconds (`wallMs`), `harness`, `model` and `source`. The `tools` list contains name/count pairs. Null means unknown, and an empty list means the harness observed no tools. A terminal job without a report has source `none`; an unended job with no report has null usage. Rollups sum the available values of each additive counter. A counter with no measured values stays null. First-call context measures the input to the first parent model response when the harness reports it. Aggregate usage alone leaves this field unknown. Largest context is the maximum measured input to one call. Total tokens is the sum of available input and output counts, including partial reports. Input already includes cached tokens.
+Each attempt can report `tokensIn`, `tokensOut`, `cacheRead`, `cacheWritten`, `modelCalls`, `toolCalls`, `firstContext`, `largestContext`, elapsed milliseconds (`wallMs`), `harness`, `model` and `source`. The `tools` list contains name/count pairs. Null means unknown, and an empty list means the harness observed no tools. A terminal job without a report has source `none`; an unended job with no report has null usage. Rollups sum the available values of each additive counter. A counter with no measured values stays null. First-call context measures the input to the first parent model response when the harness reports it. Aggregate usage alone leaves this field unknown. Largest context is the maximum measured input to one call. In a rollup, `jobsWithLargestContext` counts the visible jobs that reported a peak, including a measured zero. Usage shows this count alongside the peak so you can see how many jobs contributed. Total tokens is the sum of available input and output counts, including partial reports. Input already includes cached tokens.
 
 Observations are calculated when read from visible jobs and current measurements.
 
@@ -32,7 +32,7 @@ query ConversationCost($id: String!, $from: String!, $to: String!) {
     }
   }
   jobUsageRollup(conversation: $id, from: $from, to: $to, groupBy: "day") {
-    key jobCount retryCount totalTokens wallMs
+    key jobCount retryCount totalTokens wallMs largestContext jobsWithLargestContext
   }
 }
 ```
