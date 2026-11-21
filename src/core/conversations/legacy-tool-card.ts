@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { messages } from '../data/schema.js';
 
 const time = z.iso.datetime({ offset: true });
 const printableLine = /^[^\x00-\x1f\x7f-\x9f\u2028\u2029\p{Cf}]*$/u;
@@ -6,7 +7,7 @@ const shownText = /^(?:(?![\p{Cf}])[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u
 export const legacyCardSummary = z.string().min(1).max(120).regex(printableLine);
 export const legacyToolCard = z.object({
   tool: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/),
-  state: z.enum(['running', 'done', 'failed']),
+  state: z.enum(messages.cardState.enumValues),
   exit: z.number().int().min(-999999).max(999999).optional(),
   limit: z.number().int().min(1).max(86400).optional(),
   parent: z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/).optional(),

@@ -7,7 +7,7 @@ import { agentInput, memberInput, settingsInput } from '../apps/household.js';
 import { clock as systemClock } from '../core/clock.js';
 import { readKey } from '../pieces/comms/crypto.js';
 import { initializeSharedHome, type InitialHousehold } from '../shared-initialize.js';
-import { householdId } from '../slug.js';
+import { householdId, SLUG } from '../slug.js';
 
 const member = z.object({person:householdId,role:z.enum(['owner','member']),agents:z.union([z.literal('*'),z.array(householdId)])});
 const doc = z.object({
@@ -32,14 +32,15 @@ function readDirectory(source:string):InitialHousehold {
   } finally {closeSync(fd);}})();
   const defaultAgent=raw.default??raw.agents[0];
   if(!raw.agents.includes(defaultAgent)||new Set(raw.agents).size!==raw.agents.length)throw Error('Invalid agent directory');
+  const shapes=agentInput.shape.faceShape.options, eyes=agentInput.shape.faceEyes.options;
   const agents=raw.agents.map((id,i)=>{
     const [bg,fg]=palette[i%palette.length], mark=raw.marks[id], face=raw.faces[id];
     const about=Object.hasOwn(raw.about,id)?raw.about[id].trim():'';
     return agentInput.parse({id,about,markBg:mark?.bg??bg,markFg:mark?.fg??fg,
-      faceShape:face?.shape??['pebble','trefoil','clover','drop'][i%4],faceEyes:face?.eyes??['dot','oval'][i%2]});
+      faceShape:face?.shape??shapes[i%shapes.length],faceEyes:face?.eyes??eyes[i%eyes.length]});
   });
   const oldOwner=raw.owner?.toLowerCase()??'owner';
-  const implicitOwner=/^[a-z0-9]+(-[a-z0-9]+)*$/.test(oldOwner)?oldOwner:'owner';
+  const implicitOwner=SLUG.test(oldOwner)?oldOwner:'owner';
   const members=(raw.members??[{person:implicitOwner,role:'owner',agents:'*'} as const]).map(m=>{
     if(Array.isArray(m.agents) && (m.agents.some(id=>!raw.agents.includes(id)) || (m.role==='owner' && !m.agents.length)))throw Error('Invalid agent ownership');
     return memberInput.parse({id:m.person,role:m.role,fullOwner:m.agents==='*',agents:m.agents==='*'?[]:m.agents});
