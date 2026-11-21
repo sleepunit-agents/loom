@@ -1,10 +1,13 @@
 import { useId } from 'react';
+import { DepthBackground } from './components/ui/depth-background';
+import { ContourField } from './components/ui/contour-field';
 import { WovenCloth } from './woven-cloth';
 import './ground.css';
 
 /** Two planes of the login cloth recede towards a shared horizon. */
 export function Depth(){
   return <div aria-hidden="true" className="loom-ground loom-depth-cloth pointer-events-none fixed inset-0 -z-10">
+    <DepthBackground variant="pollen" density={.4} intensity={.4} className="loom-cloth-underlay" />
     <div className="loom-depth-far"><WovenCloth /></div>
     <div className="loom-depth-near"><WovenCloth /></div>
   </div>;
@@ -15,6 +18,7 @@ export function Contours(){
   const id=useId();
   const loop="M-190 310C-190 136 -32 82 132 99S374 252 502 246S660 327 619 432S408 496 307 559S96 649 -60 548S-197 444 -190 310Z";
   return <div aria-hidden="true" className="loom-ground loom-contour-cloth pointer-events-none fixed inset-0 -z-10">
+    <ContourField tone="warm" speed={.3} intensity={.5} className="loom-cloth-underlay" />
     <svg viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" focusable="false">
       <defs><path id={id} d={loop} pathLength="1000" /></defs>
       {['translate(-32 -78)','translate(1232 780) rotate(180)'].map(transform=>

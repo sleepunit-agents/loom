@@ -5,7 +5,8 @@
 .loom-depth-near { transform-origin:50% 65%; transform:rotateX(54deg) rotateZ(-16deg) scale(1.45); opacity:.56; }
 .loom-depth-far .loom-gate__cloth { animation-duration:520ms,160s; }
 .loom-depth-near .loom-gate__cloth { animation-duration:520ms,88s; }
-.loom-contour-cloth svg { width:100%; height:100%; }
+.loom-ground .loom-cloth-underlay { position:absolute; inset:0; opacity:.22; }
+.loom-contour-cloth > svg { position:relative; width:100%; height:100%; }
 .loom-contour-thread,.loom-contour-stitch { fill:none; vector-effect:non-scaling-stroke; }
 .loom-contour-thread { stroke:var(--v-edge); stroke-width:1; opacity:.75; }
 .loom-contour-stitch { stroke-width:2; stroke-dasharray:24 3 3 320 9 641; opacity:.83; }
