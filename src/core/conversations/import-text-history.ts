@@ -22,6 +22,7 @@ const oldText=z.object({
   at:z.iso.datetime({offset:true}).transform(v=>new Date(v).toISOString()), run:id.nullable(),
   text:z.instanceof(Uint8Array).transform(bytes => Buffer.from(bytes)).nullable(), card_json:z.string().nullish(), step:z.instanceof(Uint8Array).transform(bytes => Buffer.from(bytes)).nullish(), delivered:z.union([z.literal(0),z.literal(1)]).nullable(),
 });
+const toolMetadata = (row:z.infer<typeof oldText>)=>row.kind==='card'?legacyToolCard.parse(JSON.parse(row.card_json??'null')):null;
 const oldThread=z.object({id,conversation:id,agent:id,member:id,project:id.nullable()});
 
 interface HistoryInput {
@@ -96,7 +97,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       }
       continue;
     }
-    const card=row.kind==='card'?legacyToolCard.parse(JSON.parse(row.card_json??'null')):null;
+    const card=toolMetadata(row);
     if (row.step && !row.text) throw Error('Private tool details without a retained summary');
     if (row.text && kept(row,initialDays,inspected)) {
       const words=await key.open(row.text);
@@ -127,7 +128,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       const words=kept(row,initialDays,inspected)&&kept(row,days,at)?(reason?.words ?? row.text):null;
       if (words) firstDeadline=Math.min(firstDeadline,wordsDeadline({at:row.at,keepUntil},days));
       const delivery=row.delivered===1?'delivered':row.delivered===0?'failed':row.kind==='message'?'sending':null;
-      const card=row.kind==='card'?legacyToolCard.parse(JSON.parse(row.card_json??'null')):null;
+      const card=toolMetadata(row);
       const extra=words&&card?row.step??null:null;
       const identity={thread:row.thread,seq:row.seq,kind:row.kind==='error'?'notice':row.kind,archivedNotice:notice?JSON.stringify(notice):null,sender:row.sender,at:row.at,run:row.run,
         clientId:row.id,delivery,keepUntil,tool:card?.tool??null,cardState:card?.state??null,archivedStepMeta:card?JSON.stringify(card):null} as const;

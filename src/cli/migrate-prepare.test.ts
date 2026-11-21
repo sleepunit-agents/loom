@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { loadKey, readKey, wordsKey } from '../pieces/comms/crypto.js';
 import { prepareArchiveHome } from './migrate-prepare.js';
 
 it('builds an empty home with the original ownership and settings and refuses to replace it', async()=>{
@@ -19,8 +20,11 @@ it('builds an empty home with the original ownership and settings and refuses to
     expect(await run(join(source,'nested'))).toBe(1);expect(existsSync(join(source,'nested'))).toBe(false);
     writeFileSync(join(source,'comms.db'),'');
     expect(await run()).toBe(1);expect(existsSync(home)).toBe(false);
-    rmSync(join(source,'comms.db'));
+    const priorKey=await loadKey(source);
+    const originalEnvelope=await priorKey.seal('original private step');
+
     expect(await run()).toBe(0);
+    expect(await wordsKey(readKey(join(home,'comms.key'))).open(originalEnvelope)).toBe('original private step');
     const db=new Database(join(home,'loom.db'),{readonly:true});
     try{
       expect(db.prepare('SELECT id,role,full_owner FROM members').all()).toEqual([{id:'alex',role:'owner',full_owner:1}]);
