@@ -77,3 +77,21 @@ export async function knowledgeSourceCheck({page,tile,out}) {
   return {ok:false,error:String(error)};
  }
 }
+
+export async function activityWorkLinks({page,tile,example,out}) {
+ const screenshot='action-activity-work-links.png';
+ try {
+  await tile.locator('[data-split-row]').filter({has:page.getByText('Repair the garden pump',{exact:true})}).first().click();
+  const reader=tile.locator('article');
+  const section=reader.locator('section').filter({has:page.getByRole('heading',{name:'Tasks and pull requests',exact:true})});
+  const expected=new Map(example.tasks.map((id,i)=>['/p/tasks-preview/task/'+id,
+   ['Compare garden pumps','Order the selected pump','Measure the hose','Retire the broken pump'][i]]));
+  expected.set('https://github.com/example-house/garden/pull/12',`Plan the pump repair (${example.tasks[0]})`);
+  for(const [href,label] of expected){
+   const link=section.getByRole('link',{name:label,exact:true});
+   if(await link.getAttribute('href')!==href)throw Error('Incorrect work link for '+label);
+  }
+  await reader.screenshot({path:join(out,screenshot)});
+  return {ok:true,screenshot,reason:'The pump conversation shows its four sourced tasks and their pull request with the correct titles and destinations.'};
+ }catch(error){return {ok:false,error:String(error)};}
+}

@@ -22,7 +22,7 @@ import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
-import {knowledgeActions,knowledgeSourceCheck} from './rebuild-memory-actions.mjs';
+import {activityWorkLinks,knowledgeActions,knowledgeSourceCheck} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
@@ -170,6 +170,7 @@ export async function* walkthroughSteps(output) {
      row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
     }
+    if(title==='Activity')report.actions.activityWorkLinks=await activityWorkLinks({page,tile,example:report.example,out});
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out,app});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Subscriptions')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));

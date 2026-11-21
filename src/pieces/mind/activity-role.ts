@@ -7,6 +7,7 @@ export interface ActivityRun {
  summary?:string;turns?:number;replies?:number;asked:string[];decided:string[];tasks:string[];
  /** Text from every digest item kind, for task/PR reference extraction. */
  references?:string[];
+ linkedWork?:{tasks:Array<{label:string;href:string}>;prs:Array<{label:string;href:string}>};
  links:Array<{label:string;href?:string}>;steps?:Array<{label:string;state:string;tool:string}>;
  needs?:string;needsHref?:string;needsForMember?:string;
  more:Array<{id:string;at:string;title:string}>;

@@ -1,4 +1,4 @@
-import { readEpisodeConversations, readActivityAgents, readActivityWindow, readActivityConversation, readActivityDigest, readActivitySet, type ActivityReadSet } from '../../core/data/activity-read.js';
+import { readActivityWork, readEpisodeConversations, readActivityAgents, readActivityWindow, readActivityConversation, readActivityDigest, readActivitySet, type ActivityReadSet } from '../../core/data/activity-read.js';
 /** Activity's read projection of the shared Conversations service's records.
  * No legacy database, copied content, or independent visibility policy. */
 import type { DataDatabase } from '../../core/data/database.js';
@@ -71,7 +71,13 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       const digest = kind === 'digest' ? readActivityDigest(db, viewer, agent, key) : undefined;
       if (kind === 'digest' && !digest) return;
       const row = readActivityConversation(db, viewer, agent, digest?.conversation ?? key);
-      if (row) return run(viewer, row, readActivitySet(db, viewer, [row.id], digest ? [digest.id] : [], digest?.inboxItem ? [digest.inboxItem] : []), digest);
+      if (!row) return;
+      const detail = run(viewer, row, readActivitySet(db, viewer, [row.id], digest ? [digest.id] : [], digest?.inboxItem ? [digest.inboxItem] : []), digest);
+      const work = readActivityWork(db, viewer, row.id);
+      return { ...detail, linkedWork: {
+        tasks: work.map(task => ({ label: task.title, href: `/p/tasks-preview/task/${encodeURIComponent(task.id)}` })),
+        prs: work.flatMap(task => task.changeTasksByTask.map(({ changeRow }) => ({ label: changeRow.title, href: changeRow.url || `/p/changes-preview/change/${encodeURIComponent(changeRow.id)}` }))),
+      } };
     },
     conversations:episodeConversations,
     conversation(viewer,agent,id){return episodeConversations(viewer,agent,[id])[0];},

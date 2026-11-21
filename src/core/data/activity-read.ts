@@ -3,6 +3,8 @@
 import { and, asc, desc, eq, getTableColumns, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from './database.js';
+import { taskVisibility } from './visibility.js';
+import { workVisibility } from './work-visibility.js';
 import { conversations, digests, turns } from './schema.js';
 import { conversationVisibility, talkVisibility } from './conversation-visibility.js';
 const protectedSQL = (value: ReturnType<typeof sql>) => sql`${{ getSQL: () => value }}`;
@@ -59,3 +61,18 @@ export function readActivitySet(db: DataDatabase, viewer: Viewer, ids: string[],
   return { conversation: (id: string) => byConversation.get(id), items: (id: string) => byDigest.get(id) ?? [], question: (id: string) => byQuestion.get(id) };
 }
 export type ActivityReadSet = ReturnType<typeof readActivitySet>;
+
+/** Work attached to the selected conversation, scoped on both ends of every link. */
+export function readActivityWork(db: DataDatabase, viewer: Viewer, conversation: string) {
+  return db.query.tasks.findMany({
+    columns: { id: true, title: true },
+    where: f => and(eq(f.sourceKind, 'conversation'), eq(f.sourceId, conversation), protectedSQL(taskVisibility(viewer).tasks!(f))),
+    orderBy: f => asc(f.id),
+    with: { changeTasksByTask: {
+      columns: {},
+      where: f => protectedSQL(workVisibility(viewer).changeTasks!(f)),
+      orderBy: f => asc(f.change),
+      with: { changeRow: { columns: { id: true, title: true, url: true } } },
+    } },
+  }).sync();
+}
