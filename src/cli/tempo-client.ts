@@ -24,9 +24,9 @@ const reply = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z
 // Select through the daemon's visibility rules first. The agent argument selects a clock.
 function triggersQuery(view: 'pending' | 'history' | 'schedules') {
   const pendingOnly = view === 'pending';
-  const filter = view === 'schedules' ? 'sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},targetKind:{eq:inbox},'
+  const filter = view === 'schedules' ? 'scheduleRemovedAt:{isNull:true},sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},targetKind:{eq:inbox},'
     : pendingOnly ? 'enabled:{eq:true},' : '';
-  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : view === 'schedules' ? 'id times days nextDueAt note state' : 'id';
+  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : view === 'schedules' ? 'id scheduleName times days nextDueAt note state' : 'id';
   return `query WakeTriggers($agent:String!, $after:String!, $limit:Int!) {
     tempoTimezone
     triggers(where:{OR:[
@@ -37,7 +37,7 @@ function triggersQuery(view: 'pending' | 'history' | 'schedules') {
 }
 
 const schedulePage = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z.array(z.object({
-  id: z.string(), times: z.string(), days: z.string().nullable(), nextDueAt: z.string().datetime().nullable(),
+  id: z.string(), scheduleName: z.string().nullable(), times: z.string(), days: z.string().nullable(), nextDueAt: z.string().datetime().nullable(),
   note: z.string(), state: z.string(),
 })) }) }).strict();
 
@@ -52,11 +52,11 @@ async function listSchedules(read: Read, agent: string) {
       after = row.id;
       const when = (row.days || 'daily') + ' ' + row.times;
       const next = row.nextDueAt ? format.format(new Date(row.nextDueAt)) : '(none armed)';
-      lines.push(onOneLine(encodeURIComponent(row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
+      lines.push(onOneLine(encodeURIComponent(row.scheduleName ?? row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
     }
     if (data.triggers.length < pageSize) break;
   }
-  return (lines.join('\n') || onOneLine(agent) + ' has no schedules') + '\n';
+  return (lines.sort().join('\n') || onOneLine(agent) + ' has no schedules') + '\n';
 }
 
 const idsReply = z.object({
@@ -237,7 +237,8 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
   let laneUpdate: { name: string; file?: string; words?: string } | undefined;
-  let runSchedule: string | undefined;
+  let scheduleAction: 'run' | 'rm' | undefined;
+  let scheduleName: string | undefined;
   let cancel: { id: string; at?: string } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
   let options: ReturnType<typeof logOptions> | undefined;
@@ -252,7 +253,9 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         laneUpdate = { name: decodeURIComponent(positionals[0]), file: values['prompt-file'], words: values.prompt };
       } else if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
     } else if (verb === 'schedule') {
-      if (argv[1] === 'run' && argv.length === 3 && argv[2]) runSchedule = decodeURIComponent(argv[2]);
+      if ((argv[1] === 'run' || argv[1] === 'rm') && argv.length === 3 && argv[2]) {
+        scheduleAction = argv[1]; scheduleName = decodeURIComponent(argv[2]);
+      }
       else if (argv[1] !== 'list' || argv.length !== 2) throw Error();
     } else if (verb === 'cancel') {
       if (argv.length !== 2) throw Error();
@@ -263,7 +266,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule run NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule run NAME | schedule rm NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -286,7 +289,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         }
         await response.body?.cancel();
         if (response.status === 401) throw new DoorRefusal('Loom rejected the credential.');
-        if (runSchedule && response.status === 409) throw new DoorRefusal('The run conflicted with the current schedule. Check schedule list and wake log.');
+        if (scheduleAction && response.status === 409) throw new DoorRefusal('The schedule changed. Check schedule list and wake log.');
         if (laneUpdate && response.status === 409) throw new DoorRefusal('The lane changed during the update. Read its current text before retrying.');
         if (response.status === 403) throw new DoorRefusal('Loom denied this clock request.');
         if (response.status !== 503 || attempt >= 3) throw Error();
@@ -324,10 +327,18 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       }
       agent = choice.data.tempoDefaultAgent;
     }
-    if (runSchedule) {
-      const answer = await post('/api/tempo/runNow', { id: randomUUID(), input: { id: runSchedule, scheduleAgent: agent } });
+    if (scheduleAction) {
+      const scope = 'toKind:{eq:agent},to:{eq:$agent},targetKind:{eq:inbox},sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},scheduleRemovedAt:{isNull:true}';
+      const query = `query ClockSchedule($agent:String!,$name:String!){triggers(where:{OR:[
+        {${scope},scheduleName:{eq:$name}},{${scope},scheduleName:{isNull:true},id:{eq:$name}}
+      ]},limit:2){id}}`;
+      const result = await read(query, {agent, name:scheduleName});
+      const rows = z.object({data:z.object({triggers:z.array(z.object({id:z.string()}))})}).parse(result).data.triggers;
+      if (rows.length !== 1) throw new DoorRefusal('No matching recurring wake on this clock.');
+      const path = scheduleAction === 'run' ? '/api/tempo/runNow' : '/api/tempo/stop';
+      const answer = await post(path, { id: randomUUID(), input: { id: rows[0].id, scheduleAgent: agent } });
       z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
-      io.stdout('Requested a run of ' + onOneLine(runSchedule) + '.\n');
+      io.stdout((scheduleAction === 'run' ? 'Requested a run of ' : 'Removed schedule ') + onOneLine(scheduleName!) + '.\n');
       return 0;
     }
     if (verb === 'schedule') { io.stdout(await listSchedules(read, agent)); return 0; }
@@ -389,7 +400,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
     else if (laneUpdate) io.stderr('Could not confirm the stored lane update.\n');
     else if (verb === 'lane') io.stderr('Could not read the household lane.\n');
-    else if (runSchedule) io.stderr('Could not confirm the run. Check wake log before retrying.\n');
+    else if (scheduleAction) io.stderr('Could not confirm the schedule request. Check wake log before retrying.\n');
     else if (verb === 'schedule') io.stderr('Could not read recurring schedules from Loom.\n');
     else if (cancel) io.stderr('Could not confirm cancellation. Run wake list for the current occurrence.\n');
     else if (wake) io.stderr('Could not confirm the scheduled wake.\n');

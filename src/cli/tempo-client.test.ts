@@ -70,13 +70,30 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     let lost = false;
     const loseFirstReply: typeof fetch = async (url, init) => {
       const response = await request(url, init);
-      if (!lost && response.ok) { lost = true; throw Error('lost response after commit'); }
+      if (!lost && response.ok && String(url).endsWith('/api/tempo/runNow')) { lost = true; throw Error('lost response after commit'); }
       return response;
     };
     expect(await runTempoClient(['--agent', 'birch', 'schedule', 'run', 'daily'], io, loseFirstReply), err).toBe(0);
     expect(lost).toBe(true);
     expect(db.select().from(inbox).all()).toHaveLength(1);
     expect(db.select().from(triggers).all().find(row => row.id === 'daily')?.nextDueAt).toBe(due);
+    expect(await runTempoClient(['--agent','birch','schedule','rm','daily'], io, request), err).toBe(0);
+    expect(db.select().from(triggers).all().find(row => row.id === 'daily')).toMatchObject({state:'stopped',nextDueAt:null});
+    expect(await runTempoClient(['--agent','birch','schedule','run','daily'], io, request)).toBe(1);
+    out = '';
+    expect(await runTempoClient(['--agent','birch','schedule','list'], io, request), err).toBe(0);
+    expect(out).toBe('weekly-birch  sun 05:17  next (none armed)  [stopped]  Review\n');
+    const recreated = await app.http.request('/api/tempo/set', { method:'POST',
+      headers:{authorization:'Bearer ' + token,'content-type':'application/json'}, body:JSON.stringify({
+        id:'recreate',input:{scheduleName:'daily',ownerKind:'agent',owner:'birch',sourceKind:'time',times:'05:17',
+          lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'birch',instructions:'Check',note:'Again'}
+      }) });
+    expect(recreated.status, await recreated.text()).toBe(200);
+    out = '';
+    expect(await runTempoClient(['--agent','birch','schedule','list'], io, request), err).toBe(0);
+    expect(out).toMatch(/^daily  daily 05:17 /);
+    expect(await runTempoClient(['--agent','birch','schedule','run','daily'], io, request), err).toBe(0);
+    expect(db.select().from(inbox).all()).toHaveLength(2);
     const result = await app.http.request('/api/tempo/set', { method: 'POST',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
       body: JSON.stringify({ id: 'request', input: { id: 'scheduled', ownerKind: 'household', sourceKind: 'time',

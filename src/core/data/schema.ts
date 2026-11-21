@@ -766,6 +766,8 @@ export const triggers = sqliteTable('triggers', {
   programPeriod: text('program_period', { enum: ['day'] }),
   readStateFrom: text('read_state_from').references((): AnySQLiteColumn => triggers.id),
   programState: text('program_state', { mode: 'json' }).$type<HouseProgram['state']>(),
+  scheduleName: text('schedule_name'),
+  scheduleRemovedAt: text('schedule_removed_at'),
 }, t => [
   check('triggers_asked_at_utc', utc(t.askedAt)),
   check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
@@ -783,8 +785,16 @@ export const triggers = sqliteTable('triggers', {
   check('triggers_to_kind_choice', sql`${t.toKind} in ('person', 'agent')`),
   check('triggers_enabled_boolean', sql`${t.enabled} in (0, 1)`),
   check('triggers_state_choice', sql`${t.state} in ('standing', 'due', 'firing', 'held', 'fired', 'stopped', 'failed')`),
+  check('triggers_schedule_removed_at_utc', utc(t.scheduleRemovedAt)),
+  check('triggers_removed_schedule_stopped', sql`${t.scheduleRemovedAt} is null or (${t.enabled} = 0 and ${t.state} = 'stopped' and ${t.nextDueAt} is null)`),
   index('triggers_enabled_next_due_at_idx').on(t.enabled, t.nextDueAt),
 ]);
+
+/** Older schedules use their trigger ID as their clock-local name. Drizzle Kit does not
+ * serialize expression indexes for SQLite, so the installer emits this index directly. */
+export const clockScheduleNameIndex = `CREATE UNIQUE INDEX triggers_clock_schedule_name ON triggers
+  ("to", coalesce(schedule_name, id)) WHERE schedule_removed_at IS NULL AND source_kind = 'time'
+  AND lifespan = 'until-stopped' AND target_kind = 'inbox' AND to_kind = 'agent';`;
 
 /** What happened to each trigger, in order. */
 export const programFirings = sqliteTable('program_firings', {

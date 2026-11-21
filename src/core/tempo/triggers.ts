@@ -18,6 +18,7 @@ const placement = { needs: machineFacts.nullish(), prefers: machineFacts.nullish
 export const HOST_SCHEDULE_REFUSAL = 'Host execution is unavailable for scheduled work. Schedule a container job or use an approved machine read.';
 export const triggerInput = z.object({
   execution: z.enum(['container', 'host']).optional(),
+  scheduleName: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
@@ -145,6 +146,8 @@ export class TriggerEngine {
     this.open();
     const { execution, ...v } = triggerInput.parse(value);
     if (execution === 'host') throw new Error(HOST_SCHEDULE_REFUSAL);
+    if (v.scheduleName && (v.sourceKind !== 'time' || v.lifespan !== 'until-stopped' || v.targetKind !== 'inbox' || v.toKind !== 'agent'))
+      throw new Error('Only an agent clock’s recurring wake can have a schedule name');
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
     if ((v.ownerKind === 'household') !== !v.owner) throw new Error('Trigger needs its owner');
     if (!!v.toKind !== !!v.to) throw new Error('A recipient needs both kind and id');
@@ -200,11 +203,25 @@ export class TriggerEngine {
     });
     this.tick();
   }
+  removeSchedule(id: string): void {
+    this.open();
+    this.db.transaction(() => {
+      const row = this.get(id);
+      if (row.scheduleRemovedAt || row.sourceKind !== 'time' || row.lifespan !== 'until-stopped'
+        || row.targetKind !== 'inbox' || row.toKind !== 'agent') throw Error('Select a recurring wake');
+      const at = this.now();
+      this.db.update(triggers).set({ scheduleRemovedAt: at, enabled: false, state: 'stopped', nextDueAt: null, changedAt: at })
+        .where(eq(triggers.id, id)).run();
+      this.log(id, 'removed', row.scheduleName ?? id);
+    });
+    this.tick();
+  }
   /** Turn a stopped trigger back on. Its next time is worked out from now: while it was off it had no times. */
   start(id: string): void {
     this.open();
     this.db.transaction(() => {
       const t = this.get(id);
+      if (t.scheduleRemovedAt) throw new Error('Schedule was removed');
       if (t.enabled) throw new Error('Trigger is already on');
       if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
       if (this.expired(t)) throw new Error('No time left today');

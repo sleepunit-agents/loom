@@ -42,6 +42,29 @@ describe('upgrading a household database', () => {
     expect(old.pragma('foreign_key_check')).toEqual([]);
   });
 
+  it('preserves schedule history and releases a removed name only on its own clock', () => {
+    const old = household(29);
+    for (const agent of ['fern','birch']) old.prepare(
+      "INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES (?,'','','','pebble','dot')"
+    ).run(agent);
+    const insert = `INSERT INTO triggers (id,owner_kind,owner,to_kind,"to",source_kind,times,lifespan,target_kind,
+      note,enabled,state,created_at,changed_at`;
+    const values = "VALUES (?, 'agent', ?, 'agent', ?, 'time', '12:00', 'until-stopped', 'inbox', '', 1, 'standing', ?, ?";
+    old.prepare(insert + ') ' + values + ')').run('nightly','fern','fern',at,at);
+    old.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (1,'nightly',?,'fired','first')").run(at);
+    upgradeDataSchema(old);
+    const create = old.prepare(insert + ',schedule_name) ' + values + ',?)');
+    const add = (id: string, agent: string) => create.run(id,agent,agent,at,at,'nightly');
+    add('birch-first','birch');
+    expect(() => add('fern-second','fern')).toThrow(/unique/i);
+    expect(() => old.prepare("UPDATE triggers SET schedule_removed_at=? WHERE id='nightly'").run(at)).toThrow(/check/i);
+    old.prepare("UPDATE triggers SET schedule_removed_at=?, enabled=0, state='stopped' WHERE id='nightly'").run(at);
+    add('fern-second','fern');
+    expect(() => add('birch-second','birch')).toThrow(/unique/i);
+    expect(old.prepare('SELECT trigger,note FROM trigger_log').all()).toEqual([{trigger:'nightly',note:'first'}]);
+    expect(old.pragma('foreign_key_check')).toEqual([]);
+  });
+
   it('keeps an existing handoff immediately runnable when upgrading schema 27', () => {
     const old = household(27);
     old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
