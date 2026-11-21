@@ -85,6 +85,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-waiting');
   expect(step.value.actions.deskWaiting,JSON.stringify(step.value.actions.deskWaiting)).toMatchObject({ok:true});
  });
+ it('tracks the counts on the desktop ticker as work moves',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk-ticker');
+  expect(step.value.actions.deskTicker,JSON.stringify(step.value.actions.deskTicker)).toMatchObject({ok:true});
+ });
+
  it('answers in Inbox and shows the answer in Comms',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
