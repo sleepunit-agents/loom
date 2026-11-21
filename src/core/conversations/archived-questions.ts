@@ -35,7 +35,8 @@ export function archivedQuestionsField(db:DataDatabase,key:WordsKey,allowed:(vie
       const {words,...metadata}=getTableColumns(q);
       const read=()=>db.select({...metadata,words:wantsBody?words:sql<null>`null`}).from(q)
         .innerJoin(threads,eq(threads.id,q.thread)).innerJoin(conversations,eq(conversations.id,threads.conversation))
-        .where(and(eq(q.thread,thread),allowed(ctx.viewer))).orderBy(desc(q.raisedAt),desc(q.ref)).limit(limit).offset(offset).all();
+        .where(and(eq(q.thread,thread),eq(q.sourceConversation,conversations.id),eq(q.sourceMember,conversations.member),
+          eq(q.sourceAgent,conversations.agent),eq(conversations.venue,'loom'),allowed(ctx.viewer))).orderBy(desc(q.raisedAt),desc(q.ref)).limit(limit).offset(offset).all();
       const rows=read();
       if (!rows.length) return [];
       const days=commsKeepDays(db), deadlines:number[]=[];

@@ -203,6 +203,24 @@ it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored',
   const retry=await f.query(source);expect(retry.response.status).toBe(200);expect(JSON.stringify(retry.body)).not.toContain('PRIVATE FINAL WORDS');
 });
 
+it('withdraws a buffered archived-question body when its original deadline passes',async()=>{
+  const f=await fixture(),start=f.clock.now();let now=start;
+  vi.spyOn(f.clock,'now').mockImplementation(()=>now);
+  const thread=f.root.services.comms!.threads.open({member:'alice',agent:'art',title:'Archive'});
+  const until=new Date(start+1000).toISOString(),at=new Date(start).toISOString();
+  f.db.insert(archivedQuestions).values({thread:thread.id,ref:'old',sourceMember:'alice',sourceAgent:'art',
+    sourceConversation:thread.conversation,raisedAt:at,seenAt:at,keepUntil:until,
+    words:await f.sealFixtureWords(JSON.stringify({text:'Historical question'}))}).run();
+  const source='query($id:String!){commsArchivedQuestions(thread:$id){ref body{text}}}';
+  const response=await f.root.http.request('/graphql',{method:'POST',
+    headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.alice.cookie}`},
+    body:JSON.stringify({query:source,variables:{id:thread.id}})});
+  expect(response.status).toBe(200);
+  now=start+1000;
+  await expect(response.text()).rejects.toThrow('Data access ended');
+  expect((await f.query(source,'alice',{id:thread.id})).body.data?.commsArchivedQuestions).toEqual([{ref:'old',body:null}]);
+});
+
 it('withdraws a returned but unread HTTP response after its reader loses read access', async () => {
   const f=await fixture();
   expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE BUFFERED LABEL'},'open')).status).toBe(200);
@@ -343,7 +361,7 @@ it('keeps the open thread selection bounded as its retained archived questions g
   let small=0;
   for(let n=0;n<10;n++){
     const at=new Date(f.clock.now()).toISOString();
-    f.db.insert(archivedQuestions).values({thread:thread.id,ref:'digest:'+n,raisedAt:at,seenAt:at,
+    f.db.insert(archivedQuestions).values({thread:thread.id,sourceMember:'alice',sourceAgent:'art',sourceConversation:thread.conversation,ref:'digest:'+n,raisedAt:at,seenAt:at,
       keepUntil:new Date(f.clock.now()+86_400_000).toISOString(),words:await f.sealFixtureWords(JSON.stringify({text:'Historical question '+n}))}).run();
     if(n===1)small=await read(2);
   }
