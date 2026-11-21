@@ -57,3 +57,37 @@ it('validates scope before opening an envelope, rolls back conflicts and keeps p
     client.close();archive.close();writer.close();rmSync(dir,{recursive:true,force:true});
   }
 });
+
+it('keeps tool state after expiry and cannot restore erased private details on retry', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loom-tool-history-'));
+  const path = join(dir, 'source.db');
+  const writer = new Database(path), archive = new Database(path, { readonly: true }), client = new Database(':memory:');
+  let current = '2026-11-20T00:00:00.000Z';
+  try {
+    const destination = createDataSchema(client);
+    client.exec(`INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES('fern','','','','drop','dot');
+      INSERT INTO members(id,role,joined_at) VALUES('alex','member','${current}')`);
+    const thread = new Threads(destination, () => current).open({member:'alex',agent:'fern',title:'Garden'});
+    writer.exec('CREATE TABLE comms_threads(id,conversation,agent,member,project); CREATE TABLE comms_messages(thread,seq,kind,sender,id,at,run,text,delivered,card_json,step)');
+    writer.prepare('INSERT INTO comms_threads VALUES(?,?,?,?,null)').run(thread.id, thread.conversation, 'fern', 'alex');
+    const summary = Buffer.from('Garden'), step = Buffer.from('{"body":"garden diff"}');
+    writer.prepare("INSERT INTO comms_messages VALUES(?,1,'card','fern','step-edit',?,'run',?,null,?,?)")
+      .run(thread.id, current, summary, JSON.stringify({ tool:'Edit', state:'done', exit:0 }), step);
+    let opens = 0;
+    const run = () => importTextHistory({ archive, household:archive, destination, cards:true, sourceDays:2, now:() => current,
+      key:{ async open(bytes){ opens++; return bytes.toString(); }, async seal(){ throw Error('unexpected'); }, hash(){ throw Error('unexpected'); } } });
+    expect(await run()).toEqual({inserted:1,total:1});
+    const read = () => client.prepare('SELECT words, archived_step_words detail, card_state state FROM messages').get();
+    expect(read()).toEqual({ words:summary, detail:step, state:'done' });
+    client.exec('UPDATE messages SET archived_step_words=NULL');
+    expect(await run()).toEqual({inserted:0,total:1});
+    expect(read()).toEqual({ words:summary, detail:null, state:'done' });
+    current = '2026-11-22T00:00:00.000Z';
+    const before = opens;
+    await run();
+    expect(opens).toBe(before);
+    expect(read()).toEqual({ words:null, detail:null, state:'done' });
+  } finally {
+    archive.close(); writer.close(); client.close(); rmSync(dir, {recursive:true, force:true});
+  }
+});

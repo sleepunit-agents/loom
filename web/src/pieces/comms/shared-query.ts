@@ -2,7 +2,7 @@ import { archivedQuestionFields, type ArchivedQuestion } from './archived-questi
 import type { QuerySelection } from '../../data/graphql/selection';
 import type { CommsMessage, CommsThread } from '../comms-view/model';
 export const threadFields = 'id conversation venue title agent project member pinned archivedAt lastAt readSeq working stopRequested';
-export const messageFields = 'thread seq kind sender at words wordsKeepUntil inboxItem verdict tool cardState delivery';
+export const messageFields = 'thread seq kind sender at words wordsKeepUntil inboxItem verdict tool cardState delivery stepInfo { exit limit parent t0 t1 } stepDetails { detail body result items { text state } }';
 export const commsQuery = `query Comms($archived:Boolean!,$search:String!,$offset:Int!){
  homeComms { member agents }
  commsFolders { threads archived }
@@ -40,6 +40,6 @@ export function commsThreadSelection(id: string, before?: number): QuerySelectio
 }
 /** Withhold private wording without waiting for a live refresh at the deadline. */
 export function retainedCommsMessage(row: CommsMessage, now: number): CommsMessage {
-  return row.wordsKeepUntil && Date.parse(row.wordsKeepUntil) > now ? row : { ...row, words: null };
+  return row.wordsKeepUntil && Date.parse(row.wordsKeepUntil) > now ? row : { ...row, words: null, stepDetails:null };
 }
 export function commsThreadPath(id: string) { return `/p/comms-preview/thread/${encodeURIComponent(id.replace(/^th:/,''))}`; }

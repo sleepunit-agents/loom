@@ -11,6 +11,8 @@ export interface CommsMessage {
   thread: string; seq: number; kind: 'message' | 'reply' | 'card' | 'ask' | 'answer' | 'notice';
   sender: string; at: string; wordsKeepUntil?: string | null; words: string | null; inboxItem?: string | null;
   verdict?: 'yes' | 'no' | null; tool?: string | null; cardState?: 'running' | 'done' | 'failed' | null;
+  stepInfo?: { exit?:number|null; limit?:number|null; parent?:string|null; t0?:string|null; t1?:string|null }|null;
+  stepDetails?: { detail?:string|null; body?:string|null; result?:string|null; items?:{text:string;state:string}[]|null }|null;
   delivery?: 'sending' | 'held' | 'failed' | 'delivered' | null;
 }
 export type Status = 'live' | 'loading' | 'offline' | 'denied';

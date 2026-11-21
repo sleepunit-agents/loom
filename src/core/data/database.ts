@@ -399,6 +399,9 @@ const upgrades: readonly (readonly string[])[] = [
       SELECT jobs.id,jobs.queued_at,jobs.queued_at,1 FROM jobs JOIN conversations ON conversations.id=jobs.conversation
       WHERE jobs.state='running' AND (conversations.venue IN ('slack','discord')
         OR (conversations.venue='loom' AND conversations.member IS NOT NULL))`],
+  // 34: extra v1 tool-card words have exactly the parent message's lifetime.
+  ['ALTER TABLE messages ADD COLUMN archived_step_meta text',
+    `ALTER TABLE messages ADD COLUMN archived_step_words blob CONSTRAINT "messages_step_words_kept" CHECK("messages"."archived_step_words" is null or ("messages"."kind" = 'card' and "messages"."words" is not null))`],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

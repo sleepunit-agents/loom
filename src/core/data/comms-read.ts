@@ -7,7 +7,7 @@ function visibleThread(id:SQL,allowed:SQL){return sql`exists(select 1 from ${thr
 /** Generated metadata page: filter current conversation authority in SQL,
  * before pagination. Nested relations carry only labels, never ciphertext. */
 export function readCommsPage(db:DataDatabase,thread:string,allowed:SQL,before:number|undefined,count:number){
-  const rows=db.query.messages.findMany({columns:{words:false},
+  const rows=db.query.messages.findMany({columns:{words:false,archivedStepWords:false},
     with:{threadRow:{columns:{conversation:true},with:{conversationRow:{columns:{id:true,agent:true,project:true,member:true}}}}},
     where:f=>and(eq(f.thread,thread),before===undefined?undefined:lt(f.seq,before),sql`${{getSQL:()=>visibleThread(sql`${f.thread}`,allowed)}}`),
     orderBy:f=>desc(f.seq),limit:count,
@@ -19,14 +19,14 @@ export function readCommsPage(db:DataDatabase,thread:string,allowed:SQL,before:n
 }
 /** A private message read set lives only for one selection. Both reads use
  * the same current SQL authority; compare again after every decrypt batch. */
-export function readCommsSet(db:DataDatabase,thread:string,seqs:number[],allowed:SQL,words:boolean){
+export function readCommsSet(db:DataDatabase,thread:string,seqs:number[],allowed:SQL,words:boolean,stepWords=false){
   const scope=db.query.threads.findFirst({columns:{id:true,conversation:true},
     with:{conversationRow:{columns:{id:true,agent:true,project:true,member:true}}},
     where:f=>{const visible=sql`exists(select 1 from ${conversations} where ${conversations.id}=${f.conversation} and ${allowed})`;return and(eq(f.id,thread),sql`${{getSQL:()=>visible}}`);},
   }).sync();
-  const rows=db.query.messages.findMany({columns:words?undefined:{words:false},
+  const rows=db.query.messages.findMany({columns:stepWords?undefined:words?{archivedStepWords:false}:{words:false,archivedStepWords:false},
     where:f=>and(eq(f.thread,thread),inArray(f.seq,seqs),sql`${{getSQL:()=>visibleThread(sql`${f.thread}`,allowed)}}`),orderBy:f=>asc(f.seq),
-  }).sync().map(row=>({...row,words:words?row.words:null}));
+  }).sync().map(row=>({...row,words:words||stepWords?row.words:null,archivedStepWords:stepWords?row.archivedStepWords:null}));
   const days=commsKeepDays(db);
   const entries=new Map(rows.flatMap(message=>{
     const cv=scope?.conversationRow;

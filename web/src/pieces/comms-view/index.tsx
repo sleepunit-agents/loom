@@ -40,6 +40,21 @@ type Drawing = { member: string; name(id: string): string; zone?: string; cards?
 const mine = (message: CommsMessage) => message.kind === 'message' || message.kind === 'answer';
 const joins = (message: CommsMessage) => message.kind !== 'card' && message.kind !== 'notice';
 /** A step's and a delivery's stored state, in plain words. */
+function ArchivedStep({message,zone}:{message:CommsMessage;zone:Parameters<typeof fullTime>[1]}) {
+  const info=message.stepInfo, words=message.stepDetails;
+  const facts=[
+    info?.t0 && `Started ${fullTime(info.t0,zone)}`, info?.t1 && `Ended ${fullTime(info.t1,zone)}`,
+    info?.exit!=null && `Exit code ${info.exit}`, info?.limit!=null && `Time limit ${info.limit}s`,
+    info?.parent && `Parent ${info.parent}`,
+  ].filter(Boolean);
+  if(!facts.length && !words)return null;
+  return <details><summary>Step details</summary>
+    {facts.length>0 && <p>{facts.join(' · ')}</p>}
+    {words?.detail && <pre>{words.detail}</pre>}{words?.body && <pre>{words.body}</pre>}
+    {words?.result && <p>{words.result}</p>}
+    {words?.items?.length ? <ul>{words.items.map((item,i)=><li key={i}>{item.text} · {item.state}</li>)}</ul>:null}
+  </details>;
+}
 const stepWords = { running: 'in progress', done: 'done', failed: 'failed' } as const;
 const deliveryWords: Record<string, string | undefined> = { sending: 'Sending…', held: 'On hold', failed: 'Not delivered' };
 /** Messages a few minutes apart from one sender are one group, under one name. */
@@ -73,7 +88,8 @@ function Entries({ messages, refs, drawing }: { messages: readonly CommsMessage[
     const first = group[0], who = first.sender === drawing.member ? 'You' : drawing.name(first.sender);
     const said = <span className="comms-sr">{who}, {fullTime(first.at, drawing.zone)}: </span>;
     if (first.kind === 'card') return <li key={first.seq} className="comms-step" data-state={first.cardState ?? 'running'}>
-      {said}<span>{first.words ?? first.tool ?? 'Working'} · {stepWords[first.cardState ?? 'running']}</span></li>;
+      {said}<span>{first.words ?? first.tool ?? 'Working'} · {stepWords[first.cardState ?? 'running']}</span>
+      <ArchivedStep message={first} zone={drawing.zone}/></li>;
     if (first.kind === 'notice') return <li key={first.seq} className="comms-notice">{said}{first.words ?? 'Message words are unavailable'}</li>;
     return <li key={first.seq} className="comms-group" data-side={mine(first) ? 'me' : 'them'}>
       <p className="comms-group__who" aria-hidden="true"><span>{who}</span><time dateTime={first.at} title={fullTime(first.at, drawing.zone)}>{briefTime(first.at, drawing.zone)}</time></p>
