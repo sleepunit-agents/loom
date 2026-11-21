@@ -39,8 +39,7 @@ function guarded<T>(path: string, rule: string, fn: () => T): T {
 /** A retired WAL database in a sealed directory cannot create read-coordination
  * files. Only a checkpointed main file with no sidecars may take this path. */
 async function backupDatabase(source: string, temporary: string): Promise<void> {
-  const sealed = () => (lstatSync(source).mode & 0o222) === 0 &&
-    (lstatSync(dirname(source)).mode & 0o222) === 0 &&
+  const sealed = () => (lstatSync(dirname(source)).mode & 0o222) === 0 &&
     ['-wal','-shm','-journal'].every(suffix => !lstatSync(source + suffix, {throwIfNoEntry:false}));
   if (!sealed()) {
     const db = new Database(source, { readonly: true, fileMustExist: true });
@@ -171,13 +170,13 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     } else if (!stat.isFile()) inventory.skipped.push({ path: label(path), rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
       if (memoryFile && logical !== path &&
-          !(fileAlias && identityPage(logical) && identityPage(path) && logical.split('/')[1] === path.split('/')[1])) {
+          !(identityPage(logical) && identityPage(path) && logical.split('/')[1] === path.split('/')[1])) {
         refusal(logical, 'memory source alias must stay within its agent identity pages');
       }
       addCopy(`${prefix}/${path}`, input, stat.size);
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
-      const preserveAlias = prefix === 'home' ? fileAlias && (memoryFile || importerPatterns.some(pattern => matches(logical, pattern))) : declaredAlias;
+      const preserveAlias = prefix === 'home' ? memoryFile || (fileAlias && importerPatterns.some(pattern => matches(logical, pattern))) : declaredAlias;
       if (logical !== path && preserveAlias) {
         addCopy(`${prefix}/${logical}`, input, stat.size);
         if (!inventory.followed.some(alias => alias.path === label(logical) && alias.realPath === label(path))) inventory.followed.push({path: label(logical), realPath: label(path)});
@@ -265,7 +264,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
       destinationPath(output);
       if (existsSync(output)) refusal(path, 'destination entry already exists');
       const selectedDocument=bridgeDocumentPath(file.path);
-      const attachment = file.path.startsWith('home/') && noteAttachmentPath(file.path.slice(5));
+      const attachment = householdMemory && file.path.startsWith('home/') && noteAttachmentPath(file.path.slice(5));
       const sqlite = !attachment && !selectedDocument&&guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
         const copyKey = JSON.stringify([file.source, sqlite]);
@@ -290,6 +289,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
         } else copyMigrationFile(file.source, output);
         const digest = fileDigest(output);
+        if (attachment && digest.sha256 !== basename(file.path)) refusal(path, 'attachment digest differs from its name');
         if(!selectedDocument)copied.set(copyKey, output);
         manifest.files.push({ path: file.path, ...digest, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }

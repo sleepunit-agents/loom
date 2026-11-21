@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { Readable } from 'node:stream';
 import { run } from './migrate.js';
 import { canonicalSnapshotPath, migrateSnapshot, createSnapshot, readSnapshot } from './migration-snapshot.js';
+import { prepareMigrationPlan } from './migration-plan.js';
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -491,7 +492,9 @@ test('refuses aggregate document growth after inventory before completion',async
 
 test('captures authored memory pages and byte-exact SQLite attachments for a rebuilt home', async () => {
   const { home, root, to } = fixture(), agent = join(home, 'agents', 'fern');
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['fern'],default:'fern',owner:'alex'}));
   mkdirSync(join(agent, 'roles'), {recursive:true});
+  symlinkSync('roles', join(agent, 'projects'));
   writeFileSync(join(agent, 'roles', 'garden.md'), 'Garden');
   symlinkSync('roles/garden.md', join(agent, 'IDENTITY.md'));
   const sqlite = join(root, 'source.db'), db = new Database(sqlite);
@@ -499,6 +502,21 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   const bytes = readFileSync(sqlite), hash = createHash('sha256').update(bytes).digest('hex');
   const prefix = join(agent, 'note-files', hash.slice(0,2));
   mkdirSync(prefix, {recursive:true}); writeFileSync(join(prefix, hash), bytes);
+  mkdirSync(join(home,'commons'));
+  const databases = ['agents/fern/notes.db','commons/knowledge.db','commons/people.db'];
+  for (const name of databases) writeFileSync(join(home,name),bytes);
+  symlinkSync(join('note-files',hash.slice(0,2),hash),join(agent,'memories.db'));
+  const legacy = join(root,'legacy');
+  const legacyManifest = await createSnapshot(home,legacy);
+  expect(legacyManifest.files.find(f=>f.path.endsWith(hash))?.kind).toBe('sqlite');
+  expect(legacyManifest.files.some(f=>f.path.endsWith('/notes.db'))).toBe(false);
+  expect(()=>prepareMigrationPlan(legacy)).not.toThrow();
+  const dry: string[] = [];
+  expect(await migrateSnapshot(['--dry-run','--household-memory','--from',home,'--to',to], {
+    stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:s=>dry.push(s),stderr:s=>dry.push(s)
+  })).toBe(0);
+  expect(JSON.parse(dry.join('')).copies.map((f:{path:string})=>f.path)).toEqual(expect.arrayContaining(databases.map(p=>'home/'+p)));
+  expect(existsSync(to)).toBe(false);
   const messages: string[] = [];
   expect(await migrateSnapshot(['--from',home,'--to',to,'--household-memory'], {
     stdin: Readable.from([]), stdinIsTTY: false, env: {}, stdout: text => messages.push(text), stderr: text => messages.push(text)
@@ -506,12 +524,18 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   const manifest = readSnapshot(to);
   expect(readFileSync(join(to,'home/agents/fern/IDENTITY.md'),'utf8')).toBe('Garden');
   expect(manifest.files.find(row => row.path.endsWith(hash))).toMatchObject({kind:'file', sha256:hash});
+  expect(readFileSync(join(to,'home/agents/fern/projects/garden.md'),'utf8')).toBe('Garden');
+  for (const name of databases) expect(manifest.files.find(f=>f.path==='home/'+name)?.kind).toBe('sqlite');
+  expect(()=>prepareMigrationPlan(to)).not.toThrow();
   expect(manifest.followed).toContainEqual({path:'agents/fern/IDENTITY.md', realPath:'agents/fern/roles/garden.md'});
   rmSync(join(agent, 'IDENTITY.md')); symlinkSync('../../comms.key', join(agent,'IDENTITY.md'));
   await expect(createSnapshot(home,join(root,'refused'),undefined,{},true)).rejects.toThrow(/identity pages/);
+  mkdirSync(join(home,'agents','other')); writeFileSync(join(home,'agents/other/IDENTITY.md'),'Other');
+  rmSync(join(agent,'IDENTITY.md')); symlinkSync('../other/IDENTITY.md',join(agent,'IDENTITY.md'));
+  await expect(createSnapshot(home,join(root,'cross-agent'),undefined,{},true)).rejects.toThrow(/identity pages/);
 });
 
-test('captures a retired checkpointed WAL task store inside a read-only directory', async () => {
+test.each([0o444,0o644])('captures a retired checkpointed WAL task store (mode %i) inside a read-only directory', async mode => {
   const { root, home, to } = fixture();
   const dir = join(root,'retired');
   mkdirSync(dir);
@@ -520,7 +544,7 @@ test('captures a retired checkpointed WAL task store inside a read-only director
   db.exec("CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('t-1')");
   db.close();
   const original = readFileSync(path);
-  chmodSync(path,0o444); chmodSync(dir,0o555);
+  chmodSync(path,mode); chmodSync(dir,0o555);
   try {
     await createSnapshot(home,to,path);
     const copy = new Database(join(to,'tasks/store.db'),{readonly:true});

@@ -83,7 +83,10 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
     const fd = openSync(join(root, file.path), 'r');
     const header = Buffer.alloc(16);
     try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
-    const attachment = file.path.startsWith('home/') && noteAttachmentPath(file.path.slice(5));
+    // Older snapshots backed up a SQLite attachment reached via a registered
+    // database alias. Raw content-addressed copies retain the digest in their name.
+    const attachment = file.kind === 'file' && file.path.startsWith('home/') &&
+      noteAttachmentPath(file.path.slice(5)) && file.sha256 === basename(file.path);
     const kind = !attachment && !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
     if (kind !== file.kind) throw Error('Snapshot kind disagrees with file contents');
   }
