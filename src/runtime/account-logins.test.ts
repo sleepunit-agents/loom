@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import { createDataSchema } from '../core/data/database.js';
 import { boxes, inbox, members, modelAccountBoxes, modelAccountLogins, modelAccounts } from '../core/data/schema.js';
 import { AccountLogins, LOGIN_ENDING_MS } from './account-logins.js';
@@ -179,17 +180,25 @@ it('warns again when a renewal is rolled back without signing out', () => {
   const report = (expiresAt: string) => f.service.checked('loom', [{ ...claude, place: 'host', state: 'signed-in', expiresAt }]);
   report(end);
   const [first] = f.service.sweep();
+  const began = f.rows()[0].since;
+  f.advance(1000);
   report(f.at(30 * DAY));
   expect(f.mail()[0].state).toBe('resolved');
+  f.advance(1000);
   report(end);
+  expect(f.rows()[0]).toMatchObject({since:began, checkedAt:f.now()});
   const [second] = f.service.sweep();
   expect(second.state).toBe('waiting');
   expect(second.id).not.toBe(first.id);
   expect(f.service.sweep()[0].id).toBe(second.id);
   // Simulate the resolved item an older release kept under the current key.
-  f.db.update(inbox).set({ state: 'resolved' }).where(eq(inbox.id, second.id)).run();
+  const mail = new Conversations(f.db, f.now, lateMailWaits);
+  mail.resolveItem(second.id, 'Signed in again');
   const [third] = f.service.sweep();
   expect(third.state).toBe('waiting');
   expect(third.id).not.toBe(second.id);
-  expect(f.mail().filter(item => item.state === 'waiting')).toHaveLength(1);
+  expect(f.mail().map(item => [item.id, item.state])).toEqual([[first.id, 'resolved'], [second.id, 'resolved'], [third.id, 'waiting']]);
+  mail.resolveItem(third.id, 'Dismissed');
+  expect(f.service.sweep()[0].id).toBe(third.id);
+  expect(f.mail()).toHaveLength(3);
 });

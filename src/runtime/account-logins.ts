@@ -170,7 +170,7 @@ export class AccountLogins {
         // Releases before occasion retirement left a resolved warning under the active key.
         const words = `The ${account.label} sign-in on ${box.name} (${placeWords(login)}) ${when}, on ${login.expiresAt!.slice(0, 10)}.`;
         const notice = send(row, id, words);
-        if (notice.state !== 'resolved') return [notice];
+        if (notice.state !== 'resolved' || notice.resolution !== 'Signed in again') return [notice];
         this.retireEnding(id);
         return [send(row, id, words)];
       });
