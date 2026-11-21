@@ -19,15 +19,15 @@ export async function withFictionalMemoryHome(measure) {
   app=await startSharedHome({home,clock,port:0,stdout(){}});
   credential??=app.writes.run(()=>app.services.signin.issue({kind:'agent',agent:'fern',label:'Fictional memory walkthrough'})).value;
  }
- async function post(path,body,status=200){
-  const r=await fetch(app.url+path,{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'},body:JSON.stringify(body)});
+ async function post(path,body,status=200,token=credential.token){
+  const r=await fetch(app.url+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});
   assert.equal(r.status,status);
   const value=await r.json();
   assert.equal(value.errors,undefined);
   return value;
  }
- async function command(name,input){
-  const result=await post('/api/'+name,{id:randomUUID(),input});assert.equal(result.ok,true);return result.value;
+ async function command(name,input,token=credential.token){
+  const result=await post('/api/'+name,{id:randomUUID(),input},200,token);assert.equal(result.ok,true);return result.value;
  }
  try{
   const example=await exampleHome(home);assert.equal(example.fictional,true);
@@ -37,7 +37,8 @@ export async function withFictionalMemoryHome(measure) {
   p.adapters=adapter;
   p.memory.noteSweepAgent='fern';writeFileSync(config,JSON.stringify(p));
   await open(start);
-  return await measure({command,post,open,advance:ms=>clock.advance(ms),start});
+  const issue=input=>app.writes.run(()=>app.services.signin.issue(input)).value.token;
+  return await measure({command,post,open,issue,home,advance:ms=>clock.advance(ms),start});
  } finally {
   try {
    if (credential && app) app.writes.run(()=>app.services.signin.revoke(credential.fingerprint));

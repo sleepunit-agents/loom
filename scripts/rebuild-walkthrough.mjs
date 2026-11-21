@@ -238,6 +238,12 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  phase='agent memory files';
+  try {
+   const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
+   report.actions.agentMemoryFiles=await agentMemoryFiles();
+  } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
+  save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
    const {noteLifetimeEvidence}=await import('./rebuild-note-lifetimes.mjs');

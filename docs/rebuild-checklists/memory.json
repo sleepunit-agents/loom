@@ -12,7 +12,11 @@
     {
       "id": "memory-002",
       "promise": "Keeps each agent's memories in that agent's own files.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "agentMemoryFiles"
+      }
     },
     {
       "id": "memory-003",
