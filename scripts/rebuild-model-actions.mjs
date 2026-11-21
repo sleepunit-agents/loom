@@ -16,7 +16,7 @@ export async function modelAccountActions({page,tile,example,subscriptions,out})
   check(account.signedInOn.length===1&&account.signedInOn[0].id===example.runtime.box,'The actual account-to-worker binding differs');
   const card=summary.locator('..');
   const configured=card.getByRole('region',{name:'Sign-ins',exact:true});
-  check(await configured.getByText('Configured machines: '+account.signedInOn[0].name,{exact:true}).isVisible(),'The visible subscription omitted its configured worker');
+  await configured.getByText('Configured machines: '+account.signedInOn[0].name,{exact:true}).waitFor().catch(()=>{throw new ObservedModelFailure('The visible subscription omitted its configured worker');});
   const screenshot='action-modelsMachines.png';await card.screenshot({path:join(out,screenshot)});
   return{modelsMachines:{ok:true,reason:'The authenticated account selection and visible Subscriptions reader show the configured worker registered by the example.',account:account.id,box:example.runtime.box,screenshot},modelsOwnerInformation:{inconclusive:true,reason:'Only the subscription’s worker binding was checked. Usage, preference order and distinct account-owner access rules are not measured here.'}};
  }catch(error){return{modelsMachines:error instanceof ObservedModelFailure?{ok:false,error:String(error)}:{inconclusive:true,reason:'The Models observation could not complete.'}};}

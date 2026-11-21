@@ -169,8 +169,9 @@ export async function* walkthroughSteps(output) {
     }
     if(title==='Machines and jobs'){
      await tile.getByRole('combobox',{name:'Jobs for'}).selectOption('moss');
-     const jobs=tile.getByRole('group',{name:'moss jobs now',exact:true}).locator('.loom-kit-note');
+     const jobs=tile.getByRole('group',{name:'moss queued jobs',exact:true}).locator('.loom-kit-note');
      await jobs.filter({hasText:report.example.runtime.job.title}).waitFor();
+     row.queuedShownAsRunning=await tile.getByRole('group',{name:'moss jobs now',exact:true}).getByText(report.example.runtime.job.title,{exact:true}).count();
      row.runtimeJobs=await jobs.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('.loom-kit-title')?.textContent,status:row.querySelector('.loom-kit-meta')?.textContent})));
      row.text=await tile.innerText();
     }
