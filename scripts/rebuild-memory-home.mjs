@@ -41,7 +41,7 @@ export async function withFictionalMemoryHome(measure,{realEmbedding=false,alter
   p.memory.noteSweepAgent='fern';writeFileSync(config,JSON.stringify(p));
   await open(start);
   const issue=input=>app.writes.run(()=>app.services.signin.issue(input)).value.token;
-  return await measure({command,post,open,issue,home,advance:ms=>clock.advance(ms),start});
+  return await measure({command,post,open,issue,home,connectAgent:()=>({url:app.url,token:credential.token}),advance:ms=>clock.advance(ms),start});
  } finally {
   try {
    if (credential && app) app.writes.run(()=>app.services.signin.revoke(credential.fingerprint));

@@ -163,6 +163,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
    # taskLifecycle claims, hands back, claims again, closes, reopens and closes again; taskStructure covers ready and blocked.
    if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
+ if f.stem=='tools':
+  for row in rows:
+   if row['promise']=='Write a note, read one by path, list notes under a prefix.':row['probe']={'kind':'action','action':'namedNotes'}
+   if row['promise']=='Search knowledge pages, read one, and add one.':row['probe']={'kind':'action','action':'namedKnowledge'}
  if f.stem=='approvals':
   for row in rows:
    # approvalPreparedChanges denies one dangerous card with one answer and allows another, which takes the second yes.

@@ -110,6 +110,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('knowledge-due');
   expect(step.value.actions.knowledgeDue,JSON.stringify(step.value.actions.knowledgeDue)).toMatchObject({ok:true,days:30});
  });
+ it('writes and reads notes and shared Knowledge through the named MCP tools',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('named-agent-tools');
+  for(const name of ['namedNotes','namedKnowledge'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
   expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});
