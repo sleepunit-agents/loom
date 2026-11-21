@@ -8,7 +8,7 @@ import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInbo
 import { commsKeepDays } from '../data/comms-days.js';
 type Item=typeof inbox.$inferSelect;
 export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:string|null;link:string|null};
-export type AnswerContext={question:AnswerQuestion;until:number};
+export type AnswerContext={question:AnswerQuestion;until:number;at:string};
 export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Promise<()=>AnswerContext|null>{
  const {db}=comms;
  if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(db,answer)){
@@ -18,7 +18,7 @@ export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Prom
   const envelope=privateInboxEnvelope(before.words);if(!envelope)return()=>null;
   const value=privateInboxQuestion(await comms.key.open(Buffer.from(envelope.cipher,'base64')));
   const question:AnswerQuestion={words:value.words,why:value.why??null,ifYes:value.ifYes??null,ifNo:value.ifNo??null,link:value.link??null};
-  return()=>{const after=snapshot();if(!after||privateInboxDeadline(after,days())<=Date.parse(comms.now()))return null;if(JSON.stringify(after)!==JSON.stringify(before))throw Error('Question context changed; prepare again');return {question,until:privateInboxDeadline(after,days())};};
+  return()=>{const after=snapshot();if(!after||privateInboxDeadline(after,days())<=Date.parse(comms.now()))return null;if(JSON.stringify(after)!==JSON.stringify(before))throw Error('Question context changed; prepare again');return {question,at:after.at,until:privateInboxDeadline(after,days())};};
  }
  if(answer.source!=='answer'||!answer.thread||answer.messageSeq===null||!answer.sourceId||answer.fromKind!=='person'||!answer.fromId)return()=>null;
  const snapshot=()=>{
@@ -59,6 +59,6 @@ export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Prom
   const until=deadline(after);
   if(!(until>Date.parse(comms.now())))return null;
   if(JSON.stringify(after)!==JSON.stringify(before))throw Error('Question context changed; prepare again');
-  return until>Date.parse(comms.now())?{question,until}:null;
+  return until>Date.parse(comms.now())?{question,until,at:after.message.at}:null;
  };
 }

@@ -1,5 +1,14 @@
 /** Fresh native bodies get bounded retained dialogue through existing take only. */
 import {afterEach,expect,it,vi} from 'vitest';
+import Database from 'better-sqlite3';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {bodySessions} from './runtime/body-session.js';
+import {jobRoom} from './shared-place-mail.js';
+import {bodyCommandClient} from './runtime/body-command-client.js';
+import {dataDatabase} from './core/data/database.js';
+import {ConversationSessions} from './core/conversations/sessions.js';
 import {eq,and} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
@@ -225,4 +234,119 @@ it.each(['multiple','source','count'] as const)('rejects malformed history at th
   return Response.json(value);
  }});clean.push(()=>client.close());
  await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();
+});
+
+it('retains the issued input deadline after reopening the database and discards a checkpoint at that deadline',async()=>{
+ const f=await bodyFixture(clean), now=()=>new Date(f.clock.now()).toISOString();
+ const sdkBody=sdk(f), start=now(), deadline=new Date(f.clock.now()+5000).toISOString();
+ await f.send('Earlier input','earlier');
+ f.db.update(s.messages).set({keepUntil:deadline}).where(eq(s.messages.thread,f.thread.id)).run();
+ await sdkBody.takeAndAccept(async item=>{expect(item.keepUntil).toBe(deadline);});
+ f.clock.advance(1000);
+ await f.send('Later input','later');
+ await sdkBody.takeAndAccept(async()=>{});
+ const copy=new Database(f.db.$client.serialize());
+ clean.push(()=>copy.close());
+ const reopened=dataDatabase(copy,now);
+ expect(reopened.select().from(s.jobSessionLimits).get()).toEqual({job:'job',since:start,keepUntil:deadline});
+ const sessions=new ConversationSessions(reopened,now,f.key);
+ const prepared=await sessions.seal({conversation:f.thread.conversation,harness:'claude',model:'fixture',session:'abcd-1234',
+  files:Buffer.from('fictional checkpoint').toString('base64')});
+ expect(sessions.store(prepared,'job')).toBe(true);
+ expect(reopened.select().from(s.conversationSessions).get()?.keepUntil).toBe(deadline);
+ f.clock.advance(4000);
+ expect(await sessions.open(f.thread.conversation,'claude','fixture')).toBeNull();
+ expect(sessions.store(prepared,'job')).toBe(false);
+});
+
+it('keeps a replacement job bound by the checkpoint it could restore even after the source is erased',async()=>{
+ const f=await bodyFixture(clean), now=()=>new Date(f.clock.now()).toISOString(), jobs=new Jobs(f.db,now);
+ const sessions=new ConversationSessions(f.db,now,f.key);
+ const input={conversation:f.thread.conversation,harness:'claude',model:'fixture',session:'abcd-1234',
+   files:Buffer.from('fictional checkpoint').toString('base64')};
+ const expiry=new Date(f.clock.now()+1000).toISOString();
+ expect(sessions.store(await sessions.seal({...input,keepUntil:expiry}))).toBe(true);
+ f.db.update(s.jobs).set({state:'starting',harness:'claude'}).where(eq(s.jobs.id,'job')).run();
+ jobs.started('job','box','fixture');
+ expect(await sessions.open(input.conversation,'claude','fixture')).not.toBeNull();
+ f.clock.advance(1000);
+ f.root.services.comms!.expire();
+ expect(f.db.select().from(s.conversationSessions).all()).toEqual([]);
+ expect(sessions.store(await sessions.seal(input),'job')).toBe(false);
+ jobs.finish('job','box',0);
+ expect(f.db.select().from(s.jobSessionLimits).all()).toEqual([]);
+});
+
+it('returns stable coverage keys only to a worker that requests them and omits them from the model prompt', async()=>{
+ const f=await fixture();
+ const prior=f.db.select().from(s.messages).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.seq,1))).get()!;
+ await f.client.takeAndAccept(async item=>{
+   expect(item.history.map(line=>line.sourceKey)).toEqual(['input:'+prior.inboxItem,'reply:2']);
+   expect(bodyMailContext(item)).not.toContain('sourceKey');
+ },50,true);
+});
+
+it('hands a private Comms checkpoint to the replacement body after a loss and keeps the delivered deadline authoritative',async()=>{
+ const f=await bodyFixture(clean), now=()=>new Date(f.clock.now()).toISOString(), jobs=new Jobs(f.db,now);
+ f.db.update(s.jobs).set({harness:'claude'}).where(eq(s.jobs.id,'job')).run();
+ const old=sdk(f);
+ await f.send('First private input','first');
+ const expiry=new Date(f.clock.now()+600000).toISOString();
+ f.db.update(s.messages).set({keepUntil:expiry}).where(eq(s.messages.thread,f.thread.id)).run();
+ const session='0f0e0d0c-1111-4222-8333-444455556666';
+ const run=async(id:string,box:string,token:string,continuing:boolean)=>{
+  const base=mkdtempSync(join(tmpdir(),'loom-private-checkpoint-')),place=join(base,'.claude');
+  clean.push(()=>rmSync(base,{recursive:true,force:true}));
+  mkdirSync(place);
+  const env={CLAUDE_CONFIG_DIR:place,LOOM_BODY_OWN_HARNESS:'1'};
+  const path=join(place,'projects','-house',session+'.jsonl');
+  const fetch:typeof globalThis.fetch=async(url,init)=>f.root.http.request(new Request(url,init));
+  const signal=new AbortController().signal;
+  const client=bodyCommandClient({url:'https://loom.invalid',clock:f.clock,token,signal,fetch});
+  clean.push(()=>client.close());
+  const keeper=bodySessions(client,'claude',env,place,base)!;
+  const job={id,agent:'art',box,run:{nestedContainers:false,gpu:false,ports:[],policy:jobRoom(f.db,{id,agent:'art',conversation:f.thread.conversation})},venue:'loom',thread:f.thread.id,conversation:f.thread.conversation,
+    model:'fixture',account:'fixture',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
+  const native=vi.fn<NonNullable<Parameters<typeof bodyProgram>[0]['native']>>(async(_room,context,_signal,options)=>{
+   if(continuing){
+    expect(options?.resume).toBe(session);
+    expect(context).toContain('Continue');expect(context).not.toContain('First private input');expect(context).not.toContain('Recorded reply');
+    expect(readFileSync(path,'utf8')).toBe('fictional first turn');
+   }else{
+    expect(options?.resume).toBeUndefined();
+    expect(context).toContain('First private input');
+    mkdirSync(join(place,'projects','-house'),{recursive:true});
+   }
+   writeFileSync(path,continuing?'fictional second turn':'fictional first turn');
+   return {text:continuing?'Continued reply':'Recorded reply',model:'fixture',actions:[],session};
+  });
+  const exit=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fixture/claude',cwd:'/fixture'}),
+   stdin:async()=>Buffer.from(JSON.stringify({job,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:id,token}})),
+   env,signal,clock:f.clock,fetch,startup:async()=>{},native,sessions:keeper,error:()=>{}});
+  expect(exit).toBe(0);
+  expect(native).toHaveBeenCalledOnce();
+  expect(existsSync(path)).toBe(false);
+ };
+ const firstToken='body_'+'c'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:hash(firstToken),label:'First worker',kind:'agent',agent:'art',job:'job',createdAt:now()}).run();
+ await run('job','box',firstToken,false);
+ const stored=f.db.select().from(s.conversationSessions).get();
+ expect(stored?.keepUntil).toBe(expiry);
+ await f.send('Continue','continue');
+ await old.takeAndAccept(async()=>{});
+ f.db.update(s.jobs).set({heardAt:new Date(f.clock.now()-SILENCE_MS-1).toISOString()}).where(eq(s.jobs.id,'job')).run();
+ jobs.sweep();
+ const retry=f.db.select().from(s.jobs).where(eq(s.jobs.retryOf,'job')).get()!;
+ f.clock.advance(Date.parse(retry.retryAt!)-f.clock.now());
+ const [firstBox]=f.db.select().from(s.boxes).all();
+ f.db.insert(s.boxes).values({...firstBox,id:'backup',name:'Backup'}).run();
+ expect(jobs.claim(retry.id,'backup')).toBeDefined();
+ f.db.update(s.jobs).set({harness:'claude'}).where(eq(s.jobs.id,retry.id)).run();
+ jobs.started(retry.id,'backup','fixture');
+ const token='body_'+'d'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Replacement',kind:'agent',agent:'art',job:retry.id,createdAt:now()}).run();
+ expect((await f.call('session',{retention:true},'read',raw.body)).status).toBeGreaterThanOrEqual(400);
+ const restored=await f.call('session',{retention:true},'restore',token);
+ expect(await restored.json()).toMatchObject({ok:true,value:{session:{session,keepUntil:expiry}}});
+ await run(retry.id,'backup',token,true);
 });

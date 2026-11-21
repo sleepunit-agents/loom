@@ -7,7 +7,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeConnections, jobs, turns } from './core/data/schema.js';
+import { bridgeConnections, jobs, turns, threads, jobSessionLimits } from './core/data/schema.js';
 import { DOOR_REQUEST_BYTES } from './core/data/door-limit.js';
 import { bodyOperationDefaults, type conversationBodyScope } from './core/conversations/body-scope.js';
 import type { ConversationSessions, OpenedSession, SealedSession } from './core/conversations/sessions.js';
@@ -19,12 +19,20 @@ import { jobHeld } from './shared-place-mail.js';
 
 export function registerConversationSessions(operations: Operations, db: DataDatabase, sessions: ConversationSessions,
   current: ReturnType<typeof conversationBodyScope>, hash: (words: string) => string) {
-  // Both doors are for the body of a bridge conversation's job and no other: a Comms thread's body and a wake keep no session.
-  // Nor the body of a job on anybody else's word (shared-place-mail.ts, jobHeld), asked of the job here and never
-  // of the body: a session is the harness's own record of what an owners' job read and used, tool results and
-  // all, and a guest's job resuming it would be handed all of that. Such a job is refused both doors: it
-  // starts fresh with the conversation's kept history, and it neither saves a session nor removes the one kept.
-  const bound = (viewer: Parameters<typeof current>[0]) => { const found = current(viewer); return found?.job.harness && (bridgeConnections.platform.enumValues as readonly string[]).includes(found.cv.venue) && !jobHeld(db, found.job) ? { conversation: found.cv.id, harness: found.job.harness, model: found.job.model } : undefined; };
+  // A Comms transcript is sealed to one private thread, member, agent and project. The
+  // current body scope checks that assignment afresh before any bytes are handed over.
+  const bound = (viewer: Parameters<typeof current>[0]) => {
+    const found=current(viewer);
+    if(!found?.job.harness || jobHeld(db,found.job))return;
+    const {cv,job}=found;
+    let scope:string|undefined;
+    if(cv.venue==='loom'){
+      const thread=db.select({id:threads.id}).from(threads).where(eq(threads.conversation,cv.id)).get();
+      if(!cv.member || !thread || thread.id!==cv.place)return;
+      scope=JSON.stringify([thread.id,cv.member,cv.agent,cv.project]);
+    }else if(!(bridgeConnections.platform.enumValues as readonly string[]).includes(cv.venue))return;
+    return {job:job.id,conversation:cv.id,harness:found.job.harness,model:job.model,scope};
+  };
   /** A session last saved before the conversation's last answer does not hold that answer: its body died after
    * replying, or a body of another harness answered since. Resuming it would lose what was said, so it is
    * not handed on, and the body starts fresh with the kept history.
@@ -48,7 +56,7 @@ export function registerConversationSessions(operations: Operations, db: DataDat
   operations.register({ name: 'conversation.session', write: false, doors: ['http'], input: z.object({historyKeys:z.literal(true).optional(),retention:z.literal(true).optional()}).strict(),
     output: z.object({ session: z.object({ session: z.string(), files: z.string(), since:z.string().optional(),keepUntil:z.string().optional(), covered: coverage.optional() }).strict().nullable() }).strict(),
     may: viewer => !!bound(viewer),
-    async prepare(_input, ctx) { const mine = bound(ctx.viewer); return mine ? { mine, kept: await sessions.open(mine.conversation, mine.harness, mine.model) } : undefined; },
+    async prepare(_input, ctx) { const mine = bound(ctx.viewer); return mine ? { mine, kept: await sessions.open(mine.conversation, mine.harness, mine.model,mine.scope) } : undefined; },
     run(ctx, input, prepared) {
       const mine = bound(ctx.viewer), opened = prepared as { mine: NonNullable<ReturnType<typeof bound>>; kept: OpenedSession | null } | undefined;
       if (!mine || !opened || JSON.stringify(opened.mine) !== JSON.stringify(mine)) throw new OperationError('denied', 'Current conversation body required');
@@ -57,6 +65,11 @@ export function registerConversationSessions(operations: Operations, db: DataDat
       // nothing says so through the save door, which removes whatever is kept (runtime/body-session.ts).
       const row = sessions.kept(mine.conversation, mine.harness);
       if (!kept || row?.session !== kept.session || row.startedAt !== kept.startedAt || behind(mine.conversation, kept.lastSavedAt)) return { session: null };
+      if(mine.scope) {
+        const held=db.select().from(jobSessionLimits).where(eq(jobSessionLimits.job,mine.job)).get();
+        const expires=wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db));
+        if(!held || Date.parse(held.since)>Date.parse(row.startedAt) || wordsDeadline({at:held.since,keepUntil:held.keepUntil},commsKeepDays(db))>expires)return {session:null};
+      }
       return { session: { session: kept.session, files: kept.files, ...(input.retention ? {since: row.startedAt,keepUntil: new Date(wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db))).toISOString()} : {}), ...(input.historyKeys && kept.covered ? {covered:kept.covered} : {}) } };
     },
   });
@@ -74,8 +87,8 @@ export function registerConversationSessions(operations: Operations, db: DataDat
     },
     run(ctx, _input, prepared) {
       const mine = bound(ctx.viewer), sealed = prepared as SealedSession | undefined;
-      if (!mine || !sealed || sealed.conversation !== mine.conversation || sealed.harness !== mine.harness) throw new OperationError('denied', 'Current conversation body required');
-      return { saved: sessions.store(sealed) };
+      if (!mine || !sealed || sealed.scope!==mine.scope || sealed.conversation !== mine.conversation || sealed.harness !== mine.harness) throw new OperationError('denied', 'Current conversation body required');
+      return { saved: sessions.store(sealed,mine.job) };
     },
   });
 }

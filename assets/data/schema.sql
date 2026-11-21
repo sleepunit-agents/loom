@@ -1362,6 +1362,15 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `job_session_limits` (
+	`job` text PRIMARY KEY NOT NULL,
+	`since` text NOT NULL,
+	`keep_until` text NOT NULL,
+	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "job_session_limits_since_utc" CHECK("job_session_limits"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."since") = "job_session_limits"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."since") = "job_session_limits"."since", 0)),
+	CONSTRAINT "job_session_limits_until_utc" CHECK("job_session_limits"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "job_session_limits"."keep_until") = "job_session_limits"."keep_until", 0))
+);
+
 CREATE TABLE `account_week_readings` (
 	`account` text NOT NULL,
 	`window` text NOT NULL,

@@ -5,6 +5,7 @@
  * only after the answer is recorded. A body that dies before answering therefore leaves the mail with its job,
  * and loom tries the work again on the bounded retry chain (Jobs.retry). A body that dies after answering
  * cannot cause a second answer: loom settles the mail in the same write as a thread reply or a bridge reply. */
+import {threadInputKey, threadReplyKey} from '../core/conversations/history-limit.js';
 import { z } from 'zod';
 import { createHash, randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
@@ -138,7 +139,7 @@ export async function bodyProgram(input: {
     // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
     // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
     // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
-    if(bridge&&!hasGuest(job.run?.policy)){
+    if((bridge || (job.venue==='loom' && job.thread && !job.review))&&!hasGuest(job.run?.policy)){
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:jobSignal,onJobEnded,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
@@ -175,6 +176,7 @@ export async function bodyProgram(input: {
       }
       if(item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
+      if(job.venue==='loom' && item.source==='thread' && item.words!==null)seen.add(keyOf(threadInputKey(item.id)));
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
         context.push('Your delegated worker returned the following result. Continue the originating request using the findings.');
       }
@@ -353,7 +355,10 @@ export async function bodyProgram(input: {
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }
-    else await client.reply({ clientId: repeated??randomUUID(), ...(repeated?{progressId:repeated}:{}), words: answer.text, model: answer.model, outcome: 'progressed' });
+    else {
+      const receipt=await client.reply({ clientId:replyId, ...(repeated?{progressId:repeated}:{}), words:answer.text, model:answer.model, outcome:'progressed' });
+      seen.add(keyOf(threadReplyKey(receipt.seq)));
+    }
     // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
     // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
     await client.settle();
