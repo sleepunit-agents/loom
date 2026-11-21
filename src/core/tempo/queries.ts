@@ -1,5 +1,6 @@
+import { wakeDeliveries } from './deliveries.js';
 /** Safe household display projection for Tempo; never expose settings wholesale. */
-import { GraphQLInt, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { triggerLog, triggers } from '../data/schema.js';
 import { dataValue } from '../data/subscriptions.js';
@@ -30,6 +31,10 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
      const { lessons, state, stateChangedAt } = readJournal(db, id);
      return { lessons, state, stateChangedAt };
    },
+ }, tempoDeliveries: { type: dataValue, args: { agent: { type: new GraphQLNonNull(GraphQLString) },
+   events: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLInt))) } },
+   resolve: (_source: unknown, { agent, events }: { agent: string; events: number[] }) =>
+     current() ? wakeDeliveries(db, viewer, agent, events, canReadProgram()) : [],
  }, tempoTimezone: { type: GraphQLString,
    resolve: () => current() ? householdTimezone(db) : null,
  },

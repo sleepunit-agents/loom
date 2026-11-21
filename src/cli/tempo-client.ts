@@ -1,3 +1,5 @@
+import { DAY_MS } from '../core/day.js';
+import { onOneLine } from '../core/line-name.js';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { doorConnection } from './connection.js';
@@ -34,6 +36,10 @@ const eventReply = z.object({
     }).nullable(),
   })) }),
 }).strict();
+const deliveryQuery = `query WakeDeliveries($agent:String!, $events:[Int!]!){tempoDeliveries(agent:$agent,events:$events)}`;
+const deliveryReply = z.object({ data: z.object({ tempoDeliveries: z.array(z.object({
+  event: z.number().int(), kind: z.enum(['program','mail']), conversation: z.string().nullable(), job: z.string().nullable(),
+})) }) }).strict();
 type Read = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 
 function logOptions(args: string[]) {
@@ -42,14 +48,13 @@ function logOptions(args: string[]) {
   } });
   const duration = values.since!;
   if (!/^(?:\d+[smhd])+$/.test(duration)) throw Error();
-  const units: Record<string, number> = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+  const units: Record<string, number> = { s: 1000, m: 60000, h: 3600000, d: DAY_MS };
   let ms = 0;
   for (const [, count, unit] of duration.matchAll(/(\d+)([smhd])/g)) ms += Number(count) * units[unit];
   if (!Number.isSafeInteger(ms)) throw Error();
   return { since: new Date(Date.now() - ms).toISOString(), grep: values.grep! };
 }
 
-function printable(line: string) { return line.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '); }
 function householdTime(zone: string) {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: zone, dateStyle: 'short', timeStyle: 'medium' });
 }
@@ -72,6 +77,18 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
         }
       }`;
       const { data: { triggerLog } } = eventReply.parse(await read(query, { ids, since: options.since, limit: pageSize, before }));
+      const fired = triggerLog.filter(row => row.event === 'fired').map(row => row.seq);
+      const deliveries = fired.length
+        ? deliveryReply.parse(await read(deliveryQuery, { agent, events: fired })).data.tempoDeliveries : [];
+      const byEvent = new Map<number, string[]>();
+      for (const delivery of deliveries) {
+        const parts = [delivery.kind === 'program' ? 'program' : 'delivered'];
+        if (delivery.conversation) parts.push(delivery.conversation);
+        if (delivery.job) parts.push('job', delivery.job);
+        const destinations = byEvent.get(delivery.event) ?? [];
+        destinations.push(parts.join(' '));
+        byEvent.set(delivery.event, destinations);
+      }
       for (const row of triggerLog) {
         if (before !== undefined && row.seq >= before) throw Error();
         before = row.seq;
@@ -80,7 +97,9 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
         if (!t) continue;
         const recipient = t.toKind ? t.toKind === 'agent' && t.to : t.ownerKind === 'agent' && t.owner;
         if (recipient !== agent) continue;
-        const line = printable(`${format.format(new Date(row.at))} | ${row.event} | ${row.trigger} ${row.note}`.trimEnd());
+        const destination = byEvent.get(row.seq)?.join(' → ');
+        const suffix = destination ? '  → ' + destination : '';
+        const line = onOneLine(`${format.format(new Date(row.at))} | ${row.event} | ${row.trigger} ${row.note}`.trimEnd() + suffix);
         if (!line.includes(options.grep)) continue;
         matches.push({ seq: row.seq, line });
         if (++found === 2000) break;
@@ -142,7 +161,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const when = row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';
       const line = `${row.id}  ${when}  [${row.state}]  ${row.note}`;
-      io.stdout(printable(line) + '\n');
+      io.stdout(onOneLine(line) + '\n');
     }
     if (!rows.length) io.stdout('No pending wakes.\n');
     return 0;

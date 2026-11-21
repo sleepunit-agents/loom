@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, tokens, triggerLog, triggers } from '../core/data/schema.js';
+import { agents, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
 import { sharedRoot } from '../shared-root.js';
 import { runTempoClient } from './tempo-client.js';
 
@@ -24,6 +24,7 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
   db.insert(tokens).values({ fingerprint: createHash('sha256').update(token).digest('hex'), label: 'fixture', kind: 'owner', member: 'owner', createdAt: at }).run();
   for (const id of ['fern', 'birch']) {
     db.insert(agents).values({ id, about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    db.insert(memberAgents).values({ member: 'owner', agent: id }).run();
     db.insert(triggers).values({ id, ownerKind: 'agent', owner: id, sourceKind: 'time', lifespan: 'once', targetKind: 'inbox',
       toKind: 'agent', to: id, enabled: false, state: 'stopped', createdAt: at, changedAt: at, note: 'Example' }).run();
   }
@@ -44,6 +45,16 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     out = '';
     expect(await runTempoClient(['list'], io, request)).toBe(0);
     expect(out).toBe('No pending wakes.\n');
+    const result = await app.http.request('/api/tempo/set', { method: 'POST',
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'request', input: { id: 'scheduled', ownerKind: 'household', sourceKind: 'time',
+        times: at, lifespan: 'once', targetKind: 'inbox', toKind: 'agent', to: 'fern', instructions: 'Fixture', note: 'Fixture' } }),
+    });
+    expect(result.status, await result.text()).toBe(200);
+    out = '';
+    expect(await runTempoClient(['log', '--grep', 'delivered'], io, request)).toBe(0);
+    expect(out.trim().split('\n')).toHaveLength(1);
+    expect(out).toMatch(/fired \| scheduled .* → delivered cv-[\w-]+/);
   } finally {
     await app.close();
     sql.close();

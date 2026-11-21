@@ -46,6 +46,23 @@ it('real shared root fires once, settles then queues a job and withdraws command
  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
  expect((await f.call('tempo.set',f.trigger,'set')).status).toBe(403);
 });
+it('resolves the exact visible firing into its delivered conversation and checks current visibility on each read',async()=>{
+ const f=fixture();
+ expect((await f.call('tempo.set',f.trigger,'set')).status).toBe(200);
+ const log=f.db.select().from(triggerLog).all();
+ const seq=log.find(row=>row.event==='fired')!.seq;
+ const item=f.db.select().from(inbox).get()!;
+ const field=tempoQueryFields(f.db,{kind:'member',id:'owner'}).tempoDeliveries;
+ const args={agent:'art',events:log.map(row=>row.seq)};
+ expect(field.resolve(null,args)).toEqual([{event:seq,kind:'mail',conversation:item.conversation,job:null}]);
+ f.clock.advance(5000);
+ const admitted=f.db.select().from(jobs).get()!;
+ expect(field.resolve(null,args)).toEqual([{event:seq,kind:'mail',conversation:item.conversation,job:admitted.id}]);
+ expect(field.resolve(null,{...args,agent:'another'})).toEqual([]);
+ expect(tempoQueryFields(f.db,{kind:'member',id:'sam'}).tempoDeliveries.resolve(null,args)).toEqual([]);
+ f.db.update(conversations).set({member:'sam'}).where(eq(conversations.id,item.conversation!)).run();
+ expect(field.resolve(null,args)).toEqual([]);
+});
 it('holds paused triggers, resumes through shared commands, then stops timers before root closes',async()=>{
  const f=fixture();
  expect((await f.call('tempo.pause',{agent:'art'},'pause')).status).toBe(200);
@@ -287,6 +304,11 @@ it('prepares a draft, supplies it to a later program and spends each local day o
  expect(tempoQueryFields(f.db, { kind: 'member', id: 'sam' }).tempoProgram.resolve(null,q)).toBeNull();
  f.clock.advance(300_000);
  const row = f.db.select().from(programFirings).where(eq(programFirings.trigger, post.id)).get()!;
+ const events=f.db.select().from(triggerLog).all().filter(line=>line.trigger===post.id&&line.event==='fired').map(line=>line.seq);
+ const args={agent:'art',events};
+ const viewer={kind:'member' as const,id:'owner'};
+ expect(tempoQueryFields(f.db,viewer).tempoDeliveries.resolve(null,args)).toMatchObject([{event:events[0],kind:'program',job:row.job}]);
+ expect(tempoQueryFields(f.db,viewer,()=>false).tempoDeliveries.resolve(null,args)).toEqual([]);
  expect(row).toMatchObject({ status: 'pending', program: { ...post.program, state: { draft: 'today' } } });
  expect(f.db.select().from(inbox).all()).toEqual([]);
  f.db.update(programFirings).set({ status: 'done' }).where(eq(programFirings.id, row.id)).run();
@@ -296,6 +318,14 @@ it('prepares a draft, supplies it to a later program and spends each local day o
  expect(f.db.select().from(triggerLog).all()).toContainEqual(expect.objectContaining({ trigger: post.id, event: 'skipped' }));
  f.clock.advance(24 * 3_600_000);
  expect(f.db.select().from(programFirings).where(eq(programFirings.trigger, post.id)).all()).toHaveLength(2);
+ const last=f.db.select().from(programFirings).where(eq(programFirings.trigger, post.id)).all().find(item=>item.status==='pending')!;
+ const postJob=f.db.select().from(jobs).where(eq(jobs.id,last.job)).get()!;
+ applyProgramResult(f.db,new Conversations(f.db,f.now),undefined,()=>true,postJob,{version:1,wake:true},()=>{});
+ const latest=f.db.select().from(triggerLog).all().find(line=>line.trigger===post.id&&line.event==='fired'&&last.id===post.id+':'+line.note)!;
+ expect(tempoQueryFields(f.db,viewer).tempoDeliveries.resolve(null,{agent:'art',events:[latest.seq]})).toEqual([
+   {event:latest.seq,kind:'program',job:postJob.id,conversation:postJob.conversation},
+   {event:latest.seq,kind:'mail',job:null,conversation:postJob.conversation},
+ ]);
 });
 
 it('runs the five-minute watch at its offset and skips overlap while the original job is pending', async () => {
