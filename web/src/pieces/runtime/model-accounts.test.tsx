@@ -111,3 +111,24 @@ it('filters by visible owner and machines together with sign-in or capacity warn
  expect(JSON.stringify(tree.toJSON())).toContain('No matching subscriptions.');
  await search('main');expect(JSON.stringify(tree.toJSON())).toContain('Main subscription');
 });
+
+it('opens the weekly report with the subscription and retires it at reset without another write',async()=>{
+ vi.useFakeTimers();
+ try {
+  const start=new Date('2026-11-18T00:00:00Z');
+  vi.setSystemTime(start);
+  const end=new Date(start.getTime()+60000).toISOString();
+  const group={key:'art',title:'Weekly worker',share:.125,href:null};
+  const account={...detail,weeklyUsage:[{window:'week',resetsAt:end,usage:.25,unattributed:.125,agents:[group],conversations:[],triggers:[]}]};
+  f.snapshot={status:'live',data:{modelAccounts:[account]}};
+  await act(async()=>{tree=create(h(RuntimeAccounts));});
+  const reportVisible=()=>JSON.stringify(tree.toJSON()).includes('Weekly worker');
+  expect(reportVisible()).toBe(false);
+  const summary=tree.root.findAllByType('summary').find((node:{children:unknown[]})=>node.children.includes('Main subscription'));
+  await act(async()=>summary.parent.props.onToggle({currentTarget:{open:true}}));
+  expect(reportVisible()).toBe(true);
+  await act(async()=>{vi.advanceTimersByTime(60000);});
+  expect(reportVisible()).toBe(false);
+  expect(JSON.stringify(tree.toJSON())).toContain('No current weekly reading');
+ } finally {vi.useRealTimers();}
+});

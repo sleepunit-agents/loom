@@ -1,9 +1,10 @@
 /** Trusted provider adapter seam. Provider calls happen outside transactions;
  * only validated observations enter the shared account/window rows. */
+import {DAY_MS} from '../core/day.js';
 import { accountCompletion, accountObservationCommitted } from './account-completion.js';
-import { eq } from 'drizzle-orm';
+import { eq, lte } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { modelAccounts, modelAccountWindows } from '../core/data/schema.js';
+import { accountWeekReadings, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
 import { accountUsageUnavailable } from './account-usage.js';
 import { accountCapacity, type QuotaWindow } from './quota.js';
 
@@ -46,6 +47,23 @@ function recordSummary(db: DataDatabase, input: {
   return result;
 }
 
+function recordWeekReadings(db: DataDatabase, account: string, windows: readonly QuotaWindow[], now: string) {
+  const at = Date.parse(now), week = 7 * DAY_MS;
+  db.delete(accountWeekReadings).where(lte(accountWeekReadings.resetsAt, new Date(at).toISOString())).run();
+  for (const row of windows) {
+    if (row.durationMs !== week || row.usage === null || !row.readAt || !row.resetsAt) continue;
+    const read = Date.parse(row.readAt), reset = Date.parse(row.resetsAt);
+    if (read > at || reset <= at || read < reset - week || read >= reset) continue;
+    db.insert(accountWeekReadings).values({
+      account, window: row.name, resetsAt: new Date(reset).toISOString(),
+      readAt: new Date(read).toISOString(), usage: row.usage,
+    }).onConflictDoUpdate({
+      target: [accountWeekReadings.account, accountWeekReadings.window, accountWeekReadings.resetsAt, accountWeekReadings.readAt],
+      set: {usage: row.usage},
+    }).run();
+  }
+}
+
 /** A provider response is the complete set of active limits. An older reading
  * of any retained window cannot erase newer observations of that window. A caller
  * enclosing this in its own transaction publishes accountObservationCommitted
@@ -60,6 +78,8 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
       && Date.parse(old.readAt) > Date.parse(row.readAt!)))) return false;
     const result = recordSummary(db, { ...identity, windows, now });
     if (!result.recorded) return false;
+    // Include the last installed reading when upgrading a household midweek.
+    recordWeekReadings(db, identity.account, [...before, ...windows], now);
     db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, identity.account)).run();
     for (const row of windows) db.insert(modelAccountWindows).values({ account: identity.account,
       window: row.name, usage: row.usage, usageReadAt: row.readAt === null ? null : new Date(row.readAt).toISOString(),
