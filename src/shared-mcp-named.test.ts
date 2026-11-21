@@ -36,7 +36,11 @@ async function program(){
 it('lists the names a terminal session already calls',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
-  expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
+  const {tools}=await art.client.listTools();
+  const write=tools.find(tool=>tool.name==='knowledge_write');
+  expect(write?.description).toContain('Household owners and agents read this');
+  expect(write?.description).toContain('private thoughts');
+  expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
     'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}

@@ -177,7 +177,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
    return data.memoryKnowledgeSearch.map(page=>'## '+page.title+'\n_'+page.domain+' · '+page.slug+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_\n\n'+page.body).join('\n\n---\n\n');
   });
 
- tool('knowledge_write','Create with title, domain and body. Append with mode "append", slug and body. Optional source URL.',
+ tool('knowledge_write','Household owners and agents read this. Keep private thoughts out. Create with title, domain and body, or append by slug. Optional source URL.',
   z.object({mode:z.enum(['create','append']).optional(),slug:pageSlug.optional(),title:z.string().min(1).max(200).optional(),
    domain:z.string().min(1).max(200).optional(),body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH),source:z.string().max(4000).optional()}).strict(),
   async ({mode,slug,title,domain,body,source})=>{
