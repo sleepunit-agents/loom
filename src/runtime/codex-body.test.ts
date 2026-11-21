@@ -4,7 +4,7 @@ import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { codexBody } from './codex-body.js';
 import { bodyHarness } from './body-harnesses.js';
-import type { HarnessSpawn } from './body-harness.js';
+import { HarnessResumeUnavailable, type HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gpt-fictional', account: 'sub', harness: 'codex', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -127,4 +127,41 @@ it.each(['abort', 'signal'])('keeps observed usage once on %s even with an inter
   expect(failedUsage).toHaveBeenCalledTimes(1);
   expect(failedUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'transcript', toolCalls: 1, tools: { command_execution: 1 } }));
   expect(JSON.stringify(failedUsage.mock.calls)).not.toContain('private');
+});
+
+it('starts a kept Codex thread and resumes its exact UUID in the body working directory', async () => {
+  const id = '019a9bdd-4e2e-7ade-91ec-4dafbbc44202';
+  const rows = [{type:'thread.started',thread_id:id}, ...good.slice(1)];
+  for (const session of [{}, {resume:id}]) {
+    const f = fixture();
+    const result = f.run(job, 'Continue the inspection', f.abort.signal, session);
+    const [, args, options] = f.launch.mock.calls[0];
+    expect(args).not.toContain('--ephemeral');
+    expect(options.cwd).toBe('/house');
+    if (session.resume) {
+      expect(args.slice(0,2)).toEqual(['exec','resume']);
+      expect(args.slice(-2)).toEqual([id,'-']);
+      expect(args).not.toContain('-C');
+    }
+    f.finish(rows);
+    expect(await result).toMatchObject({session:id,text:'Answer é'});
+  }
+});
+
+it('rejects a resumed run that reports a different thread', async () => {
+  const f = fixture();
+  const result = f.run(job,'Continue',f.abort.signal,{resume:'019a9bdd-4e2e-7ade-91ec-4dafbbc44202'});
+  f.finish([{type:'thread.started',thread_id:'019a9bdd-4e2e-7ade-91ec-4dafbbc44203'},...good.slice(1)]);
+  await expect(result).rejects.toThrow('Native execution unavailable');
+});
+
+it('allows a fresh attempt only when a failed resume emitted no events', async () => {
+  const id = '019a9bdd-4e2e-7ade-91ec-4dafbbc44202';
+  for (const started of [false,true]) {
+    const f = fixture();
+    const result = f.run(job,'Continue',f.abort.signal,{resume:id});
+    f.finish(started ? [{type:'thread.started',thread_id:id}] : '',1);
+    if (started) await expect(result).rejects.not.toBeInstanceOf(HarnessResumeUnavailable);
+    else await expect(result).rejects.toBeInstanceOf(HarnessResumeUnavailable);
+  }
 });
