@@ -9,7 +9,7 @@ import {useHouseholdZone} from '../../data/zone';
 
 type Machine = {id:string; name:string; owner:string; revokedAt:string|null; readers:string[]|null; readingsLeftOut:number};
 type Entry = {id:string; agent:string; job:string; conversation:string|null; word:string; person:string|null; read:string; args:string; askedAt:string; bytes:number; outcome:string};
-type Card = {id:string; ask:string};
+type Card = {id:string; ask:string;review?:string};
 const query = 'query OwnerMachines { boxes { id name owner readers revokedAt readingsLeftOut } boxReadings { box kind thing usedPercent sizeMib freeMib engineStatus level readAt unknownSince stale } agents { id } }';
 
 /** What the machine's worker last read on it: any open condition plainly, then the numbers quietly. */
@@ -43,6 +43,7 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
  const [error, setError] = useState('');
  const [agent, select] = useState('');
  const readers = box.readers ?? [];
+ const readerList=JSON.stringify(readers);
  useEffect(() => {
   let current = true;
   setHistory(undefined); setCards(undefined); setError('');
@@ -53,7 +54,7 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
    if (current) {setHistory(entries); setCards(pending);}
   }).catch(() => {if (current) setError('Machine settings and history are unavailable.');});
   return () => {current = false;};
- }, [box.id, box.revokedAt, revision]);
+ }, [box.id, box.revokedAt, readerList, revision]);
  async function change(operation:string, input:object) {
   if (busy) return;
   setBusy(true); setError('');
@@ -72,8 +73,8 @@ function MachineSettings({box, agents}: {box:Machine; agents:string[]}) {
      {agents.filter(id=>!readers.includes(id)).map(id=><option key={id} value={id}>{id}</option>)}</NativeSelect></label>
     <Button type="submit" disabled={busy || !agent || readers.includes(agent)}>Request read grant</Button>
    </form>
-   {cards?.map(card=><div key={card.id}><p>{card.ask}</p>
-    <Button disabled={busy} onClick={()=>void change('machine.answerReader',{id:card.id,answer:'allow'})}>Allow</Button>
+   {cards?.map(card=><div key={card.id}><p>{card.ask}</p>{card.review&&<p>Updated to show the current readers.</p>}
+    <Button disabled={busy} onClick={()=>void change('machine.answerReader',{id:card.id,answer:'allow',...(card.review?{review:card.review}:{})})}>Allow</Button>
     <Button disabled={busy} variant="outline" onClick={()=>void change('machine.answerReader',{id:card.id,answer:'deny'})}>Deny</Button></div>)}
   </section>}
   <section aria-label="Machine read history"><h4>Read history</h4>

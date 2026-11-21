@@ -8,12 +8,12 @@ import { refileConversations, refileInbox } from './core/conversations/index.js'
 import { refileTriggers } from './core/tempo/triggers.js';
 import { refileJobs } from './runtime/jobs.js';
 /** Project sharing is plain household metadata, checked only at the outside door. */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agentKitProjects, projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
+import { tasks, conversations, inbox, approvals, triggers, jobs, changes, agentKitProjects, projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
 import { householdId, projectId } from './slug.js';
@@ -59,6 +59,14 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
  // After the repositories have moved: each pull request is filed under its repository's project.
  changes(db){reprojectChanges(db);},
 };
+// A reviewed merge must still move the records the owner reviewed. The opaque
+// revision includes private record IDs; the owner preview does not publish them.
+export function projectMergeRecords(db:DataDatabase,from:string,into:string){
+ const records=(table:typeof tasks|typeof conversations|typeof inbox|typeof approvals|typeof triggers|typeof jobs|typeof changes)=>
+  db.select({id:table.id,project:table.project}).from(table).where(inArray(table.project,[from,into])).orderBy(asc(table.id)).all();
+ return {tasks:records(tasks),conversations:records(conversations),inbox:records(inbox),approvals:records(approvals),
+  triggers:records(triggers),jobs:records(jobs),changes:records(changes)};
+}
 /** A project retired, or revived. */
 export const projectStateInput=z.object({project:id}).strict();
 /** One agent let onto one project. */

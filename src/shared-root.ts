@@ -425,7 +425,7 @@ export function sharedRoot(options: {
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
-  householdProposals.register(operations, services.approvals, bodyScope, held('propose'));
+  householdProposals.register(operations, services.approvals, bodyScope, held('propose'), viewer=>!!credentials.program(viewer));
   const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => { tempo?.capacityChanged(); data.changed(); }));
   startupCleanups.push(stopHouseholdProposals);
   registerSharedTaskCommands(operations, db, services.tasks, held('task'));

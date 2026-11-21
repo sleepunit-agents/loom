@@ -2,6 +2,7 @@
  * (workAnswersAllowed); there is no narrower rule per card or per change, because an
  * owner already sees every change. What is checked beyond that is that the card and
  * the change it names still exist; the exact head is checked when the answer runs. */
+import { SHA256_HEX } from './core/sha256-hex.js';
 import { evidenceCandidates, ownerWord, type EvidenceSources } from './approval-owner-word.js';
 import { alwaysAsks } from './shared-household-proposals.js';
 import { COMMIT, parseMergeTarget } from './apps/merge-target.js';
@@ -81,12 +82,13 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const decisionBasis = (answer: 'allow' | 'deny', basis: string | undefined) =>
     basis && (answer === 'allow' ? 'Allowed by ' : 'Denied by ') + basis;
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), review: z.string().regex(SHA256_HEX).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer) && !(viewer.kind === 'agent' && viewer.atTerminalOf !== undefined && sources.terminal?.(viewer))) return false;
       evidenceCandidates(db, sources, viewer, input.onWord);
       if (!row) return false;
+      if (input.review && (viewer.kind !== 'member' || sources.isProgram(viewer) || input.onWord || input.answer !== 'allow' || row.operation !== 'household.change' || !workAnswersAllowed(db, viewer))) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
       return !merge || input.answer === 'deny' || !!change(merge.id);
@@ -129,7 +131,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       const merge = mergeTarget(row);
       if (merge) answerMerge(ctx, proof.member, { basis, ...merge, approval: row.id, allow: input.answer === 'allow' });
       else {
-        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis) : service.deny(input.id, proof.member, basis); }
+        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis, input.review) : service.deny(input.id, proof.member, basis); }
         catch (error) {
           if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
             throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');

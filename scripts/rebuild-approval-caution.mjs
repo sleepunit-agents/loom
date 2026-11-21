@@ -17,7 +17,7 @@ export async function approvalCaution({page,app,example,out}){
   phase='open card';
   await responseForAction(browser,preview,()=>browser.goto(new URL('/p/approvals-preview/approval/'+encodeURIComponent(card.id),app.url).href),15000);
   const tile=browser.getByRole('region',{name:'Approvals tile',exact:true});
-  const caution=tile.getByRole('note').filter({hasText:'has changed since the card was filed'});
+  const caution=tile.getByRole('note').filter({hasText:'The request has been refreshed.'});
   const group=tile.getByRole('group',{name:'Answer approval'});
   const allow=group.getByRole('button',{name:'Allow',exact:true});
   const deny=group.getByRole('button',{name:'Deny',exact:true});
@@ -38,8 +38,10 @@ export async function approvalCaution({page,app,example,out}){
   if((await refused.json()).ok!==false||services.approvals.get(card.id).state!=='pending'||volume.timings(who).settleSeconds!==original+2)throw Error('A stale proposal changed the fixture or was settled');
   await caution.waitFor();
   await browser.screenshot({path:join(out,screenshot)});
-  const denied=await responseForAction(browser,answer,()=>deny.click());
-  if(!(await denied.json()).ok||services.approvals.get(card.id).state!=='denied')throw Error('The owner could not deny the stale proposal');
+  phase='reviewed allow';
+  const accepted=await responseForAction(browser,answer,()=>allow.click());
+  if(!(await accepted.json()).ok||services.approvals.get(card.id).state!=='used'||volume.timings(who).settleSeconds!==original+1)throw Error('The reviewed change was not applied');
+  if(services.approvals.record(card.id).filter(event=>event.event==='use').length!==1)throw Error('Duplicate application');
   return {ok:true,screenshot};
  }catch(error){await browser.screenshot({path:join(out,screenshot)}).catch(()=>{});return {ok:false,phase,error:String(error),screenshot};}
  finally{set(original);await browser.close();}

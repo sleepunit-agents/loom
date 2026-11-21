@@ -96,7 +96,7 @@ it('refuses a card when what it would replace has changed, or when the change is
   f.root.writes.run(() => f.root.services.setup.settings({ commsDays: 10 }));
   expect((await f.call('approvals/answer', { id: first.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'conflict' });
   expect(f.root.services.household.settings().commsDays).toBe(10);
-  expect((await look(f, first.body.value!.id)).problem).toBe('This has changed since the card was filed; ask for a fresh card');
+  expect((await look(f, first.body.value!.id)).problem).toBe('This has changed since the card was filed. Open the updated card to review it.');
   // A change that could never be allowed is refused to the owner, in the words of the rule it breaks.
   await hopeless(f, await f.call('household/propose', { change: 'member', input: { id: 'sam', role: 'member', agents: [] }, why: 'Asked' }, 'art'), 'At least one household owner must remain');
   await hopeless(f, await f.call('household/propose', { change: 'project', input: { ...pond, members: ['nobody'] }, why: 'Asked' }, 'art'));
@@ -371,6 +371,20 @@ it('removing an agent switches off its bridge connections and leaves another age
   await allow('restore');
   expect(state()).toMatchObject({ marks: [false, 'disconnected', null], 'marks-slack': [false, 'disconnected', null] });
 });
+it('rechecks the connections that removing an agent will switch off',async()=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();
+ const id=(await f.call('household/propose',{change:'remove',input:{of:'agent',id:'fern'},why:'Retire Fern'},'art')).body.value!.id;
+ f.db.insert(agents).values({id:'fern',...visual}).run();
+ const first=await preview(f,id);
+ expect(JSON.parse(first.card!.exact).disconnect).toEqual([]);
+ f.db.insert(secrets).values({name:'BOT',description:'',changedAt:at,changedBy:'sam'}).run();
+ f.db.insert(bridgeConnections).values({id:'garden',platform:'discord',agent:'fern',workspace:'W',botUser:'B',tokenSecret:'BOT',enabled:true,state:'connected',stateAt:at}).run();
+ expect((await f.call('approvals/answer',{id,answer:'allow',review:first.review},'sam')).body.code).toBe('conflict');
+ expect(f.db.select().from(bridgeConnections).get()?.enabled).toBe(true);
+ const second=await preview(f,id);
+ expect(JSON.parse(second.card!.exact).disconnect[0].id).toBe('garden');
+ expect((await f.call('approvals/answer',{id,answer:'allow',review:second.review},'sam')).body.ok).toBe(true);
+});
 it('answers a card for someone who is not an owner only by a rule an owner set naming that person', async () => {
   const f = fixture(), at = new Date().toISOString();
   f.db.insert(conversations).values({ id: 'cv-lee', agent: 'art', member: 'lee', venue: 'loom', place: 'th', label: 'Lee', startedAt: at, lastAt: at, turnCount: 0 }).run();
@@ -544,11 +558,17 @@ it('merges one project into another only when an owner allows the card, and the 
   }
   expect(f.db.select().from(tasks).where(eq(tasks.id, task.id)).get()).toMatchObject({ project: 'garden' });
   expect(f.db.select().from(projects).where(eq(projects.id, 'garden')).get()!.removedAt).toBeNull();
-  // A card whose projects have changed since it was filed is refused, and has to be asked for again.
+  // A stale merge requires both the current review and explicit confirmation.
   f.db.insert(projects).values({ id: 'shed', name: 'Shed' }).run();
   const stale = await ask({ from: 'shed', into: 'garden' });
   f.db.insert(projectMembers).values({ project: 'shed', member: 'lee' }).run();
-  expect((await f.call('approvals/answer', { id: stale.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });
+  expect((await f.call('approvals/answer', { id: stale.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed. Open the updated card to review it.' });
+  const revised=await preview(f,stale.body.value!.id);
+  expect(revised.review).toBeTruthy();
+  expect((await f.call('approvals/answer',{id:stale.body.value!.id,answer:'allow',review:revised.review},'sam')).body).toMatchObject({ok:false,code:'invalid'});
+  const late=f.root.services.tasks.create({title:'New shed work',goal:'Dry storage',why:'Rain',owner:{kind:'agent',id:'art'},project:'shed'},{kind:'agent',id:'art'});
+  expect((await f.call('approvals/answer',{id:stale.body.value!.id,answer:'allow',confirm:true,review:revised.review},'sam')).body.code).toBe('conflict');
+  expect(f.db.select().from(tasks).where(eq(tasks.id,late.id)).get()?.project).toBe('shed');
   expect(f.db.select().from(projects).where(eq(projects.id, 'shed')).get()!.removedAt).toBeNull();
 });
 
@@ -665,7 +685,7 @@ it('allows two agents onto the same project in turn: one card does not make the 
   expect(late).toMatchObject({ target: 'household:projectJoin:art onto project pond' });
   const gardens = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'garden', agent: 'mark' }, why: 'x' })).value;
   f.db.update(projects).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(projects.id, 'garden')).run();
-  expect((await f.call('approvals/answer', { id: gardens.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });
+  expect((await f.call('approvals/answer', { id: gardens.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed. Open the updated card to review it.' });
   // And a card for an agent that is already on the project is refused as that.
   expect((await f.call('approvals/answer', { id: late.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'art is already on project pond' });
 });
@@ -937,8 +957,9 @@ it('shows owners every consequential colleague kit definition and its immutable 
   const changed={...tool,commit:'c'.repeat(40)};
   f.db.update(agentKits).set({tools:[changed]}).where(eq(agentKits.kit,definitions[99].kit)).run();
   const stale=await preview(f,id);
-  expect(stale.blocked).toContain('changed since');
-  expect(JSON.parse(stale.card!.exact).effects).toContain('Current definitions');
+  expect(stale.blocked).toBeNull();
+  expect(stale.review).toMatch(/^[a-f0-9]{64}$/);
+  expect(stale.card!.exact).toContain(changed.commit);
   expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).body.ok).toBe(false);
 });
 
@@ -1003,12 +1024,16 @@ it('shows an agent-proposed change to explicit readers on the machine owner’s 
  const id=result.body.value!.id;
  expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).status).toBe(403);
  expect((await f.call('machine/readerCards',{machine:'work'},'lee')).body.value).toEqual([{id,ask:'Grant machine reads to mark.'}]);
- expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(true);
+ f.db.update(boxes).set({readers:['art']}).where(eq(boxes.id,'work')).run();
+ const [updated]=(await f.call('machine/readerCards',{machine:'work'},'lee')).body.value as unknown as {review:string;ask:string}[];
+ expect(updated.ask).toContain('Revoke the explicit machine read grant for art');
+ expect((await f.call('machine/answerReader',{id,answer:'allow'},'lee')).body.ok).toBe(false);
+ expect((await f.call('machine/answerReader',{id,answer:'allow',review:updated.review},'lee')).body.ok).toBe(true);
  expect(f.db.select().from(boxes).get()?.readers).toEqual(['mark']);
 });
 
 const preview = async (f: Fixture, id: string) => (await f.call('household/proposalPreview', { id }, 'sam')).body.value as unknown as {
-  summary: string; exact?: string; blocked: string | null; card: { title: string; facts: { label: string; value: string; small?: boolean }[]; exact: string; ifYes?: string } | null;
+  summary: string; review?:string; exact?: string; blocked: string | null; card: { title: string; facts: { label: string; value: string; small?: boolean }[]; exact: string; ifYes?: string } | null;
 };
 
 it('tells a household owner who a card is for, and nobody else: the names loom holds are read for the owner when the card is read', async () => {
@@ -1131,12 +1156,27 @@ it('says on the card, before anyone presses Allow, why it cannot be allowed and 
   await stands(unplaced, /^This cannot be allowed yet: Art does not know this account as an outside contact\./);
   expect((await allow(unplaced)).body.message).toBe('Choose an outside account already known to the agent or household');
   f.db.insert(agentPeople).values({ agent: 'art', person: JSON.stringify(['slack', 'T1', 'U1']), tier: 2 }).run();
-  expect(await blocked(unplaced)).toMatch(/changed since the card was filed/);
+  const records=()=>JSON.stringify([f.db.select().from(approvals).all(),f.db.select().from(approvalRecord).all(),f.db.select().from(inbox).all()]);
+  const initial=records();
+  const refreshed=await preview(f,unplaced);
+  expect(await preview(f,unplaced)).toEqual(refreshed);
+  expect(records()).toBe(initial);
+  for(const actor of ['art','lee'] as const)expect((await f.call('approvals/answer',{id:unplaced,answer:'allow',review:refreshed.review},actor)).status).toBe(403);
+  expect(refreshed.blocked).toBeNull();
+  expect(refreshed.review).toMatch(/^[a-f0-9]{64}$/);
   expect((await allow(unplaced)).body.message).toMatch(/changed since the card was filed/);
-  await deny(unplaced);
-  const fresh = await file('kitGrant', grant);
-  expect(await blocked(fresh)).toBeNull();
-  expect((await allow(fresh)).body.ok).toBe(true);
+  const reviewed=(review:string)=>f.call('approvals/answer',{id:unplaced,answer:'allow',review},'sam');
+  expect((await reviewed('0'.repeat(64))).body.ok).toBe(false);
+  f.db.delete(agentPeople).run();
+  expect((await reviewed(refreshed.review!)).body.ok).toBe(false);
+  expect((await preview(f,unplaced)).review).toBeUndefined();
+  f.db.insert(agentPeople).values({agent:'art',person:JSON.stringify(['slack','T1','U1']),tier:2}).run();
+  const input={id:unplaced,answer:'allow',review:(await preview(f,unplaced)).review};
+  expect((await f.call('approvals/answer',input,'sam','owner-review-retry')).body.ok).toBe(true);
+  const settled=records();
+  expect((await f.call('approvals/answer',input,'sam','owner-review-retry')).body.ok).toBe(true);
+  expect(records()).toBe(settled);
+  expect(f.db.select().from(approvals).where(eq(approvals.id,unplaced)).get()?.state).toBe('used');
   expect((await allow(await file('kitGrant', { ...grant, grant: false }))).body.ok).toBe(true);
 
   // The account is linked to a member: the member should be named instead. With the link gone a fresh card is clear.
@@ -1209,8 +1249,36 @@ it('shows the same full-owner roster that Allow assigns', async () => {
   const input = { id: 'pat', role: 'owner', fullOwner: true, agents: [] };
   const id = (await f.call('household/propose', { change: 'member', input, why: 'Share ownership' }, 'art')).body.value!.id;
   expect((await preview(f,id)).card!.facts).toContainEqual({ label: 'Their agents', value: 'As a full owner they have every agent: Art, Mark' });
-  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
-  expect(f.root.services.household.members().find(row => row.id === 'pat')?.agents).toEqual(['art', 'mark']);
+  f.db.insert(members).values({id:'pat',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+  const first=(await preview(f,id)).review;
+  expect(first).toBeTruthy();
+  f.db.insert(agents).values({id:'fern',...visual}).run();
+  expect((await f.call('approvals/answer',{id,answer:'allow',review:first},'sam')).body.ok).toBe(false);
+  const updated=await preview(f,id);
+  expect(JSON.parse(updated.card!.exact).allAgents).toEqual(['art','fern','mark']);
+  expect((await f.call('approvals/answer',{id,answer:'allow',review:updated.review},'sam')).body.ok).toBe(true);
+  expect(f.root.services.household.members().find(row=>row.id==='pat')?.agents).toEqual(['art','fern','mark']);
+});
+
+it.each(['projectRevive','restore'] as const)('holds a refreshed %s to the beneficiaries and definitions it reactivates',async change=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(projects).values({id:'garden',name:'Garden'}).run();
+ f.db.insert(agentKits).values({agent:'art',kit:'garden-tools',tools:[]}).run();
+ f.db.insert(agentKitProjects).values({agent:'art',kit:'garden-tools',project:'garden'}).run();
+ const input=change==='restore'?{of:'project',id:'garden'}:{project:'garden'};
+ const id=(await f.call('household/propose',{change,input,why:'Bring back the garden'},'art')).body.value!.id;
+ f.db.update(projects).set(change==='restore'?{removedAt:at}:{retiredAt:at}).where(eq(projects.id,'garden')).run();
+ const first=await preview(f,id);
+ expect(JSON.parse(first.card!.exact).projectKitAccess.kits).toEqual([{agent:'art',kit:'garden-tools',tools:[]}]);
+ const answer=(review:string)=>f.call('approvals/answer',{id,answer:'allow',review},'sam');
+ f.db.insert(projectMembers).values({project:'garden',member:'lee'}).run();
+ expect((await answer(first.review!)).body.code).toBe('conflict');
+ const second=await preview(f,id);
+ expect(JSON.parse(second.card!.exact).projectKitAccess.roster.members).toEqual(['lee']);
+ f.db.delete(agentKitProjects).where(eq(agentKitProjects.project,'garden')).run();
+ expect((await answer(second.review!)).body.code).toBe('conflict');
+ expect(f.root.services.approvals.get(id).state).toBe('pending');
+ expect((await answer((await preview(f,id)).review!)).body.ok).toBe(true);
 });
 
 it('caps the whole Exact request even when individual values fit', async () => {
