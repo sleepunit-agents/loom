@@ -1,0 +1,51 @@
+/* Tiled apps keep their place as neighbours grow, trade slots or return from the dock. */
+:root[data-motion=full] .next-tile {
+  transition: left 180ms ease-out, top 180ms ease-out, width 180ms ease-out, height 180ms ease-out;
+  animation: desk-window-arrive 190ms cubic-bezier(.16,.8,.25,1);
+}
+@keyframes desk-window-arrive {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+.desk-window-exits { position: absolute; inset: 0; z-index: 22; pointer-events: none; }
+.desk-window-exit {
+  position: absolute; overflow: hidden; box-sizing: border-box;
+  border: 1px solid var(--v-blue); background-color: var(--v-canvas);
+  animation: desk-tv-off 230ms ease-in both;
+}
+[data-shell=phone] .desk-window-exit { inset: 0; }
+.desk-window-exit[data-effect=matrix] {
+  border-color: #63dc93;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='64' fill='%2379e8ad' font-family='monospace' font-size='11'%3E%3Ctext x='2' y='10'%3E1%3C/text%3E%3Ctext x='2' y='22' opacity='.6'%3E0%3C/text%3E%3Ctext x='18' y='37'%3E%2B%3C/text%3E%3Ctext x='18' y='49' opacity='.55'%3E1%3C/text%3E%3Ctext x='34' y='59'%3E0%3C/text%3E%3C/svg%3E");
+  animation: desk-code-rain 300ms ease-in both;
+}
+.desk-window-exit[data-effect=hexagon] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='21' viewBox='0 0 36 21'%3E%3Cpath d='M0 0h12l6 10.5L12 21H0m18-10.5h12L36 0m-6 10.5L36 21' fill='none' stroke='%237ad9f1'/%3E%3C/svg%3E");
+  animation: desk-hex-close 260ms ease-in both;
+}
+.desk-window-exit[data-effect=glitch] {
+  background-image: repeating-linear-gradient(0deg, transparent 0 7px, #ab79ea66 7px 9px, transparent 9px 15px);
+  box-shadow: inset 5px 0 #74d7ea, inset -5px 0 #dc72ac;
+  animation: desk-glitch-close 220ms steps(1,end) both;
+}
+@keyframes desk-code-rain {
+  from { opacity: .85; background-position: 0 -48px; clip-path: polygon(0 0,25% 0,50% 0,75% 0,100% 0,100% 100%,0 100%); }
+  to { opacity: 0; background-position: 0 24px; clip-path: polygon(0 100%,25% 80%,50% 100%,75% 86%,100% 100%,100% 100%,0 100%); }
+}
+@keyframes desk-hex-close {
+  from { opacity: .85; clip-path: circle(72%); }
+  to { opacity: 0; clip-path: circle(0%); }
+}
+@keyframes desk-glitch-close {
+  0% { opacity: .8; }
+  32% { transform: translateX(5px); clip-path: inset(12% 0 24%); }
+  64% { transform: translateX(-6px); clip-path: inset(38% 0 46%); opacity: .5; }
+  100% { opacity: 0; }
+}
+@keyframes desk-tv-off {
+  0% { opacity: .9; }
+  62% { transform: scale(1,.012); background-color: var(--v-blue); opacity: .9; }
+  100% { transform: scale(.025,.012); opacity: 0; }
+}
+:root[data-motion=reduce] .desk-window-exits { display: none; }
+:root[data-motion=reduce] .desk-window-exit { animation: none; }

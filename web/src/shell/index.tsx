@@ -16,6 +16,7 @@ import { buzz, HapticLabel, useHaptics } from '../haptic';
 import { oneWindowKept } from '../look';
 import { recency, useShortcuts } from './shortcuts';
 import Switcher from './switcher';
+import { WindowExits } from './window-motion';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -149,6 +150,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
           <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
         </section>;
       })}
+      <WindowExits boxes={boxes} phone={phone} tiles={route.tiles} />
     </div>
     {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher&&!keys.switching} onOpenChange={setLauncher} launch={open} />
