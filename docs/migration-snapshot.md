@@ -134,3 +134,9 @@ For a stopped household being staged into the rebuilt home, add
 agent identity and reference pages, Notes databases and attachment bytes, and
 shared Knowledge and People databases. Content-addressed attachments retain
 their exact bytes, including attachments that contain a SQLite database.
+
+An alias for a selected memory input is materialized at the selected name.
+Its backing path is also captured when independently inventoried. Agent aliases
+must resolve within that agent; shared aliases must stay in Commons. Authored
+pages must resolve to another declared authored page. Capture rejects attachments
+whose bytes disagree with the digest in their name.

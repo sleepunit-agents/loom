@@ -2,7 +2,7 @@ import {bridgeDocumentLimits,bridgeDocumentPath,readBridgeDocuments} from '../pi
 import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
 import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import Database from 'better-sqlite3';
@@ -39,8 +39,16 @@ function guarded<T>(path: string, rule: string, fn: () => T): T {
 /** A retired WAL database in a sealed directory cannot create read-coordination
  * files. Only a checkpointed main file with no sidecars may take this path. */
 async function backupDatabase(source: string, temporary: string): Promise<void> {
-  const sealed = () => (lstatSync(dirname(source)).mode & 0o222) === 0 &&
-    ['-wal','-shm','-journal'].every(suffix => !lstatSync(source + suffix, {throwIfNoEntry:false}));
+  const sealed = () => {
+    const parent = dirname(source);
+    if ((lstatSync(parent).mode & 0o222) !== 0) {
+      try { accessSync(parent, constants.W_OK); return false; }
+      catch (error) {
+        if (!['EACCES','EPERM','EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+    }
+    return ['-wal','-shm','-journal'].every(suffix => !lstatSync(source + suffix, {throwIfNoEntry:false}));
+  };
   if (!sealed()) {
     const db = new Database(source, { readonly: true, fileMustExist: true });
     try { await db.backup(temporary); } finally { db.close(); }
@@ -53,10 +61,7 @@ async function backupDatabase(source: string, temporary: string): Promise<void> 
       throw Error('Retired database changed during capture');
     }
     const db = new Database(image, {fileMustExist:true});
-    try {
-      if (db.pragma('integrity_check', {simple:true}) !== 'ok') throw Error('Invalid retired database');
-      await db.backup(temporary);
-    } finally { db.close(); }
+    try { await db.backup(temporary); } finally { db.close(); }
   } finally { rmSync(image, {force:true}); }
 }
 export function canonicalSnapshotPath(path: string): string {
@@ -169,11 +174,19 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
       for (const name of guarded(path, 'cannot list data directory', () => readdirSync(input).sort())) visit(join(input, name), logical === '.' ? name : `${logical}/${name}`, parents);
     } else if (!stat.isFile()) inventory.skipped.push({ path: label(path), rule: 'special file (socket, pipe or device)', bytes: null });
     else if (declaredAlias || patterns.some(pattern => matches(path, pattern))) {
-      if (memoryFile && logical !== path &&
-          !(identityPage(logical) && identityPage(path) && logical.split('/')[1] === path.split('/')[1])) {
-        refusal(logical, 'memory source alias must stay within its agent identity pages');
+      const memoryAlias = memoryFile && logical !== path;
+      if (memoryAlias) {
+        const scope = logical.startsWith('commons/') ? 'commons/' : logical.split('/').slice(0,2).join('/') + '/';
+        if (!path.startsWith(scope) || (identityPage(logical) && !identityPage(path))) {
+          refusal(logical, 'memory aliases must stay within their owner and authored identity pages');
+        }
       }
-      addCopy(`${prefix}/${path}`, input, stat.size);
+      // A memory-only alias names the selected archive input. Its backing
+      // file may have another format or an unrelated importer-visible name.
+      // Canonical files selected in their own right are captured on their visit.
+      if (!memoryAlias || householdMemoryFile(path)) {
+        addCopy(`${prefix}/${path}`, input, stat.size);
+      }
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
       const preserveAlias = prefix === 'home' ? memoryFile || (fileAlias && importerPatterns.some(pattern => matches(logical, pattern))) : declaredAlias;

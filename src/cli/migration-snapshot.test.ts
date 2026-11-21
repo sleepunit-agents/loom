@@ -505,6 +505,10 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   mkdirSync(join(home,'commons'));
   const databases = ['agents/fern/notes.db','commons/knowledge.db','commons/people.db'];
   for (const name of databases) writeFileSync(join(home,name),bytes);
+  for (const name of databases) {
+    renameSync(join(home,name),join(home,name+'.retired'));
+    symlinkSync(name.split('/').at(-1)+'.retired',join(home,name));
+  }
   symlinkSync(join('note-files',hash.slice(0,2),hash),join(agent,'memories.db'));
   const legacy = join(root,'legacy');
   const legacyManifest = await createSnapshot(home,legacy);
@@ -535,6 +539,20 @@ test('captures authored memory pages and byte-exact SQLite attachments for a reb
   await expect(createSnapshot(home,join(root,'cross-agent'),undefined,{},true)).rejects.toThrow(/identity pages/);
 });
 
+test('restores a confined attachment alias and refuses a changed digest before publication',async()=>{
+  const {home,to,root}=fixture(), agent=join(home,'agents/fern');
+  const bytes=Buffer.from('archive fixture'), hash=createHash('sha256').update(bytes).digest('hex');
+  const prefix=join(agent,'note-files',hash.slice(0,2));
+  mkdirSync(prefix,{recursive:true});writeFileSync(join(agent,'backing'),bytes);
+  symlinkSync('../../backing',join(prefix,hash));
+  await createSnapshot(home,to,undefined,{},true);
+  expect(readFileSync(join(to,'home/agents/fern/note-files',hash.slice(0,2),hash))).toEqual(bytes);
+  writeFileSync(join(agent,'backing'),'other content');
+  const bad=join(root,'bad');
+  await expect(createSnapshot(home,bad,undefined,{},true)).rejects.toThrow();
+  expect(existsSync(bad)).toBe(false);
+});
+
 test.each([0o444,0o644])('captures a retired checkpointed WAL task store (mode %i) inside a read-only directory', async mode => {
   const { root, home, to } = fixture();
   const dir = join(root,'retired');
@@ -542,6 +560,8 @@ test.each([0o444,0o644])('captures a retired checkpointed WAL task store (mode %
   const path = join(dir,'store.db'), db = new Database(path);
   db.pragma('journal_mode=WAL');
   db.exec("CREATE TABLE tasks(id TEXT); INSERT INTO tasks VALUES ('t-1')");
+  db.function('legacy_sort', {deterministic:true}, value=>value);
+  db.exec('CREATE INDEX by_legacy_sort ON tasks(legacy_sort(id))');
   db.close();
   const original = readFileSync(path);
   chmodSync(path,mode); chmodSync(dir,0o555);
