@@ -1,7 +1,7 @@
 import { it, expect, vi } from 'vitest';
 import * as docker from './docker-engine.js';
 import type { machineReader } from './machine-check.js';
-import { reportWorkerMachineReadings, type WorkerHttpOptions } from './worker-http.js';
+import { workerSignIn, reportWorkerMachineReadings, type WorkerHttpOptions } from './worker-http.js';
 import { workerProgram } from './worker-program.js';
 import { containerWorkerExecutor, UPKEEP_FAILED } from './worker-container.js';
 import { defaultWorkerState } from './worker-left.js';
@@ -279,6 +279,25 @@ it('refuses a private bootstrap flag on a builder before reading its token', asy
 for (const mode of ['--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
   const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account });
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
+});
+
+it('logs a failed sign-in poll once and keeps checking for requests', async () => {
+  const f = fixture();
+  const recovered = Promise.withResolvers<void>();
+  const fetcher = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response('private account information', { status: 503 }))
+    .mockImplementationOnce(async () => {
+      recovered.resolve();
+      return Response.json({ ok: true, value: null });
+    });
+  f.read.mockImplementation(async path => path === '/config'
+    ? JSON.stringify({ ...config, accountSignIn: { programs: [{ provider: 'p', command: plan }] } })
+    : 'private-token');
+  f.run.mockImplementation(async () => recovered.promise);
+  expect(await workerProgram({ ...f, signInRemote: options => workerSignIn({ ...options, fetch: fetcher }),
+    pause: async () => {} })).toBe(0);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker sign-in check unavailable (checking for a request, HTTP 503)\n');
 });
 
 it('takes a sign-in deadline up to the relay\'s own and no longer', async () => {

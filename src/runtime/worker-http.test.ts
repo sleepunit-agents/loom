@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
-import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
+import { signInFailureLine, workerSignIn, httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
 import { SILENCE_MS } from './silence.js';
 vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn((size: number) => actual.randomBytes(size)) }; });
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
@@ -9,6 +9,17 @@ function client(fetcher: typeof fetch, signal = new AbortController().signal) {
   return httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal });
 }
 describe('worker operation client', () => {
+  it('reports the failing sign-in step without provider or account data', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('private upstream words', { status: 503 }))
+      .mockRejectedValueOnce(new Error('private URL'))
+      .mockResolvedValueOnce(response({ secret: 'private code' }));
+    const remote = workerSignIn({ url: 'https://loom.example', token: 'private-token', fetch: fetcher, signal: new AbortController().signal });
+    expect(await remote.next().catch(signInFailureLine)).toBe('Worker sign-in check unavailable (checking for a request, HTTP 503)\n');
+    expect(await remote.page({ id: 'private-id', link: 'private-link' }).catch(signInFailureLine)).toBe('Worker sign-in check unavailable (reporting the sign-in page, connection failed)\n');
+    expect(await remote.code('private-id', 'private-take').catch(signInFailureLine)).toBe('Worker sign-in check unavailable (checking for a code, invalid response)\n');
+    expect(signInFailureLine(new Error('private relay output'))).toBe('Worker sign-in check unavailable\n');
+  });
   it('uses authenticated operation door, unique ids and no caller-supplied machine', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response(assignment)).mockResolvedValueOnce(response({ ok: true })).mockResolvedValueOnce(response({ active: false })).mockResolvedValueOnce(response({ ok: true }));
     const control = client(fetcher);
