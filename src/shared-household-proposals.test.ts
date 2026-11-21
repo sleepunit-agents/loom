@@ -1085,7 +1085,7 @@ it('names an outside account from its exact directory record only for the owner'
   const store = new PeopleStore({ dbPath: people });
   try {
     store.write({ slug: 'field-contact', name: 'Casey Field', where: {
-      slack: { value: 'UCASEY' }, slack_workspace: { value: 'TFIELD' },
+      slack: { value: ['UCASEY', 'UCASEYTWO'] }, slack_workspace: { value: 'TFIELD' },
     } });
     store.write({ slug: 'bare-handle', name: 'Unscoped Name', where: { slack: { value: 'UCASEY' } } });
   } finally { store.close(); }
@@ -1096,6 +1096,7 @@ it('names an outside account from its exact directory record only for the owner'
   };
   const id = await file('slack', 'TFIELD', 'UCASEY');
   const named = await preview(f, id);
+  expect((await preview(f, await file('slack','TFIELD','UCASEYTWO'))).card!.title).toContain('Casey Field (Slack)');
   expect(named.card!.title).toContain('Casey Field (Slack)');
   expect(named.card!.facts).toContainEqual({ label: 'Name from', value: 'People directory record for this account' });
   for (const [platform, workspace, user] of [['slack', 'TOTHER', 'UCASEY'], ['discord', 'TFIELD', 'UCASEY'], ['slack', 'TFIELD', 'UOTHER']]) {
