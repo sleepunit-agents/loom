@@ -140,7 +140,11 @@
     {
       "id": "conversations-017",
       "promise": "A thread keeps the pull requests it mentions and shows them as cards.thread_refs.ref",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationChangeCard"
+      }
     },
     {
       "id": "conversations-018",

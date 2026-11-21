@@ -76,6 +76,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('follows conversation PR references to their linked task',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('change-references');
+  expect(step.value.actions.conversationChangeCard,JSON.stringify(step.value.actions.conversationChangeCard)).toMatchObject({ok:true,ref:'github:example-house/garden#12',messageSeq:expect.any(Number)});
   expect(step.value.actions.changeInline,JSON.stringify(step.value.actions.changeInline)).toMatchObject({ok:true});
  });
  for(const answer of ['yes','no','words'])it(`records the Inbox ${answer} decision`,{retry:0},async()=>{
