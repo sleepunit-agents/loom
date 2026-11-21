@@ -100,7 +100,11 @@
     {
       "id": "memory-014",
       "promise": "A knowledge page is a fact about the world that says where it came from. Without a source it stays provisional. Pages are re-checked every 30 days.",
-      "source": "docs/how-it-works/site/memory.html#how-h"
+      "source": "docs/how-it-works/site/memory.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "knowledgeDue"
+      }
     },
     {
       "id": "memory-015",

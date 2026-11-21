@@ -173,6 +173,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise']=='Activity lists the tasks and pull requests each conversation touched.':row['probe']={'kind':'action','action':'activityWorkLinks'}
    if row['promise'].startswith(("Keeps each agent's memories in that agent's own files.","A memory belongs to one agent.","a Memories, notes and cards.")):row['probe']={'kind':'action','action':'agentMemoryFiles'}
    if row['promise'].startswith('Recalls by meaning, and keeps what is used most'):row['probe']={'kind':'action','action':'semanticRecall'}
+   if row['promise'].startswith('A knowledge page is a fact about the world'):row['probe']={'kind':'action','action':'knowledgeDue'}
    if row['promise'].startswith('Keeps notes: longer working documents'):row['probe']={'kind':'action','action':'noteLifetimes'}
  if f.stem=='data':
   for row in rows:

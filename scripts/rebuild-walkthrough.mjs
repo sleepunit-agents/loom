@@ -255,6 +255,12 @@ export async function* walkthroughSteps(output) {
    report.actions.semanticRecall=JSON.parse(stdout);
   } catch(error) { report.actions.semanticRecall={ok:false,error:String(error)}; }
   save();yield {phase:'semantic-recall',actions:safeReport(report.actions)};
+  phase='knowledge due delivery';
+  try {
+   const {dueKnowledgeDelivery}=await import('./rebuild-knowledge-due.mjs');
+   report.actions.knowledgeDue=await dueKnowledgeDelivery();
+  } catch(error) { report.actions.knowledgeDue={ok:false,error:String(error)}; }
+  save();yield {phase:'knowledge-due',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
    const {noteLifetimeEvidence}=await import('./rebuild-note-lifetimes.mjs');
