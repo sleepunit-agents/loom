@@ -99,6 +99,11 @@ export class ConversationSessions {
 
 }
 
+/** Erase every harness checkpoint with the thread in the caller's deletion transaction. */
+export function eraseConversationSessions(db: DataDatabase, conversation: string): void {
+  db.delete(conversationSessions).where(eq(conversationSessions.conversation, conversation)).run();
+}
+
 /** Remove every session started at or before `cutoff`: the sweep that erases words at the keep time calls
  * this with the same cutoff (messages.ts, expire). Returns how many went. */
 export function expireConversationSessions(db: DataDatabase, cutoff: string): number {

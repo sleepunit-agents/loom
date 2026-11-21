@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversationSessions, conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
-import { expireConversationSessions } from './sessions.js';
+import { eraseConversationSessions, expireConversationSessions } from './sessions.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
 import { lateMailWaits, type DigestInput, type LateJoins } from './index.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -273,7 +273,7 @@ export class CommsMessages {
     this.db.transaction(() => {
       const prior = this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get();
       if (prior) {
-        this.db.delete(conversationSessions).where(eq(conversationSessions.conversation, prior.conversation)).run();
+        eraseConversationSessions(this.db, prior.conversation);
         return;
       }
       const { thread } = this.context(threadId), at = this.now();
@@ -282,7 +282,7 @@ export class CommsMessages {
       this.db.update(inbox).set({ thread: null, messageSeq: null,
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,
         resolution: 'Thread deleted', changedAt: at }).where(eq(inbox.thread, threadId)).run();
-      this.db.delete(conversationSessions).where(eq(conversationSessions.conversation, thread.conversation)).run();
+      eraseConversationSessions(this.db, thread.conversation);
       this.db.delete(threads).where(eq(threads.id, threadId)).run();
     });
   }
