@@ -34,7 +34,11 @@
     {
       "id": "desk-004",
       "promise": "Shows each agent's face, its state and what it is doing.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskJobs"
+      }
     },
     {
       "id": "desk-005",
