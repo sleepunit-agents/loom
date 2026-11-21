@@ -26,6 +26,7 @@ export function dataSocket(options: {
 }) {
   const ws = new WebSocketServer({ noServer: true, maxPayload: DOOR_REQUEST_BYTES, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
   const admitted = new WeakMap<WebSocket, Authentication>();
+  const schemas = new WeakMap<WebSocket, { source: GraphQLSchema; tracked: GraphQLSchema }>();
   const frames = new WeakMap<object, { socket: WebSocket; version: number | undefined; until: number | undefined }>();
   const serializing = new WeakMap<WebSocket, { version: number | undefined; until: number | undefined }[]>();
   const cleanups = new Map<WebSocket, () => void>();
@@ -53,8 +54,13 @@ export function dataSocket(options: {
       if (stopping || !auth?.valid() || stopping) throw new Error('Authentication ended');
       auth.activity?.();
       if (stopping || !auth.valid() || stopping) throw new Error('Data access ended');
-      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid(), () => !stopping);
-      return executions.schema(schema, () => !stopping);
+      const source = options.schema(auth.viewer);
+      const previous = schemas.get(ctx.extra.socket);
+      if (previous?.source === source) return previous.tracked;
+      const schema = dataSubscriptions(source, options.live, () => !stopping && auth.valid(), () => !stopping);
+      const tracked = executions.schema(schema, () => !stopping);
+      schemas.set(ctx.extra.socket, { source, tracked });
+      return tracked;
     },
     context(ctx) {
       if (stopping) throw new Error('Data access ended');
