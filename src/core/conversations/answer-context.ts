@@ -1,3 +1,4 @@
+import {isBridgeVenue} from './channel-target.js';
 /** Ephemeral context for an answer to this conversation's own plain question.
  * No words are copied into a new message, Inbox row, job or receipt. */
 import {and,eq} from 'drizzle-orm';
@@ -23,7 +24,7 @@ export function guestDecisionQuestion(db:DataDatabase,receipt:Item){
  const owner=db.select().from(conversations).where(eq(conversations.id,q.conversation)).get();
  if(owner?.venue!=='wake'||owner.place!==JSON.stringify(['guest-decision',q.to])||owner.agent!==receipt.agent||owner.member!==q.to)return;
  const source=db.select().from(conversations).where(eq(conversations.id,receipt.conversation)).get();
- if(!source?.direct||source.member||source.agent!==receipt.agent||!['discord','slack'].includes(source.venue))return;
+ if(!source?.direct||source.member||source.agent!==receipt.agent||!isBridgeVenue(source.venue))return;
  const match=/^guest-decision:(dg-[0-9a-f-]+):([1-9][0-9]*)$/.exec(q.sourceId);
  if(!match)return;
  const digest=db.select().from(digests).where(eq(digests.id,match[1])).get();

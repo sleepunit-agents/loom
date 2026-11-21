@@ -12,7 +12,7 @@ import { inHousehold, isHouseholdOwner, loomToolsOnly, mayHandTo, membersWithAge
 import { householdOwners, sharedSharing } from './shared-sharing.js';
 import { OperationError } from './core/operations/index.js';
 import type { HandoffToSelf } from './core/conversations/handoff.js';
-import type { ChannelTarget } from './core/conversations/channel-target.js';
+import { isBridgeVenue,type ChannelTarget } from './core/conversations/channel-target.js';
 import { linkedBridgeReceipt } from './linked-bridge-receipt.js';
 import { conversationPlace, discordPlace } from './pieces/bridges/place.js';
 import { postable } from './pieces/bridges/reply-api.js';
@@ -38,7 +38,7 @@ export const CHAIN_NOTICE_EVERY = 25;
 
 type Place = { id: string; agent: string; venue: string; place: string };
 export type { OnWord };
-export const isBridgeVenue = (venue: string): venue is 'discord' | 'slack' => venue === 'discord' || venue === 'slack';
+export { isBridgeVenue };
 
 /** Where a post in this conversation goes: read from its place (pieces/bridges/place.ts), on the agent's
  * connection to that workspace. Nothing for a conversation that is not a bridge's or has no connection. */
@@ -234,7 +234,7 @@ export function decisionJobScope(db:DataDatabase,job:string,send?:{conversation:
 /** A private bridge question can leave the source room only for the agent's current directors. */
 export function privateDecisionAccount(db:DataDatabase,work:{job:{id:string;agent:string;conversation:string|null};cv:Place&{direct:boolean;member:string|null}},q:{to:string;answers:string;refs?:string[];link?:string;waitsOnKind?:string}){
   const {cv}=work;
-  if(!cv.direct||cv.member||!['slack','discord'].includes(cv.venue))return;
+  if(!cv.direct||cv.member||!isBridgeVenue(cv.venue))return;
   let place:unknown;
   try{place=JSON.parse(cv.place);}catch{return false;}
   if(!Array.isArray(place)||place.length!==4||!Array.isArray(place[3]))return false;
