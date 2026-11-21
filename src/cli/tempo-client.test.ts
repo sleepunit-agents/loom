@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
+import { agents, agentPauses, inbox, members, memberAgents, tokens, triggerLog, triggers } from '../core/data/schema.js';
 import { sharedRoot } from '../shared-root.js';
 import { runTempoClient } from './tempo-client.js';
 
@@ -58,6 +58,78 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
   } finally {
     await app.close();
     sql.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('replays the same pause receipt after a lost response and resumes only the selected clock', async () => {
+  const client = new Database(':memory:');
+  const clock = new FakeClock();
+  const db = createDataSchema(client);
+  const at = new Date(clock.now()).toISOString();
+  const dir = mkdtempSync(join(tmpdir(), 'loom-clock-control-'));
+  const token = randomUUID();
+  const file = join(dir, 'token');
+  writeFileSync(file, token, { mode: 0o600 });
+  db.insert(members).values({ id: 'director', role: 'owner', joinedAt: at }).run();
+  db.insert(tokens).values({ fingerprint: createHash('sha256').update(token).digest('hex'),
+    label: 'fixture', kind: 'owner', member: 'director', createdAt: at }).run();
+  for (const id of ['fern', 'birch']) {
+    db.insert(agents).values({ id, about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    db.insert(memberAgents).values({ member: 'director', agent: id }).run();
+  }
+  const app = sharedRoot({ db, clock, originAllowed: () => true });
+  try {
+    let output = '', errors = '';
+    const io = { env: { WAKE_LOCAL_AGENT: 'fern', LOOM_URL: 'http://localhost', LOOM_TOKEN_FILE: file },
+      stdin: Readable.from([]), stdinIsTTY: false, stdout: (s: string) => { output += s; }, stderr: (s: string) => { errors += s; } };
+    const attempts: string[] = [];
+    const request: typeof fetch = async (url, init) => {
+      const response = await app.http.request(String(url), init);
+      attempts.push(String(init?.body));
+      if (attempts.length === 1) {
+        expect(response.status).toBe(200);
+        await response.body?.cancel();
+        throw Error('Simulated disconnect after commit');
+      }
+      return response;
+    };
+    const paused = () => db.select({ agent: agentPauses.agent }).from(agentPauses).orderBy(agentPauses.agent).all();
+    for (const agent of ['fern', 'birch']) {
+      const result = await app.http.request('/api/tempo/set', { method: 'POST',
+        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: randomUUID(), input: { ownerKind: 'household', sourceKind: 'time',
+          times: new Date(clock.now() + 1000).toISOString(), lifespan: 'once', targetKind: 'inbox',
+          toKind: 'agent', to: agent, instructions: 'Work', note: 'Fixture' } }),
+      });
+      expect(result.status, await result.text()).toBe(200);
+    }
+    const recipients = () => db.select({ to: inbox.to }).from(inbox).all();
+    expect(await runTempoClient(['pause'], io, request)).toBe(0);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    expect(output).toContain("Paused fern's clock.");
+    expect(paused()).toEqual([{ agent: 'fern' }]);
+    expect(await runTempoClient(['--agent=birch', 'pause'], io, request)).toBe(0);
+    clock.advance(1001);
+    expect(recipients()).toEqual([]);
+    expect(await runTempoClient(['resume'], io, request)).toBe(0);
+    expect(recipients()).toEqual([{ to: 'fern' }]);
+    expect(paused()).toEqual([{ agent: 'birch' }]);
+    expect(output).toContain("Resumed fern's clock.");
+    const calls = attempts.length;
+    expect(await runTempoClient(['resume', 'everything'], io, request)).toBe(2);
+    expect(attempts).toHaveLength(calls);
+    writeFileSync(file, randomUUID());
+    output = '';
+    expect(await runTempoClient(['--agent=birch', 'resume'], io, request)).toBe(1);
+    expect(attempts).toHaveLength(calls + 1);
+    expect(output).toBe('');
+    expect(errors).toContain('Loom rejected the credential.');
+    expect(paused()).toEqual([{ agent: 'birch' }]);
+  } finally {
+    await app.close();
+    client.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

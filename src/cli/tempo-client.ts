@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { DAY_MS } from '../core/day.js';
 import { onOneLine } from '../core/line-name.js';
 import { parseArgs } from 'node:util';
@@ -7,6 +9,7 @@ import { parseRedactedJSON } from '../pieces/changes/redact.js';
 import type { IOStreams } from './io.js';
 
 const pageSize = 100;
+class DoorRefusal extends Error {}
 const pending = z.object({
   id: z.string(), nextDueAt: z.string().datetime().nullable(), sourceKind: z.string(),
   note: z.string(), state: z.string(), watches: z.string().nullable(),
@@ -117,30 +120,52 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
 }
 
 export async function runTempoClient(argv: string[], io: IOStreams, request = fetch): Promise<number> {
-  let agent = io.env.WAKE_AGENT;
+  let agent = io.env.WAKE_AGENT || io.env.WAKE_LOCAL_AGENT;
   if (argv[0] === '--agent') { agent = argv[1]; argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--agent=')) { agent = argv[0].slice('--agent='.length); argv = argv.slice(1); }
   const verb = argv[0];
+  const changesClock = verb === 'pause' || verb === 'resume';
   let options: ReturnType<typeof logOptions> | undefined;
   try {
     if (!agent) throw Error();
     if (verb === 'log') options = logOptions(argv.slice(1));
-    else if (verb !== 'list' || argv.length !== 1) throw Error();
+    else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake --agent AGENT list | log [--since DURATION] [--grep TEXT] (or set WAKE_AGENT)\n');
+    io.stderr('usage: wake --agent AGENT list | pause | resume | log [--since DURATION] [--grep TEXT] (or set WAKE_AGENT)\n');
     return 2;
   }
   try {
     const { base, token } = await doorConnection(io.env);
-    const read: Read = async (query, variables) => {
-      const response = await request(new URL('/graphql', base), {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
-        headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-        body: JSON.stringify({ query, variables }),
-      });
-      if (!response.ok) { await response.body?.cancel(); throw Error(); }
-      return parseRedactedJSON(await response.text(), token);
+    const post = async (path: string, payload: unknown) => {
+      const url = new URL(path, base);
+      const body = JSON.stringify(payload);
+      for (let attempt = 1; ; attempt++) {
+        let response: Response;
+        try {
+          response = await request(url, {
+            method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
+            headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body,
+          });
+          if (response.ok) return parseRedactedJSON(await response.text(), token);
+        } catch (error) {
+          if (attempt >= 3) throw error;
+          await delay(100 * attempt);
+          continue;
+        }
+        await response.body?.cancel();
+        if (response.status === 401) throw new DoorRefusal('Loom rejected the credential.');
+        if (response.status === 403) throw new DoorRefusal('Loom denied this clock request.');
+        if (response.status !== 503 || attempt >= 3) throw Error();
+        await delay(100 * attempt);
+      }
     };
+    if (changesClock) {
+      const answer = await post('/api/tempo/' + verb, { id: randomUUID(), input: { agent } });
+      z.object({ ok: z.literal(true), value: z.object({ saved: z.literal(true) }) }).parse(answer);
+      io.stdout((verb === 'pause' ? 'Paused ' : 'Resumed ') + onOneLine(agent) + "'s clock.\n");
+      return 0;
+    }
+    const read: Read = (query, variables) => post('/graphql', { query, variables });
     if (options) { io.stdout(await readLog(read, agent, options)); return 0; }
     const rows: z.infer<typeof pending>[] = [];
     let after = '', timezone: string;
@@ -165,8 +190,10 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     }
     if (!rows.length) io.stdout('No pending wakes.\n');
     return 0;
-  } catch {
-    io.stderr('Could not read ' + (verb === 'log' ? 'wake history' : 'pending wakes') + ' from Loom.\n');
+  } catch (error) {
+    if (error instanceof DoorRefusal) io.stderr(error.message + '\n');
+    else if (changesClock) io.stderr('Could not confirm the request to ' + verb + ' the clock.\n');
+    else io.stderr('Could not read ' + (verb === 'log' ? 'wake history' : 'pending wakes') + ' from Loom.\n');
     return 1;
   }
 }
