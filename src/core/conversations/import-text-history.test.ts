@@ -74,7 +74,7 @@ it('keeps tool state after expiry and cannot restore erased private details on r
     writer.prepare("INSERT INTO comms_messages VALUES(?,1,'card','fern','step-edit',?,'run',?,null,?,?)")
       .run(thread.id, current, summary, JSON.stringify({ tool:'Edit', state:'done', exit:0 }), step);
     let opens = 0;
-    const run = () => importTextHistory({ archive, household:archive, destination, cards:true, sourceDays:2, now:() => current,
+    const run = () => importTextHistory({ archive, household:archive, destination, kind:'cards', sourceDays:2, now:() => current,
       key:{ async open(bytes){ opens++; return bytes.toString(); }, async seal(){ throw Error('unexpected'); }, hash(){ throw Error('unexpected'); } } });
     expect(await run()).toEqual({inserted:1,total:1});
     const read = () => client.prepare('SELECT words, archived_step_words detail, card_state state FROM messages').get();
@@ -89,5 +89,40 @@ it('keeps tool state after expiry and cannot restore erased private details on r
     expect(read()).toEqual({ words:null, detail:null, state:'done' });
   } finally {
     archive.close(); writer.close(); client.close(); rmSync(dir, {recursive:true, force:true});
+  }
+});
+
+it('validates notice attribution, keeps retry state, and never restores an erased reason', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loom-notice-history-'));
+  const path = join(dir, 'source.db');
+  const writer = new Database(path), archive = new Database(path, {readonly:true}), client = new Database(':memory:');
+  const at = '2026-11-20T00:00:00.000Z';
+  try {
+    const destination = createDataSchema(client);
+    client.exec(`INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES('fern','','','','drop','dot');
+      INSERT INTO members(id,role,joined_at) VALUES('alex','member','${at}')`);
+    const thread = new Threads(destination, () => at).open({member:'alex',agent:'fern',title:'Garden'});
+    writer.exec('CREATE TABLE comms_threads(id,conversation,agent,member,project); CREATE TABLE comms_messages(thread,seq,kind,sender,id,at,run,text,delivered,card_json,step)');
+    writer.prepare('INSERT INTO comms_threads VALUES(?,?,?,?,null)').run(thread.id,thread.conversation,'fern','alex');
+    const info = {error:'start-retry',attempt:2,settled:true,retry_at:at};
+    writer.prepare("INSERT INTO comms_messages VALUES(?,1,'error','fern','e1',?,'run',null,null,?,null)")
+      .run(thread.id,at,JSON.stringify({...info,reason:'garden failure'}));
+    let seals = 0;
+    const run = () => importTextHistory({archive,household:archive,destination,kind:'notices',sourceDays:2,now:()=>at,
+      key:{async seal(value){seals++;return Buffer.from(value);},async open(bytes){return Buffer.from(bytes).toString();},hash(){throw Error('unexpected');}}});
+    await expect(run()).rejects.toThrow(/sender differs/);
+    expect(seals).toBe(0);
+    writer.exec("UPDATE comms_messages SET sender='loom'");
+    expect(await run()).toEqual({inserted:1,total:1});
+    const row = () => client.prepare('SELECT kind, archived_notice meta, words FROM messages').get();
+    expect(row()).toEqual({kind:'notice',meta:JSON.stringify(info),words:Buffer.from('garden failure')});
+    writer.prepare('UPDATE comms_messages SET card_json=?').run(JSON.stringify({...info,reason:'different'}));
+    await expect(run()).rejects.toThrow(/Conflicting/);
+    client.exec('UPDATE messages SET words=NULL');
+    expect(await run()).toEqual({inserted:0,total:1});
+    expect(row()).toEqual({kind:'notice',meta:JSON.stringify(info),words:null});
+    expect(seals).toBe(1);
+  } finally {
+    archive.close(); writer.close(); client.close(); rmSync(dir,{recursive:true,force:true});
   }
 });

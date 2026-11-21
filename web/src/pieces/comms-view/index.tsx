@@ -40,6 +40,19 @@ type Drawing = { member: string; name(id: string): string; zone?: string; cards?
 const mine = (message: CommsMessage) => message.kind === 'message' || message.kind === 'answer';
 const joins = (message: CommsMessage) => message.kind !== 'card' && message.kind !== 'notice';
 /** A step's and a delivery's stored state, in plain words. */
+function ArchivedNotice({ message, zone }: { message: CommsMessage; zone: Parameters<typeof fullTime>[1] }) {
+  const info = message.notice;
+  if (!info) return <>{message.words ?? 'Message words are unavailable'}</>;
+  const labels: Record<string, string> = {
+    'no-runtime': 'The runtime was unavailable', refused: 'Delivery refused', 'start-failed': 'The agent failed to start',
+    busy: 'The agent was busy', 'start-retry': info.settled ? 'The agent started after a retry' : 'A start retry was scheduled',
+    loop: 'The agent paused after repeating itself', 'post-failed': 'The reply could not be shown',
+    'no-reply': 'The agent finished without replying', 'no-age': 'Message encryption was unavailable', unreachable: 'Delivery failed',
+  };
+  return <>{labels[info.error] ?? 'Delivery notice'}{info.attempt && ` · attempt ${info.attempt}`}
+    {info.retryAt && ` · retry scheduled for ${fullTime(info.retryAt, zone)}`}{message.words && ` · ${message.words}`}</>;
+}
+
 function ArchivedStep({message,zone}:{message:CommsMessage;zone:Parameters<typeof fullTime>[1]}) {
   const info=message.stepInfo, words=message.stepDetails;
   const facts=[
@@ -90,7 +103,7 @@ function Entries({ messages, refs, drawing }: { messages: readonly CommsMessage[
     if (first.kind === 'card') return <li key={first.seq} className="comms-step" data-state={first.cardState ?? 'running'}>
       {said}<span>{first.words ?? first.tool ?? 'Working'} · {stepWords[first.cardState ?? 'running']}</span>
       <ArchivedStep message={first} zone={drawing.zone}/></li>;
-    if (first.kind === 'notice') return <li key={first.seq} className="comms-notice">{said}{first.words ?? 'Message words are unavailable'}</li>;
+    if (first.kind === 'notice') return <li key={first.seq} className="comms-notice">{said}<ArchivedNotice message={first} zone={drawing.zone}/></li>;
     return <li key={first.seq} className="comms-group" data-side={mine(first) ? 'me' : 'them'}>
       <p className="comms-group__who" aria-hidden="true"><span>{who}</span><time dateTime={first.at} title={fullTime(first.at, drawing.zone)}>{briefTime(first.at, drawing.zone)}</time></p>
       {group.map(message => <Words key={message.seq} message={message} who={who} drawing={drawing} refs={refs.filter(row => row.messageSeq === message.seq).map(row => row.ref)} />)}

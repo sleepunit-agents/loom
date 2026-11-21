@@ -1,3 +1,4 @@
+import { noticeInfo } from './legacy-notice.js';
 import { legacyStepWords, legacyToolCard } from './legacy-tool-card.js';
 import { archivedQuestionsField } from './archived-questions.js';
 import { readAll } from '../data/execution.js';
@@ -132,6 +133,10 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['pinned', 'working', 'stopRequested'].map(name => [name, { type: new GraphQLNonNull(GraphQLBoolean) }])),
     readSeq: { type: new GraphQLNonNull(GraphQLInt) },
   } });
+  const notice = new GraphQLObjectType({ name:'ArchivedCommsNotice', fields:{
+    error:{type:new GraphQLNonNull(GraphQLString)}, attempt:{type:GraphQLInt}, settled:{type:GraphQLBoolean},
+    retryAt:{type:GraphQLString,resolve:row=>row.retry_at},
+  }});
   const stepInfo=new GraphQLObjectType({name:'ArchivedStepInfo',fields:{
     exit:{type:GraphQLInt},limit:{type:GraphQLInt},parent:{type:GraphQLString},t0:{type:GraphQLString},t1:{type:GraphQLString},
   }});
@@ -142,6 +147,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   const message = new GraphQLObjectType<MessageView, { viewer: Viewer }>({ name: 'CommsMessageView', fields: {
     ...Object.fromEntries(['thread', 'kind', 'sender', 'at'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['keepUntil', 'delivery', 'inboxItem', 'verdict', 'run', 'tool', 'cardState', 'clientId'].map(name => [name, { type: GraphQLString }])),
+    notice:{type:notice,resolve:row=>row.archivedNotice?noticeInfo.parse(JSON.parse(row.archivedNotice)):null},
     stepInfo:{type:stepInfo,resolve:row=>row.archivedStepMeta?legacyToolCard.parse(JSON.parse(row.archivedStepMeta)):null},
     stepDetails:{type:stepDetails,resolve:(row,_args,context)=>row[projected]&&Object.hasOwn(row[projected],'stepDetails')?row[projected].stepDetails:
       service.stepDetails(context.viewer,row,until=>keepReadUntil(context,until))},

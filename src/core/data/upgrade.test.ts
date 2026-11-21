@@ -137,7 +137,7 @@ describe('upgrading a household database', () => {
     expect(privateHistory()).toEqual([
       before[0].map(row => ({ ...row as object, handoff_not_before: null })),
       before[1],
-      before[2].map(row => ({ ...row as object, archived_step_meta: null, archived_step_words: null })),
+      before[2].map(row => ({ ...row as object, archived_step_meta: null, archived_step_words: null, archived_notice: null })),
       before[3],
     ]);
     expect(old.pragma('foreign_key_check')).toEqual([]);

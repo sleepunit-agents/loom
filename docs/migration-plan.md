@@ -2,7 +2,7 @@
 
 ## Current Comms history import
 
-Run `loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME` against completed SQLite backups and a stopped, prepared home with its original Comms key. The command holds the home lock while it restores threads, text messages, tool cards and saved questions. It refuses an archive with additional message kinds before writing any threads. Each phase commits separately. After correcting an error, rerun the command with the same archive and home. A successful run reports the number of new and source records for each phase.
+Run `loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME` against completed SQLite backups and a stopped, prepared home with its original Comms key. The command holds the home lock while it restores threads, text messages, tool cards, delivery notices and saved questions. It refuses an archive with additional message kinds before writing any threads. Each phase commits separately. After correcting an error, rerun the command with the same archive and home. A successful run reports the number of new and source records for each phase.
 
 ## Historical whole-household commands
 

@@ -58,19 +58,19 @@ export async function migrateComms(phase:'comms'|'archived-questions'|'comms-thr
     const input={archive,household,destination:dataDatabase(client),key:wordsKey(identity),
       sourceDays:sourceConfig.comms_days,github:sourceConfig.github,now:()=>new Date().toISOString()};
     if (phase === 'comms') {
-      const unsupported = archive.prepare("SELECT 1 FROM comms_messages WHERE kind IS NULL OR kind NOT IN ('message','reply','card') LIMIT 1").get();
+      const unsupported = archive.prepare("SELECT 1 FROM comms_messages WHERE kind IS NULL OR kind NOT IN ('message','reply','card','error') LIMIT 1").get();
       if (unsupported) {
         io.stderr('This archive contains Comms message kinds the combined importer cannot restore yet.\n');
         return 1;
       }
       restoreThreads();
     }
-    const phases = phase === 'comms' ? ['comms-text', 'comms-cards', 'archived-questions'] as const : [phase];
+    const phases = phase === 'comms' ? ['comms-text', 'comms-cards', 'comms-notices', 'archived-questions'] as const : [phase];
     for (const part of phases) {
       const result = part === 'archived-questions'
         ? await importArchivedQuestions(input)
-        : await importTextHistory({ ...input, cards: part === 'comms-cards' });
-      const label = part === 'archived-questions' ? 'archived questions' : part === 'comms-cards' ? 'Comms tool cards' : 'Comms text messages';
+        : await importTextHistory({ ...input, kind: part === 'comms-cards' ? 'cards' : part === 'comms-notices' ? 'notices' : 'text' });
+      const label = part === 'comms-notices' ? 'Comms notices' : part === 'archived-questions' ? 'archived questions' : part === 'comms-cards' ? 'Comms tool cards' : 'Comms text messages';
       io.stdout(`Imported ${result.inserted} of ${result.total} ${label}.\n`);
     }
     return 0;

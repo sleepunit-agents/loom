@@ -568,6 +568,7 @@ CREATE TABLE `messages` (
 	`client_id` text,
 	`archived_step_meta` text,
 	`archived_step_words` blob,
+	`archived_notice` text,
 	PRIMARY KEY(`thread`, `seq`),
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`inbox_item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
