@@ -30,9 +30,9 @@ it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open
       const t=svc.threads.open({id:'th:archived-questions',member:'alex',agent:'fern',title:'Old garden questions'});
       thread=t.id;
       meta.exec('create table comms_threads(id,agent,member,conversation)');
-      meta.prepare('insert into comms_threads values(?,?,?,?)').run(t.id,'fern','alex',t.conversation);
+      meta.prepare('insert into comms_threads(id,agent,member,conversation) values(?,?,?,?)').run(t.id,'fern','alex',t.conversation);
       old.exec('create table comms_asks(thread,ref,approval,raised,seen,words,answer_json)');
-      old.prepare('insert into comms_asks values(?,?,?,?,?,?,?)').run(t.id,'approval:a-41','a-41',iso(now+day*9),iso(now-day*2+keepMs),
+      old.prepare('insert into comms_asks(thread,ref,approval,raised,seen,words,answer_json) values(?,?,?,?,?,?,?)').run(t.id,'approval:a-41','a-41',iso(now+day*9),iso(now-day*2+keepMs),
         await key.seal(JSON.stringify({text,why})),JSON.stringify({verdict:'allowed',by:'alex',at:iso(now-1500)}));
     }finally{old.close();meta.close();}
 
@@ -43,6 +43,14 @@ it.runIf(process.env.LOOM_TEST_CHROME)('an archived question expires in the open
       const before=counts();
       expect(await importArchivedQuestions(options)).toEqual({total:1,inserted:1});
       expect(await importArchivedQuestions(options)).toEqual({total:1,inserted:0});
+      const changed=new Database(oldPath);
+      try {
+        // The new question sorts before the conflicting previously imported one.
+        changed.exec("insert into comms_asks(thread,ref,approval,raised,seen,words,answer_json) select thread,'a-first',null,raised,seen,words,null from comms_asks");
+        changed.exec("update comms_asks set approval='different' where ref='approval:a-41'");
+      } finally { changed.close(); }
+      await expect(importArchivedQuestions(options)).rejects.toThrow('Conflicting archived question');
+      expect(client.prepare('select ref from archived_questions').all()).toEqual([{ref:'approval:a-41'}]);
       expect(counts()).toEqual(before);
     }finally{client.close();archive.close();household.close();}
 
