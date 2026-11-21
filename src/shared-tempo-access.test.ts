@@ -88,7 +88,9 @@ it('binds a parked secret verdict to the agent and the private work that asked f
    model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:at}).run();
  f.db.insert(secrets).values({name:'fixture',description:'',changedBy:'owner',changedAt:at}).run();
  f.db.insert(secretRequests).values({id:'q-bound',secret:'fixture',agent:'art',job:'sam-job',why:'private',state:'pending',minutes:1,always:false,askedAt:at}).run();
- const trigger={...f.set.trigger,sourceKind:'answer' as const,times:null,watches:'park-secret:q-bound',project:'pond'};
+ const cv = new Conversations(f.db,f.now).open({agent:'art',member:'sam',project:'pond',venue:'loom',place:'sam-private',label:'Private'});
+ f.client.prepare("UPDATE jobs SET conversation=? WHERE id='sam-job'").run(cv.id);
+ const trigger={...f.set.trigger,sourceKind:'answer' as const,times:null,parked:true,watches:'park-secret:q-bound',project:'pond'};
  const can=(member:string,change:Partial<Extract<TempoAccess,{action:'set'}>['trigger']>)=>f.can('member',member,{action:'set',trigger:{...trigger,...change}});
  expect(can('sam',{})).toBe(true);
  expect(can('sam',{project:undefined})).toBe(false);

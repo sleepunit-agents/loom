@@ -51,8 +51,10 @@ describe('upgrading a household database', () => {
       note,enabled,state,created_at,changed_at`;
     const values = "VALUES (?, 'agent', ?, 'agent', ?, 'time', '12:00', 'until-stopped', 'inbox', '', 1, 'standing', ?, ?";
     old.prepare(insert + ') ' + values + ')').run('nightly','fern','fern',at,at);
+    old.prepare("UPDATE triggers SET watches='park-approval:existing' WHERE id='nightly'").run();
     old.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (1,'nightly',?,'fired','first')").run(at);
     upgradeDataSchema(old);
+    expect(old.prepare("SELECT parked,watches FROM triggers WHERE id='nightly'").get()).toEqual({parked:0,watches:'park-approval:existing'});
     const create = old.prepare(insert + ',schedule_name) ' + values + ',?)');
     const add = (id: string, agent: string) => create.run(id,agent,agent,at,at,'nightly');
     add('birch-first','birch');

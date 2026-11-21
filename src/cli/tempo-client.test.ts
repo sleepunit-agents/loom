@@ -124,6 +124,8 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
       id,agent:'fern',kind:'command',target:'fixture',what:'Fixture',why:'Private reason',askedFrom:'fixture',actingFor:'fern',
       state:'pending',minutes:5,ask:'Fixture',ifYes:'Yes',ifNo:'No',details:'Private details',askedAt:at,
     }).run();
+    const native = /delivered (cv-[\w-]+)/.exec(out)![1];
+    sql.prepare("UPDATE approvals SET conversation=? WHERE id='a-report'").run(native);
     const park = (id:string) => ['park','--on',id,'-p','Check the result','--note','Follow up'];
     expect(await runTempoClient(['--agent','birch',...park('a-report')], io, request)).toBe(1);
     expect(await runTempoClient(park('a-report'), io, request),err).toBe(0);
@@ -276,7 +278,7 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
   const words = '  Make a note 🎛️\r\n'.repeat(1024) + '\n';
   const lane = {ownerKind:'household',sourceKind:'time',times:'03:13',lifespan:'until-stopped',targetKind:'inbox',
     toKind:'agent',to:'fern',instructions:words,note:'Watch',enabled:true,state:'standing',createdAt:at,changedAt:at} as const;
-  for (let i = 0; i < 103; i++) db.insert(triggers).values({...lane,id:'lane-'+i}).run();
+  for (let i = 0; i < 103; i++) db.insert(triggers).values({...lane,id:i===0?'Ｚ':i===1?'😀':'lane-'+i}).run();
   db.insert(triggers).values({...lane,id:'other',to:'birch',instructions:'No final newline'}).run();
   db.insert(triggers).values({...lane,id:'private-token',instructions:agent}).run();
   db.insert(triggers).values({...lane,id:'off',enabled:false,state:'stopped'}).run();
@@ -297,6 +299,7 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
     const names = listed.out.trimEnd().split('\n').map(line=>line.split(' ')[0]);
     expect(names).toHaveLength(105);
     expect(new Set(names).size).toBe(105);
+    expect(names.slice(-2).map(decodeURIComponent)).toEqual(['Ｚ','😀']);
     expect(names).toContain('other');
     expect(names).not.toContain('off');
     expect(await run(owner,'lane','text','other')).toMatchObject({code:0,out:'No final newline\n'});
@@ -338,6 +341,17 @@ it('lists named household lanes across pages and returns stored UTF-8 instructio
     };
     expect(await run(owner,'lane','set','lane-102','-p','Stale update')).toMatchObject({code:1,out:'',err:expect.stringContaining('changed')});
     expect(await run(owner,'lane','text','lane-102')).toMatchObject({code:0,out:'Concurrent text\n'});
+
+    const setSchedule = (id:string) => run(owner,'--agent','fern','schedule','set',id,'--at','04:15','-p','Replacement','--note','Fixture');
+    transport = async (url,init) => {
+      if (new URL(String(url)).pathname === '/api/tempo/edit')
+        app.services.tempo.triggers.edit('lane-102',{times:'06:00'},{kind:'member',id:'director'});
+      return direct(url,init);
+    };
+    expect(await setSchedule('lane-102')).toMatchObject({code:1,err:expect.stringContaining('changed')});
+    expect(await run(owner,'lane','text','lane-102')).toMatchObject({code:0,out:'Concurrent text\n'});
+    transport = direct;
+    expect(await setSchedule('off')).toMatchObject({code:0});
 
   } finally {
     await app.close(); sql.close(); rmSync(folder,{recursive:true,force:true});

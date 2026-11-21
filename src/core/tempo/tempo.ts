@@ -56,7 +56,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
-      const park = parkedSource(t.watches);
+      const park = parkedSource(t);
       if (park && (!t.to || !parkedDestination(db, park, {agent:t.to, project:t.project, conversation:t.conversation, member:options.worksFor?.(t)})))
         return 'stop';
       // A trigger that names a conversation is mail there, on its asker's word, and opens no wake. One that

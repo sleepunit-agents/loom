@@ -36,6 +36,13 @@ it('fires a one-off time to an inbox without starting a body, once across restar
   engine.close(); const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
   reopened.tick(); clock.advance(60_000); expect(items()).toHaveLength(1);
 });
+it('preserves time triggers that happen to carry a parked-looking watch name', () => {
+  const {engine,base,items,row} = fixture();
+  const created = engine.set({...base,watches:'park-approval:historical'});
+  expect(row(created.id).parked).toBe(false);
+  engine.runNow(created.id);
+  expect(items()).toMatchObject([{words:base.instructions}]);
+});
 it('holds a due trigger while paused and fires once on resume', () => {
   const { engine, clock, base, items, row } = fixture();
   const t = engine.set(base); engine.pause('art');
@@ -59,7 +66,7 @@ it('recovers a parked approval and times out only an unanswered wait, once each'
     db.insert(approvals).values({ id, agent:'art', kind:'command', target:'fixture', what:'Fixture', why:'Private reason',
       askedFrom:'fixture', actingFor:'art', state:'pending', minutes:5, ask:'Fixture', ifYes:'Yes', ifNo:'No',
       details:'Private details', askedAt:new Date(clock.now()).toISOString() }).run();
-    engine.set({ ...base, id:'wait-' + id, sourceKind:'answer', times:null, watches:'park-approval:' + id });
+    engine.set({ ...base, id:'wait-' + id, sourceKind:'answer', times:null, parked:true,watches:'park-approval:' + id });
   }
   expect(() => engine.runNow('wait-a-decided')).toThrow(/parked wait/);
   engine.pause('art');
@@ -88,7 +95,7 @@ it('arms a parked secret request for exactly 24 hours and reports a revoked requ
   for (const id of ['q-revoked','q-pending']) {
     db.insert(secretRequests).values({id,secret:'private-name',agent:'art',why:'private reason',minutes:5,
       always:false,askedAt:at,state:'pending'}).run();
-    engine.set({...base,id:'wait-' + id,times:null,sourceKind:'answer',watches:'park-secret:' + id});
+    engine.set({...base,id:'wait-' + id,times:null,sourceKind:'answer',parked:true,watches:'park-secret:' + id});
   }
   db.update(secretRequests).set({state:'revoked',answeredAt:at}).where(eq(secretRequests.id,'q-revoked')).run();
   engine.tick();

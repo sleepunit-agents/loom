@@ -708,6 +708,7 @@ CREATE TABLE `triggers` (
 	`program_period` text,
 	`read_state_from` text,
 	`program_state` text,
+	`parked` integer DEFAULT false NOT NULL,
 	`schedule_name` text,
 	`schedule_removed_at` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
@@ -729,6 +730,7 @@ CREATE TABLE `triggers` (
 	CONSTRAINT "triggers_to_kind_choice" CHECK("triggers"."to_kind" in ('person', 'agent')),
 	CONSTRAINT "triggers_enabled_boolean" CHECK("triggers"."enabled" in (0, 1)),
 	CONSTRAINT "triggers_state_choice" CHECK("triggers"."state" in ('standing', 'due', 'firing', 'held', 'fired', 'stopped', 'failed')),
+	CONSTRAINT "triggers_parked_boolean" CHECK("triggers"."parked" in (0, 1)),
 	CONSTRAINT "triggers_schedule_removed_at_utc" CHECK("triggers"."schedule_removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."schedule_removed_at") = "triggers"."schedule_removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."schedule_removed_at") = "triggers"."schedule_removed_at", 0)),
 	CONSTRAINT "triggers_removed_schedule_stopped" CHECK("triggers"."schedule_removed_at" is null or ("triggers"."enabled" = 0 and "triggers"."state" = 'stopped' and "triggers"."next_due_at" is null))
 );

@@ -60,7 +60,7 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
     // Judged as it will be recorded: see recordedTrigger.
     case 'set': {
       const t = triggerAsSet(viewer, access.trigger, sharing);
-      const park = parkedSource(t.watches);
+      const park = parkedSource(t);
       if (park) return t.sourceKind === 'answer' && t.toKind === 'agent' && !!t.to
         && sourceAllowed('answer', (park.approval ? 'approval:' : 'secret-request:') + park.id)
         && maySetTrigger(viewer, t, sharing)

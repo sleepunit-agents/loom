@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, getTableColumns, gt, isNotNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, gt, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlHolds, sqlVisibility } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
@@ -29,4 +29,19 @@ export function clockLaneText(db: DataDatabase, viewer: Viewer, id: string) {
   const revision = viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer)
     ? createHash('sha256').update(JSON.stringify([id, digest, row.agent, row.project, row.member, row.conversation])).digest('hex') : null;
   return { text, digest, revision };
+}
+
+/** Bind a household schedule replacement to the settings its owner just read. */
+export function clockScheduleRevision(db: DataDatabase, viewer: Viewer, id: string) {
+  if (viewer.kind !== 'member' || !sqlHolds(db, rules.householdOwner, viewer)) return null;
+  const row = db.select({
+    id: triggers.id, name: triggers.scheduleName, agent: triggers.to, member: triggers.member,
+    project: triggers.project, conversation: triggers.conversation, enabled: triggers.enabled,
+    times: triggers.times, days: triggers.days, instructions: triggers.instructions, file: triggers.file,
+    note: triggers.note, model: triggers.wantsModel,
+  }).from(triggers).where(and(sqlVisibility(viewer, ['triggers']).triggers(getTableColumns(triggers)),
+    eq(triggers.id, id), eq(triggers.ownerKind, 'household'), eq(triggers.sourceKind, 'time'),
+    eq(triggers.lifespan, 'until-stopped'), eq(triggers.targetKind, 'inbox'), eq(triggers.toKind, 'agent'),
+    isNull(triggers.scheduleRemovedAt))).get();
+  return row ? createHash('sha256').update(JSON.stringify(row)).digest('hex') : null;
 }

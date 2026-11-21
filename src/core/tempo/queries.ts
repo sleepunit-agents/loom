@@ -1,4 +1,4 @@
-import { clockLanes, clockLaneText } from './lanes.js';
+import { clockLanes, clockLaneText, clockScheduleRevision } from './lanes.js';
 import { wakeDeliveries } from './deliveries.js';
 /** Safe household display projection for Tempo; never expose settings wholesale. */
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
@@ -40,6 +40,8 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer, canReadProgra
    resolve: (_source: unknown, { after }: { after: string }) => current() ? clockLanes(db, viewer, after) : [],
  }, tempoLaneText: { type: dataValue, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
    resolve: (_source: unknown, { id }: { id: string }) => current() ? clockLaneText(db, viewer, id) : null,
+ }, tempoScheduleRevision: { type: GraphQLString, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
+   resolve: (_source: unknown, { id }: { id: string }) => current() ? clockScheduleRevision(db, viewer, id) : null,
  }, tempoDefaultAgent: { type: GraphQLString,
    resolve: () => {
      if (!current() || (viewer.kind !== 'agent' && viewer.kind !== 'member')) return null;

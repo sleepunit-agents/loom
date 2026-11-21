@@ -766,6 +766,7 @@ export const triggers = sqliteTable('triggers', {
   programPeriod: text('program_period', { enum: ['day'] }),
   readStateFrom: text('read_state_from').references((): AnySQLiteColumn => triggers.id),
   programState: text('program_state', { mode: 'json' }).$type<HouseProgram['state']>(),
+  parked: integer('parked', {mode:'boolean'}).default(false).notNull(),
   scheduleName: text('schedule_name'),
   scheduleRemovedAt: text('schedule_removed_at'),
 }, t => [
@@ -785,6 +786,7 @@ export const triggers = sqliteTable('triggers', {
   check('triggers_to_kind_choice', sql`${t.toKind} in ('person', 'agent')`),
   check('triggers_enabled_boolean', sql`${t.enabled} in (0, 1)`),
   check('triggers_state_choice', sql`${t.state} in ('standing', 'due', 'firing', 'held', 'fired', 'stopped', 'failed')`),
+  check('triggers_parked_boolean', sql`${t.parked} in (0, 1)`),
   check('triggers_schedule_removed_at_utc', utc(t.scheduleRemovedAt)),
   check('triggers_removed_schedule_stopped', sql`${t.scheduleRemovedAt} is null or (${t.enabled} = 0 and ${t.state} = 'stopped' and ${t.nextDueAt} is null)`),
   index('triggers_enabled_next_due_at_idx').on(t.enabled, t.nextDueAt),

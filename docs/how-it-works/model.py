@@ -444,6 +444,7 @@ area("tempo", "Tempo",
     ("program_period", "text", "Optional period limiting program admission.", ""),
     ("read_state_from", "id", "Another trigger that supplies this program’s input state.", ""),
     ("program_state", "text", "Small JSON value from the last successful state update.", ""),
+    ("parked", "boolean", "Whether this wake waits for a request verdict with a deadline.", ""),
     ("schedule_name", "text", "Name of a recurring wake on its agent’s clock. Older schedules use their trigger ID.", ""),
     ("schedule_removed_at", "time", "When the schedule released its name. The trigger keeps its firing history.", "")]),
   T("trigger_log", "What happened to each trigger, in order.", [

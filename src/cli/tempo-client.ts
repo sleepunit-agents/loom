@@ -14,11 +14,15 @@ import { doorConnection } from './connection.js';
 import { parseRedactedJSON } from '../pieces/changes/redact.js';
 import type { IOStreams } from './io.js';
 
+function nextCursor(previous: string, id: string) {
+  if (Buffer.compare(Buffer.from(id),Buffer.from(previous)) <= 0) throw Error('Invalid clock cursor');
+  return id;
+}
 const pageSize = 100;
 class DoorRefusal extends Error {}
 const pending = z.object({
   id: z.string(), nextDueAt: z.string().datetime().nullable(), sourceKind: z.string(), lifespan: z.string(),
-  note: z.string(), state: z.string(), watches: z.string().nullable(),
+  note: z.string(), state: z.string(), parked:z.boolean(), watches: z.string().nullable(),
 });
 const reply = z.object({ data: z.object({ tempoTimezone: z.string(), triggers: z.array(pending) }) });
 // Select through the daemon's visibility rules first. The agent argument selects a clock.
@@ -26,7 +30,7 @@ function triggersQuery(view: 'pending' | 'history' | 'schedules') {
   const pendingOnly = view === 'pending';
   const filter = view === 'schedules' ? 'scheduleRemovedAt:{isNull:true},sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},targetKind:{eq:inbox},'
     : pendingOnly ? 'enabled:{eq:true},' : '';
-  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state watches' : view === 'schedules' ? 'id scheduleName times days nextDueAt note state' : 'id';
+  const fields = pendingOnly ? 'id nextDueAt sourceKind lifespan note state parked watches' : view === 'schedules' ? 'id scheduleName times days nextDueAt note state' : 'id';
   return `query WakeTriggers($agent:String!, $after:String!, $limit:Int!) {
     tempoTimezone
     triggers(where:{OR:[
@@ -48,8 +52,7 @@ async function listSchedules(read: Read, agent: string) {
     const { data } = schedulePage.parse(await read(triggersQuery('schedules'), { agent, after, limit: pageSize }));
     const format = householdTime(data.tempoTimezone);
     for (const row of data.triggers) {
-      if (row.id <= after) throw Error();
-      after = row.id;
+      after = nextCursor(after, row.id);
       const when = (row.days || 'daily') + ' ' + row.times;
       const next = row.nextDueAt ? format.format(new Date(row.nextDueAt)) : '(none armed)';
       lines.push(onOneLine(encodeURIComponent(row.scheduleName ?? row.id) + '  ' + when + '  next ' + next + '  [' + row.state + ']  ' + row.note));
@@ -119,8 +122,7 @@ async function listLanes(read: Read): Promise<string> {
     const answer = await read('query($after:String!){tempoLanes(after:$after)}', { after });
     const rows = lanePage.parse(answer).data.tempoLanes;
     for (const row of rows) {
-      if (row.id <= after) throw Error();
-      after = row.id;
+      after = nextCursor(after, row.id);
       const size = row.file ? 'file ' + row.file : row.characters + ' chars';
       lines.push(onOneLine(`${encodeURIComponent(row.id).padEnd(22)} ${row.agent.padEnd(8)} ${row.times} ${row.days || 'daily'}  ${size}  — ${row.note}`));
     }
@@ -177,7 +179,7 @@ function parkOptions(args: string[]) {
   const note = values.note || file;
   if (!note?.trim()) throw Error();
   return {ownerKind:'agent',sourceKind:'answer',lifespan:'once',targetKind:'inbox',toKind:'agent',
-    watches:(approval ? 'park-approval:' : 'park-secret:') + id, instructions, file, note,
+    parked:true, watches:(approval ? 'park-approval:' : 'park-secret:') + id, instructions, file, note,
     project:values.project, conversation:values.conversation, wantsModel:values.model,
     execution:instructions?.includes('<!-- house: local -->') ? 'host' : 'container'};
 }
@@ -260,8 +262,7 @@ async function readLog(read: Read, agent: string, options: ReturnType<typeof log
     matches.sort((a, b) => b.seq - a.seq);
     matches.splice(2000);
     const last = ids[ids.length - 1];
-    if (last <= after) throw Error();
-    after = last;
+    after = nextCursor(after,last);
     if (ids.length < pageSize) break;
   }
   return matches.reverse().map(match => match.line).join('\n') + '\n';
@@ -377,14 +378,22 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const scope = 'toKind:{eq:agent},to:{eq:$agent},targetKind:{eq:inbox},sourceKind:{eq:"time"},lifespan:{eq:"until-stopped"},scheduleRemovedAt:{isNull:true}';
       const query = `query ClockSchedule($agent:String!,$name:String!){triggers(where:{OR:[
         {${scope},scheduleName:{eq:$name}},{${scope},scheduleName:{isNull:true},id:{eq:$name}}
-      ]},limit:2){id}}`;
+       ]},limit:2){id ownerKind}}`;
       const result = await read(query, {agent, name:scheduleName});
-      const rows = z.object({data:z.object({triggers:z.array(z.object({id:z.string()}))})}).parse(result).data.triggers;
+      const rows = z.object({data:z.object({triggers:z.array(z.object({id:z.string(),ownerKind:z.string()}))})}).parse(result).data.triggers;
       if (scheduleSet && rows.length <= 1) {
         const key = randomUUID(), change = scheduleSet.change;
         let waits: string | undefined;
         if (rows.length) {
-          const result = await post('/api/tempo/edit', {id:key, input:{id:rows[0].id, scheduleAgent:agent, ...change}});
+          const id = rows[0].id;
+          let scheduleRevision: string | undefined;
+          if (rows[0].ownerKind === 'household') {
+            const result = await read('query($id:String!){tempoScheduleRevision(id:$id)}', {id});
+            const revision = z.object({data:z.object({tempoScheduleRevision:z.string().nullable()})}).parse(result).data.tempoScheduleRevision;
+            if (!revision) throw new DoorRefusal('A household owner updates this schedule.');
+            scheduleRevision = revision;
+          }
+          const result = await post('/api/tempo/edit', {id:key, input:{id, scheduleAgent:agent, scheduleRevision, ...change}});
           const {value} = z.object({ok:z.literal(true), value:z.object({saved:z.boolean(),waits:z.string().optional()})}).parse(result);
           if (!value.saved && !value.waits) throw Error();
           waits = value.waits;
@@ -446,8 +455,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       const result = reply.strict().parse(await read(triggersQuery('pending'), { agent, after, limit: pageSize })).data;
       timezone = result.tempoTimezone;
       for (const row of result.triggers) {
-        if (row.id <= after) throw Error();
-        after = row.id;
+        after = nextCursor(after, row.id);
         rows.push(row);
       }
       if (result.triggers.length < pageSize) break;
@@ -456,7 +464,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     rows.sort((a, b) => (a.nextDueAt ?? '~').localeCompare(b.nextDueAt ?? '~') || a.id.localeCompare(b.id));
     const now = Date.now();
     for (const row of rows) {
-      const parked = row.sourceKind === 'answer' && row.watches?.match(/^park-(?:approval|secret):(.+)$/);
+      const parked = row.parked && row.sourceKind === 'answer' && row.watches?.match(/^park-(?:approval|secret):(.+)$/);
       const when = parked && row.nextDueAt ? 'waiting for ' + parked[1] + ' until ' + format.format(new Date(row.nextDueAt))
         : row.nextDueAt ? format.format(new Date(row.nextDueAt)) + '  (in ' + remaining(row.nextDueAt, now) + ')'
         : row.watches ? 'waiting for ' + row.watches : 'no due time';

@@ -2,7 +2,7 @@
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
  */
-import { clockLaneText } from './lanes.js';
+import { clockLaneText, clockScheduleRevision } from './lanes.js';
 import { rules } from '../../policy.js';
 import { sqlHolds } from '../../policy-sql.js';
 import { SHA256_HEX } from '../sha256-hex.js';
@@ -101,9 +101,9 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       ctx.changed('triggers', input.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ scheduleAgent:z.string().min(1).optional(), laneRevision: z.string().regex(SHA256_HEX).optional(), id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ scheduleRevision:z.string().regex(SHA256_HEX).optional(), scheduleAgent:z.string().min(1).optional(), laneRevision: z.string().regex(SHA256_HEX).optional(), id: z.string().min(1), execution: z.enum(['container', 'host']).optional() }).strict(), output: z.object({ saved: z.boolean(), waits }).strict(),
     may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && (!input.laneRevision || (viewer.kind === 'member' && sqlHolds(db, rules.householdOwner, viewer))) && triggerAccess(viewer, input.id, 'edit'),
-    run(ctx, { id: target, execution, laneRevision, scheduleAgent, ...change }) {
+    run(ctx, { id: target, execution, laneRevision, scheduleRevision, scheduleAgent, ...change }) {
       if (laneRevision) {
         const lane = clockLaneText(db, ctx.viewer, target);
         if (lane?.revision !== laneRevision) throw new OperationError('conflict', 'The stored lane changed; read it again');
@@ -112,6 +112,8 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
       const held = options.heldRefusal?.(ctx.viewer, 'edit'); if (held) throw new OperationError('denied', held);
       const stored = db.select().from(triggers).where(eq(triggers.id, target)).get(), refused = stored && options.wordRefusal?.(ctx.viewer, 'edit', stored, change);
+      if (scheduleAgent && stored?.ownerKind === 'household' && (!scheduleRevision || clockScheduleRevision(db, ctx.viewer, target) !== scheduleRevision))
+        throw new OperationError('conflict', 'The household schedule changed or requires an owner to read it again');
       if (scheduleAgent && !matchesClockSchedule(stored, scheduleAgent))
         throw new OperationError('conflict', 'The schedule changed on the selected clock');
       if (refused) throw new OperationError('denied', refused);

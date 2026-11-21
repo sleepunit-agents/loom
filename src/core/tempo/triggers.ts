@@ -20,6 +20,7 @@ const placement = { needs: machineFacts.nullish(), prefers: machineFacts.nullish
 export const HOST_SCHEDULE_REFUSAL = 'Host execution is unavailable for scheduled work. Schedule a container job or use an approved machine read.';
 export const triggerInput = z.object({
   execution: z.enum(['container', 'host']).optional(),
+  parked: z.boolean().optional(),
   scheduleName: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
@@ -171,8 +172,8 @@ export class TriggerEngine {
         if (!producer.program || producer.to !== v.to || producer.project !== (v.project ?? null)) throw new Error('State must come from a program for the same agent and project');
       }
     }
-    const park = parkedSource(v.watches);
-    if (park && (v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
+    const park = parkedSource(v);
+    if (v.parked && (!park || v.sourceKind !== 'answer' || v.lifespan !== 'once' || v.targetKind !== 'inbox' || v.toKind !== 'agent'
       || v.times || v.days || v.program)) throw Error('A parked wait resumes an agent once on an answer');
     const due = park ? new Date(this.clock.now() + DAY_MS).toISOString() : this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
@@ -226,7 +227,7 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => {
       const t = this.get(id);
-      if (parkedSource(t.watches)) throw new Error('Set a new parked wait');
+      if (parkedSource(t)) throw new Error('Set a new parked wait');
       if (t.scheduleRemovedAt) throw new Error('Schedule was removed');
       if (t.enabled) throw new Error('Trigger is already on');
       if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
@@ -309,7 +310,7 @@ export class TriggerEngine {
   runNow(id: string): void {
     this.open();
     const t = this.get(id);
-    if (parkedSource(t.watches)) throw new Error('A parked wait resumes on its answer or deadline');
+    if (parkedSource(t)) throw new Error('A parked wait resumes on its answer or deadline');
     if (!t.enabled || this.paused(t)) throw new Error('Trigger is stopped or held');
     this.fire(t, `manual:${randomUUID()}`); this.tick();
   }
@@ -364,7 +365,7 @@ export class TriggerEngine {
         next = Math.min(next ?? Infinity, end);
       }
       if (this.paused(t)) continue;
-      const park = parkedSource(t.watches);
+      const park = parkedSource(t);
       if (park && t.sourceKind === 'answer') {
         this.db.transaction(() => {
           const current = this.get(t.id);
