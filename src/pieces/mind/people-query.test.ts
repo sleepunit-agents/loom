@@ -215,6 +215,13 @@ it('resolves a unique workspace account from the agent’s visible relationship 
  const viewer:Viewer={kind:'agent',id:'fiction'};
  expect(reader.outsideAccount(viewer,'friend','slack')).toEqual({workspace:'TWORK',user:'UFRIEND'});
  expect(reader.outsideAccount(viewer,'friend','discord')).toBeUndefined();
+ expect(reader.outsideAccount({kind:'runner',id:'box'},'friend','slack')).toBeUndefined();
+ // This viewer can read its own relationship store only. An unrelated card in
+ // the owner's directory cannot supply a name or influence its destination.
+ directory.write({slug:'other-holder',name:'Other holder',where:{slack:{value:['UFRIEND','UOTHER']},slack_workspace:{value:'TWORK'}}});
+ expect(reader.access(viewer).directory).toBe(false);
+ expect(reader.outsideName(viewer,'slack','TWORK','UFRIEND')).toBeUndefined();
+ expect(reader.outsideAccount(viewer,'friend','slack')).toEqual({workspace:'TWORK',user:'UFRIEND'});
  agent.write({slug:'other',name:'Other',where});
  expect(reader.outsideAccount(viewer,'friend','slack')).toBeUndefined();
  expect(reader.outsideAccount({kind:'runner',id:'box'},'friend','slack')).toBeUndefined();
