@@ -1208,6 +1208,20 @@ export const modelAccountWindows = sqliteTable('model_account_windows', {
   check('model_account_windows_reserve_range', sql`${t.reserve} between 0 and 1`),
 ]);
 
+/** Successive provider readings for attribution within a subscription's current week. */
+export const accountWeekReadings = sqliteTable('account_week_readings', {
+  account: text('account').notNull().references(() => modelAccounts.id, { onDelete: 'cascade' }),
+  window: text('window').notNull(),
+  resetsAt: text('resets_at').notNull(),
+  readAt: text('read_at').notNull(),
+  usage: real('usage').notNull(),
+}, t => [
+  primaryKey({columns:[t.account,t.window,t.resetsAt,t.readAt]}),
+  check('account_week_readings_usage', sql`${t.usage} between 0 and 1`),
+  check('account_week_readings_read_utc', utc(t.readAt)),
+  check('account_week_readings_reset_utc', utc(t.resetsAt)),
+]);
+
 /** Which worker machines an account is signed in on. */
 export const modelAccountBoxes = sqliteTable('model_account_boxes', {
   account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
@@ -2288,6 +2302,7 @@ export const triggerAcceptances = sqliteTable('trigger_acceptances', {
 });
 
 export const plumbing = {
+  accountWeekReadings,
   changeReviewRounds,
   importedTaskSequence,
   triggerAcceptances,

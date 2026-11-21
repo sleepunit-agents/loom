@@ -1362,6 +1362,19 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `account_week_readings` (
+	`account` text NOT NULL,
+	`window` text NOT NULL,
+	`resets_at` text NOT NULL,
+	`read_at` text NOT NULL,
+	`usage` real NOT NULL,
+	PRIMARY KEY(`account`, `window`, `resets_at`, `read_at`),
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "account_week_readings_usage" CHECK("account_week_readings"."usage" between 0 and 1),
+	CONSTRAINT "account_week_readings_read_utc" CHECK("account_week_readings"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_week_readings"."read_at") = "account_week_readings"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_week_readings"."read_at") = "account_week_readings"."read_at", 0)),
+	CONSTRAINT "account_week_readings_reset_utc" CHECK("account_week_readings"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_week_readings"."resets_at") = "account_week_readings"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_week_readings"."resets_at") = "account_week_readings"."resets_at", 0))
+);
+
 CREATE TABLE `change_review_rounds` (
 	`job` text PRIMARY KEY NOT NULL,
 	`change` text NOT NULL,

@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3';
 import { afterEach, it, expect } from 'vitest';
 import { createDataSchema } from '../core/data/database.js';
-import { members, modelAccounts } from '../core/data/schema.js';
+import { accountWeekReadings, agents, jobs, jobUsage, members, modelAccounts, modelAccountWindows } from '../core/data/schema.js';
 import { recordAccountWindows, readAccountWindows, currentAccountCapacity, refreshAccountWindows } from './account-windows.js';
+import {accountWeeklyUsage} from './account-weekly-usage.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
 const now = '2026-11-14T20:00:00.000Z';
@@ -117,4 +118,40 @@ it('does not freshen an older offset observation while normalizing storage', () 
   const db = fixture(); recordAccountWindows(db, identity, [window], now);
   expect(recordAccountWindows(db, identity, [{ ...window, usage: 0.9, readAt: '2026-11-14T22:59:00+03:00' }], now)).toBe(false);
   expect(readAccountWindows(db, 'shared')).toEqual([{ ...window, reserve: 0.05 }]);
+});
+
+
+it('records accepted readings once per weekly window and retires them at reset', () => {
+  const db = fixture();
+  db.insert(modelAccountWindows).values({account:identity.account,window:'week',usage:0.2,usageReadAt:now,resetsAt:window.resetsAt,durationMs:window.durationMs}).run();
+  const later = '2026-11-14T20:05:00.000Z';
+  const reading = {...window,usage:0.25,readAt:later};
+  const record = (usage: number) => recordAccountWindows(db,identity,[{...reading,usage},{...reading,name:'five-hour',durationMs:18_000_000}],later);
+  expect(record(0.25)).toBe(true);
+  expect(record(0.26)).toBe(true);
+  expect(recordAccountWindows(db,identity,[window],later)).toBe(false);
+  expect(db.select({at:accountWeekReadings.readAt,usage:accountWeekReadings.usage}).from(accountWeekReadings).orderBy(accountWeekReadings.readAt).all()).toEqual([{at:now,usage:0.2},{at:later,usage:0.26}]);
+  recordAccountWindows(db,identity,[{...window,usage:0,readAt:window.resetsAt,resetsAt:'2026-11-21T21:00:00.000Z'}],window.resetsAt);
+  expect(db.select().from(accountWeekReadings).all()).toMatchObject([{readAt:window.resetsAt,usage:0}]);
+});
+
+it('attributes only the measured rise to work placed on that account and expires the report at reset', () => {
+  const db = fixture();
+  const first = {...window,usage:.25};
+  const end = '2026-11-14T20:10:00.000Z';
+  const last = {...window,usage:.5,readAt:end};
+  expect(accountWeeklyUsage(db,'shared',first,now)?.unattributed).toBe(.25);
+  recordAccountWindows(db,identity,[first],now);
+  recordAccountWindows(db,identity,[last],end);
+  db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  for (const [id,account] of [['placed','shared'],['other',null]] as const) {
+    db.insert(jobs).values({id,account,agent:'art',title:id,state:'done',brief:'',model:'m',
+      startedByKind:'member',startedBy:'owner',houseRepository:'r',houseFile:'f',houseBranch:'b',
+      queuedAt:now,claimedAt:now,endedAt:end}).run();
+    db.insert(jobUsage).values({job:id,source:'report',tokensIn:20,tokensOut:10}).run();
+  }
+  const report = accountWeeklyUsage(db,'shared',last,end);
+  expect([...report!.shares]).toEqual([['placed',.25]]);
+  expect(report!.unattributed).toBe(.25);
+  expect(accountWeeklyUsage(db,'shared',last,last.resetsAt)).toBeNull();
 });

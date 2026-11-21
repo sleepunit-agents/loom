@@ -10,7 +10,7 @@ import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { accountWeekReadings, conversations, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
 import { readModelAccounts } from '../core/data/model-account-read.js';
@@ -294,4 +294,33 @@ it('offers sign-in only for a reporting machine the viewer may manage',async()=>
   expect(await login('alice')).toEqual({reporting:true,needsSignIn:true,canRequest:false});
   f.clock.advance(121_000);
   expect(await login('house')).toEqual({reporting:false,needsSignIn:false,canRequest:false});
+});
+
+it('shows only the account owner’s readable conversations and keeps hidden work in the unassigned share', async () => {
+  const gate = Promise.withResolvers<void>(), began = Promise.withResolvers<void>();
+  const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began.resolve();await gate.promise;return 'ready';}}});
+  const end=f.now(), start=new Date(f.clock.now()-60000).toISOString();
+  const reset=new Date(f.clock.now()+3.5*86400_000).toISOString();
+  f.db.insert(accountWeekReadings).values({account:'private-a',window:'week',readAt:start,resetsAt:reset,usage:0}).run();
+  for(const member of ['alice','bob']){
+    f.db.insert(conversations).values({id:member,agent:'agent',member,venue:'loom',place:'th:'+member,label:member+' discussion',
+      direct:true,startedAt:start,lastAt:end,turnCount:1}).run();
+    f.db.insert(jobs).values({id:member,agent:'agent',account:'private-a',member,conversation:member,title:member,state:'done',
+      brief:'',model:'m',startedByKind:'member',startedBy:member,houseRepository:'r',houseFile:'f',houseBranch:'b',
+      queuedAt:start,claimedAt:start,endedAt:end}).run();
+    f.db.insert(jobUsage).values({job:member,source:'report',tokensIn:10,tokensOut:10}).run();
+  }
+  const query='{modelAccounts {... on RuntimeAccountDetail { weeklyUsage {unattributed agents {title share} conversations {title share href}}}}}';
+  const response=await (await f.post('alice',query)).json();
+  expect(response).toEqual({data:{modelAccounts:[{weeklyUsage:[{unattributed:.1,agents:[{title:'agent',share:.1}],
+    conversations:[{title:'alice discussion',share:.1,href:'/p/comms-preview/thread/alice'}]}]},{}]}});
+  expect(await (await f.post('guest',query)).json()).toEqual({data:{modelAccounts:[{},{}]}});
+  const pending = f.post('alice',query.replace('{modelAccounts','{hold modelAccounts'));
+  await began.promise;
+  await new Promise(resolve=>setImmediate(resolve));
+  f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,'alice')).run();
+  gate.resolve();
+  const revoked = await pending;
+  expect(revoked.status).toBe(401);
+  expect(await revoked.text()).not.toContain('alice discussion');
 });

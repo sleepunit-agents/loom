@@ -1,7 +1,7 @@
 /** Read-time usage projections. All reads enter through the job's current SQL visibility. */
-import { and, desc, eq, isNull, isNotNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, isNotNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { GraphQLFloat, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
-import { conversations, inbox, inboxRefs, jobs, jobUsage, programFirings, terminalRuns } from '../core/data/schema.js';
+import { conversations, inbox, inboxRefs, jobs, jobUsage, programFirings, terminalRuns, triggers } from '../core/data/schema.js';
 import { jobUnended } from '../core/data/job-states.js';
 import type { JobSummaries } from './job-summary.js';
 
@@ -51,7 +51,7 @@ function rows(s:JobSummaries, filter?:SQL | ((conversation:SQL<string|null>)=>SQ
   const conversation = sql<string|null>`coalesce(${jobs.conversation}, ${parent.conversation})`;
   const runKind = sql<string|null>`case when ${programFirings.id} is not null then 'program' when ${terminalRuns.job} is null then null
     when ${terminalRuns.job} = ${terminalRuns.parent} then 'main' else 'subagent' end`;
-  return s.db.select({id:jobs.id,title:jobs.title,conversation,runKind,label:conversations.label,
+  return s.db.select({id:jobs.id,jobAgent:jobs.agent,title:jobs.title,conversation,runKind,label:conversations.label,
     state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,programFiring:programFirings.id,programTrigger:programFirings.trigger,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
     .from(jobs).leftJoin(programFirings,eq(programFirings.job,jobs.id)).leftJoin(terminalRuns,eq(terminalRuns.job,jobs.id)).leftJoin(parent,eq(parent.id,terminalRuns.parent))
     .leftJoin(conversations,eq(conversations.id,conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
@@ -136,6 +136,46 @@ function among(value:SQL | typeof jobs.conversation, ids:Iterable<string>) {
 function conversationHistory(s:JobSummaries,selected:Row[]) {
   const ids = [...new Set(selected.flatMap(row=>row.conversation ? [row.conversation] : []))];
   return ids.length ? rows(s,among(jobs.conversation,ids)) : [];
+}
+/** Group an account's internal usage weights under the viewer's current job, conversation,
+ * parent-run and trigger rules. Only these grouped values may leave the projection. */
+export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,number>;unattributed:number}) {
+  if (!estimate.shares.size) return {agents:[],conversations:[],triggers:[],unattributed:estimate.unattributed};
+  const selected = rows(s,among(sql`${jobs.id}`,estimate.shares.keys()));
+  const seenConversations = s.db.select({id:conversations.id}).from(conversations)
+    .where(and(among(sql`${conversations.id}`,selected.flatMap(row=>row.conversation ?? [])),
+      s.rule('conversations')!(getTableColumns(conversations)))).all();
+  const readable = new Set(seenConversations.map(row=>row.id));
+  const visible = selected.filter(row=>row.conversation === null || readable.has(row.conversation));
+  const runs = assignRuns([...new Map([...conversationHistory(s,visible),...visible].map(row=>[row.id,row])).values()]
+    .sort((a,b)=>Date.parse(b.queuedAt)-Date.parse(a.queuedAt) || b.id.localeCompare(a.id)));
+  const notes = new Map(s.db.select({id:triggers.id,note:triggers.note}).from(triggers)
+    .where(and(among(sql`${triggers.id}`,[...runs.values()].map(run=>run.trigger)),
+      s.rule('triggers')!(getTableColumns(triggers)))).all().map(row=>[row.id,row.note]));
+  type Group = {key:string|null;title:string;share:number;href:string|null};
+  const agents = new Map<string|null,Group>(), conversationsById = new Map<string|null,Group>(), triggersById = new Map<string|null,Group>();
+  function add(groups:Map<string|null,Group>,key:string|null,title:string,share:number,href:string|null=null) {
+    const group = groups.get(key);
+    if (group) group.share += share;
+    else groups.set(key,{key,title,share,href});
+  }
+  let visibleShare = 0;
+  for (const row of visible) {
+    const share = estimate.shares.get(row.id)!;
+    visibleShare += share;
+    add(agents,row.jobAgent,row.jobAgent,share);
+    const id = row.conversation;
+    const href = id && (row.venue === 'terminal' || row.venue === 'loom') && row.place
+      ? '/p/comms-preview/thread/'+encodeURIComponent(row.place.replace(/^th:/,'')) : id && '/p/comms-preview/conversation/'+encodeURIComponent(id);
+    add(conversationsById,id,row.label ?? id ?? 'No conversation',share,href);
+    const trigger = runs.get(row.id)?.trigger;
+    if (trigger && notes.has(trigger)) add(triggersById,trigger,notes.get(trigger) || trigger,share,'/p/tempo/trigger/'+encodeURIComponent(trigger));
+    else add(triggersById,null,'No visible trigger',share);
+  }
+  const sorted = (groups:Map<string|null,Group>)=>[...groups.values()].sort((a,b)=>b.share-a.share || a.title.localeCompare(b.title));
+  const total = [...estimate.shares.values()].reduce((a,b)=>a+b,0);
+  return {agents:sorted(agents),conversations:sorted(conversationsById),triggers:sorted(triggersById),
+    unattributed:estimate.unattributed + Math.max(0,total-visibleShare)};
 }
 /** Only the actual receiving job counts as a wake. Both jobs must pass the viewer's current SQL
  * policy. Look up mail through its unique (to_kind,to,source,source_id) index, including when one

@@ -1,4 +1,5 @@
 import {memberOperation} from '../../data/operation';
+import {WeeklyBreakdown} from './weekly-usage';
 import {useState} from 'react';
 import {useDeadline} from '../comms/use-deadline';
 import {fullTime} from '../../kit/time';
@@ -46,6 +47,7 @@ function AccountDetails({account,zone,active}:{account:Detail;zone?:string;activ
     {w.reserve!==null&&<p>Reserve {percent(w.reserve)}</p>}
    </div>):<dl><dt>Usage</dt><dd>{account.usage===null?'Not read yet':percent(account.usage)}</dd>
     <dt>Read</dt><dd><UsageReadTime at={account.usageReadAt} zone={zone}/></dd><dt>Resets</dt><dd>{time(account.resetsAt,zone)}</dd></dl>}
+   <WeeklyBreakdown account={account.id}/>
    <p>Has room: {account.hasRoom?'Yes':'No'}</p>
   </section>
   <section aria-label="Sign-ins"><h4>Sign-ins</h4>
@@ -90,6 +92,7 @@ export function RuntimeAccounts({active=true}:{active?:boolean}={}){
  }
  return <section aria-label="Subscriptions" className="grid gap-4">
   {feed.status==='loading'?<Loading label="Opening subscriptions…"/>:!rows?<ErrorView text="Subscriptions are unavailable. Check the connection."/>:<>
+   {rows.some(row=>row.__typename==='RuntimeAccountDetail')&&<WeeklyBreakdown/>}
    <Search label="Search subscriptions" value={search} onChange={setSearch}/>
    <label><input type="checkbox" checked={attentionOnly} onChange={event=>setAttentionOnly(event.target.checked)}/> Needs attention</label>
    {!rows.length?<p>No model accounts yet.</p>:!services.size?<p>No matching subscriptions.</p>:[...services].map(([provider,accounts])=>{

@@ -7,11 +7,15 @@ import type { DataDatabase } from '../core/data/database.js';
 import { accountCapacity } from './quota.js';
 import { allowedModelAccounts, modelAccountAuthority, readModelAccounts } from '../core/data/model-account-read.js';
 
+import {accountWeeklyUsage} from './account-weekly-usage.js';
+import {visibleWeeklyGroups} from './job-usage-queries.js';
+import type {JobSummaries} from './job-summary.js';
+
 const text = new GraphQLNonNull(GraphQLString);
 const common = { label: { type: text }, level: { type: text } };
 const account = new GraphQLInterfaceType({ name: 'RuntimeAccount', fields: common });
 const summary = new GraphQLObjectType({ name: 'RuntimeAccountSummary', interfaces: [account], fields: common });
-type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns';
+type PrivateColumn = 'id' | 'owner' | 'provider' | 'usage' | 'usageReadAt' | 'resetsAt' | 'hasRoom' | 'signedInOn' | 'logins' | 'windows' | 'pendingSignIns' | 'weeklyUsage';
 const column = (name: PrivateColumn, type: GraphQLOutputType) => ({ type,
   resolve: (value: { read(name: PrivateColumn, viewer: Viewer): unknown }, _args: unknown, context: { viewer: Viewer }) => value.read(name, context.viewer),
 });
@@ -26,7 +30,16 @@ const windowReading = new GraphQLObjectType({ name: 'RuntimeAccountWindow', fiel
   window: { type: text }, usage: { type: GraphQLFloat }, usageReadAt: { type: GraphQLString },
   resetsAt: { type: GraphQLString }, reserve: { type: GraphQLFloat },
 } });
+const weeklyGroup = new GraphQLObjectType({name:'WeeklyUsageGroup',fields:{
+  key:{type:GraphQLString},title:{type:text},share:{type:new GraphQLNonNull(GraphQLFloat)},href:{type:GraphQLString},
+}});
+const groups = {type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(weeklyGroup)))};
+const weeklyUsage = new GraphQLObjectType({name:'AccountWeeklyUsage',fields:{
+  window:{type:text},usage:{type:GraphQLFloat},readAt:{type:text},resetsAt:{type:text},
+  unattributed:{type:GraphQLFloat},agents:groups,triggers:groups,conversations:groups,
+}});
 const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces: [account], fields: {
+  weeklyUsage:column('weeklyUsage',new GraphQLList(new GraphQLNonNull(weeklyUsage))),
   ...common, id: column('id', text), owner: column('owner', text), provider: column('provider', text), usage: column('usage', GraphQLFloat),
   usageReadAt: column('usageReadAt', GraphQLString), resetsAt: column('resetsAt', GraphQLString),
   hasRoom: column('hasRoom', new GraphQLNonNull(GraphQLBoolean)),
@@ -39,10 +52,11 @@ const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces:
 // shared interface lets clients select label/level with one common fragment.
 const view = new GraphQLUnionType({ name: 'RuntimeAccountView', types: [summary, detail] });
 
-export function modelAccountQueries(db: DataDatabase, now: () => string) {
+export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().
   // Retain only selected account IDs, never usage/provider/location values or a credential.
   const witnesses = new WeakMap<Viewer, Set<string>>();
+  const usageChecks = new WeakMap<Viewer,Map<string,()=>boolean>>();
   const fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = { modelAccounts: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(view))),
     resolve(_source, _args, { viewer }) {
@@ -74,7 +88,25 @@ export function modelAccountQueries(db: DataDatabase, now: () => string) {
           let selected = witnesses.get(viewer);
           if (!selected) { selected = new Set(); witnesses.set(viewer, selected); }
           selected.add(row.id);
-          return current(row.id).then(() => values[name]);
+          return current(row.id).then(() => {
+            if (name !== 'weeklyUsage') return values[name];
+            const scope = usageScope?.(viewer);
+            if (!scope) return null;
+            const reports = [], checks:Array<()=>boolean> = [];
+            for (const window of values.windows) {
+              const estimate = accountWeeklyUsage(db,row.id,{name:window.window,usage:window.usage,readAt:window.usageReadAt,
+                resetsAt:window.resetsAt,durationMs:window.durationMs,reserve:window.reserve},at);
+              if (!estimate) continue;
+              const projected = visibleWeeklyGroups(scope,estimate);
+              const snapshot = JSON.stringify(projected);
+              checks.push(()=>JSON.stringify(visibleWeeklyGroups(scope,estimate)) === snapshot);
+              reports.push({window:window.window,usage:window.usage,readAt:window.usageReadAt,resetsAt:window.resetsAt,...projected});
+            }
+            let watched = usageChecks.get(viewer);
+            if (!watched) { watched = new Map(); usageChecks.set(viewer,watched); }
+            watched.set(row.id,()=>Boolean(usageScope?.(viewer)) && checks.every(check=>check()));
+            return reports;
+          });
         },
         };
       });
@@ -84,6 +116,6 @@ export function modelAccountQueries(db: DataDatabase, now: () => string) {
     fields,
     /** Rechecked after public awaits and on socket refresh/delivery. Reject a
      * previously private selection if its CURRENT ownership no longer permits it. */
-    valid(viewer: Viewer) { const ids = [...(witnesses.get(viewer) ?? [])]; return allowedModelAccounts(db, viewer, ids).size === ids.length; },
+    valid(viewer: Viewer) { const ids = [...(witnesses.get(viewer) ?? [])]; return allowedModelAccounts(db, viewer, ids).size === ids.length && [...(usageChecks.get(viewer)?.values() ?? [])].every(check=>check()); },
   };
 }

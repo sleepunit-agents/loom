@@ -92,7 +92,7 @@ export class JobSummaries {
     const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     return readCurrentJobs(this.db,allowed,agent,cutoff);
   }
-  private rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
+  rule(name: 'conversations' | 'boxes' | 'tasks' | 'triggers') {
     const rule = this.visibility()[name];
     if (typeof rule !== 'function') throw new Error(`SQL visibility required for ${name}`);
     // A rule that answered with nothing would be dropped from the join it guards, leaving it open: refuse, as allowed() does.
