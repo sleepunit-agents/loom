@@ -34,7 +34,7 @@ function wearGateLook():(()=>void)|undefined{
   };
 }
 
-function Weave(){
+export function Weave(){
   return <div className="loom-gate__ground" aria-hidden="true">
     <span className="loom-wash loom-gate__wash" />
     <WovenCloth />
