@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
+import { DeskOpening } from '../../data/loading';
 import { useDataQuery } from '../../data/graphql';
 import { inboxApp } from '../attention/registration';
 import './notice.css';
@@ -37,7 +38,8 @@ export default function InboxNotice() {
   const query = useDataQuery<{ settledInboxNotice: Notice | null }>(settledNoticeQuery);
   const [dismissed, dismiss] = useState<string>();
   const notice = query.status === 'live' ? query.data?.settledInboxNotice : undefined;
-  if (!notice || ![notice.needs, notice.fyi].every(n => Number.isSafeInteger(n) && n >= 0)
+  const opening = useContext(DeskOpening);
+  if (opening || !notice || ![notice.needs, notice.fyi].every(n => Number.isSafeInteger(n) && n >= 0)
     || notice.needs + notice.fyi === 0 || notice.id === dismissed) return null;
   return <Popup key={notice.id} notice={notice} dismiss={dismiss} />;
 }

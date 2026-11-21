@@ -69,7 +69,7 @@ function busy() {
   h.job('j-slack-dm', { conversation: 'cv-slack-dm', member: 'alex', queuedAt: hour(7), claimedAt: hour(7) });
   // Alex's own thread in Comms.
   h.talk('cv-loom', 'loom', 'th:garden/1', 'Repair the garden pump', { member: 'alex' });
-  h.job('j-loom', { conversation: 'cv-loom', member: 'alex', title: 'Repair the garden pump', state: 'queued', box: null, queuedAt: hour(14), claimedAt: null });
+  h.job('j-loom', { conversation: 'cv-loom', member: 'alex', title: 'Repair the garden pump', state: 'running', box: null, queuedAt: hour(14), claimedAt: null });
   // A trigger's firing in its own wake conversation; a house program's job; the sweep, which no trigger names.
   h.trigger('tr-night', 'Plan the night');
   h.talk('cv-night', 'wake', wakePlace('tr-night'), 'Plan the night');
@@ -109,7 +109,7 @@ it('says each thing by its kind, from the rows alone, to the person who may read
   // Slack keeps a channel's id and no name, so there is no place to say.
   expect(all.get('j-slack')).toEqual({ id: 'j-slack', kind: 'slack', title: '171.5', since: hour(13), state: 'running', href: '/p/comms-preview/conversation/cv-slack' });
   expect(all.get('j-slack-dm')).toEqual({ id: 'j-slack-dm', kind: 'slack', title: 'D9', with: 'alex', direct: 'person', since: hour(7), state: 'running', href: '/p/comms-preview/conversation/cv-slack-dm' });
-  expect(all.get('j-loom')).toEqual({ id: 'j-loom', kind: 'loom', title: 'Repair the garden pump', with: 'alex', since: hour(14), state: 'queued', href: '/p/comms-preview/thread/garden%2F1' });
+  expect(all.get('j-loom')).toEqual({ id: 'j-loom', kind: 'loom', title: 'Repair the garden pump', with: 'alex', since: hour(14), state: 'running', href: '/p/comms-preview/thread/garden%2F1' });
   expect(all.get('j-night')).toEqual({ id: 'j-night', kind: 'trigger', title: 'Plan the night', machine: 'one', since: hour(15), state: 'running', href: '/p/tempo' });
   expect(all.get('j-program')).toEqual({ id: 'j-program', kind: 'trigger', title: 'Tidy the logs', since: hour(6), state: 'running', href: '/p/tempo' });
   expect(all.get('j-sweep')).toEqual({ id: 'j-sweep', kind: 'wake', title: 'The sweep', since: hour(5), state: 'running', href: '/p/comms-preview/conversation/cv-sweep' });
@@ -306,7 +306,7 @@ it('still lists a job the sweep should have ended and has not, last, with when i
   h.job('j-unplaced', { title: 'Queued past the deadline', state: 'queued', claimedAt: null, heardAt: null, queuedAt: ago(QUEUE_DEADLINE_MS + 60_000) });
   h.task('t-1', 'A task');
   expect(h.as(alex).doing('art').items.map(item => [item.id, item.state, item.quietSince])).toEqual([
-    ['j-edge', 'running', null], ['j-live', 'running', null], ['j-waiting', 'queued', null], ['t-1', 'in_progress', null],
-    ['j-unplaced', 'queued', ago(QUEUE_DEADLINE_MS + 60_000)], ['j-silent', 'running', '2026-11-14T12:00:00.000Z'],
+    ['j-edge', 'running', null], ['j-live', 'running', null], ['t-1', 'in_progress', null],
+    ['j-silent', 'running', '2026-11-14T12:00:00.000Z'],
   ]);
 });

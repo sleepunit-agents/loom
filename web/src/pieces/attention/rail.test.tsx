@@ -169,10 +169,12 @@ it('shows the first waiting item and how many more, updates on answers, and clea
  ]);
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});
  const needs=()=>tree.root.findByProps({className:'desk-rail-needs'});
+ const order=tree.toJSON().children.map((child:any)=>child.props['data-agent']??child.props.className);
+ expect(order).toEqual(['art','desk-rail-needs','mark']);
  expect(words(needs())).toContain('2 more');
  expect(text()).not.toContain('Already answered');
  await publish('attention.ask','live',[{...first,state:'answered'}]);
- expect(text()).not.toContain(' more');expect(text()).toContain('All clear.');
+ expect(text()).not.toContain(' more');expect(tree.root.findAllByProps({className:'desk-rail-needs'})).toHaveLength(0);
  await publish('attention.ask','offline');
  expect(text()).not.toContain('All clear.');expect(text()).not.toContain(' more');expect(text()).toContain('Waiting items unavailable');
 });

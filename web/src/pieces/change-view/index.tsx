@@ -1,3 +1,4 @@
+import { usePendingRead } from '../../data/loading';
 import { Suspense, useRef, useState } from 'react';
 import { Split, List, Row, NoteRow, Empty, Error, Loading, Button, Actions, Search, Reader, Meta, Title, Facts, Fact, Section, Disclosure, ShortIdentifier, Clamp, Body, Chip, Markdown } from '../../kit';
 import { briefTime, fullTime } from '../../kit/time';
@@ -92,6 +93,7 @@ export default function Changes({ snapshot, actions, openTask, navigation, names
   const selected = navigation ? navigation.selected : localSelected;
   const setSelected = navigation ? navigation.select : setLocalSelected;
   const [refreshing, setRefreshing] = useState(false), [error, setError] = useState('');
+  usePendingRead(refreshing);
   const refreshActive = useRef(false);
   const live = snapshot.status === 'live';
   const name: Name = id => displayName(id, names);
