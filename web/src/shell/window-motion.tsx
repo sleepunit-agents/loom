@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
+import { reducedMotion } from '../access';
 import type { Tile } from './router';
 import type { Rect } from '../tiling/layout';
 import './window-motion.css';
@@ -13,8 +14,8 @@ export function WindowExits({ boxes, phone, tiles }: { boxes: Record<string, Rec
   useLayoutEffect(() => {
     const before = previous.current;
     previous.current = boxes;
-    if (document.documentElement.dataset.motion !== 'full') return;
-    const host = layer.current!;
+    const host = layer.current;
+    if (!host?.isConnected || reducedMotion()) return;
     for (const child of Array.from(host.children)) {
       if (boxes[(child as HTMLElement).dataset.departed!]) child.remove();
     }
