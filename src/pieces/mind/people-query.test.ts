@@ -244,3 +244,24 @@ it('labels each exact account in a workspace without selecting a destination fro
  expect(reader.outsideName(owner,'slack','TWORK','UFIRST')).toBeUndefined();
  expect(reader.outsideAccount(owner,'other','slack')).toBeUndefined();
 });
+
+it('reuses the deadline of each unchanged read-only file until its next boundary',()=>{
+ const dir=home(),first=store(join(dir,'first.db')),second=store(join(dir,'second.db'));
+ let now=Date.parse('2026-11-14T18:00:00Z');
+ const start=now;
+ const write=(s:PeopleStore,offset:number)=>s.write({slug:'friend',name:'Friend',where:{email:{value:'friend@example.invalid',verified_at:new Date(start-14*86400000+offset).toISOString()}}});
+ write(first,1000);
+ const reader=peopleReader({agents:[{agent:'first',memories:first.database.name},{agent:'second',memories:second.database.name}],sharing:()=>({members:{},projects:{}}),now:()=>now});
+ closes.push(reader.close);
+ const scans=['first','second'].map(id=>vi.spyOn(reader.sources.get(id)!,'prepare'));
+ const counts=()=>scans.map(spy=>spy.mock.calls.filter(([query])=>query.includes('SELECT card_json FROM people')).length);
+ expect(reader.nextDeadline()).toBe(start+1001);
+ for(let i=0;i<25;i++)expect(reader.nextDeadline()).toBe(start+1001);
+ expect(counts()).toEqual([1,1]);
+ write(second,500);
+ expect(reader.nextDeadline()).toBe(start+501);
+ expect(counts()).toEqual([1,2]);
+ now=start+501;expect(reader.nextDeadline()).toBe(start+1001);
+ now=start+1001;expect(reader.nextDeadline()).toBeUndefined();
+ now=start;expect(reader.nextDeadline()).toBe(start+501);
+});
