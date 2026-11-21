@@ -247,6 +247,14 @@ export async function* walkthroughSteps(output) {
    report.actions.agentMemoryFiles=await agentMemoryFiles();
   } catch(error) { report.actions.agentMemoryFiles={ok:false,error:String(error)}; }
   save();yield {phase:'agent-memory-files',actions:safeReport(report.actions)};
+  phase='semantic recall';
+  try {
+   // Run the real embedding model and advance its wall clock in a separate process.
+   const script=fileURLToPath(new URL('./rebuild-semantic-recall.mjs',import.meta.url));
+   const {stdout}=await promisify(execFile)(process.execPath,[script],{timeout:110_000});
+   report.actions.semanticRecall=JSON.parse(stdout);
+  } catch(error) { report.actions.semanticRecall={ok:false,error:String(error)}; }
+  save();yield {phase:'semantic-recall',actions:safeReport(report.actions)};
   phase='note lifetimes';
   try {
    const {noteLifetimeEvidence}=await import('./rebuild-note-lifetimes.mjs');

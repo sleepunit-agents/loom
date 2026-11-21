@@ -25,6 +25,11 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
+      - name: Cache embedding model
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/loom/fastembed
+          key: loom-embedding-model-fast-bge-small-en-v1.5-v1
       - name: Sign in and visit every launcher app
         env:
           TZ: America/Chicago

@@ -102,6 +102,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('agent-memory-files');
   expect(step.value.actions.agentMemoryFiles,JSON.stringify(step.value.actions.agentMemoryFiles)).toMatchObject({ok:true});
  });
+ it('recalls paraphrases by meaning and retains the most-used fact at the top of mind',{retry:0,timeout:120_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('semantic-recall');
+  expect(step.value.actions.semanticRecall,JSON.stringify(step.value.actions.semanticRecall)).toMatchObject({ok:true,paraphrases:3});
+ });
  it('keeps and expires notes by path and lifespan across restarts',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('note-lifetimes');
   expect(step.value.actions.noteLifetimes,JSON.stringify(step.value.actions.noteLifetimes)).toMatchObject({ok:true,after60Days:['keep']});

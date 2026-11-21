@@ -21,7 +21,11 @@
     {
       "id": "memory-003",
       "promise": "Recalls by meaning, and keeps what is used most at the top of mind.",
-      "source": "docs/how-it-works/site/memory.html"
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "action": "semanticRecall"
+      }
     },
     {
       "id": "memory-004",

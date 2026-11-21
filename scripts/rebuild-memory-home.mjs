@@ -9,7 +9,7 @@ import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
 
 // The clock starts one millisecond before the Chicago household's nightly sweep.
-export async function withFictionalMemoryHome(measure) {
+export async function withFictionalMemoryHome(measure,{realEmbedding=false}={}) {
  const dir=mkdtempSync(join(tmpdir(),'loom-fictional-memory-'));
  const home=join(dir,'home'),start=Date.parse('2027-01-01T10:40:59.999Z');
  let app, clock, credential;
@@ -32,9 +32,11 @@ export async function withFictionalMemoryHome(measure) {
  try{
   const example=await exampleHome(home);assert.equal(example.fictional,true);
   const config=join(home,'program.json'),p=JSON.parse(readFileSync(config,'utf8'));
-  const adapter=join(home,'fictional-embedding.mjs');
-  writeFileSync(adapter,'import previous from '+JSON.stringify(pathToFileURL(p.adapters).href)+';\nexport default async context=>({...await previous(context),memoryEmbedding:()=>({dimensions:4,embed:async()=>[1,0,0,0],embedBatch:async words=>words.map(()=>[1,0,0,0])})});\n',{mode:0o600});
-  p.adapters=adapter;
+  if(!realEmbedding){
+   const adapter=join(home,'fictional-embedding.mjs');
+   writeFileSync(adapter,'import previous from '+JSON.stringify(pathToFileURL(p.adapters).href)+';\nexport default async context=>({...await previous(context),memoryEmbedding:()=>({dimensions:4,embed:async()=>[1,0,0,0],embedBatch:async words=>words.map(()=>[1,0,0,0])})});\n',{mode:0o600});
+   p.adapters=adapter;
+  }
   p.memory.noteSweepAgent='fern';writeFileSync(config,JSON.stringify(p));
   await open(start);
   const issue=input=>app.writes.run(()=>app.services.signin.issue(input)).value.token;
