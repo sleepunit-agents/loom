@@ -62,7 +62,11 @@
     {
       "id": "desk-008",
       "promise": "The count comes from the items waiting in your inbox.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskWaiting"
+      }
     },
     {
       "id": "desk-009",

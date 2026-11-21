@@ -45,6 +45,7 @@ import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth}
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
@@ -235,6 +236,8 @@ export async function* walkthroughSteps(output) {
   for await(const step of inboxActionSteps({page,tile:await openApp('Inbox'),app,example:report.example,out})){
    Object.assign(report.actions,step.actions);save();yield {phase:step.phase,answer:step.answer,actions:safeReport(report.actions)};
   }
+  report.actions.deskWaiting=await deskWaiting({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'desk-waiting',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
