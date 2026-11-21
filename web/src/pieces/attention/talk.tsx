@@ -1,3 +1,4 @@
+import {conversationTitle} from '../../data/conversation-title';
 import { useMemo, type ReactNode } from 'react';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import { Body, LinkButton, List, Meta, Row, Section } from '../../kit';
@@ -27,7 +28,7 @@ export function cardTalk(query: DataQuerySnapshot<Data>, agent: string, limit: n
     .sort((a, b) => b.lastAnswer!.at.localeCompare(a.lastAnswer!.at) || a.id.localeCompare(b.id))[0];
   return { status: 'live', answer: answered ? { ...answered.lastAnswer!, path: talkPath(answered) } : undefined,
     recent: mine(query.data.recent).sort((a, b) => (b.lastAt ?? '').localeCompare(a.lastAt ?? '') || a.id.localeCompare(b.id)).slice(0, limit)
-      .map(row => ({ id: row.id, title: row.label || 'Conversation', at: row.lastAt ?? '', path: talkPath(row) })) };
+      .map(row => ({ id: row.id, title: conversationTitle(row), at: row.lastAt ?? '', path: talkPath(row) })) };
 }
 export function useCardTalk(agent: string, limit = 3): CardTalk {
   const query = useDataQuery<Data>(cardTalkQuery, { agent, limit });

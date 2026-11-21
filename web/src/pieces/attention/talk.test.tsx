@@ -27,3 +27,12 @@ it('has no answer when the latest answered conversation holds none, and is not l
   expect(cardTalk({ status: 'live' }, 'art', 3)).toEqual({ status: 'loading', recent: [] });
   expect(cardTalk({ status: 'live', data: { recent: null as never, answered: [] } }, 'art', 3)).toEqual({ status: 'offline', recent: [] });
 });
+
+it('names Slack direct messages and threads while preserving a saved human title', () => {
+  const slack = (id:string, label:string, address:unknown[]) => row(id,{label,venue:'slack',place:JSON.stringify(address)});
+  const recent = [slack('a','DFAKE',['T','DFAKE',null,['member','fern']]),
+    slack('b','DFAKE',['T','DFAKE',null,['member',null]]), slack('c','GFAKE',['T','GFAKE',null,['group']]),
+    slack('d','123.45',['T','CFAKE','123.45']), slack('e','Planting schedule',['T','CFAKE','345.67'])];
+  expect(cardTalk({status:'live',data:{recent,answered:[]}},'art',5).recent.map(item=>item.title))
+    .toEqual(['Slack direct message with Fern','Slack direct message','Slack group direct message','Slack channel thread','Planting schedule']);
+});
