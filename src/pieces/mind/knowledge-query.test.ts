@@ -144,3 +144,32 @@ it('keeps the successful stamp after a stale check and recomputes backlinks from
  await store.archivePage({slug:'renamed'});await store.purgePages(['renamed']);
  expect(await read()).toMatchObject({data:{memoryKnowledgePage:{citedBy:[]}}});
 });
+
+it('reviews active shared pages by sourcing and pages through candidates by slug',async()=>{
+ const path=join(home(),'knowledge.db'),store=new KnowledgePages({dbPath:path});closes.push(()=>store.close());
+ const conversation={claim:'Fictional claim',source_kind:'conversation' as const,excerpt:'Fictional excerpt'};
+ const web={...conversation,source_kind:'web' as const};
+ for(const [slug,domain,sourcing,citations] of [
+  ['a','world','provisional',[web]],['b','world','sourced',[conversation,conversation]],
+  ['c','ours/project','provisional',[]],['d','ours/project','internal',[conversation]],
+  ['e','world','sourced',[conversation,web]],['f','world','sourced',[]],
+  ['g','world','provisional',[]],
+ ] as const)await store.writePage({slug,title:slug,domain,sourcing,citations:[...citations],body:'Fictional body'});
+ await store.archivePage({slug:'g'});
+ const f=fixture(path),query=(args:string)=>'{memoryKnowledgeFilingReview('+args+'){slug reason}}';
+ const first=await f.query(query('first:2'));
+ expect(first).toEqual({data:{memoryKnowledgeFilingReview:[
+  {slug:'a',reason:'Provisional sourcing'},{slug:'b',reason:'All citations are conversations'},
+ ]}});
+ expect(await f.query(query('after:"b",first:2'),{viewer:{kind:'agent',id:'fiction'}})).toEqual({data:{memoryKnowledgeFilingReview:[{slug:'c',reason:'Provisional sourcing'}]}});
+ expect(await f.query(query('first:0'),{viewer:{kind:'runner',id:'fixture'}})).toEqual({data:{memoryKnowledgeFilingReview:null}});
+ expect((await f.query(query('first:101'))).errors?.[0].message).toContain('1 to 100');
+});
+
+it('reviews recorded provisional sourcing in older Knowledge files without a citations table',async()=>{
+ const path=join(home(),'legacy.db'),db=new Database(path);
+ db.exec("CREATE TABLE pages(id INTEGER PRIMARY KEY, slug TEXT, title TEXT, domain TEXT, status TEXT, sourcing TEXT); INSERT INTO pages VALUES(1,'old','Old','world','active','provisional'),(2,'known','Known','world','active','sourced')");
+ db.close();
+ const {query}=fixture(path);
+ expect(await query('{memoryKnowledgeFilingReview{slug reason}}')).toEqual({data:{memoryKnowledgeFilingReview:[{slug:'old',reason:'Provisional sourcing'}]}});
+});

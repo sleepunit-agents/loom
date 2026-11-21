@@ -449,3 +449,17 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});
  }finally{await art.client.close();await p.close();}
 });
+
+it('lets an agent review potentially misfiled shared Knowledge through loom_query',async()=>{
+ const {p,connect}=await program(),writer=await connect('art'),reader=await connect('mark');
+ try{
+  const draft=await writer.call('knowledge_write',{title:'Fictional notes from today',domain:'fictional',body:'Fictional unverified text.'});
+  expect(draft.error,draft.text).toBe(false);
+  const slug=draft.text.replace(/^Wrote knowledge page /,'');
+  const sourced=await writer.call('knowledge_write',{title:'Fictional material guide',domain:'fictional',body:'Fictional sourced text.',source:'https://example.org/guide'});
+  expect(sourced.error,sourced.text).toBe(false);
+  const result=await reader.call('loom_query',{query:'{memoryKnowledgeFilingReview{slug reason}}'});
+  expect(result.error,result.text).toBe(false);
+  expect(JSON.parse(result.text)).toEqual({data:{memoryKnowledgeFilingReview:[{slug,reason:'Provisional sourcing'}]}});
+ }finally{await reader.client.close();await writer.client.close();await p.close();}
+});

@@ -65,6 +65,12 @@ files in the agent's own declared folder (`harnesses/`, `models/`, `roles/`,
 in the title, body or domain; it is one statement and records no access. The
 named tools need an agent credential and always act on that agent's own source.
 
+A filing review helps an agent spot pages that may belong in private memory.
+Household owners and agents can use `loom_query` with
+`{memoryKnowledgeFilingReview(first:50){slug title domain reason}}`.
+Pass the last slug as `after` to continue. Review each candidate for its
+shared audience before deciding whether to revise it.
+
 Through the generic tools: for private Memory, use `memory.remember` and `memory.recall`; their opaque IDs
 can be read with `memoryProjectMemory(id:){title content}`. For Notes, use
 `memory.noteWrite` with `{path,body,lifespan}` and read
