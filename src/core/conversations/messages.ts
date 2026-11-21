@@ -240,6 +240,7 @@ export class CommsMessages {
     const check=()=>{
       const item=cvs.item(itemId),cv=item.conversation?cvs.conversation(item.conversation):undefined;
       if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!hasPrivateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
+      if(item.sourceId?.startsWith('guest-decision:')&&(answer==='words'||answer==='replied'))throw Error('Choose yes or no for this decision');
       return {item,cv,verdict:acceptAnswer(item,member,answer,text,true)};
     };
     const before=check();if(before.verdict==='repeat')return()=>check().item;

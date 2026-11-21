@@ -2100,6 +2100,10 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
   f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
  });
  const answer = {item, answer:verdict, words:'Private owner explanation'};
+ for(const reply of ['words','replied']){
+  expect((await f.call('inbox','answer',{...answer,answer:reply},token.owner)).status).not.toBe(200);
+  expect(f.root.services.conversations.item(item).state).toBe('waiting');
+ }
  expect(f.root.services.conversations.item(prior.body.value.item).state).toBe('resolved');
  expect((await f.call('inbox','answer',{...answer,item:prior.body.value.item},token.owner)).status).not.toBe(200);
  f.db.insert(members).values({id:'new-director',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();
@@ -2131,8 +2135,14 @@ it.each([['slack','yes'],['slack','no'],['discord','yes'],['discord','no']] as c
   headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
  const payload = await delivery.json();
  expect(delivery.status).toBe(200);
- expect(payload.value.items).toMatchObject([{id:returned[0].id,words:returned[0].words}]);
+ expect(payload.value.items).toMatchObject([{id:returned[0].id,words:returned[0].words,question:{words:expect.stringContaining(question.words),ifYes:question.ifYes,ifNo:question.ifNo},questionKeepUntil:expect.any(String)}]);
  expect(JSON.stringify(payload)).not.toContain(answer.words);
- expect((await f.call('conversation','confirm',{items:[returned[0].id]})).status).toBe(200);
  expect(f.db.select().from(bridgeSends).all()).toHaveLength(0);
+ const reply = {id:randomUUID(),text:'I received the decision.',model:'fixture'};
+ f.db.delete(agentPeople).where(eq(agentPeople.person,guest)).run();
+ expect((await f.call('bridges','reply',reply)).status).toBe(403);
+ f.db.insert(agentPeople).values({agent:'art',person:guest,tier:2}).run();
+ expect((await f.call('bridges','reply',reply)).status).toBe(200);
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{channel:'DGUEST',conversation,text:reply.text}]);
+ expect(f.root.services.conversations.item(returned[0].id).state).toBe('done');
 });

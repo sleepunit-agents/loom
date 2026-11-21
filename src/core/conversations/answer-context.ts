@@ -1,7 +1,8 @@
 /** Ephemeral context for an answer to this conversation's own plain question.
  * No words are copied into a new message, Inbox row, job or receipt. */
 import {and,eq} from 'drizzle-orm';
-import {inbox,messages,threads} from '../data/schema.js';
+import type {DataDatabase} from '../data/database.js';
+import {conversations,digests,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInboxQuestion,hasPrivateInboxPayload} from './private-inbox-words.js';
@@ -9,10 +10,31 @@ import { commsKeepDays } from '../data/comms-days.js';
 type Item=typeof inbox.$inferSelect;
 export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:string|null;link:string|null};
 export type AnswerContext={question:AnswerQuestion;until:number};
+/** Recover only the guest body's own question for the continuation. The owner's
+ * explanation is a separate encrypted item and is never opened here. */
+export function guestDecisionQuestion(db:DataDatabase,receipt:Item){
+ if(receipt.thread||receipt.member||receipt.source!=='answer'||receipt.fromKind!=='agent'||receipt.toKind!=='agent'||
+    receipt.to!==receipt.agent||receipt.fromId!==receipt.agent||receipt.onWordKind!=='outside'||
+    !receipt.onWord||!receipt.conversation||!receipt.sourceId?.startsWith('guest-decision:'))return;
+ const q=db.select().from(inbox).where(eq(inbox.id,receipt.sourceId.slice('guest-decision:'.length))).get();
+ if(!q?.conversation||!q.sourceId||q.source!=='thread'||q.fromKind!=='agent'||q.toKind!=='person'||q.member!==q.to||
+    q.fromId!==receipt.agent||q.agent!==receipt.agent||q.onWord!==receipt.onWord||q.onWordKind!=='outside'||
+    q.state!=='answered'||q.answeredBy!==q.to||!['yes','no'].includes(q.answer??''))return;
+ const owner=db.select().from(conversations).where(eq(conversations.id,q.conversation)).get();
+ if(owner?.venue!=='wake'||owner.place!==JSON.stringify(['guest-decision',q.to])||owner.agent!==receipt.agent||owner.member!==q.to)return;
+ const source=db.select().from(conversations).where(eq(conversations.id,receipt.conversation)).get();
+ if(!source?.direct||source.member||source.agent!==receipt.agent||!['discord','slack'].includes(source.venue))return;
+ const match=/^guest-decision:(dg-[0-9a-f-]+):([1-9][0-9]*)$/.exec(q.sourceId);
+ if(!match)return;
+ const digest=db.select().from(digests).where(eq(digests.id,match[1])).get();
+ if(digest?.conversation!==source.id||digest.revision<Number(match[2])||
+    receipt.words!=='Owner decision for digest '+digest.id+' revision '+match[2]+': '+q.answer+'.')return;
+ return q;
+}
 export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Promise<()=>AnswerContext|null>{
  const {db}=comms;
- if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(db,answer)){
-  const snapshot=()=>{const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
+ if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&(answer.sourceId.startsWith('guest-decision:')||hasPrivateInboxPayload(db,answer))){
+  const snapshot=()=>{if(answer.sourceId!.startsWith('guest-decision:'))return guestDecisionQuestion(db,answer);const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
   const before=snapshot(),days=()=>commsKeepDays(db);
   if(!before||privateInboxDeadline(before,days())<=Date.parse(comms.now()))return()=>null;
   const envelope=privateInboxEnvelope(before.words);if(!envelope)return()=>null;
