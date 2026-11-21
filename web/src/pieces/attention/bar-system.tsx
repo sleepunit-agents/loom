@@ -1,5 +1,4 @@
 import { useDataQuery } from '../../data/graphql';
-import { latestStatus, type AgentStatus, type OwnedAgent } from './home-model';
 
 export const deskTimeQuery = 'query DeskTime { deskTime { at timezone } }';
 export interface DeskTimeData { deskTime: { at:number;timezone:string } | null }
@@ -19,10 +18,8 @@ export function BarClock() {
   const words = text && minute ? serverTime(minute.at, minute.timezone, true) : 'Loom time unavailable';
   return <span className="next-system-clock loom-sys__clock" title={words}><span aria-hidden="true">{text || '—:—'}</span><span className="sr-only">{words}</span></span>;
 }
-export function BarStatus({ boxes, roster, statuses, available, live, go }: { boxes: number | undefined; roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; available: boolean; live: boolean; go(path:string):void }) {
-  const working = roster.filter(a=>latestStatus(statuses,a.id)?.state==='working').length;
-  const known = available && roster.every(a=>latestStatus(statuses,a.id)!==undefined);
-  const agents = known ? `${working} of ${roster.length} agents at work` : 'Agent status unavailable';
+export function BarStatus({ boxes, total, working, known, live, go }: { boxes: number | undefined; total: number; working: number; known: boolean; live: boolean; go(path:string):void }) {
+  const agents = known ? `${working} of ${total} agents at work` : 'Agent status unavailable';
   const signal = live ? 'Live desk data available' : 'Desk data unavailable';
   const boxWords = boxes===undefined ? 'Boxes unavailable' : `${boxes} enrolled box${boxes===1?'':'es'}`;
   return <span className="next-system-icons loom-sys__icons" role="group" aria-label="Status">
