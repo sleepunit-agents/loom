@@ -64,8 +64,8 @@ export async function knowledgeSourceCheck({page,tile,out}) {
   await reader.getByText(/Asked to be checked again/).waitFor();
   await reader.getByRole('button',{name:'Still true',exact:true}).click();
   await reader.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
-  await page.reload();
-  await reader.getByText(claim,{exact:true}).waitFor();
+  await page.reload();await page.locator('.next-shell').waitFor();
+  await reader.getByText(claim,{exact:true}).waitFor({timeout:20_000});
   const citation=reader.getByRole('region',{name:'Sources'}).getByRole('link',{name:source,exact:true});
   if(await citation.getAttribute('href')!==source)throw Error('The saved citation points elsewhere');
   const checks=reader.getByRole('region',{name:'Recent checks'}).getByRole('listitem');
