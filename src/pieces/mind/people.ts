@@ -1,4 +1,4 @@
-import {accountColumns,accountIndex,type AccountPlatform} from '../../backends/people-accounts.js';
+import {accountColumns,type AccountPlatform} from '../../backends/people-accounts.js';
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -32,6 +32,18 @@ export interface PeopleReader {
  close():void;
 }
 export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
+// Scoped card values can name several accounts. Each can identify its holder on
+// an Inbox card; choosing where to send a message still requires a single text value.
+function accountHolders(db: Database, platform: AccountPlatform, workspace: string, user: string) {
+  const [space, account] = accountColumns(platform);
+  const path = `'$.where.${platform}.value'`;
+  return db.prepare(`SELECT slug, json_extract(card_json, '$.name') AS name FROM people
+    WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND
+    ((json_type(card_json, ${path})='text' AND ${account}=?) OR
+     (json_type(card_json, ${path})='array' AND EXISTS
+       (SELECT 1 FROM json_each(card_json, ${path}) WHERE type='text' AND value=?))) LIMIT 2`)
+    .all(workspace,user,user) as {slug:string;name:string}[];
+}
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   const failed=new Set<string>();
   const open=(id:string,path:string|undefined)=>{
@@ -204,11 +216,11 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       let result:{workspace:string;user:string}|undefined;
       for(const source of visible){
         const db=sources.get(source);if(!db||!hasTable(db,'people'))continue;
-        const row=db.prepare(`SELECT ${space} AS workspace, ${account} AS user FROM people WHERE slug=? AND archived_at IS NULL AND json_valid(card_json)`)
-          .get(resolve(db,slug)) as {workspace:unknown;user:unknown}|undefined;
+        const row=db.prepare(`SELECT ${space} AS workspace, ${account} AS user, json_type(card_json, '$.where.${platform}.value') AS kind FROM people WHERE slug=? AND archived_at IS NULL AND json_valid(card_json)`)
+          .get(resolve(db,slug)) as {workspace:unknown;user:unknown;kind:string|null}|undefined;
         if(!row||row.workspace===null&&row.user===null)continue;
-        if(typeof row.workspace!=='string'||typeof row.user!=='string')return;
-        const matches=db.prepare(`SELECT slug FROM people WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND ${account}=? LIMIT 2`).all(row.workspace,row.user);
+        if(row.kind!=='text'||typeof row.workspace!=='string'||typeof row.user!=='string')return;
+        const matches=accountHolders(db,platform,row.workspace,row.user);
         if(matches.length!==1||result&&(result.workspace!==row.workspace||result.user!==row.user))return;
         result={workspace:row.workspace,user:row.user};
       }
@@ -218,10 +230,8 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       if (!allowed(viewer)) return;
       const db=sources.get('commons');
       if(!db) return;
-      const [space,account]=accountColumns(platform);
       try {
-        const matches=db.prepare(`SELECT json_extract(card_json, '$.name') AS name FROM people INDEXED BY ${accountIndex(platform)}
-          WHERE archived_at IS NULL AND json_valid(card_json) AND ${space}=? AND ${account}=? LIMIT 2`).all(workspace,user) as {name:string}[];
+        const matches=accountHolders(db,platform,workspace,user);
         return matches.length===1 ? matches[0]?.name : undefined;
       } catch { return undefined; } // An unavailable directory cannot supply a held name.
     },
