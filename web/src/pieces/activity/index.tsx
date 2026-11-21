@@ -3,7 +3,7 @@ import {Suspense,useEffect,useRef,useState} from 'react';
 import {useMemoryRecord} from '../../memory/query';
 import {memoryQueries} from '../../memory/queries';
 import {Split,List,Row,Empty,Loading,Error,Button,Markdown,type SplitFolder} from '../../kit';
-import Face from '../../face';
+import AgentFace, { useAgentDisplays } from '../attention/agent-face';
 import {folded,groupLabel,isPlan,stepOf} from '../../steps';
 import {reducedMotion} from '../../access';
 import {VENUES,address,filtersOf,passes,safeHref,type Filters,type ActivityEntry,type ActivityOpen} from './model';
@@ -43,6 +43,7 @@ function Reader({entry:e,go,pick,tz}:{entry:ActivityOpen;go?:(p:string)=>void;pi
  </article>;
 }
 export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:string)=>void}={}){
+ const displays=useAgentDisplays();
  const [local,setLocal]=useState(()=>typeof location==='undefined'?'/p/activity-preview':location.pathname+location.search);
  const url=new URL(shellPath??local,'http://loom'),q=url.searchParams,f=filtersOf(q);
  let memoryId:string|undefined;
@@ -79,7 +80,7 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  const strip=<div className="grid gap-2 p-3"><label>Shown day<NativeSelect aria-label="Shown day" value={day} onChange={e=>navigate(f,selected,e.target.value)}>{days.map(d=><option key={d}>{d}</option>)}</NativeSelect></label><div className="flex h-12 items-end gap-px" role="group" aria-label={`Activity per hour, ${day}`}>{hours.map((n,h)=><button type="button" key={h} disabled={!n} aria-label={`${h}:00: ${n} entries`} className="flex h-full min-w-0 flex-1 items-end focus-visible:outline" onClick={()=>{const rows=[...(rowsRef.current?.querySelectorAll<HTMLElement>('[data-split-row]')??[])];const row=rows.find(r=>r.dataset.day===day&&Number(r.dataset.hour)<=h);row?.scrollIntoView({block:'nearest',behavior:reducedMotion()?'instant':'smooth'});row?.focus({preventScroll:true});}}><span className="w-full bg-primary" style={{height:`${Math.max(4,n/peak*100)}%`}}/></button>)}</div><p className="text-sm">{hours.reduce((a,b)=>a+b,0)} entries · midnight / 6am / noon / 6pm</p></div>;
  return <Split className="h-full" label="Activity" folders={folders} folder="" onFolder={toggle} isOn={isOn} narrow={menu} listTop={strip} listTitle="Activity" listMeta={`${shown.length} entries`}
  list={<div ref={rowsRef}>{bad?unavailable(bad.status):<>{records.some(w=>w.conversations!=='available')&&<p role="status" className="p-3">Conversations and digests {records.some(w=>w.conversations==='error')?'couldn’t load':'are not available yet'}.</p>}{records.some(w=>w.episodes!=='available')&&<p role="status" className="p-3">Some episode stores {records.some(w=>w.episodes==='error')?'couldn’t load':'are not available'}.</p>}{records.some(w=>w.truncated)&&<p role="status">Showing the newest 600 entries per window.</p>}
- {days.map(d=>{const rows=shown.filter(e=>e.day===d);return rows.length?<section key={d} aria-label={d}><h2 className="px-4 py-2 font-medium">{d}</h2><List label={`Activity on ${d}`}>{rows.map(e=><Row key={e.id} data-day={e.day} data-hour={e.hour} title={e.title} meta={`${new Date(e.at).toLocaleTimeString([],{timeZone:tz,hour:'numeric',minute:'2-digit'})} · ${e.agent} · ${e.where}${e.line?' · '+e.line:''}`} icon={<Face bg="" size={28} label={e.agent}/>} status={e.what==='work'?'Work done':e.what==='system'?'System':undefined} selected={e.id===selected} onClick={()=>pick(e.id)} style={{contentVisibility:'auto',containIntrinsicSize:'auto 100px'}}/>)}</List></section>:null;})}
+ {days.map(d=>{const rows=shown.filter(e=>e.day===d);return rows.length?<section key={d} aria-label={d}><h2 className="px-4 py-2 font-medium">{d}</h2><List label={`Activity on ${d}`}>{rows.map(e=><Row key={e.id} data-day={e.day} data-hour={e.hour} title={e.title} meta={`${new Date(e.at).toLocaleTimeString([],{timeZone:tz,hour:'numeric',minute:'2-digit'})} · ${e.agent} · ${e.where}${e.line?' · '+e.line:''}`} icon={<AgentFace display={displays.find(d=>d.id===e.agent)} name={e.agent} state="idle" size={28}/>} status={e.what==='work'?'Work done':e.what==='system'?'System':undefined} selected={e.id===selected} onClick={()=>pick(e.id)} style={{contentVisibility:'auto',containIntrinsicSize:'auto 100px'}}/>)}</List></section>:null;})}
  {loading?<Loading label="Opening activity…"/>:!shown.length&&<Empty title={f.who.length+f.where.length+f.what.length?'Nothing matches these filters':'Quiet'} text="Try fewer filters or earlier days."/>}
  {count<11&&<Button disabled={loading} onClick={()=>{activitySession.windows=count+1;setCount(count+1);}}>Earlier</Button>}</>}</div>}
  reader={detail.status==='loading'?<Loading label="Opening entry…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?<Reader entry={detail.records[0]} tz={tz} go={go} pick={pick}/>:<Empty title="This entry is no longer available" text="It may have expired or you may no longer have access."/>}

@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { lookOf, wearLook } from '../look';
 import './signin.css';
+import { WovenCloth } from '../woven-cloth';
 const enc=(buf:ArrayBuffer)=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const dec=(s:string)=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((s.length+3)%4)),c=>c.charCodeAt(0));
 async function post(url:string,body:unknown){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error ?? 'Sign-in failed');return j;}
@@ -32,23 +33,10 @@ function wearGateLook():(()=>void)|undefined{
   };
 }
 
-// The ground: one tile of plain weave, eight warp and eight weft threads, each broken where it passes under.
-const TILE=192,GAP=5,AT=[12,36,60,76,108,132,156,172];
-const WARP=['border','edge','pink','border','border','blue','edge','border'],WEFT=['border','olive','border','edge','border','yellow','border','edge'];
-function threadPath(i:number,weft:boolean){
-  const line=(a:number,b:number)=>weft?`M${a} ${AT[i]}H${b}`:`M${AT[i]} ${a}V${b}`;
-  let d='',from=0;
-  for(const [j,at] of AT.entries())if((i+j)%2===(weft?0:1)){d+=line(from,at-GAP);from=at+GAP;}
-  return d+line(from,TILE);
-}
-const THREADS=[...WEFT.map((tint,i)=>({tint,d:threadPath(i,true)})),...WARP.map((tint,i)=>({tint,d:threadPath(i,false)}))];
 function Weave(){
   return <div className="loom-gate__ground" aria-hidden="true">
     <span className="loom-wash loom-gate__wash" />
-    <div className="loom-gate__cloth"><svg width="100%" height="100%" focusable="false">
-      <defs><pattern id="loom-gate-weave" width={TILE} height={TILE} patternUnits="userSpaceOnUse">{THREADS.map(t=><path key={t.d} className="loom-gate__ply" data-tint={t.tint} d={t.d} />)}</pattern></defs>
-      <rect width="100%" height="100%" fill="url(#loom-gate-weave)" />
-    </svg></div>
+    <WovenCloth />
     <i className="loom-gate__shuttle" data-tint="pink" /><i className="loom-gate__shuttle" data-tint="blue" /><i className="loom-gate__shuttle" data-tint="yellow" />
     <span className="loom-gate__veil" />
   </div>;
