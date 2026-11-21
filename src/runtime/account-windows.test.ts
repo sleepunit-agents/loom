@@ -150,6 +150,9 @@ it('attributes only the measured rise to work placed on that account and expires
       queuedAt:now,claimedAt:now,endedAt:end}).run();
     db.insert(jobUsage).values({job:id,source:'report',tokensIn:20,tokensOut:10}).run();
   }
+  db.insert(jobs).values({id:'just-started',account:'shared',agent:'art',title:'Next run',state:'running',
+    brief:'',model:'m',startedByKind:'member',startedBy:'owner',houseRepository:'r',houseFile:'f',houseBranch:'b',
+    queuedAt:end,claimedAt:end}).run();
   const report = accountWeeklyUsage(db,'shared',last,end);
   expect([...report!.shares]).toEqual([['placed',.25]]);
   expect(report!.unattributed).toBe(.25);

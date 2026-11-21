@@ -10,7 +10,7 @@ import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { accountWeekReadings, conversations, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { accountWeekReadings, conversations, inbox, inboxRefs, triggers, jobs, jobUsage, agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountLogins, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
 import { readModelAccounts } from '../core/data/model-account-read.js';
@@ -331,4 +331,34 @@ it('shows only the account owner’s readable conversations and keeps hidden wor
   const revoked = await pending;
   expect(revoked.status).toBe(401);
   expect(await revoked.text()).not.toContain('New discussion title');
+});
+
+it('rechecks a retry on another account when it supplied the trigger for a buffered report',async()=>{
+  const gate=deferred(), began=deferred();
+  const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began.resolve();await gate.promise;return 'ready';}}});
+  const end=f.now(), start=new Date(f.clock.now()-60000).toISOString();
+  const resetsAt=new Date(f.clock.now()+3.5*86400_000).toISOString();
+  f.db.insert(accountWeekReadings).values({account:'private-a',window:'week',readAt:start,resetsAt,usage:0}).run();
+  f.db.insert(conversations).values({id:'room',agent:'agent',member:'alice',venue:'loom',place:'th:test',label:'Test',
+    startedAt:start,lastAt:end,turnCount:1}).run();
+  const attempt={agent:'agent',member:'alice',conversation:'room',title:'Run',state:'done' as const,brief:'',model:'m',
+    startedByKind:'member',startedBy:'alice',houseRepository:'r',houseFile:'f',houseBranch:'b',claimedAt:start,endedAt:end};
+  f.db.insert(jobs).values({id:'original',account:'private-a',queuedAt:start,...attempt}).run();
+  f.db.insert(jobs).values({id:'retry',account:'private-b',queuedAt:end,retryOf:'original',...attempt}).run();
+  f.db.insert(jobUsage).values({job:'original',source:'report',tokensIn:10,tokensOut:10}).run();
+  f.db.insert(triggers).values({id:'timer',ownerKind:'member',owner:'alice',sourceKind:'time',lifespan:'until-stopped',
+    targetKind:'inbox',toKind:'agent',to:'agent',note:'Private association',enabled:true,state:'standing',createdAt:start,changedAt:start}).run();
+  f.db.insert(inbox).values({id:'mail',source:'trigger',sourceId:'timer:1',toKind:'agent',to:'agent',fromKind:'schedule',
+    conversation:'room',seq:1,job:'retry',at:end,changedAt:end,state:'done'}).run();
+  f.db.insert(inboxRefs).values({item:'mail',ref:'timer'}).run();
+  const selection='modelAccounts {... on RuntimeAccountDetail { weeklyUsage {triggers {title share}}}}';
+  expect(JSON.stringify(await (await f.post('alice','{'+selection+'}')).json())).toContain('Private association');
+  const buffered=f.post('alice','{hold '+selection+'}');
+  await began.promise;
+  await new Promise(resolve=>setImmediate(resolve));
+  f.db.update(jobs).set({member:'bob'}).where(eq(jobs.id,'retry')).run();
+  gate.resolve();
+  const response=await buffered;
+  expect(response.status).toBe(401);
+  expect(await response.text()).not.toContain('Private association');
 });

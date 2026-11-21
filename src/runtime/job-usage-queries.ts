@@ -65,7 +65,7 @@ function plus(a:number|null,b:number|null) {
 function total(row:Row) {return plus(row.usage?.tokensIn ?? null,row.usage?.tokensOut ?? null);}
 
 type Run = {trigger:string; id:string};
-function assignRuns(history:Row[]) {
+function assignRuns(history:Row[], evidence?:Map<Run,Set<string>>) {
   const byId = new Map(history.map(row=>[row.id,row]));
   const families = new Map<string,Row[]>();
   for (const row of history) {
@@ -100,6 +100,14 @@ function assignRuns(history:Row[]) {
     }
     if (!run) continue;
     if (!row.programFiring && row.venue === 'wake' && row.conversation) lastWake.set(row.conversation,run);
+    if (evidence) {
+      const sources = evidence.get(run) ?? new Set<string>();
+      for (const attempt of family) {
+        sources.add(attempt.id);
+        if (attempt.parentId) sources.add(attempt.parentId);
+      }
+      evidence.set(run,sources);
+    }
     for (const attempt of family) runs.set(attempt.id,run);
   }
   return runs;
@@ -164,8 +172,9 @@ export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,
       s.rule('conversations')!(getTableColumns(conversations)))).all();
   const readable = new Set(seenConversations.map(row=>row.id));
   const visible = selected.filter(row=>row.conversation === null || readable.has(row.conversation));
+  const evidence = new Map<Run,Set<string>>();
   const runs = assignRuns([...new Map([...conversationHistory(s,visible),...visible].map(row=>[row.id,row])).values()]
-    .sort((a,b)=>Date.parse(b.queuedAt)-Date.parse(a.queuedAt) || b.id.localeCompare(a.id)));
+    .sort((a,b)=>Date.parse(b.queuedAt)-Date.parse(a.queuedAt) || b.id.localeCompare(a.id)),evidence);
   const notes = new Map(s.db.select({id:triggers.id,note:triggers.note}).from(triggers)
     .where(and(among(sql`${triggers.id}`,[...runs.values()].map(run=>run.trigger)),
       s.rule('triggers')!(getTableColumns(triggers)))).all().map(row=>[row.id,row.note]));
@@ -188,8 +197,10 @@ export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,
     const href = id && (row.venue === 'terminal' || row.venue === 'loom') && row.place
       ? '/p/comms-preview/thread/'+encodeURIComponent(row.place.replace(/^th:/,'')) : id && '/p/comms-preview/conversation/'+encodeURIComponent(id);
     add(conversationsById,id,row.label ?? id ?? 'No conversation',share,href);
-    const trigger = runs.get(row.id)?.trigger;
-    if (trigger && notes.has(trigger)) {
+    const run = runs.get(row.id);
+    const trigger = run?.trigger;
+    if (run && trigger && notes.has(trigger)) {
+      for (const job of evidence.get(run) ?? []) witness.jobs.add(job);
       witness.triggers.add(trigger);
       add(triggersById,trigger,notes.get(trigger) || trigger,share,'/p/tempo/trigger/'+encodeURIComponent(trigger));
     }

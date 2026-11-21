@@ -22,7 +22,8 @@ export function accountWeeklyUsage(db:DataDatabase, account:string, window:Quota
   if (readings.length === 1) return estimateWeeklyUsage(readings,[]);
   const weights = db.select({id:jobs.id,start:jobs.claimedAt,end:jobs.endedAt,input:jobUsage.tokensIn,output:jobUsage.tokensOut})
     .from(jobs).leftJoin(jobUsage,eq(jobUsage.job,jobs.id)).where(and(eq(jobs.account,account),
-      sql`julianday(${jobs.claimedAt}) <= julianday(${window.readAt})`,
+      sql`(julianday(${jobs.claimedAt}) < julianday(${window.readAt})
+        or (${jobs.endedAt} is not null and julianday(${jobs.claimedAt}) = julianday(${window.readAt})))`,
       sql`(${jobs.endedAt} is null or julianday(${jobs.endedAt}) > julianday(${new Date(readings[0].at).toISOString()}))`)).all();
   return estimateWeeklyUsage(readings,weights.map(row=>({
     id:row.id,start:Date.parse(row.start!),end:row.end ? Date.parse(row.end) : end,
