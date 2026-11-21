@@ -23,8 +23,14 @@ export async function approvalCaution({page,app,example,out}){
   const deny=group.getByRole('button',{name:'Deny',exact:true});
   await allow.waitFor();
   phase='timer';
-  await responseForAction(browser,preview,()=>set(original+2),65_000);
-  await caution.waitFor();
+  const seconds=value=>value+' '+(value===1?'second':'seconds');
+  const timing=before=>tile.getByText(seconds(before)+' → '+seconds(original+1),{exact:true});
+  await timing(original).waitFor();
+  await caution.waitFor({state:'hidden'});
+  set(original+2);
+  // Leave the card untouched for its minute refresh. Check what the owner actually sees.
+  await caution.waitFor({timeout:90_000});
+  await timing(original+2).waitFor();
   if(!await allow.isEnabled()||!await deny.isEnabled())throw Error('An advisory disabled an owner decision');
   phase='focus';
   set(original);
