@@ -4,6 +4,8 @@
 
 Run `loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME` against completed SQLite backups and a stopped, prepared home with its original Comms key. The command holds the home lock while it restores threads, text messages, tool cards, delivery notices and saved questions. It refuses an archive with additional message kinds before writing any threads. Each phase commits separately. After correcting an error, rerun the command with the same archive and home. A successful run reports the number of new and source records for each phase.
 
+A v1 deletion can commit its tombstone before the old process removes the remaining messages, references and questions. The import preserves that tombstone and omits the revoked history. A pending deletion that conflicts with a live thread stops the import.
+
 Released v1 households kept questions in `comms_asks`. The early proposal for an `ask` row inside `comms_messages` was superseded before it shipped. The importer reads saved questions from their own table and reports zero questions for recognized message databases from before that table existed.
 
 ## Historical whole-household commands

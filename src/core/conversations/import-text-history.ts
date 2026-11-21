@@ -1,3 +1,4 @@
+import { pendingThreadDeletions } from './archive-deletions.js';
 import Database from 'better-sqlite3';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -41,6 +42,7 @@ export async function importTextHistory(input: HistoryInput) {
 async function importRows(input: HistoryInput, reasons: Database.Database | null) {
   const {archive,household,destination:db,key,sourceDays,now}=input;
   if (!archive.readonly || !household.readonly || !validKeepDays(sourceDays)) throw Error('Invalid Comms archive');
+  const deleted=pendingThreadDeletions(household, db);
   const oldThreads=new Map(household.prepare('SELECT id,conversation,agent,member,project FROM comms_threads').all()
     .map(raw=>{const row=oldThread.parse(raw);return [row.id,row] as const;}));
   const text=input.kind==='notices'
@@ -76,6 +78,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
   const saveReason = reasons?.prepare('INSERT INTO reasons VALUES(?,?,?)');
   const findReason = reasons?.prepare('SELECT words FROM reasons WHERE thread=? AND seq=?');
   for (const raw of text.iterate()) {
+    if (deleted.has((raw as {thread:string}).thread)) continue;
     const row=oldText.parse(raw);
     checkScope(row,initialScopes);
     if (row.kind === 'error') {
@@ -113,6 +116,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
     const staged=readScopes();
     let total=0, inserted=0;
     for (const raw of text.iterate()) {
+      if (deleted.has((raw as {thread:string}).thread)) continue;
       const row=oldText.parse(raw);
       checkScope(row,staged);
       const keepUntil=keepUntilFor(row.at,sourceDays);
@@ -150,6 +154,7 @@ async function importRows(input: HistoryInput, reasons: Database.Database | null
       const reference=z.object({thread:id,ref:id.max(200),seq:z.number().int().positive(),pos:z.number().int().nonnegative(),at:z.iso.datetime({offset:true})});
       const parent=archive.prepare("SELECT at FROM comms_messages WHERE thread=? AND seq=? AND kind IN ('message','reply')");
       for (const raw of household.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs').iterate()) {
+        if (deleted.has((raw as {thread:string}).thread)) continue;
         const row=reference.parse(raw), msg=parent.get(row.thread,row.seq) as {at:string}|undefined;
         if (!msg || Date.parse(msg.at)!==Date.parse(row.at) || legacyCommsRefs(row.ref.replace(/^github:/,'')).at(0)!==row.ref)
           throw Error('Unrecognized archived thread reference');

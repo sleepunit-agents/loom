@@ -1,3 +1,4 @@
+import { pendingThreadDeletions } from './archive-deletions.js';
 /** Restore the live thread directory from a stopped archive. This phase never schedules work. */
 import { legacyConversationId } from './legacy-thread-id.js';
 import type Database from 'better-sqlite3';
@@ -22,6 +23,7 @@ const sourceThread = z.object({
 
 export function importThreads(source:Database.Database, db:DataDatabase, recover:(agent:string,member:string,thread:string)=>string|undefined) {
   if (!source.readonly) throw Error('Expected a read-only household snapshot');
+  pendingThreadDeletions(source, db);
   const gone = source.prepare('SELECT * FROM comms_deleted ORDER BY id');
   const rows = source.prepare('SELECT * FROM comms_threads ORDER BY id');
   return db.transaction(() => {

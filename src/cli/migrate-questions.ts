@@ -12,6 +12,7 @@ import { importTextHistory } from '../core/conversations/import-text-history.js'
 import { importArchivedQuestions } from '../core/conversations/archived-question-store.js';
 import { householdId } from '../slug.js';
 import { legacyThreadLookup } from '../core/conversations/legacy-thread-id.js';
+import { pendingThreadDeletions } from '../core/conversations/archive-deletions.js';
 import { importThreads, UnresolvedArchiveThread } from '../core/conversations/import-threads.js';
 export async function migrateComms(phase:'comms'|'archived-questions'|'comms-threads'|'comms-text'|'comms-cards', args:string[],io:{stdout(text:string):void;stderr(text:string):void}) {
   const usage=`loom migrate ${phase} --source STOPPED_ARCHIVE --home PREPARED_HOME`;
@@ -58,8 +59,9 @@ export async function migrateComms(phase:'comms'|'archived-questions'|'comms-thr
     const input={archive,household,destination:dataDatabase(client),key:wordsKey(identity),
       sourceDays:sourceConfig.comms_days,github:sourceConfig.github,now:()=>new Date().toISOString()};
     if (phase === 'comms') {
-      const unsupported = archive.prepare("SELECT 1 FROM comms_messages WHERE kind IS NULL OR kind NOT IN ('message','reply','card','error') LIMIT 1").get();
-      if (unsupported) {
+      const removed = pendingThreadDeletions(household, input.destination);
+      const unsupported = archive.prepare("SELECT DISTINCT thread FROM comms_messages WHERE kind IS NULL OR kind NOT IN ('message','reply','card','error')").pluck().all();
+      if (unsupported.some(thread => typeof thread !== 'string' || !removed.has(thread))) {
         io.stderr('This archive contains Comms message kinds the combined importer cannot restore yet.\n');
         return 1;
       }
