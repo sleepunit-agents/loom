@@ -8,7 +8,7 @@ import { accountCapacity } from './quota.js';
 import { allowedModelAccounts, modelAccountAuthority, readModelAccounts } from '../core/data/model-account-read.js';
 
 import {accountWeeklyUsage} from './account-weekly-usage.js';
-import {visibleWeeklyGroups} from './job-usage-queries.js';
+import {visibleWeeklyGroups, WeeklyVisibility} from './job-usage-queries.js';
 import type {JobSummaries} from './job-summary.js';
 
 const text = new GraphQLNonNull(GraphQLString);
@@ -54,9 +54,9 @@ const view = new GraphQLUnionType({ name: 'RuntimeAccountView', types: [summary,
 
 export function modelAccountQueries(db: DataDatabase, now: () => string, usageScope?: (viewer:Viewer)=>JobSummaries | undefined) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().
-  // Retain only selected account IDs, never usage/provider/location values or a credential.
+  // Retain only the resource identifiers needed to recheck selected private fields.
   const witnesses = new WeakMap<Viewer, Set<string>>();
-  const usageChecks = new WeakMap<Viewer,Map<string,()=>boolean>>();
+  const usageChecks = new WeakMap<Viewer,WeeklyVisibility>();
   const fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = { modelAccounts: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(view))),
     resolve(_source, _args, { viewer }) {
@@ -92,19 +92,16 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
             if (name !== 'weeklyUsage') return values[name];
             const scope = usageScope?.(viewer);
             if (!scope) return null;
-            const reports = [], checks:Array<()=>boolean> = [];
+            let watched = usageChecks.get(viewer);
+            if (!watched) { watched = new WeeklyVisibility(); usageChecks.set(viewer,watched); }
+            const reports = [];
             for (const window of values.windows) {
               const estimate = accountWeeklyUsage(db,row.id,{name:window.window,usage:window.usage,readAt:window.usageReadAt,
                 resetsAt:window.resetsAt,durationMs:window.durationMs,reserve:window.reserve},at);
               if (!estimate) continue;
-              const projected = visibleWeeklyGroups(scope,estimate);
-              const snapshot = JSON.stringify(projected);
-              checks.push(()=>JSON.stringify(visibleWeeklyGroups(scope,estimate)) === snapshot);
+              const projected = visibleWeeklyGroups(scope,estimate,watched);
               reports.push({window:window.window,usage:window.usage,readAt:window.usageReadAt,resetsAt:window.resetsAt,...projected});
             }
-            let watched = usageChecks.get(viewer);
-            if (!watched) { watched = new Map(); usageChecks.set(viewer,watched); }
-            watched.set(row.id,()=>Boolean(usageScope?.(viewer)) && checks.every(check=>check()));
             return reports;
           });
         },
@@ -116,6 +113,13 @@ export function modelAccountQueries(db: DataDatabase, now: () => string, usageSc
     fields,
     /** Rechecked after public awaits and on socket refresh/delivery. Reject a
      * previously private selection if its CURRENT ownership no longer permits it. */
-    valid(viewer: Viewer) { const ids = [...(witnesses.get(viewer) ?? [])]; return allowedModelAccounts(db, viewer, ids).size === ids.length && [...(usageChecks.get(viewer)?.values() ?? [])].every(check=>check()); },
+    valid(viewer: Viewer) {
+      const ids = [...(witnesses.get(viewer) ?? [])];
+      if (allowedModelAccounts(db, viewer, ids).size !== ids.length) return false;
+      const watched = usageChecks.get(viewer);
+      if (!watched) return true;
+      const scope = usageScope?.(viewer);
+      return !!scope && watched.valid(scope);
+    },
   };
 }

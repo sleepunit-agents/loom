@@ -51,7 +51,7 @@ function rows(s:JobSummaries, filter?:SQL | ((conversation:SQL<string|null>)=>SQ
   const conversation = sql<string|null>`coalesce(${jobs.conversation}, ${parent.conversation})`;
   const runKind = sql<string|null>`case when ${programFirings.id} is not null then 'program' when ${terminalRuns.job} is null then null
     when ${terminalRuns.job} = ${terminalRuns.parent} then 'main' else 'subagent' end`;
-  return s.db.select({id:jobs.id,jobAgent:jobs.agent,title:jobs.title,conversation,runKind,label:conversations.label,
+  return s.db.select({id:jobs.id,parentId:parent.id,jobAgent:jobs.agent,title:jobs.title,conversation,runKind,label:conversations.label,
     state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,programFiring:programFirings.id,programTrigger:programFirings.trigger,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
     .from(jobs).leftJoin(programFirings,eq(programFirings.job,jobs.id)).leftJoin(terminalRuns,eq(terminalRuns.job,jobs.id)).leftJoin(parent,eq(parent.id,terminalRuns.parent))
     .leftJoin(conversations,eq(conversations.id,conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
@@ -137,9 +137,26 @@ function conversationHistory(s:JobSummaries,selected:Row[]) {
   const ids = [...new Set(selected.flatMap(row=>row.conversation ? [row.conversation] : []))];
   return ids.length ? rows(s,among(jobs.conversation,ids)) : [];
 }
+/** Keep only resource IDs whose private values have entered this viewer's response.
+ * Socket operations can overlap. A later selection must never erase an earlier witness. */
+export class WeeklyVisibility {
+  readonly jobs = new Set<string>();
+  readonly conversations = new Set<string>();
+  readonly triggers = new Set<string>();
+
+  valid(s:JobSummaries) {
+    const count = sql<number>`count(*)`;
+    return (!this.jobs.size || this.jobs.size === s.db.select({count}).from(jobs)
+      .where(and(s.allowed(),among(sql`${jobs.id}`,this.jobs))).get()?.count)
+      && (!this.conversations.size || this.conversations.size === s.db.select({count}).from(conversations)
+        .where(and(s.rule('conversations')!(getTableColumns(conversations)),among(sql`${conversations.id}`,this.conversations))).get()?.count)
+      && (!this.triggers.size || this.triggers.size === s.db.select({count}).from(triggers)
+        .where(and(s.rule('triggers')!(getTableColumns(triggers)),among(sql`${triggers.id}`,this.triggers))).get()?.count);
+  }
+}
 /** Group an account's internal usage weights under the viewer's current job, conversation,
  * parent-run and trigger rules. Only these grouped values may leave the projection. */
-export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,number>;unattributed:number}) {
+export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,number>;unattributed:number}, witness:WeeklyVisibility) {
   if (!estimate.shares.size) return {agents:[],conversations:[],triggers:[],unattributed:estimate.unattributed};
   const selected = rows(s,among(sql`${jobs.id}`,estimate.shares.keys()));
   const seenConversations = s.db.select({id:conversations.id}).from(conversations)
@@ -161,6 +178,9 @@ export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,
   }
   let visibleShare = 0;
   for (const row of visible) {
+    witness.jobs.add(row.id);
+    if (row.parentId) witness.jobs.add(row.parentId);
+    if (row.conversation) witness.conversations.add(row.conversation);
     const share = estimate.shares.get(row.id)!;
     visibleShare += share;
     add(agents,row.jobAgent,row.jobAgent,share);
@@ -169,7 +189,10 @@ export function visibleWeeklyGroups(s:JobSummaries, estimate:{shares:Map<string,
       ? '/p/comms-preview/thread/'+encodeURIComponent(row.place.replace(/^th:/,'')) : id && '/p/comms-preview/conversation/'+encodeURIComponent(id);
     add(conversationsById,id,row.label ?? id ?? 'No conversation',share,href);
     const trigger = runs.get(row.id)?.trigger;
-    if (trigger && notes.has(trigger)) add(triggersById,trigger,notes.get(trigger) || trigger,share,'/p/tempo/trigger/'+encodeURIComponent(trigger));
+    if (trigger && notes.has(trigger)) {
+      witness.triggers.add(trigger);
+      add(triggersById,trigger,notes.get(trigger) || trigger,share,'/p/tempo/trigger/'+encodeURIComponent(trigger));
+    }
     else add(triggersById,null,'No visible trigger',share);
   }
   const sorted = (groups:Map<string|null,Group>)=>[...groups.values()].sort((a,b)=>b.share-a.share || a.title.localeCompare(b.title));

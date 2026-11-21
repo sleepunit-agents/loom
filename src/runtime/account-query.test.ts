@@ -315,6 +315,14 @@ it('shows only the account owner’s readable conversations and keeps hidden wor
   expect(response).toEqual({data:{modelAccounts:[{weeklyUsage:[{unattributed:.1,agents:[{title:'agent',share:.1}],
     conversations:[{title:'alice discussion',share:.1,href:'/p/comms-preview/thread/alice'}]}]},{}]}});
   expect(await (await f.post('guest',query)).json()).toEqual({data:{modelAccounts:[{},{}]}});
+  const ws = await openSocket(f,'alice');
+  const first = nextPayload(ws,'week');
+  ws.send(JSON.stringify({type:'subscribe',id:'week',payload:{query:
+    `subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value } } }`}}));
+  expect(JSON.stringify(await first)).toContain('alice discussion');
+  const renamed = nextPayload(ws,'week');
+  f.data.writes.run(()=>f.db.update(conversations).set({label:'New discussion title'}).where(eq(conversations.id,'alice')).run());
+  expect(JSON.stringify(await renamed)).toContain('New discussion title');
   const pending = f.post('alice',query.replace('{modelAccounts','{hold modelAccounts'));
   await began.promise;
   await new Promise(resolve=>setImmediate(resolve));
@@ -322,5 +330,5 @@ it('shows only the account owner’s readable conversations and keeps hidden wor
   gate.resolve();
   const revoked = await pending;
   expect(revoked.status).toBe(401);
-  expect(await revoked.text()).not.toContain('alice discussion');
+  expect(await revoked.text()).not.toContain('New discussion title');
 });
