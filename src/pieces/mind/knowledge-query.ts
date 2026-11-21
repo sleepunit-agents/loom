@@ -56,6 +56,8 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
  close():void;
 } {
  let db:Database.Database|undefined,failed=false;
+ // The reader owns one read-only connection. An outside commit changes its SQLite data_version.
+ let deadline:{version:number;measuredAt:number;next:number|undefined}|undefined;
  try {
   if(options.path&&existsSync(options.path)) db=new Database(options.path,{readonly:true,fileMustExist:true,timeout:0});
  } catch { failed=true; }
@@ -151,7 +153,11 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
   nextDeadline(){
    if(!db||failed)return;
    try {
-    const now=options.now();let next:number|undefined;
+    const now=options.now();
+    let version:number|undefined;
+    try{version=db.pragma('data_version',{simple:true}) as number;}catch{/* Read the deadlines directly if SQLite cannot supply a version. */}
+    if(deadline&&deadline.version===version&&deadline.measuredAt<=now&&(deadline.next===undefined||now<deadline.next))return deadline.next;
+    let next:number|undefined;
     const retired=retiredKnowledgePages(db);
     const rows=db.prepare("SELECT id,updated,verified_at FROM pages WHERE status='active'").all() as Array<{id:number;updated:string;verified_at:string|null}>;
     for(const row of rows){
@@ -161,8 +167,9 @@ export function knowledgeQueryFields(options: { path?:string; timezone?():string
       ...(row.verified_at?[Date.parse(row.verified_at)+RECENT_DAYS*DAY_MS]:[])];
      for(const at of boundaries)if(Number.isFinite(at)&&at>now&&(next===undefined||at<next))next=at;
     }
+    deadline=version===undefined?undefined:{version,measuredAt:now,next};
     return next;
-   }catch{return undefined;}
+   }catch{deadline=undefined;return undefined;}
   },
   close(){db?.close();db=undefined;},
  };

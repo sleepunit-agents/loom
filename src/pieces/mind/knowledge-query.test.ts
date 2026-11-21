@@ -96,6 +96,8 @@ it('schedules the earliest future freshness boundary and recomputes from current
  expect(f.reader.nextDeadline()).toBe(now+1000);
  f.at(now+1000);expect(f.reader.nextDeadline()).toBe(now+2000);
  f.at(now+2000);expect(f.reader.nextDeadline()).toBe(now+3000);
+ f.at(now);expect(f.reader.nextDeadline()).toBe(now+1000);
+ f.at(now+2000);expect(f.reader.nextDeadline()).toBe(now+3000);
  // Rechecking moves a pending due boundary; it does not leave an old timer due.
  stamp('due',new Date(now+2000).toISOString());
  expect(f.reader.nextDeadline()).toBe(now+2000+7*day);
