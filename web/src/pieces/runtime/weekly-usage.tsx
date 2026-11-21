@@ -1,31 +1,27 @@
+import {useDeadline} from '../comms/use-deadline';
 import {useState} from 'react';
 import {useDataQuery} from '../../data/graphql';
 import {Loading,Error as ErrorView} from '../../kit';
 
 type Group = {key:string|null;title:string;share:number;href:string|null};
-type Week = {window:string;usage:number;unattributed:number;agents:Group[];triggers:Group[];conversations:Group[]};
+type Week = {window:string;resetsAt:string;usage:number;unattributed:number;agents:Group[];triggers:Group[];conversations:Group[]};
 type Account = {id?:string;label?:string;weeklyUsage?:Week[]|null};
 const query = `query WeeklySubscriptions {
   modelAccounts { ... on RuntimeAccountDetail { id label weeklyUsage {
-    window usage unattributed agents {key title share href} triggers {key title share href} conversations {key title share href}
+    window resetsAt usage unattributed agents {key title share href} triggers {key title share href} conversations {key title share href}
   } } }
 }`;
 const percent = new Intl.NumberFormat(undefined,{style:'percent',maximumFractionDigits:2});
 type Dimension = 'agents'|'triggers'|'conversations';
 
-export function WeeklyBreakdown({account}: {account?:string}) {
-  const [open,setOpen] = useState(false);
-  return <details onToggle={event=>setOpen(event.currentTarget.open)}>
-    <summary>{account?'Where the week went':'Weekly usage across subscriptions'}</summary>
-    {open&&<WeeklyUsage accountId={account}/>}
-  </details>;
-}
-function WeeklyUsage({accountId}:{accountId?:string}){
+export function WeeklyUsage({accountId}:{accountId?:string}){
   const feed = useDataQuery<{modelAccounts:Account[]}>(query);
   const [dimension,setDimension] = useState<Dimension>('agents');
+  const selected = (feed.status==='live' ? feed.data?.modelAccounts ?? [] : []).filter(account=>!accountId || account.id === accountId);
+  const now = useDeadline(selected.flatMap(account=>account.weeklyUsage?.map(week=>week.resetsAt) ?? []));
   if(feed.status==='loading') return <Loading label="Reading weekly usage…"/>;
   if(feed.status!=='live'||!feed.data) return <ErrorView text="Weekly usage is unavailable."/>;
-  const accounts = feed.data.modelAccounts.filter(account=>(!accountId || account.id === accountId) && account.weeklyUsage?.length);
+  const accounts = selected.map(account=>({...account,weeklyUsage:account.weeklyUsage?.filter(week=>Date.parse(week.resetsAt)>now) ?? []})).filter(account=>account.weeklyUsage.length);
   if(!accounts.length) return <p>No current weekly reading is available.</p>;
   return <div className="grid gap-3">
     <label>Group by <select value={dimension} onChange={event=>setDimension(event.target.value as Dimension)}>
