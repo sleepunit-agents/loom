@@ -239,6 +239,7 @@ export class TriggerEngine {
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {
       const t = this.get(id);
+      if (t.scheduleRemovedAt) throw new Error('Schedule was removed');
       // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;

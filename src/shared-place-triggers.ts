@@ -151,7 +151,7 @@ export function placeScheduleRefusal(db: DataDatabase, ask: PlaceScheduleAsk): s
   if (!stillKnown(db, ask.agent, ask.asker)) return `${named(ask.asker)}, who asked for it, is no longer known to ${ask.agent}`;
   if (ask.action === 'set') return ask.trigger.conversation === cv.id && ask.trigger.to === cv.agent ? undefined : 'A trigger names a Discord or Slack conversation of the agent it puts to work';
   const stored = db.select().from(triggers).where(eq(triggers.id, ask.id)).get();
-  return stored && stored.conversation === cv.id && stored.askedByKind === ask.asker.kind && stored.askedBy === ask.asker.id ? undefined : 'The schedule is gone, or somebody else has reworded it since';
+  return stored && !stored.scheduleRemovedAt && stored.conversation === cv.id && stored.askedByKind === ask.asker.kind && stored.askedBy === ask.asker.id ? undefined : 'The schedule is gone, or somebody else has reworded it since';
 }
 /** Carry out an allowed card: the trigger is made with the person who asked as its asker, exactly as the door would
  * have made it, or the change is made as that person's body would have made it. */

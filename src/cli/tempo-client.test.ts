@@ -83,12 +83,28 @@ it('finds earlier matching history of a stopped wake across pages, with the agen
     out = '';
     expect(await runTempoClient(['--agent','birch','schedule','list'], io, request), err).toBe(0);
     expect(out).toBe('weekly-birch  sun 05:17  next (none armed)  [stopped]  Review\n');
-    const recreated = await app.http.request('/api/tempo/set', { method:'POST',
-      headers:{authorization:'Bearer ' + token,'content-type':'application/json'}, body:JSON.stringify({
-        id:'recreate',input:{scheduleName:'daily',ownerKind:'agent',owner:'birch',sourceKind:'time',times:'05:17',
-          lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'birch',instructions:'Check',note:'Again'}
-      }) });
-    expect(recreated.status, await recreated.text()).toBe(200);
+    const setBirch = ['--agent','birch','schedule','set','daily'];
+    const dropped = new Set<string>();
+    const loseScheduleReply: typeof fetch = async (url, init) => {
+      const response = await request(url, init);
+      const path = new URL(String(url)).pathname;
+      if (response.ok && path.startsWith('/api/tempo/') && !dropped.has(path)) {
+        dropped.add(path);
+        throw Error('lost schedule acknowledgement');
+      }
+      return response;
+    };
+    expect(await runTempoClient([...setBirch,'--at','05:17,19:17','--days','mon-fri','--model','normal','-f','routines/check.md'], io, loseScheduleReply), err).toBe(0);
+    const current = () => db.select().from(triggers).all().filter(row => row.to === 'birch' && row.scheduleName === 'daily');
+    expect(current()).toHaveLength(1);
+    const first = current()[0];
+    expect(first).toMatchObject({days:'mon-fri',times:'05:17,19:17',wantsModel:'normal',file:'routines/check.md'});
+    expect(await runTempoClient([...setBirch,'--at','05:17','-p','Check','--note','Again'], io, loseScheduleReply), err).toBe(0);
+    expect([...dropped]).toEqual(['/api/tempo/set','/api/tempo/edit']);
+    expect(current()).toHaveLength(1);
+    expect(current()[0]).toMatchObject({id:first.id,days:null,times:'05:17',instructions:'Check',note:'Again',file:null,wantsModel:null});
+    expect(await runTempoClient([...setBirch,'--at','32:11','-p','Invalid'], io, request)).toBe(2);
+    expect(await runTempoClient([...setBirch,'--at','10:00','--days','bad','-p','Invalid'], io, request)).toBe(2);
     out = '';
     expect(await runTempoClient(['--agent','birch','schedule','list'], io, request), err).toBe(0);
     expect(out).toMatch(/^daily  daily 05:17 /);
@@ -168,7 +184,7 @@ it('replays creation and pause after lost responses and delivers once to the res
     expect(recipients()).toEqual([{ to: 'fern' }]);
     expect(paused()).toEqual([{ agent: 'birch' }]);
     expect(output).toContain("Resumed fern's clock.");
-    expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, request)).toBe(0);
+    expect(await runTempoClient(['at','tomorrow','9:30','-f','routines/check.md'], io, loseScheduleReply)).toBe(0);
     expect(db.select().from(triggers).all().at(-1)).toMatchObject({ file:'routines/check.md', note:'routines/check.md', instructions:null });
     const fileWake = db.select().from(triggers).all().find(row => row.file === 'routines/check.md')!;
     expect(await runTempoClient(['--agent=birch','cancel',fileWake.id], io, request)).toBe(1);

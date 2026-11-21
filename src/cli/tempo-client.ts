@@ -4,7 +4,7 @@ import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 import { MESSAGE_WORDS_MAX } from '../core/conversations/words.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { datedWake, HH_MM } from '../core/tempo/calendar.js';
+import { datedWake, HH_MM, nextTime } from '../core/tempo/calendar.js';
 import { laneFile } from '../core/tempo/lane-file.js';
 import { DAY, DAY_MS } from '../core/day.js';
 import { onOneLine } from '../core/line-name.js';
@@ -145,6 +145,24 @@ function durationMs(duration: string) {
   return ms;
 }
 
+function scheduleOptions(args: string[]) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+    at: {type:'string'}, days: {type:'string'}, prompt: {type:'string', short:'p'},
+    'prompt-file': {type:'string', short:'f'}, note: {type:'string'}, model: {type:'string'},
+  } });
+  const [name] = positionals;
+  if (positionals.length !== 1 || !/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw Error();
+  const times = values.at?.split(',').map(t => t.trim());
+  if (!times || times.some(t => !HH_MM.test(t))) throw Error();
+  const days = values.days?.toLowerCase() || null;
+  const at = times.join(',');
+  nextTime(at, days, Date.now(), 'UTC');
+  const file = values['prompt-file'] || null, instructions = values.prompt || null;
+  if (!!file === !!instructions || (file && !laneFile(file)) || (instructions && !instructions.trim())) throw Error();
+  return { name, change: { times:at, days, instructions, file, note:values.note || file || name,
+    wantsModel:values.model || null, execution:instructions?.includes('<!-- house: local -->') ? 'host' : 'container' } };
+}
+
 function wakeOptions(verb: 'at' | 'in', args: string[]) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     prompt: { type: 'string', short: 'p' }, 'prompt-file': { type: 'string', short: 'f' },
@@ -237,7 +255,8 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
   const verb = argv[0];
   const changesClock = verb === 'pause' || verb === 'resume';
   let laneUpdate: { name: string; file?: string; words?: string } | undefined;
-  let scheduleAction: 'run' | 'rm' | undefined;
+  let scheduleSet: ReturnType<typeof scheduleOptions> | undefined;
+  let scheduleAction: 'run' | 'rm' | 'set' | undefined;
   let scheduleName: string | undefined;
   let cancel: { id: string; at?: string } | undefined;
   let wake: ReturnType<typeof wakeOptions> | undefined;
@@ -253,7 +272,10 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
         laneUpdate = { name: decodeURIComponent(positionals[0]), file: values['prompt-file'], words: values.prompt };
       } else if (!(argv[1] === 'list' && argv.length === 2 || argv[1] === 'text' && argv.length === 3 && argv[2])) throw Error();
     } else if (verb === 'schedule') {
-      if ((argv[1] === 'run' || argv[1] === 'rm') && argv.length === 3 && argv[2]) {
+      if (argv[1] === 'set') {
+        scheduleSet = scheduleOptions(argv.slice(2));
+        scheduleAction = 'set'; scheduleName = scheduleSet.name;
+      } else if ((argv[1] === 'run' || argv[1] === 'rm') && argv.length === 3 && argv[2]) {
         scheduleAction = argv[1]; scheduleName = decodeURIComponent(argv[2]);
       }
       else if (argv[1] !== 'list' || argv.length !== 2) throw Error();
@@ -266,7 +288,7 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
     else if (verb === 'log') options = logOptions(argv.slice(1));
     else if ((verb !== 'list' && !changesClock) || argv.length !== 1) throw Error();
   } catch {
-    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule run NAME | schedule rm NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
+    io.stderr('usage: wake [--agent AGENT] lane list | lane text NAME | lane set NAME (-f FILE | -p WORDS) | schedule list | schedule set NAME --at HH:MM (-p WORDS | -f REPO_FILE) [--days DAYS] [--note NOTE] [--model MODEL] | schedule run NAME | schedule rm NAME | list | cancel WAKE | pause | resume | log [--since DURATION] [--grep TEXT] | at TIME | in DURATION\nFor at/in supply -p WORDS --note PURPOSE or -f REPO_FILE, optionally --model MODEL.\n');
     return 2;
   }
   try {
@@ -334,6 +356,22 @@ export async function runTempoClient(argv: string[], io: IOStreams, request = fe
       ]},limit:2){id}}`;
       const result = await read(query, {agent, name:scheduleName});
       const rows = z.object({data:z.object({triggers:z.array(z.object({id:z.string()}))})}).parse(result).data.triggers;
+      if (scheduleSet && rows.length <= 1) {
+        const key = randomUUID(), change = scheduleSet.change;
+        let waits: string | undefined;
+        if (rows.length) {
+          const result = await post('/api/tempo/edit', {id:key, input:{id:rows[0].id, scheduleAgent:agent, ...change}});
+          const {value} = z.object({ok:z.literal(true), value:z.object({saved:z.boolean(),waits:z.string().optional()})}).parse(result);
+          if (!value.saved && !value.waits) throw Error();
+          waits = value.waits;
+        } else {
+          const result = await post('/api/tempo/set', {id:key, input:{scheduleName, ownerKind:'agent', owner:agent,
+            toKind:'agent', to:agent, sourceKind:'time', targetKind:'inbox', lifespan:'until-stopped', ...change}});
+          waits = z.object({ok:z.literal(true), value:z.object({id:z.string(),waits:z.string().optional()})}).parse(result).value.waits;
+        }
+        io.stdout(onOneLine(waits ? 'Awaiting approval: ' + waits : 'Saved schedule ' + scheduleName + '.') + '\n');
+        return 0;
+      }
       if (rows.length !== 1) throw new DoorRefusal('No matching recurring wake on this clock.');
       const path = scheduleAction === 'run' ? '/api/tempo/runNow' : '/api/tempo/stop';
       const answer = await post(path, { id: randomUUID(), input: { id: rows[0].id, scheduleAgent: agent } });
