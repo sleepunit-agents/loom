@@ -147,7 +147,7 @@ export async function bodyProgram(input: {
     // Keys identify individual posts even when two replies have identical text and timestamps.
     const keyOf=(id:string)=>createHash('sha256').update(id).digest('hex');
     const covered=new Set(keeper?.covered), seen=new Set<string>();
-    const continued:string[]=[];let oldestErased:string|undefined;
+    const continued:string[]=[];let oldestErased:string|undefined, earliestExpiry:string|undefined;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     const journalDeliveries: string[] = [];
@@ -170,6 +170,10 @@ export async function bodyProgram(input: {
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       // The oldest word handed in that will be erased: a session started from them is counted from then.
+      for(const deadline of [item.keepUntil,item.questionKeepUntil,...item.history.map(line=>line.keepUntil)]) {
+        if(deadline && (!earliestExpiry || Date.parse(deadline)<Date.parse(earliestExpiry))) earliestExpiry=deadline;
+      }
+      if(item.keepUntil && (!oldestErased || Date.parse(item.at)<Date.parse(oldestErased))) oldestErased=item.at;
       for(const line of item.history)if(line.keepUntil!==null&&(oldestErased===undefined||Date.parse(line.at)<Date.parse(oldestErased)))oldestErased=line.at;
       if(job.venue==='loom' && item.source==='handoff' && item.words!==null){
         context.push('Your delegated worker returned the following result. Continue the originating request using the findings.');
@@ -360,7 +364,7 @@ export async function bodyProgram(input: {
       if(keeper){
         const current=new Set([...seen,keyOf(replyId)]);
         const previous=[...covered].filter(key=>!current.has(key));
-        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS));
+        await keeper.save(answer.session,oldestErased,[...previous,...current].slice(-SESSION_HISTORY_KEYS),earliestExpiry);
       }
       saved=true;
     }catch{/* loom sees the kept session is behind the answer */}

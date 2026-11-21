@@ -29,7 +29,7 @@ import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversationSessions, deletedThreads } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { ageCutoff } from './retention.js';
+import { ageCutoff, ageLimit, keepUntilFor, wordsDeadline } from './retention.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
 import type { WordsKey } from './words.js';
 
@@ -37,7 +37,7 @@ export interface KeptSession { session: string; files: string }
 /** What `open` hands back: the session, when it was started (the row's `started_at`) and when it was last saved. */
 export type OpenedSession = KeptSession & { startedAt: string; lastSavedAt: string; covered?: string[] };
 /** A session sealed and ready to store: made outside the transaction that stores it. */
-export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string }
+export interface SealedSession { conversation: string; harness: string; session: string; sealed: Buffer | null; bytes: number; since?: string; keepUntil?: string }
 
 export class ConversationSessions {
   constructor(private db: DataDatabase, private now: () => string, private key: WordsKey) {}
@@ -46,10 +46,14 @@ export class ConversationSessions {
    * stores as a removal. */
   /** `since` is the time of the oldest word this body was handed that is erased at the keep time (a direct
    * conversation's kept history): the session holds that word, so its count starts no later than then. */
-  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; covered?: string[] }): Promise<SealedSession> {
+  async seal(input: { conversation: string; harness: string; model: string; session: string; files: string; since?: string; keepUntil?: string; covered?: string[] }): Promise<SealedSession> {
     const bytes = Buffer.byteLength(input.files, 'base64');
     const keep = SESSION_ID.test(input.session) && bytes > 0 && bytes <= SESSION_BYTES;
-    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}),
+    const preparedAt = this.now(), days = commsKeepDays(this.db);
+    const first = input.since && Date.parse(input.since) < Date.parse(preparedAt) ? input.since : preparedAt;
+    const fixed = keepUntilFor(first, days);
+    const keepUntil = input.keepUntil === undefined || Date.parse(fixed) <= Date.parse(input.keepUntil) ? fixed : input.keepUntil;
+    return { conversation: input.conversation, harness: input.harness, session: input.session, bytes, ...(input.since ? { since: input.since } : {}), keepUntil,
       // When it was last saved is sealed with it: the row's own time is when the session was started.
       sealed: keep ? await this.key.seal(JSON.stringify({ model: input.model, files: input.files, at: this.now(), covered:input.covered })) : null };
   }
@@ -65,11 +69,17 @@ export class ConversationSessions {
       // The count of its keep time starts at the oldest erasable word the session can hold: the start of the
       // session kept here, if one is still within the keep time (this save continues or replaces it); the
       // oldest such word its body was handed (`since`); and otherwise now. Whichever is earliest.
-      const now = this.now(), times = [this.kept(sealed.conversation, sealed.harness)?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
+      const previous = this.kept(sealed.conversation, sealed.harness);
+      const now = this.now(), times = [previous?.startedAt, sealed.since, now].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(now));
       const startedAt = times.reduce((oldest, at) => Date.parse(at) < Date.parse(oldest) ? at : oldest);
       // Already past the keep time by that count: there is nothing it may be kept for.
-      if (Date.parse(startedAt) <= Date.parse(ageCutoff(now, commsKeepDays(this.db)))) { this.db.delete(conversationSessions).where(where).run(); return false; }
-      const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed, bytes: sealed.bytes, startedAt };
+      const days = commsKeepDays(this.db);
+      const deadline = Math.min(Date.parse(keepUntilFor(startedAt, days)),
+        previous?.keepUntil == null ? Infinity : Date.parse(previous.keepUntil),
+        sealed.keepUntil === undefined ? Infinity : Date.parse(sealed.keepUntil));
+      if (!(deadline > Date.parse(now))) { this.db.delete(conversationSessions).where(where).run(); return false; }
+      const row = { conversation: sealed.conversation, harness: sealed.harness, session: sealed.session, files: sealed.sealed,
+        bytes: sealed.bytes, startedAt, keepUntil: new Date(deadline).toISOString() };
       this.db.insert(conversationSessions).values(row).onConflictDoUpdate({ target: [conversationSessions.conversation, conversationSessions.harness], set: row }).run();
       return true;
     }, { behavior: 'immediate' });
@@ -79,7 +89,7 @@ export class ConversationSessions {
   kept(conversation: string, harness: string): typeof conversationSessions.$inferSelect | undefined {
     const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness),
       notInArray(conversationSessions.conversation,this.db.select({conversation:deletedThreads.conversation}).from(deletedThreads)))).get();
-    return row && Date.parse(row.startedAt) > Date.parse(ageCutoff(this.now(), commsKeepDays(this.db))) ? row : undefined;
+    return row && wordsDeadline({at: row.startedAt, keepUntil: row.keepUntil}, commsKeepDays(this.db)) > Date.parse(this.now()) ? row : undefined;
   }
 
   /** What the next body is handed, or nothing: none kept, kept too long, or kept under another family of models. */
@@ -106,15 +116,18 @@ export function eraseConversationSessions(db: DataDatabase, conversation: string
 
 /** Remove every session started at or before `cutoff`: the sweep that erases words at the keep time calls
  * this with the same cutoff (messages.ts, expire). Returns how many went. */
-export function expireConversationSessions(db: DataDatabase, cutoff: string): number {
+export function expireConversationSessions(db: DataDatabase, now: string): number {
+  const cutoff = ageCutoff(now, commsKeepDays(db));
   const removed = db.select({conversation: deletedThreads.conversation}).from(deletedThreads);
   return db.delete(conversationSessions).where(or(
     sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`,
+    sql`coalesce(julianday(${conversationSessions.keepUntil}), 0) <= julianday(${now})`,
     inArray(conversationSessions.conversation, removed),
   )).run().changes;
 }
-/** When the oldest kept session was started, for the sweep's schedule (lifetime.ts). */
-export function oldestConversationSession(db: DataDatabase): number | undefined {
-  const row = db.select({ at: conversationSessions.startedAt }).from(conversationSessions).orderBy(sql`julianday(${conversationSessions.startedAt})`).get();
-  return row ? Date.parse(row.at) : undefined;
+/** The next physical erasure uses the earliest fixed deadline or current household age limit. */
+export function nextConversationSessionExpiry(db: DataDatabase, days: number): number | undefined {
+  const row = db.select({at: sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', min(julianday(${conversationSessions.startedAt})))`,
+    until: sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', min(coalesce(julianday(${conversationSessions.keepUntil}), 2440587.5)))`}).from(conversationSessions).get();
+  return row?.at ? Math.min(ageLimit(Date.parse(row.at),days),Date.parse(row.until)) : undefined;
 }

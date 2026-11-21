@@ -133,15 +133,17 @@ it('unpacks through no link, and a refused pack leaves nothing behind: no file, 
 it('takes the kept session from loom, hands back the one the run left, and leaves no file of either behind', async () => {
   const before = home(), kept = packSession(claude, before.root, session)!;
   const base = fresh(), root = join(base, '.claude'); mkdirSync(root);
+  const since='2026-11-20T09:00:00.000Z', keepUntil='2026-11-20T10:00:00.000Z';
   const calls: [string, unknown][] = [];
   const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]);
-    return operation === 'conversation.session' ? { ok: true as const, value: { session: { session, files: kept } } } : { ok: true as const, value: { saved: true } }; } };
+    return operation === 'conversation.session' ? { ok: true as const, value: { session: { session, files: kept, since, keepUntil } } } : { ok: true as const, value: { saved: true } }; } };
   const keeper = keep(client, { base, root })!;
   expect(await keeper.take()).toBe(session);
   expect(existsSync(join(root, 'projects', '-house', `${session}.jsonl`))).toBe(true);
   // The run went on in the same session and added to it.
   writeFileSync(join(root, 'projects', '-house', `${session}.jsonl`), '{"type":"user"}\n{"type":"assistant"}\n{"type":"user"}\n');
-  await keeper.save(session);
+  await keeper.save(session,'2026-11-20T09:30:00.000Z',[],'2026-11-21T10:00:00.000Z');
+  expect(calls[1][1]).toMatchObject({since,keepUntil});
   expect(calls.map(call => call[0])).toEqual(['conversation.session', 'conversation.sessionSave']);
   const saved = calls[1][1] as { session: string; files: string };
   expect(saved.session).toBe(session);
@@ -159,7 +161,7 @@ it('starts fresh, and never fails, when loom has none, loom is away, or what it 
     const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]); return operation === 'conversation.session' ? answer : { ok: true, value: { saved: false } }; } };
     expect(await keep(client, { base, root })!.take()).toBeUndefined();
     // Handed nothing it can continue, it says so at once: what loom keeps is of no use to this body and is removed.
-    expect(calls).toEqual([['conversation.session', {historyKeys:true}], ['conversation.sessionSave', { session: null }]]);
+    expect(calls).toEqual([['conversation.session', {historyKeys:true,retention:true}], ['conversation.sessionSave', { session: null }]]);
   }
   // Refused, or loom away: nothing more is asked, and nothing fails.
   const refused: string[] = [];

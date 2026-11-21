@@ -1715,6 +1715,7 @@ CREATE TABLE `conversation_sessions` (
 	`files` blob NOT NULL,
 	`bytes` integer NOT NULL,
 	`started_at` text NOT NULL,
+	`keep_until` text,
 	PRIMARY KEY(`conversation`, `harness`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "conversation_sessions_started_at_utc" CHECK("conversation_sessions"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."started_at") = "conversation_sessions"."started_at", 0))

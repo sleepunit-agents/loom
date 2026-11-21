@@ -2141,6 +2141,7 @@ export const conversationSessions = sqliteTable('conversation_sessions', {
   files: blob('files', { mode: 'buffer' }).notNull(),
   bytes: integer('bytes').notNull(),
   startedAt: text('started_at').notNull(),
+  keepUntil: text('keep_until'),
 }, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_started_at_utc', utc(t.startedAt))]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),

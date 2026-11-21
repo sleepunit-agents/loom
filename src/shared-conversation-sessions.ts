@@ -13,6 +13,8 @@ import { bodyOperationDefaults, type conversationBodyScope } from './core/conver
 import type { ConversationSessions, OpenedSession, SealedSession } from './core/conversations/sessions.js';
 import { SESSION_ID, SESSION_HISTORY_KEYS } from './core/conversations/session-limit.js';
 import { OperationError, type Operations } from './core/operations/index.js';
+import { wordsDeadline } from './core/conversations/retention.js';
+import { commsKeepDays } from './core/data/comms-days.js';
 import { jobHeld } from './shared-place-mail.js';
 
 export function registerConversationSessions(operations: Operations, db: DataDatabase, sessions: ConversationSessions,
@@ -43,8 +45,8 @@ export function registerConversationSessions(operations: Operations, db: DataDat
   };
   const coverage=z.array(z.hash('sha256')).max(SESSION_HISTORY_KEYS);
   const defaults = bodyOperationDefaults(current, hash, 'loom-conversation-session-v1');
-  operations.register({ name: 'conversation.session', write: false, doors: ['http'], input: z.object({historyKeys:z.literal(true).optional()}).strict(),
-    output: z.object({ session: z.object({ session: z.string(), files: z.string(), covered: coverage.optional() }).strict().nullable() }).strict(),
+  operations.register({ name: 'conversation.session', write: false, doors: ['http'], input: z.object({historyKeys:z.literal(true).optional(),retention:z.literal(true).optional()}).strict(),
+    output: z.object({ session: z.object({ session: z.string(), files: z.string(), since:z.string().optional(),keepUntil:z.string().optional(), covered: coverage.optional() }).strict().nullable() }).strict(),
     may: viewer => !!bound(viewer),
     async prepare(_input, ctx) { const mine = bound(ctx.viewer); return mine ? { mine, kept: await sessions.open(mine.conversation, mine.harness, mine.model) } : undefined; },
     run(ctx, input, prepared) {
@@ -55,20 +57,20 @@ export function registerConversationSessions(operations: Operations, db: DataDat
       // nothing says so through the save door, which removes whatever is kept (runtime/body-session.ts).
       const row = sessions.kept(mine.conversation, mine.harness);
       if (!kept || row?.session !== kept.session || row.startedAt !== kept.startedAt || behind(mine.conversation, kept.lastSavedAt)) return { session: null };
-      return { session: { session: kept.session, files: kept.files, ...(input.historyKeys && kept.covered ? {covered:kept.covered} : {}) } };
+      return { session: { session: kept.session, files: kept.files, ...(input.retention ? {since: row.startedAt,keepUntil: new Date(wordsDeadline({at:row.startedAt,keepUntil:row.keepUntil},commsKeepDays(db))).toISOString()} : {}), ...(input.historyKeys && kept.covered ? {covered:kept.covered} : {}) } };
     },
   });
   operations.register({ ...defaults, name: 'conversation.sessionSave',
     // `session: null` says the body leaves no session it can hand on: whatever is kept is then behind and is removed.
     // `since`: the time of the oldest word this body was handed that is erased at the keep time, when it started fresh.
-    input: z.object({ session: z.string().regex(SESSION_ID).nullable(), covered:coverage.optional(), files: z.base64().max(DOOR_REQUEST_BYTES).optional(), since: z.iso.datetime({ offset: true }).optional() }).strict()
-      .refine(value => (value.session === null) === (value.files === undefined) && (value.session !== null || (value.since === undefined && value.covered === undefined))),
+    input: z.object({ session: z.string().regex(SESSION_ID).nullable(), covered:coverage.optional(), files: z.base64().max(DOOR_REQUEST_BYTES).optional(), keepUntil: z.iso.datetime({ offset:true }).optional(), since: z.iso.datetime({ offset: true }).optional() }).strict()
+      .refine(value => (value.session === null) === (value.files === undefined) && (value.session !== null || (value.keepUntil === undefined && value.since === undefined && value.covered === undefined))),
     output: z.object({ saved: z.boolean() }).strict(),
     may: viewer => !!bound(viewer),
     async prepare(input, ctx): Promise<SealedSession | undefined> {
       const mine = bound(ctx.viewer);
       if (!mine) return undefined;
-      return input.session === null ? { ...mine, session: '', sealed: null, bytes: 0 } : sessions.seal({ ...mine, session: input.session, files: input.files!, covered:input.covered, ...(input.since ? { since: input.since } : {}) });
+      return input.session === null ? { ...mine, session: '', sealed: null, bytes: 0 } : sessions.seal({ ...mine, session: input.session, files: input.files!, keepUntil:input.keepUntil, covered:input.covered, ...(input.since ? { since: input.since } : {}) });
     },
     run(ctx, _input, prepared) {
       const mine = bound(ctx.viewer), sealed = prepared as SealedSession | undefined;
