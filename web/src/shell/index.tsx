@@ -94,14 +94,14 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest('input,textarea,select,[contenteditable=true]');
       if (!typing && e.key === 'Escape') setLauncher(false);
-      if(typing||document.querySelector(':is([role=dialog],[role=menu]):not([hidden], [hidden] *)')||!e.altKey) return;
+      if(typing||document.querySelector(':is([role=dialog],[role=menu]):not([hidden], [hidden] *, .next-tile:not([data-focused]) *)')||!e.altKey) return;
       if(!e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();router.home();return;}
       const tile=visible.find(t=>t.id===route.focused);if(!tile)return;
       const key=e.key.toLowerCase();let acted=true;
       if(!e.shiftKey&&key==='h') router.home();
       else if(!e.shiftKey&&key==='arrowleft'&&tile.at>0) router.travel(tile.id,-1);
       else if(!e.shiftKey&&key==='arrowright'&&tile.at<tile.trail.length-1) router.travel(tile.id,1);
-      else if(!phone&&e.shiftKey&&key==='f') router.maximize(tile.id);
+      else if(!phone&&e.shiftKey&&(e.code==='KeyF'||key==='f')) router.maximize(tile.id);
       else if(e.shiftKey&&key==='enter') router.big(tile.id);
       else if(e.shiftKey&&key==='m') router.remove(tile.id,true);
       else if(e.shiftKey&&key==='w') router.remove(tile.id);

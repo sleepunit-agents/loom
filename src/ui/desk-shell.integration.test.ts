@@ -214,12 +214,12 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   const maximize=b.getByRole('button',{name:'Maximize Tasks',exact:true});
   const strip=b.locator('[aria-label="Tasks tile"] .next-strip');
-  await strip.click({button:'right'});await b.getByRole('menuitem',{name:'Maximize',exact:true}).click();
-  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
-  // A covered app may still contain its own dialog. It cannot capture the focused app's shortcuts.
+  // A dialog in another tile is modal only to that app, whether visible or covered.
   await b.locator('[aria-label="Agents tile"]').evaluate(tile=>{
    const dialog=document.createElement('div');dialog.setAttribute('role','dialog');dialog.dataset.fixture='covered';tile.append(dialog);
   });
+  await maximize.focus();await maximize.press('Alt+Shift+F');
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
   await b.getByRole('button',{name:'Restore Tasks',exact:true}).press('Alt+Shift+F');
   await b.locator('[data-fixture=covered]').evaluate(el=>el.remove());
   await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);

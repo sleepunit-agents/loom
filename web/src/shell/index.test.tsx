@@ -40,7 +40,7 @@ const shownTiles=()=>tree.root.findAll((n:Node)=>n.type==='section'&&!!n.props['
 const bar=(id:string):Node=>tile(id).find((n:Node)=>n.type==='header');
 const control=(id:string,name:string):Node=>bar(id).find((n:Node)=>n.type==='button'&&n.props['aria-label']===name);
 const screen=(id:string):Node=>tile(id).find((n:Node)=>n.type==='app-screen');
-async function altKey(key:string,mods:{shiftKey?:boolean}={}){
+async function altKey(key:string,mods:{shiftKey?:boolean;code?:string}={}){
  const e={key,code:key,altKey:true,ctrlKey:false,metaKey:false,shiftKey:false,repeat:false,isComposing:false,...mods,timeStamp:1,target:{closest:()=>null},defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){}};
  await act(async()=>listeners.filter(l=>l.type==='keydown').forEach(l=>l.fn(e)));return e;
 }
@@ -81,7 +81,7 @@ it('the three window controls still make a tile big, send it to the dock and clo
 });
 it('keeps the maximized app and its trail across navigation, reload and keyboard restore',async()=>{
  await mount();await dock('tasks');await act(async()=>screen('tasks').props.go('/tasks/first'));
- await dock('inbox');await altKey('f',{shiftKey:true});
+ await dock('inbox');await altKey('Ï',{shiftKey:true,code:'KeyF'});
  await act(async()=>screen('inbox').props.go('/inbox/detail'));
  await act(async()=>tree.unmount());await mount();
  expect(shownTiles()).toEqual(['inbox']);expect(screen('inbox').props.path).toBe('/inbox/detail');
