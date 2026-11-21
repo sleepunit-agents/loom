@@ -65,9 +65,15 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   // Start deadline scans only after an actual activity selection succeeds.
 
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
+  // A socket reuses its authenticated viewer object. Share only the schema shape;
+  // row visibility and capability checks still execute on every read.
+  const memberSchemas = new WeakMap<Viewer, GraphQLSchema>();
   const schema = (viewer: Viewer, full = false) => {
     const records=full?undefined:programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
-    return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
+    const reusable = viewer.kind === 'member' && records === undefined && !full;
+    const previous = reusable && memberSchemas.get(viewer);
+    if (previous) return previous;
+    const result = withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
     // Every rule is stated in policy.ts.
     visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
@@ -76,7 +82,10 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer, () => canReadProgram(viewer)), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
     ...jobSummaryFields(summaries(viewer), () => canReadUsage(viewer)),
-  });};
+  });
+    if (reusable) memberSchemas.set(viewer, result);
+    return result;
+  };
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));
   const socket = dataSocket({ live, clock, originAllowed, measure,
