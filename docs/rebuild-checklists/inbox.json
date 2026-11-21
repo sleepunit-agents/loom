@@ -12,7 +12,11 @@
     {
       "id": "inbox-002",
       "promise": "Lists what needs you, with what happens on yes and on no.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "action",
+        "action": "inboxConsequences"
+      }
     },
     {
       "id": "inbox-003",
