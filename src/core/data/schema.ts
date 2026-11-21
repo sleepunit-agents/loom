@@ -618,7 +618,11 @@ export const messages = sqliteTable('messages', {
   tool: text('tool'),
   cardState: text('card_state', { enum: ["running", "done", "failed"] }),
   clientId: text('client_id'),
+  archivedStepMeta: text('archived_step_meta'),
+  archivedStepWords: blob('archived_step_words', {mode:'buffer'}),
+  archivedNotice: text('archived_notice'),
 }, t => [
+  check('messages_step_words_kept', sql`${t.archivedStepWords} is null or (${t.kind} = 'card' and ${t.words} is not null)`),
   check('messages_at_utc', utc(t.at)),
   check('messages_keep_until_utc', utc(t.keepUntil)),
   primaryKey({ columns: [t.thread, t.seq] }),

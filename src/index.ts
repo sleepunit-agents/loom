@@ -29,7 +29,10 @@ const USAGE = `Usage:
   loom mcp --url <origin> --token-file <file> [--agent <id>]
   loom note read|list|write|attach|file|pin|unpin|delete [options]
   loom runtime send --conversation <id> --text <text|-> [options]
+  loom migrate prepare --source STOPPED_ARCHIVE --home EMPTY_HOME
+  loom migrate comms --source STOPPED_ARCHIVE --home PREPARED_HOME
   loom migrate comms-threads --source STOPPED_ARCHIVE --home PREPARED_HOME
+  loom migrate comms-cards --source STOPPED_ARCHIVE --home PREPARED_HOME
   loom migrate comms-text --source STOPPED_ARCHIVE --home PREPARED_HOME
   loom migrate archived-questions --source STOPPED_ARCHIVE --home PREPARED_HOME
   loom --version
@@ -101,7 +104,8 @@ async function main(): Promise<number | undefined> {
   const args = process.argv.slice(2), first = args[0];
   if (first === '--version' || first === '-V') { process.stdout.write(`loom v${version()}\n`); return 0; }
   if (first === undefined || first === '--help' || first === '-h') { process.stdout.write(USAGE); return first === undefined ? 2 : 0; }
-  if (first === 'migrate' && (args[1] === 'archived-questions' || args[1] === 'comms-threads' || args[1] === 'comms-text')) return (await import('./cli/migrate-questions.js')).migrateComms(args[1], args.slice(2), processIo);
+  if (first === 'migrate' && args[1] === 'prepare') return (await import('./cli/migrate-prepare.js')).prepareArchiveHome(args.slice(2), processIo);
+  if (first === 'migrate' && (args[1] === 'comms' || args[1] === 'archived-questions' || args[1] === 'comms-threads' || args[1] === 'comms-text' || args[1] === 'comms-cards')) return (await import('./cli/migrate-questions.js')).migrateComms(args[1], args.slice(2), processIo);
   if (first === 'runtime') return (await import('./house-runtime-cli.js')).houseRuntimeCli(args.slice(1), processIo);
   if (first === 'note') return (await import('./house-note-cli.js')).houseNoteCli(args.slice(1), processIo);
   if (first === 'serve') return serve(args.slice(1));

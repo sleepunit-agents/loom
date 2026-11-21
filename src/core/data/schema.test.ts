@@ -42,6 +42,9 @@ describe('the approved data model', () => {
     // The provider read outcome is internal bookkeeping for handoff diagnostics.
     actual.model_accounts = actual.model_accounts.filter(n => n !== 'usage_read_succeeded');
     expect(actual.threads.pop()).toBe('source_channel');
+    // Retained v1 card and delivery details are importer bookkeeping on native messages.
+    expect(actual.messages.filter(n=>n.startsWith('archived_'))).toEqual(['archived_step_meta','archived_step_words','archived_notice']);
+    actual.messages=actual.messages.filter(n=>!n.startsWith('archived_'));
     expect(actual.deleted_threads.slice(-3)).toEqual(['source_member','source_agent','source_channel']);
     actual.deleted_threads=actual.deleted_threads.slice(0,-3);
     expect(actual).toEqual(expected);

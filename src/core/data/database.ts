@@ -394,7 +394,11 @@ const upgrades: readonly (readonly string[])[] = [
    'ALTER TABLE deleted_threads ADD COLUMN source_agent text',
    'ALTER TABLE deleted_threads ADD COLUMN source_channel integer',
    'ALTER TABLE threads ADD COLUMN source_channel integer'],
-  // 34: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
+  // 34: private v1 card details expire with the message.
+  ['ALTER TABLE messages ADD COLUMN archived_step_meta text',
+    `ALTER TABLE messages ADD COLUMN archived_step_words blob CONSTRAINT "messages_step_words_kept" CHECK("messages"."archived_step_words" is null or ("messages"."kind" = 'card' and "messages"."words" is not null))`,
+    'ALTER TABLE messages ADD COLUMN archived_notice text'],
+  // 35: pre-upgrade bridge sessions may include private handoffs whose deadlines were never recorded.
   ['ALTER TABLE conversation_sessions ADD COLUMN keep_until text',
     "DELETE FROM conversation_sessions WHERE conversation IN (SELECT id FROM conversations WHERE venue IN ('slack','discord'))",
     "UPDATE conversation_sessions SET keep_until = strftime('%Y-%m-%dT%H:%M:%fZ', started_at, '+' || coalesce((select comms_days from household limit 1), 14) || ' days')",

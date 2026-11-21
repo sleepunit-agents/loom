@@ -1,7 +1,7 @@
 import { pendingThreadDeletions } from './archive-deletions.js';
 /** Restore the live thread directory from a stopped archive. This phase never schedules work. */
 import { legacyConversationId } from './legacy-thread-id.js';
-import type Database from 'better-sqlite3';
+import type { ArchiveReader } from './archive-reader.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
@@ -21,7 +21,8 @@ const sourceThread = z.object({
   read_seq:z.number().int().nonnegative(),
 });
 
-export function importThreads(source:Database.Database, db:DataDatabase, recover:(agent:string,member:string,thread:string)=>string|undefined) {
+export function importThreads(source:ArchiveReader, db:DataDatabase, recover:(agent:string,member:string,thread:string)=>string|undefined,
+  activity?:(agent:string,conversation:string)=>{started:string;last:string}|undefined) {
   if (!source.readonly) throw Error('Expected a read-only household snapshot');
   pendingThreadDeletions(source, db);
   const gone = source.prepare('SELECT * FROM comms_deleted ORDER BY id');
@@ -63,6 +64,16 @@ export function importThreads(source:Database.Database, db:DataDatabase, recover
       const prior = db.select().from(threads).where(eq(threads.id,row.id)).get();
       if (prior) {
         const cv = db.select().from(conversations).where(eq(conversations.id,prior.conversation)).get();
+        // Staging turns can extend the thread directory's time range. Accept
+        // only the bounds independently reproduced from the same v1 archive.
+        if (cv && cv.turnCount > 0 && (cv.startedAt!==conversation.startedAt || cv.lastAt!==conversation.lastAt)) {
+          const dates=activity?.(row.agent,row.conversation);
+          if (dates) {
+            const start=time.parse(dates.started), end=time.parse(dates.last);
+            if (start<conversation.startedAt) conversation.startedAt=start;
+            if (end>conversation.lastAt) conversation.lastAt=end;
+          }
+        }
         if (!cv || !Object.entries(conversation).every(([key,v]) => cv[key as keyof typeof cv]===v) ||
             !Object.entries(thread).every(([key,v]) => prior[key as keyof typeof prior]===v))
           throw Error('Staged thread differs from archive');
