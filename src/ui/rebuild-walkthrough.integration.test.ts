@@ -38,7 +38,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Approvals')expect(step.value.report.actions?.approvalRulesAndExpiry,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Tasks')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
-  if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
+  if(title==='Machines and jobs'){expect(app.error).toBeUndefined();expect(app.queuedShownAsRunning).toBe(0);expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:expect.stringMatching(/^Queued · queued /)});}
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});

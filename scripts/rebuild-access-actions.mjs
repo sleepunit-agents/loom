@@ -33,6 +33,10 @@ export async function approveRequestedChange({page,app,composer,change,input,exp
  check(!exists(),'The change took effect before approval');
  await page.goto(new URL('/p/approvals-preview/approval/'+encodeURIComponent(card.id),app.url).href);
  const answer=page.getByRole('region',{name:'Approvals tile',exact:true}).getByRole('group',{name:'Answer approval',exact:true});
+ // A direct link boots the desktop. Keyboard input belongs to the document until its window is interactive.
+ await answer.waitFor();
+ await page.locator('.loom-desk-boot').waitFor({state:'detached'});
+ await page.getByRole('region',{name:'Approvals tile',exact:true}).locator('.next-page:not([inert])').waitFor();
  const result=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.method()==='POST'&&r.postDataJSON()?.input?.id===card.id,
   ()=>answer.getByRole('button',{name:'Allow',exact:true}).press('Enter',{timeout:20_000}),6000);
  check(result.ok()&&(await result.json()).ok&&app.services.approvals.get(card.id).state==='used','Approval did not apply the setting');
