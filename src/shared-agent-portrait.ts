@@ -3,10 +3,10 @@ import {DOOR_REQUEST_BYTES} from './core/data/door-limit.js';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,agentSprites} from './core/data/schema.js';
+import {agents} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {checkSpriteLayout,SPRITE_MAX_BYTES,spriteSheets} from './desk-sprite-layout.js';
-import {storeDeskSprite} from './desk-sprites.js';
+import {removeDeskSprite,storeDeskSprite} from './desk-sprites.js';
 import {householdOwner} from './shared-sharing.js';
 
 const encodedLimit=4*Math.ceil(SPRITE_MAX_BYTES/3);
@@ -34,8 +34,7 @@ export function registerAgentPortrait(operations:Operations,db:DataDatabase){
         }
         next=storeDeskSprite(db,agent,layout,{'sheet.png':bytes});
       }else{
-        db.delete(agentSprites).where(eq(agentSprites.agent,agent)).run();
-        db.update(agents).set({spriteVersion:null}).where(eq(agents.id,agent)).run();
+        removeDeskSprite(db,agent);
       }
       ctx.changed('agents',agent);
       return {version:next};

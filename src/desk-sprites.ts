@@ -20,6 +20,12 @@ export function storeDeskSprite(db:DataDatabase,agent:string,document:unknown,im
  db.transaction(()=>{db.insert(agentSprites).values({agent,layout,sheets}).onConflictDoUpdate({target:agentSprites.agent,set:{layout,sheets}}).run();db.update(agents).set({spriteVersion:version}).where(eq(agents.id,agent)).run();});
  return version;
 }
+export function removeDeskSprite(db:DataDatabase,agent:string){
+ db.transaction(()=>{
+  db.delete(agentSprites).where(eq(agentSprites.agent,agent)).run();
+  db.update(agents).set({spriteVersion:null}).where(eq(agents.id,agent)).run();
+ });
+}
 export function deskSpriteFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{viewer:Viewer}>{
  const asset=new GraphQLObjectType({name:'DeskSprite',fields:{id:{type:new GraphQLNonNull(GraphQLString)},version:{type:new GraphQLNonNull(GraphQLString)},layout:{type:new GraphQLNonNull(GraphQLString)},sheets:{type:new GraphQLNonNull(GraphQLString)}}});
  return {deskSprite:{type:asset,args:{agent:{type:new GraphQLNonNull(GraphQLString)},version:{type:new GraphQLNonNull(GraphQLString)}},resolve(_row,args:{agent:string;version:string},{viewer}){
