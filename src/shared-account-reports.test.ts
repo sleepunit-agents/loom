@@ -129,7 +129,7 @@ it('latches a current failed read without fabricating a usage timestamp or erasi
   const f = fixture(); await f.call(); const before = f.db.select().from(modelAccounts).get(), windows = f.db.select().from(modelAccountWindows).all();
   const response = await f.operation('accountUnavailable', { ...f.identity, basis: await f.basis() });
   expect(await response.json()).toMatchObject({ value: { recorded: true } });
-  expect(f.db.select().from(modelAccounts).get()).toEqual({ ...before, hasRoom: false });
+  expect(f.db.select().from(modelAccounts).get()).toEqual({ ...before, hasRoom: false, usageReadSucceeded: false });
   expect(f.db.select().from(modelAccountWindows).all()).toEqual(windows);
 });
 it('ignores an old failure after a newer success, including an identical provider observation', async () => {
