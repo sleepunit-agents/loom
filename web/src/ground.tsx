@@ -1,27 +1,33 @@
-// The page's ground: 000h's contour field (living topographic lines, WebGL with a still fallback) over the wash.
-// Its own chunk: the first page never waits on it. Jonathan, 2026-10-29: "contour field is also fucking baller ...
-// we might at least try that to see how it feels"; then "we're too zoomed in" (--field-zoom).
-import { ContourField } from '@/components/ui/contour-field';
-import { DepthBackground } from '@/components/ui/depth-background';
+import { useId } from 'react';
+import { DepthBackground } from './components/ui/depth-background';
+import { ContourField } from './components/ui/contour-field';
+import { WovenCloth } from './woven-cloth';
+import './ground.css';
 
-/** --field-zoom (index.css) sets how much terrain shows; a dev knob, localStorage 'loom-contour-zoom', tries others. */
-export function Contours() {
-  let zoom: string | undefined;
-  try { zoom = localStorage.getItem('loom-contour-zoom') ?? undefined; } catch { /* private window */ }
-  return <div aria-hidden className="loom-ground pointer-events-none fixed inset-0 -z-10" style={zoom ? ({ '--field-zoom': zoom } as React.CSSProperties) : undefined}>
-    <ContourField tone="warm" speed={0.5} intensity={0.85} /></div>;
+/** Two planes of the login cloth recede towards a shared horizon. */
+export function Depth(){
+  return <div aria-hidden="true" className="loom-ground loom-depth-cloth pointer-events-none fixed inset-0 -z-10">
+    <DepthBackground variant="pollen" density={.4} intensity={.4} className="loom-cloth-underlay" />
+    <div className="loom-depth-far"><WovenCloth /></div>
+    <div className="loom-depth-near"><WovenCloth /></div>
+  </div>;
 }
 
-/** The other trial ground: 000h's depth background, its contour look (contours on three planes, drifting with the
- * pointer and the scroll), over the wash. Jonathan, 2026-10-29: "lets enable that as one of our choices too". */
-export function Depth() {
-  return <div aria-hidden className="loom-ground pointer-events-none fixed inset-0 -z-10"><DepthBackground variant="contour" density={1} intensity={1} />
-    <GlowFilter /></div>;
-}
-
-/** The glow on the depth background's lines (looks.css: filter: var(--glow-ground), url(#loom-neon-glow) where a look
- * glows): each line's own colour, blurred under it. */
-function GlowFilter() {
-  return <svg width="0" height="0" className="absolute" aria-hidden focusable="false"><filter id="loom-neon-glow" x="-10%" y="-10%" width="120%" height="120%">
-    <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter></svg>;
+/** Loops of thread follow the terrain. Short lengths of coloured yarn travel along the same paths. */
+export function Contours(){
+  const id=useId();
+  const loop="M-190 310C-190 136 -32 82 132 99S374 252 502 246S660 327 619 432S408 496 307 559S96 649 -60 548S-197 444 -190 310Z";
+  return <div aria-hidden="true" className="loom-ground loom-contour-cloth pointer-events-none fixed inset-0 -z-10">
+    <ContourField tone="warm" speed={.3} intensity={.5} className="loom-cloth-underlay" />
+    <svg viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" focusable="false">
+      <defs><path id={id} d={loop} pathLength="1000" /></defs>
+      {['translate(-32 -78)','translate(1232 780) rotate(180)'].map(transform=>
+        <g key={transform} transform={transform}>
+          {Array.from({length:19},(_,i)=><g key={i} transform={`translate(190 350) scale(${.32+i*.065}) translate(-190 -350)`}>
+            <use href={'#'+id} className="loom-contour-thread" />
+            {i%4===1&&<use href={'#'+id} className="loom-contour-stitch" style={{stroke:['var(--v-pink)','var(--v-blue)','var(--v-olive)','var(--v-yellow)'][((i-1)/4)%4],animationDelay:`-${i*2}s`}} strokeDashoffset={i*47}/>}
+          </g>)}
+        </g>)}
+    </svg>
+  </div>;
 }
