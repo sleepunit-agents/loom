@@ -575,8 +575,8 @@ it('keeps an archived question and its sealed words intact through the checkpoin
       VALUES ('cv', 'art', 'sam', 'loom', 'th', 'Private', 1, '${at}', '${at}', 0);
     INSERT INTO threads (id, conversation, title, titled_by, pinned, opened_at, last_at, read_seq, working, stop_requested)
       VALUES ('th', 'cv', 'Private', 'member', 0, '${at}', '${at}', 0, 0, 0);
-    INSERT INTO archived_questions (thread, ref, raised_at, seen_at, keep_until, words, verdict, answered_by, answered_at)
-      VALUES ('th', 'card', '${at}', '${at}', '2026-11-29T00:00:00.000Z', X'0000FF', 'deny', 'sam', '${at}')`);
+    INSERT INTO archived_questions (thread, source_member, source_agent, source_conversation, ref, raised_at, seen_at, keep_until, words, verdict, answered_by, answered_at)
+      VALUES ('th', 'sam', 'art', 'cv', 'card', '${at}', '${at}', '2026-11-29T00:00:00.000Z', X'0000FF', 'deny', 'sam', '${at}')`);
   const archived = () => old.prepare('SELECT * FROM archived_questions').all();
   const before = archived();
   upgradeDataSchema(old, () => at);
