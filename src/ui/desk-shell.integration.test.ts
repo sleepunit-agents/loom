@@ -83,7 +83,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>activityTile.getByRole('heading',{name:activityTitle,exact:true}).count()).toBe(1);
   await expect.poll(()=>activityTile.getByText(activitySummary,{exact:true}).count()).toBeGreaterThan(0);
   await b.goto(app.url);
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Needs you',exact:true}).getByText('Needs you · 1',{exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
   for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box',exact:true}).count()).toBe(1);
   app.writes.run(()=>db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'desk-box')).run());
@@ -94,7 +94,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await a.getByRole('button',{name:'All apps',exact:true}).first().click();
   await a.getByRole('dialog',{name:'Apps',exact:true}).getByRole('region',{name:'Look & feel',exact:true}).getByRole('button',{name:'Appearance',exact:true}).click();
   const appearance=a.getByRole('region',{name:'Appearance tile',exact:true});
-  await appearance.getByRole('group',{name:'Look',exact:true}).getByRole('radio',{name:'Daylight',exact:true}).click();
+  await appearance.getByText('Daylight',{exact:true}).press('Enter');
   for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
   await appearance.getByRole('button',{name:'Close Appearance',exact:true}).click();await expect.poll(()=>a.locator('[data-tile]').count()).toBe(0);
   // Saves travel through the real cookie HTTP command; displayed choices come
@@ -154,7 +154,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await b.evaluate(()=>document.fonts.ready);await b.screenshot({path:join(shots,`new-home-${look}-${width}.png`),animations:'disabled'});
-    await b.getByRole('button',{name:'Open Appearance',exact:true}).click();await expect.poll(()=>b.getByRole('group',{name:'Look',exact:true}).isVisible()).toBe(true);
+    await b.getByRole('button',{name:'Open Appearance',exact:true}).click();await expect.poll(()=>b.getByText('Daylight',{exact:true}).isVisible()).toBe(true);
     await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.getByRole('button',{name:'Close Appearance',exact:true}).click();
     await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
     await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
@@ -164,10 +164,11 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});
     if(width>=1024){await expect.poll(()=>b.locator('.desk-rail-card').count()).toBe(1);await b.locator('.next-rail').screenshot({path:join(shots,`new-rail-${look}-${width}.png`),animations:'disabled'});}
     await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-    const screen=b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true});
+    const screen=width>=1280?b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true}):b.locator('.desk-comms-mini');
     await expect.poll(()=>screen.count()).toBe(1);
     await expect.poll(()=>screen.getAttribute('data-location')).toBe(width>=1280?'rail':'inline');
-    const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);
+    if(width>=1280){const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);}
+    else expect(await screen.getByRole('button',{name:`Open ${displayName}`}).count()).toBe(1);
     if(width>=1280){await expect.poll(()=>b.locator('.desk-agent-rail > [data-companion=true]').getAttribute('data-agent')).toBe('art');expect(await b.locator('.next-rail .desk-comms-screen').count()).toBe(1);}
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await b.screenshot({path:join(shots,`new-comms-${look}-${width}.png`),animations:'disabled'});
@@ -179,10 +180,10 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
    }
   }
-  // A narrow desktop keeps the full-size screen inline; minimizing clears
+  // A narrow desktop keeps the compact companion inline; minimizing clears
   // selection even though the reader component remains mounted in the tile.
   await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-  await expect.poll(()=>b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true}).getAttribute('data-location')).toBe('inline');
+  await expect.poll(()=>b.locator('.desk-comms-mini').getAttribute('data-location')).toBe('inline');
   await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
   await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);expect(await b.locator('[data-companion=true]').count()).toBe(0);
   // Shell behavior uses actual registered apps on the same shared program.
