@@ -170,18 +170,19 @@ export function evidenceExpiry(value: string) {
 /** Read the tagged memories themselves, including evidence collected before a card exists. */
 export function personEvidenceRows(db: Database, slug: string, since: string | null, now: number): PersonEvidence[] {
   const cutoff = since === null ? undefined : evidenceTime(since);
+  const selected: Array<{row:PersonEvidence; time:ReturnType<typeof evidenceTime>}> = [];
   const rows = db.prepare(`
     SELECT created, category, title, content, expires_at FROM memories
     WHERE json_valid(metadata) AND json_extract(metadata, '$.person') = ?
       AND category IN ('user', 'feedback') AND archived = 0
-      AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))
     ORDER BY rowid
-  `).all(slug, new Date(now - 1).toISOString()) as Array<PersonEvidence & {expires_at:string|null}>;
-  return rows.filter(row => row.expires_at === null || evidenceExpiry(row.expires_at) > now)
-    .map(({expires_at, ...row}) => ({row, time: evidenceTime(row.created)}))
-    .filter(({time}) => !cutoff || compareEvidenceTime(time, cutoff) > 0)
-    .sort((a,b) => compareEvidenceTime(a.time, b.time))
-    .map(({row}) => row);
+  `).iterate(slug) as Iterable<PersonEvidence & {expires_at:string|null}>;
+  for (const {expires_at, ...row} of rows) {
+    if (expires_at !== null && !(evidenceExpiry(expires_at) > now)) continue;
+    const time = evidenceTime(row.created);
+    if (!cutoff || compareEvidenceTime(time, cutoff) > 0) selected.push({row, time});
+  }
+  return selected.sort((a,b) => compareEvidenceTime(a.time, b.time)).map(({row}) => row);
 }
 
 export interface PersonListEntry {

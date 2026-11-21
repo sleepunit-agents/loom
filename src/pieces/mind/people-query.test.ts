@@ -286,7 +286,7 @@ it('reads every current tagged memory in the calling agent’s source before a c
  expect(await f.query('{memoryOwnPersonEvidence(slug:"early",since:"2026-11-01T00:00:00.0001Z"){title}}',viewer)).toEqual({data:{memoryOwnPersonEvidence:[
   {title:'2026-11-01T01:00:00.0002+01:00'},{title:'2026-11-01T00:00:00.0004Z'}
  ]}});
- const expires='2026-11-14T18:00:00.0004Z';
+ const expires='2026-11-14T18:00:00.0004+0000';
  insert.run(when,'user','fractional expiry','example','{"person":"expiry"}',0,expires);
  const expiring='{memoryOwnPersonEvidence(slug:"expiry"){title}}';
  expect(await f.query(expiring,viewer)).toEqual({data:{memoryOwnPersonEvidence:[{title:'fractional expiry'}]}});
