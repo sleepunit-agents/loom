@@ -66,24 +66,27 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const summary=reading?.summaries.find(s=>s.agent===agent.id);
       const unread=summary?.unread??0,thread=summary?.first??summary?.last;
       const path=thread?threadPath(thread.thread):'/p/comms-preview';
-      const said=(doing=0)=>agentStateLine(status?.state,doing,needs), word=said();
-      if(fold&&agent.id!==opened)return <section key={agent.id} className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
-        <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
-          icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>}
-          trailing={<span className="desk-rail-flags"><span role="img" className="desk-rail-dot" data-state={status?.state} title={word} aria-label={word}/>
-            {ask&&<span className="desk-rail-badge" aria-label={`${(needs??0)} waiting ${(needs??0)===1?'question':'questions'}`}>NEEDS{(needs??0)>1?` · ${(needs??0)}`:''}</span>}
-            <span className="desk-rail-unread" aria-label={threadStatus!=='live'?'Conversations unavailable':`${unread} unread threads`}>{threadStatus!=='live'?'?':unread||''}</span>
-          </span>}/>
-      </section>;
-      return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=><section className="desk-rail-card" data-companion={agent.id===companion?.id||undefined} data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={shownState(status?.state,doing.items.length)}>
-        {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
-        {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
-          <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(shownState(status?.state,doing.items.length), !!ask)} size={40} />
-          <span><strong>{agent.name}</strong><span className="desk-rail-state">{said(doing.items.length)}</span></span>
-        </button>}
-        <Doing doing={doing} name={agent.name} names={names} go={go} compact />
-        <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
-      </section>}</WithDoing>;
+      return <WithDoing key={agent.id} agent={agent.id} onChange={jobsChanged}>{doing=>{
+        const state=shownState(status?.state,doing.items.length);
+        const word=agentStateLine(state,doing.items.length,needs);
+        if(fold&&agent.id!==opened)return <section className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
+          <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
+            icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,ask)} size={24}/>}
+            trailing={<span className="desk-rail-flags"><span role="img" className="desk-rail-dot" data-state={state} title={word} aria-label={word}/>
+              {ask&&<span className="desk-rail-badge" aria-label={`${(needs??0)} waiting ${(needs??0)===1?'question':'questions'}`}>NEEDS{(needs??0)>1?` · ${(needs??0)}`:''}</span>}
+              <span className="desk-rail-unread" aria-label={threadStatus!=='live'?'Conversations unavailable':`${unread} unread threads`}>{threadStatus!=='live'?'?':unread||''}</span>
+            </span>}/>
+        </section>;
+        return <section className="desk-rail-card" data-companion={agent.id===companion?.id||undefined} data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={state}>
+          {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
+          {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
+            <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(state,ask)} size={40} />
+            <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
+          </button>}
+          <Doing doing={doing} name={agent.name} names={names} go={go} compact />
+          <button className="desk-rail-thread" onClick={()=>go(path)}>{threadStatus!=='live'?'Conversations unavailable':unread?`${unread} unread ${unread===1?'thread':'threads'}`:thread?(summary?.last?.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
+        </section>;
+      }}</WithDoing>;
   };
   const first = companion ?? (fold ? agents.find(agent => agent.id === opened) : undefined) ?? agents[0];
   return <div ref={box} className="desk-agent-rail" data-fold={fold||undefined}>
