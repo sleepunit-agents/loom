@@ -52,7 +52,11 @@
     {
       "id": "data-007",
       "promise": "The connection knows the caller from its session or token.",
-      "source": "docs/how-it-works/site/data.html#con-h"
+      "source": "docs/how-it-works/site/data.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "dataCaller"
+      }
     },
     {
       "id": "data-008",

@@ -194,6 +194,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('migrations The list of changes'):row['probe']={'kind':'action','action':'dataMigrations'}
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}
    if row['promise'].startswith(('Loom runs one query', 'Loom turns the request into one database query', 'A page reads with one API call', 'Loom handles the request in one API call')):row['probe']={'kind':'action','action':'dataReadBounds'}
+   if row['promise']=='The connection knows the caller from its session or token.':row['probe']={'kind':'action','action':'dataCaller'}
    if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
    if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
  if f.stem=='desk':

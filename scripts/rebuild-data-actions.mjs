@@ -1,5 +1,7 @@
 /** Observe the actual browser transport and actual SQLite executions. No mock IO. */
 import {parse} from 'graphql';
+import {once} from 'node:events';
+import {WebSocket as NodeWebSocket} from 'ws';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {join} from 'node:path';
 const signatures={Tasks:'query\\s+Tasks\\b',Approvals:'query\\s+ApprovalsView\\b',Sharing:'\\bhouseholdSharing\\b',Changes:'query\\s+ChangesView\\b',Inbox:'query\\s+Inbox\\b',Tempo:'query\\s+Tempo\\b',Home:'query\\s+DeskCardTalk\\b',Projects:'query\\s+MemoryProjects\\b',Activity:'query\\s+MemoryActivity\\b',Comms:'query\\s+Comms\\b',Agents:'query\\s+DeskRoster\\b',People:'query\\s+MemoryPeople\\b',Knowledge:'query\\s+MemoryKnowledge\\b',Bridges:'query\\s+Bridges\\b','Job usage':'query\\s+UsageConversations\\b','Machines and jobs':'query\\s+OwnerMachines\\b',Subscriptions:'\\bsubscriptionSetup\\b',Settings:'query\\s+SettingsSecrets\\b','Household setup':'\\bhouseholdSetup\\b','Your account':'\\baccount\\s*\\{',Appearance:'query\\s+DeskPreferences\\b'};
@@ -92,6 +94,35 @@ export async function dataActions({page,app,example,apps,subscriptions,out,shari
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await stop(page);await page.screenshot({path:join(out,screenshot),fullPage:true});};
  const unknown=apps.filter(a=>!a.dataDoor?.known||!a.dataDoor.selectionSeen),bad=apps.filter(a=>!a.opened||a.dataDoor?.graphql!==1||a.dataDoor?.other?.length);
  evidence.dataDoor=bad.length?{ok:false,error:'Expected one open GraphQL socket at '+bad.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:unknown.length?{inconclusive:true,reason:'A current-document selection signature was not observed for '+unknown.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:{ok:true,inconclusive:true,reason:'One active successful selection for every app used its current document’s GraphQL socket; complete attribution of every secondary selection and transient transport is not measured.',apps:apps.map(a=>a.dataDoor)};
+ await attempt('dataCaller',async()=>{
+  const query='{ account { member } }';
+  const session=await watch(page,query);
+  const browserMember=session.patches[0]?.value?.account?.member;
+  check(browserMember==='alex','The signed-in desktop session did not resolve Alex');
+  const url=new URL('/graphql',page.url());
+  url.protocol=url.protocol==='https:'?'wss:':'ws:';
+  const credential=app.writes.run(()=>app.services.signin.issue({kind:'owner',member:'robin',label:'Fictional caller measurement'})).value;
+  let socket;
+  try{
+   const signal=AbortSignal.timeout(4000);
+   socket=new NodeWebSocket(url,'graphql-transport-ws',{headers:{authorization:'Bearer '+credential.token}});
+   await once(socket,'open',{signal});
+   const receive=async message=>{
+    const reply=once(socket,'message',{signal});
+    socket.send(JSON.stringify(message));
+    return JSON.parse(String((await reply)[0]));
+   };
+   const ack=await receive({type:'connection_init'});
+   check(ack.type==='connection_ack','Token connection did not initialize');
+   const frame=await receive({id:'account',type:'subscribe',payload:{query:envelope,variables:{query}}});
+   const tokenMember=frame.payload?.data?.observe?.patches[0]?.value?.account?.member;
+   check(frame.type==='next'&&frame.id==='account'&&tokenMember==='robin','The token connection did not resolve Robin');
+   return{browserMember,tokenMember,reason:'The same account selection on two live GraphQL connections identified Alex by browser session and Robin by bearer token.'};
+  }finally{
+   socket?.close();
+   app.writes.run(()=>app.services.signin.revoke(credential.fingerprint));
+  }
+ });
  await attempt('dataSelectionSQL',async()=>{
   const original=subscriptions.find(s=>/query\s+Tasks\b/.test(s.query))?.query;check(original,'The real Tasks selection was not observed');
   const query=original.replace(/\btasks\s*\(/,'tasks(where:{id:{eq:'+JSON.stringify(example.tasks[0])+'}}, ');check(query!==original,'Could not add the ID filter to the actual tile selection');
