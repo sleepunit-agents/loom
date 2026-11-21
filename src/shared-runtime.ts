@@ -19,7 +19,7 @@ import { WORKER_EXIT_BY } from './runtime/job-exit.js';
 import { SLOTS_MAX } from './runtime/worker-limits.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
-import { claimedJobStates } from './core/data/job-states.js';
+import { claimedJobStates, jobClaimed } from './core/data/job-states.js';
 import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 
 import { changeReviewStore } from './apps/change-reviews.js';
@@ -147,6 +147,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
     run(ctx, input) {
       const box = runner(ctx.viewer), job = dispatcher.jobs.get(input.job);
+      // A committed finish replays from its receipt. A new finish needs a live claim.
+      if (!jobClaimed(job.state)) throw new OperationError('denied', 'Job has ended');
       let exitCode = input.exitCode;
       const round = roundFor(input.job);
       if (input.coldReview && (!round || job.state !== 'running' || input.coldReview.change !== round.change ||
