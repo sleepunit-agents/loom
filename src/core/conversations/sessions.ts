@@ -25,7 +25,7 @@
  * and will be behind the conversation as soon as the body answers. A session too large to keep is not
  * kept and removes the one before it for the same reason.
  */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversationSessions, deletedThreads } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -77,7 +77,8 @@ export class ConversationSessions {
 
   /** The stored row if the keep time has not passed since its session was started, as it is: opening it is `open`. */
   kept(conversation: string, harness: string): typeof conversationSessions.$inferSelect | undefined {
-    const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness))).get();
+    const row = this.db.select().from(conversationSessions).where(and(eq(conversationSessions.conversation, conversation), eq(conversationSessions.harness, harness),
+      notInArray(conversationSessions.conversation,this.db.select({conversation:deletedThreads.conversation}).from(deletedThreads)))).get();
     return row && Date.parse(row.startedAt) > Date.parse(ageCutoff(this.now(), commsKeepDays(this.db))) ? row : undefined;
   }
 
@@ -101,7 +102,11 @@ export class ConversationSessions {
 /** Remove every session started at or before `cutoff`: the sweep that erases words at the keep time calls
  * this with the same cutoff (messages.ts, expire). Returns how many went. */
 export function expireConversationSessions(db: DataDatabase, cutoff: string): number {
-  return db.delete(conversationSessions).where(sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`).run().changes;
+  const removed = db.select({conversation: deletedThreads.conversation}).from(deletedThreads);
+  return db.delete(conversationSessions).where(or(
+    sql`julianday(${conversationSessions.startedAt}) <= julianday(${cutoff})`,
+    inArray(conversationSessions.conversation, removed),
+  )).run().changes;
 }
 /** When the oldest kept session was started, for the sweep's schedule (lifetime.ts). */
 export function oldestConversationSession(db: DataDatabase): number | undefined {

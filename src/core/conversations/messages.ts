@@ -271,7 +271,11 @@ export class CommsMessages {
    * tombstone so delayed retries cannot recreate the conversation's thread. */
   delete(threadId: string): void {
     this.db.transaction(() => {
-      if (this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get()) return;
+      const prior = this.db.select().from(deletedThreads).where(eq(deletedThreads.id, threadId)).get();
+      if (prior) {
+        this.db.delete(conversationSessions).where(eq(conversationSessions.conversation, prior.conversation)).run();
+        return;
+      }
       const { thread } = this.context(threadId), at = this.now();
       this.db.insert(deletedThreads).values({ id: threadId, conversation: thread.conversation, at }).run();
       this.db.delete(inboxRefs).where(inArray(inboxRefs.item, this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.thread, threadId)))).run();

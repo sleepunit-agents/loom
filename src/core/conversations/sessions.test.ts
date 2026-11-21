@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversationSessions, household, members } from '../data/schema.js';
+import { agents, conversationSessions, household, members, deletedThreads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { Conversations } from './index.js';
 import { ConversationSessions, expireConversationSessions, oldestConversationSession } from './sessions.js';
@@ -134,4 +134,18 @@ it('erases all checkpoints for a deleted Comms thread and fences a pending read 
   expect(f.sessions.store(prepared)).toBe(false);
   expect(f.db.select({conversation:conversationSessions.conversation}).from(conversationSessions).all())
     .toEqual([{conversation:f.cv}]);
+});
+
+it.each(['startup sweep','repeat deletion'])('removes legacy checkpoints for already deleted threads on %s',async cleanup=>{
+  const f=fixture(), other=new Conversations(f.db,f.now).open({agent:'art',venue:'loom',place:'th:former',label:'Former'});
+  expect(await f.save()).toBe(true);
+  for (const harness of ['claude','codex']) {
+    expect(f.sessions.store(await f.sessions.seal({conversation:other.id,harness,model:'fixture',session:'abcd-1234',files:f.files}))).toBe(true);
+  }
+  f.db.insert(deletedThreads).values({id:'th:former',conversation:other.id,at:f.now()}).run();
+  expect(await f.sessions.open(other.id,'claude','fixture')).toBeNull();
+  const comms=new CommsMessages(f.db,f.key,f.now);
+  if(cleanup==='startup sweep') expect(comms.expire()).toBe(2);
+  else comms.delete('th:former');
+  expect(f.db.select({id:conversationSessions.conversation}).from(conversationSessions).all()).toEqual([{id:f.cv}]);
 });
