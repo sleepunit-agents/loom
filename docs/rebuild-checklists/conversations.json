@@ -204,8 +204,17 @@
       "promise": "e Words. Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.",
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
-        "kind": "action",
-        "action": "conversationRetention"
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationRetention"
+          },
+          {
+            "kind": "action",
+            "action": "conversationShortRetention"
+          }
+        ]
       }
     },
     {

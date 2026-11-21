@@ -20,7 +20,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  },60_000);
  it('measures encrypted private-word expiry on the program clock',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
-  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
+  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{days:14,encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
+ });
+ it('expires private words under a shorter household policy after restart',{retry:0},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('short-retention');
+  const result=step.value.actions?.conversationShortRetention;
+  expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{days:3,encrypted:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true}});
  });
  it('compares actual Sharing SQL executions at two and ten projects',{retry:0},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data-growth');

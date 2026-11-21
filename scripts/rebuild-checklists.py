@@ -116,7 +116,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.','',{'kind':'action','app':'Your account'})
  if f.stem=='conversations':
   for row in rows:
-   if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'action','action':'conversationRetention'}
+   if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationRetention','conversationShortRetention']]}
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='models':
   for row in rows:
