@@ -135,6 +135,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith("Home shows each agent's last answer and recent conversations"):row['probe']={'kind':'action','action':'homeMessage'}
    if row['promise'].startswith('Wears one of three looks'):row['probe']={'kind':'action','action':'deskLooks'}
+   if row['promise'].startswith(('Each member keeps their own look','b Your own look.')):row['probe']={'kind':'action','action':'memberAppearance'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
    if row['promise'].startswith('The desk is loom on a desktop screen.'):row['probe']={'kind':'action','action':'deskShell'}

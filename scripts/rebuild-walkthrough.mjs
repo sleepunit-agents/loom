@@ -47,6 +47,7 @@ import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskWaiting} from './rebuild-desk-waiting.mjs';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {memberAppearance} from './rebuild-member-appearance.mjs';
 import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
@@ -246,6 +247,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out,open:openApp}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
+  report.actions.memberAppearance=await memberAppearance({page,app,browser,out});
+  save();yield {phase:'member-appearance',actions:safeReport(report.actions)};
   phase='agent memory files';
   try {
    const {agentMemoryFiles}=await import('./rebuild-agent-memory-files.mjs');
