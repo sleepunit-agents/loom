@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversationSessions, household } from '../data/schema.js';
+import { agents, conversationSessions, household, members } from '../data/schema.js';
+import { CommsMessages } from './messages.js';
 import { Conversations } from './index.js';
 import { ConversationSessions, expireConversationSessions, oldestConversationSession } from './sessions.js';
 import { SESSION_BYTES, SESSION_ID, modelFamily } from './session-limit.js';
@@ -21,7 +22,7 @@ function fixture() {
   const sessions = new ConversationSessions(db, now, key);
   const files = Buffer.from('record').toString('base64');
   const save = async (more: Partial<{ harness: string; model: string; session: string; files: string; since: string }> = {}) => sessions.store(await sessions.seal({ conversation: cv, harness: 'claude', model: 'claude-opus-5-5', session: 'abcd-1234', files, ...more }));
-  return { db, cv, sessions, save, files, now, later: (ms: number) => { at += ms; } };
+  return { db, cv, key, sessions, save, files, now, later: (ms: number) => { at += ms; } };
 }
 
 it('keeps one session for a conversation and harness, sealed, and replaces it whole', async () => {
@@ -108,4 +109,29 @@ it('hands on nothing it cannot open', async () => {
   const f = fixture(); await f.save();
   f.db.update(conversationSessions).set({ files: Buffer.from('not what was sealed') }).run();
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
+});
+
+it('erases all checkpoints for a deleted Comms thread and fences a pending read and a delayed save', async () => {
+  const f = fixture();
+  f.db.insert(members).values({id:'alice',role:'member',joinedAt:f.now()}).run();
+  const comms = new CommsMessages(f.db,f.key,f.now);
+  const thread = comms.threads.open({agent:'art',member:'alice',title:'Private'});
+  const input = {conversation:thread.conversation,harness:'claude',model:'fixture',session:'abcd-1234',files:f.files};
+  const prepared = await f.sessions.seal(input);
+  expect(f.sessions.store(prepared)).toBe(true);
+  expect(f.sessions.store(await f.sessions.seal({...input,harness:'codex'}))).toBe(true);
+  expect(await f.save()).toBe(true);
+  const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const waiting = new ConversationSessions(f.db,f.now,{...f.key,async open(blob) {
+    started.resolve(); await release.promise; return f.key.open(blob);
+  }});
+  const opening = waiting.open(thread.conversation,'claude','fixture');
+  await started.promise;
+  comms.delete(thread.id);
+  comms.delete(thread.id);
+  release.resolve();
+  expect(await opening).toBeNull();
+  expect(f.sessions.store(prepared)).toBe(false);
+  expect(f.db.select({conversation:conversationSessions.conversation}).from(conversationSessions).all())
+    .toEqual([{conversation:f.cv}]);
 });

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversationSessions, conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
@@ -278,6 +278,7 @@ export class CommsMessages {
       this.db.update(inbox).set({ thread: null, messageSeq: null,
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,
         resolution: 'Thread deleted', changedAt: at }).where(eq(inbox.thread, threadId)).run();
+      this.db.delete(conversationSessions).where(eq(conversationSessions.conversation, thread.conversation)).run();
       this.db.delete(threads).where(eq(threads.id, threadId)).run();
     });
   }
