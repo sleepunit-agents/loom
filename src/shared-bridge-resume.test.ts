@@ -1,5 +1,10 @@
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { bodyCommandClient } from './runtime/body-command-client.js';
+import { bodySessions } from './runtime/body-session.js';
 /** A bridge conversation over two bodies: what the second is told when it continues the first one's session,
  * and when it cannot. Real intake, real doors, the real body program; the harness and the place its
  * session files live are stood in for. */
@@ -221,4 +226,59 @@ it('runs a body on a note from another body of the agent: it is told the note is
  expect(told.input).toMatch(/^\[A note from another body of yours, not a person speaking\. It was working in its own work \(wake\) \(conversation .*\), on your own work\. .*Hand-offs before this one in this exchange: 0\. If this exchange is no longer making progress, stop and say so to a person instead of handing on\.\]\n\nTell them about X$/s);
  expect(told.history.map(line=>line.words)).toEqual(['Hello there','Hello.']);
  expect(f.db.select().from(s.bridgeSends).all().at(-1)).toMatchObject({incoming:null,conversation:cv,text:'Somebody asked about X.'});
+});
+
+
+it('resumes a second bridge body without repeating an intermediate post from the first transcript', async () => {
+ const f=await fixture(),first=await f.hear('Start the two steps'),cv=first.conversation!;
+ const session=randomUUID(),progress=randomUUID(),addressed=randomUUID(),elsewhere=randomUUID(),transcript='Start the two steps\nWorking on step one\nFirst step finished';
+ async function worker(id:string, native:(file:string,words:string,keep?:HarnessSession)=>Promise<string>) {
+  const home=mkdtempSync(join(tmpdir(),'loom-bridge-resume-')),place=join(home,'.claude');
+  clean.push(()=>rmSync(home,{recursive:true,force:true}));
+  mkdirSync(place);
+  const token='body_'+createHash('sha256').update(id).digest('hex');
+  const client=bodyCommandClient({url:'https://loom.example',clock:f.clock,token,signal:new AbortController().signal,
+   fetch:async(url,init)=>f.root.http.request(new Request(url,init))});
+  clean.push(()=>client.close());
+  const sessions=bodySessions(client,'claude',{CLAUDE_CONFIG_DIR:place,LOOM_BODY_OWN_HARNESS:'1'},place,home)!;
+  const directory=join(place,'projects','-house'),file=join(directory,session+'.jsonl');
+  const exit=await f.run(id,cv,async(_job,words,_signal,keep)=>{
+   mkdirSync(directory,{recursive:true});
+   if (keep?.resume) {
+    const digest=(id:string)=>createHash('sha256').update(id).digest('hex');
+    expect(sessions.covered).toContain(digest(progress));
+    expect(sessions.covered).not.toContain(digest(addressed));
+    expect(sessions.covered).not.toContain(digest(elsewhere));
+   }
+   const text=await native(file,words,keep);
+   return {text,model:'claude-opus-5-5',actions:[],session};
+  },sessions);
+  expect(exit).toBe(0);
+  expect(existsSync(file)).toBe(false);
+ }
+ await worker('one',async(file,words,keep)=>{
+  expect(keep).toEqual({});expect(mail(words)).toContain('Start the two steps');
+  const result=await f.root.http.request('/api/bridges/say',{method:'POST',headers:{'content-type':'application/json',
+   authorization:'Bearer body_'+createHash('sha256').update('one').digest('hex')},body:JSON.stringify({
+    id:randomUUID(),input:{id:progress,text:'Working on step one'}})});
+  expect(await result.json()).toMatchObject({ok:true,value:{saved:true}});
+  // The same job also has committed queue entries that do not belong in this room's coverage.
+  const other=f.root.services.conversations.open({agent:'art',venue:'slack',place:'other-room',label:'Other room'});
+  const queue=f.root.services.bridges.daemon!.sends;
+  queue.queue({id:elsewhere,text:'Elsewhere',held:true,at:{conversation:other.id,connection:'connection',channel:'COTHER',thread:null},author:{job:'one',intermediate:true}});
+  queue.queue({id:addressed,text:'Addressed separately',held:true,at:{conversation:cv,connection:'connection',channel:'DOTHER',thread:null},
+   author:{job:'one',intermediate:true,directTarget:{origin:cv,person:'outside',platform:'slack',workspace:'TWORK',user:'UOTHER',member:null,channel:'DOTHER'}}});
+  writeFileSync(file,transcript);
+  return 'First step finished';
+ });
+ expect(f.db.select().from(s.bridgeSends).where(eq(s.bridgeSends.state,'sent')).all()).toMatchObject([
+  {id:progress,text:'Working on step one',state:'sent'},{text:'First step finished',state:'sent'},
+ ]);
+ await f.hear('Start the second step');
+ await worker('replacement',async(file,words,keep)=>{
+  expect(keep).toEqual({resume:session});
+  expect(readFileSync(file,'utf8')).toBe(transcript);
+  expect(mail(words)).toBe('Start the second step');
+  return 'Second step finished';
+ });
 });

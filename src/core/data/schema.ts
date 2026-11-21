@@ -2155,6 +2155,7 @@ export const conversationSessions = sqliteTable('conversation_sessions', {
   files: blob('files', { mode: 'buffer' }).notNull(),
   bytes: integer('bytes').notNull(),
   startedAt: text('started_at').notNull(),
+  keepUntil: text('keep_until'),
 }, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_started_at_utc', utc(t.startedAt))]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
@@ -2332,7 +2333,16 @@ export const archivedQuestions = sqliteTable('archived_questions', {
   check('archived_questions_keep_utc',utc(t.keepUntil)), check('archived_questions_answered_utc',utc(t.answeredAt)),
   index('archived_questions_history').on(t.thread,t.raisedAt,t.ref)]);
 
+/** The earliest private words and fixed expiry passed to a running body. No message or transcript content. */
+export const jobSessionLimits = sqliteTable('job_session_limits', {
+  job: text('job').primaryKey().notNull().references(() => jobs.id, {onDelete:'cascade'}),
+  since: text('since').notNull(),
+  keepUntil: text('keep_until').notNull(),
+  invalidated: integer('invalidated', {mode:'boolean'}).notNull().default(false),
+}, t => [check('job_session_limits_valid_flag',sql`${t.invalidated} in (0, 1)`),check('job_session_limits_since_utc',utc(t.since)),check('job_session_limits_until_utc',utc(t.keepUntil))]);
+
 export const plumbing = {
+  jobSessionLimits,
   archivedQuestions,
   accountWeekReadings,
   changeReviewRounds,
